@@ -1,0 +1,135 @@
+import hashlib
+import secrets
+
+from django.conf import settings
+from django.db import models
+
+from apps.core.models import TimestampedModel
+
+
+class Tenant(TimestampedModel):
+    """Организация-тенант. Единица изоляции данных в системе."""
+
+    name = models.CharField(max_length=200)
+    slug = models.SlugField(unique=True)
+    is_active = models.BooleanField(default=True)
+    trial_ends_at = models.DateTimeField(null=True, blank=True)
+
+    # Кэш счётчиков — обновляется задачей update_tenant_counters
+    active_listings_count = models.PositiveIntegerField(default=0)
+    sku_count = models.PositiveIntegerField(default=0)
+    ai_credits_used = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        verbose_name = 'Тенант'
+        verbose_name_plural = 'Тенанты'
+        indexes = [
+            models.Index(fields=['slug']),
+            models.Index(fields=['is_active']),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class TenantUser(TimestampedModel):
+    """Пользователь в контексте тенанта с ролью."""
+
+    ROLE_OWNER = 'owner'
+    ROLE_ADMIN = 'admin'
+    ROLE_OPERATOR = 'operator'
+    ROLE_VIEWER = 'viewer'
+
+    ROLES = [
+        (ROLE_OWNER, 'Owner'),
+        (ROLE_ADMIN, 'Admin'),
+        (ROLE_OPERATOR, 'Operator'),
+        (ROLE_VIEWER, 'Viewer'),
+    ]
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='tenant_memberships',
+    )
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='members',
+    )
+    role = models.CharField(choices=ROLES, default=ROLE_OPERATOR, max_length=20)
+
+    class Meta:
+        verbose_name = 'Пользователь тенанта'
+        verbose_name_plural = 'Пользователи тенантов'
+        unique_together = [('user', 'tenant')]
+
+    def __str__(self):
+        return f'{self.user.email} @ {self.tenant.slug} ({self.role})'
+
+    # Матрица прав
+    def can_manage_billing(self):
+        return self.role == self.ROLE_OWNER
+
+    def can_manage_users(self):
+        return self.role in (self.ROLE_OWNER, self.ROLE_ADMIN)
+
+    def can_manage_connections(self):
+        return self.role in (self.ROLE_OWNER, self.ROLE_ADMIN)
+
+    def can_publish(self):
+        return self.role in (self.ROLE_OWNER, self.ROLE_ADMIN, self.ROLE_OPERATOR)
+
+
+class APIKey(TimestampedModel):
+    """API-ключ для доступа к системе от имени тенанта."""
+
+    KEY_PREFIX = 'map_sk_'
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='api_keys',
+    )
+    name = models.CharField(max_length=100)
+    key_prefix = models.CharField(max_length=12)   # первые символы для отображения
+    key_hash = models.CharField(max_length=64)      # SHA256 от полного ключа
+    is_active = models.BooleanField(default=True)
+    last_used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'API-ключ'
+        verbose_name_plural = 'API-ключи'
+        indexes = [
+            models.Index(fields=['key_hash']),
+            models.Index(fields=['tenant', 'is_active']),
+        ]
+
+    def __str__(self):
+        return f'{self.key_prefix}... ({self.tenant.slug})'
+
+    @classmethod
+    def generate(cls, tenant: 'Tenant', name: str) -> tuple['APIKey', str]:
+        """
+        Создаёт новый API-ключ.
+
+        Возвращает (объект APIKey, plaintext-ключ).
+        Plaintext показывается только один раз — потом доступен только хэш.
+        """
+        plaintext = cls.KEY_PREFIX + secrets.token_urlsafe(32)
+        key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
+        key_prefix = plaintext[:12]
+
+        api_key = cls.objects.create(
+            tenant=tenant,
+            name=name,
+            key_prefix=key_prefix,
+            key_hash=key_hash,
+        )
+        return api_key, plaintext
+
+    @classmethod
+    def verify(cls, plaintext: str) -> 'APIKey | None':
+        """Проверяет ключ по хэшу. Возвращает объект или None."""
+        key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
+        return cls.objects.filter(key_hash=key_hash, is_active=True).select_related('tenant').first()
