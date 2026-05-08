@@ -109,6 +109,13 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Europe/Moscow'
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+CELERY_BEAT_SCHEDULE = {
+    'cleanup-old-logs-daily': {
+        'task': 'apps.notifications.tasks.cleanup_old_logs',
+        'schedule': 60 * 60 * 24,  # раз в сутки
+        'options': {'queue': 'notifications'},
+    },
+}
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 3600
 CELERY_TASK_SOFT_TIME_LIMIT = 3300
