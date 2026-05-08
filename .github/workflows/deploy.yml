@@ -7,7 +7,8 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    # Пропускаем деплой если секреты сервера не настроены
+    if: ${{ secrets.PROD_HOST != '' }}
 
     steps:
       - uses: actions/checkout@v4
