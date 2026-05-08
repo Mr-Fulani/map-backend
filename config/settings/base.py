@@ -47,6 +47,61 @@ LOCAL_APPS = [
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
+UNFOLD = {
+    "SIDEBAR": {
+        "navigation": [
+            {
+                "title": "Аналитика",
+                "items": [
+                    {
+                        "title": "Статистика платформы",
+                        "icon": "bar_chart",
+                        "link": "/admin/stats/",
+                    },
+                ],
+            },
+            {
+                "title": "Пользователи и тенанты",
+                "collapsible": True,
+                "items": [
+                    {"title": "Тенанты", "icon": "domain", "link": "/admin/tenants/tenant/"},
+                    {"title": "Пользователи", "icon": "person", "link": "/admin/users/user/"},
+                    {"title": "API-ключи", "icon": "key", "link": "/admin/tenants/apikey/"},
+                ],
+            },
+            {
+                "title": "Биллинг",
+                "collapsible": True,
+                "items": [
+                    {"title": "Тарифные планы", "icon": "sell", "link": "/admin/billing/plan/"},
+                    {"title": "Подписки", "icon": "subscriptions", "link": "/admin/billing/subscription/"},
+                    {"title": "Счета", "icon": "receipt", "link": "/admin/billing/invoice/"},
+                ],
+            },
+            {
+                "title": "Товары и маркетплейсы",
+                "collapsible": True,
+                "items": [
+                    {"title": "Товары", "icon": "inventory_2", "link": "/admin/products/product/"},
+                    {"title": "Листинги", "icon": "storefront", "link": "/admin/marketplaces/listing/"},
+                    {"title": "Аккаунты", "icon": "manage_accounts", "link": "/admin/marketplaces/marketplaceaccount/"},
+                    {"title": "Источники данных", "icon": "database", "link": "/admin/datasources/datasourceconnection/"},
+                ],
+            },
+            {
+                "title": "Система",
+                "collapsible": True,
+                "items": [
+                    {"title": "Логи синхронизации", "icon": "sync", "link": "/admin/sync/synclog/"},
+                    {"title": "Уведомления", "icon": "notifications", "link": "/admin/notifications/notificationlog/"},
+                    {"title": "Настройки уведомлений", "icon": "settings", "link": "/admin/notifications/tenantnotificationsettings/"},
+                    {"title": "Периодические задачи", "icon": "schedule", "link": "/admin/django_celery_beat/periodictask/"},
+                ],
+            },
+        ],
+    },
+}
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
