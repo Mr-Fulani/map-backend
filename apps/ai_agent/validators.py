@@ -6,6 +6,7 @@ BANNED_WORDS = [
     'недорого', 'дёшево', 'дешево', 'акция', 'распродажа',
 ]
 
+# Регулярка для удаления контактных данных из текста объявления
 _CONTACTS_RE = re.compile(
     r'(\+?[\d\s\-\(\)]{7,})'          # телефоны
     r'|([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,})'  # email
@@ -16,14 +17,15 @@ _CONTACTS_RE = re.compile(
 
 
 class ValidationError(ValueError):
-    pass
+    """Ошибка валидации ответа AI-агента."""
 
 
 class BannedWordsError(ValidationError):
-    pass
+    """В тексте обнаружены запрещённые слова."""
 
 
 def validate_title(title: str) -> str:
+    """Проверяет длину заголовка (20–100 символов)."""
     title = title.strip()
     if not (20 <= len(title) <= 100):
         raise ValidationError(f'Заголовок должен быть от 20 до 100 символов, получено {len(title)}')
@@ -31,6 +33,7 @@ def validate_title(title: str) -> str:
 
 
 def validate_description(text: str) -> str:
+    """Обрезает описание до 7500 символов и проверяет запрещённые слова."""
     text = text.strip()
     if len(text) > 7500:
         text = _truncate_at_paragraph(text, 7500)
@@ -42,11 +45,14 @@ def validate_description(text: str) -> str:
 
 
 def strip_contacts(text: str) -> str:
+    """Удаляет телефоны, email и ссылки из текста."""
     return _CONTACTS_RE.sub('', text).strip()
 
 
 def validate_json_response(raw: str) -> dict:
+    """Парсит JSON-ответ агента, проверяет структуру и применяет все валидации."""
     raw = raw.strip()
+    # Убираем markdown-блоки если модель их добавила
     if raw.startswith('```'):
         raw = re.sub(r'^```[a-z]*\n?', '', raw)
         raw = re.sub(r'\n?```$', '', raw)
@@ -73,6 +79,7 @@ def validate_json_response(raw: str) -> dict:
 
 
 def _truncate_at_paragraph(text: str, max_len: int) -> str:
+    """Обрезает текст по последнему переносу строки до max_len символов."""
     if len(text) <= max_len:
         return text
     truncated = text[:max_len]
