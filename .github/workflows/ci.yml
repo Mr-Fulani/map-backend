@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: map_db
+          POSTGRES_USER: map_user
+          POSTGRES_PASSWORD: map_password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DATABASE_URL: postgres://map_user:map_password@localhost:5432/map_db
+      REDIS_URL: redis://localhost:6379/0
+      DJANGO_SECRET_KEY: ci-secret-key-for-testing-only
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Настроить Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'requirements/dev.txt'
+
+      - name: Установить зависимости
+        run: pip install -r requirements/dev.txt
+
+      - name: Проверить линтером (flake8)
+        run: flake8 apps/ config/
+
+      - name: Запустить тесты
+        run: pytest --cov=apps --cov-fail-under=0 --cov-report=xml
+
+      - name: Загрузить покрытие
+        uses: codecov/codecov-action@v4
+        if: always()
+        with:
+          file: coverage.xml
