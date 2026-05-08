@@ -2,6 +2,8 @@ from celery import shared_task
 from django.core.cache import cache
 from django.utils.timezone import now
 
+from apps.anti_ban.ramp_up import GradualRampUp
+from apps.anti_ban.velocity import VelocityController
 from apps.billing.services import LimitChecker
 from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
 from apps.marketplaces.adapters.avito.error_handler import (
@@ -37,6 +39,17 @@ def publish_listing_task(self, listing_id: int):
             listing.status = Listing.STATUS_LIMIT_REACHED
             listing.save(update_fields=['status'])
             return
+
+        # Проверка gradual ramp-up — лимит публикаций в первые дни работы тенанта
+        ramp = GradualRampUp()
+        published_today = ramp.get_published_today(listing.tenant)
+        if not ramp.is_allowed(listing.tenant, published_today):
+            # Откладываем задачу на следующий день, не теряем
+            raise self.retry(exc=RuntimeError('Ramp-up limit reached'), countdown=3600)
+
+        # Проверка velocity — защита от слишком быстрых публикаций
+        if not VelocityController().is_allowed(listing.account, 'publish'):
+            raise self.retry(exc=RuntimeError('Velocity limit exceeded'), countdown=300)
 
         try:
             external_id = AvitoAdapter(listing.account).publish(listing)
