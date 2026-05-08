@@ -159,3 +159,58 @@ def check_moderation_task(self, listing_id: int):
         listing.save(update_fields=['status', 'rejection_reason', 'last_sync_at'])
     except (ServerError, RateLimitError) as exc:
         raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
+
+
+@shared_task(queue='avito_update')
+def check_moderation_status():
+    """
+    Запускает проверку статуса модерации для всех активных листингов.
+
+    Запускается каждые 30 минут через Celery Beat.
+    """
+    listing_ids = list(Listing.objects.filter(
+        status=Listing.STATUS_ACTIVE,
+    ).values_list('pk', flat=True))
+
+    for listing_id in listing_ids:
+        check_moderation_task.delay(listing_id)
+
+    return {'listings_queued': len(listing_ids)}
+
+
+@shared_task(queue='avito_update')
+def reconcile_listings():
+    """
+    Сверяет статусы листингов на Avito с данными в БД.
+
+    Запускается ежедневно в 03:00 через Celery Beat.
+    """
+    listing_ids = list(Listing.objects.filter(
+        status=Listing.STATUS_ACTIVE,
+        external_id__isnull=False,
+    ).values_list('pk', flat=True))
+
+    for listing_id in listing_ids:
+        check_moderation_task.delay(listing_id)
+
+    return {'listings_reconciled': len(listing_ids)}
+
+
+@shared_task(queue='avito_update')
+def refresh_avito_stats():
+    """
+    Запускает проверку теневого бана для всех активных аккаунтов.
+
+    Запускается ежечасно через Celery Beat.
+    """
+    from apps.anti_ban.tasks import check_shadow_ban_task
+    from apps.marketplaces.models import MarketplaceAccount
+
+    account_ids = list(MarketplaceAccount.objects.filter(
+        is_active=True,
+    ).values_list('pk', flat=True))
+
+    for account_id in account_ids:
+        check_shadow_ban_task.delay(account_id)
+
+    return {'accounts_checked': len(account_ids)}
