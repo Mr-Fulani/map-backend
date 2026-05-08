@@ -199,6 +199,7 @@ AVITO_CLIENT_SECRET = os.environ.get('AVITO_CLIENT_SECRET', '')
 # --- Биллинг ---
 YOOKASSA_SHOP_ID = os.environ.get('YOOKASSA_SHOP_ID', '')
 YOOKASSA_SECRET_KEY = os.environ.get('YOOKASSA_SECRET_KEY', '')
+SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8000')
 
 # --- Уведомления ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')

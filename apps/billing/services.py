@@ -93,6 +93,91 @@ class BillingService:
     """Управление подписками и платёжными событиями."""
 
     @staticmethod
+    def create_payment(tenant: Tenant, plan_slug: str, period: str, return_url: str) -> str:
+        """
+        Создаёт платёж в YooKassa и возвращает URL для редиректа пользователя.
+
+        Также создаёт Invoice в статусе pending, который будет обновлён вебхуком.
+        """
+        from apps.billing.yookassa_client import create_payment as yk_create
+
+        plan = Plan.objects.get(slug=plan_slug, is_active=True)
+        amount = plan.price_yearly if period == Subscription.PERIOD_YEARLY else plan.price_monthly
+        period_label = 'год' if period == Subscription.PERIOD_YEARLY else 'месяц'
+        description = f'MAP {plan.name} ({period_label})'
+
+        payment_id, confirmation_url = yk_create(
+            amount=amount,
+            description=description,
+            return_url=return_url,
+            metadata={
+                'tenant_id': str(tenant.pk),
+                'plan_slug': plan_slug,
+                'period': period,
+            },
+        )
+
+        Invoice.objects.create(
+            tenant=tenant,
+            amount=amount,
+            status=Invoice.STATUS_PENDING,
+            yookassa_payment_id=payment_id,
+        )
+        return confirmation_url
+
+    @staticmethod
+    @transaction.atomic
+    def handle_payment_success_webhook(payment_id: str, amount, metadata: dict) -> None:
+        """
+        Обрабатывает вебхук payment.succeeded от YooKassa.
+
+        Обновляет существующий Invoice до статуса paid и активирует подписку.
+        Отправляет email-уведомление тенанту.
+        """
+        from apps.notifications.services import LEVEL_BILLING
+        from apps.notifications.tasks import send_notification_task
+
+        try:
+            invoice = Invoice.objects.select_related('tenant').get(yookassa_payment_id=payment_id)
+        except Invoice.DoesNotExist:
+            logger.warning('handle_payment_success_webhook: Invoice %s не найден', payment_id)
+            return
+
+        invoice.status = Invoice.STATUS_PAID
+        invoice.paid_at = timezone.now()
+        invoice.save(update_fields=['status', 'paid_at'])
+
+        tenant = invoice.tenant
+        plan_slug = metadata.get('plan_slug')
+        period = metadata.get('period', Subscription.PERIOD_MONTHLY)
+
+        if plan_slug:
+            BillingService.upgrade_plan(tenant, plan_slug, period)
+        else:
+            sub = tenant.subscription
+            sub.status = Subscription.STATUS_ACTIVE
+            sub.save(update_fields=['status'])
+
+        send_notification_task.delay(
+            tenant.pk, LEVEL_BILLING,
+            f'Оплата {invoice.amount}₽ прошла успешно. Подписка активирована.',
+        )
+        logger.info('Вебхук payment.succeeded: tenant=%s, amount=%s', tenant.slug, amount)
+
+    @staticmethod
+    @transaction.atomic
+    def handle_payment_failed_webhook(payment_id: str) -> None:
+        """
+        Обрабатывает вебхук payment.canceled от YooKassa.
+
+        Переводит Invoice в статус failed.
+        """
+        updated = Invoice.objects.filter(yookassa_payment_id=payment_id).update(
+            status=Invoice.STATUS_FAILED,
+        )
+        logger.warning('Вебхук payment.canceled: payment_id=%s, обновлено=%d', payment_id, updated)
+
+    @staticmethod
     @transaction.atomic
     def start_trial(tenant: Tenant) -> Subscription:
         """Запускает 14-дневный пробный период на плане Business."""

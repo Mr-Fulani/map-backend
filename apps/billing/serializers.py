@@ -3,6 +3,19 @@ from rest_framework import serializers
 from apps.billing.models import Invoice, Plan, Subscription
 
 
+class CheckoutSerializer(serializers.Serializer):
+    """Входные данные для создания платежа YooKassa."""
+
+    plan_slug = serializers.ChoiceField(choices=[
+        Plan.SLUG_STARTER, Plan.SLUG_BUSINESS, Plan.SLUG_PRO, Plan.SLUG_ENTERPRISE,
+    ])
+    period = serializers.ChoiceField(
+        choices=[Subscription.PERIOD_MONTHLY, Subscription.PERIOD_YEARLY],
+        default=Subscription.PERIOD_MONTHLY,
+    )
+    return_url = serializers.URLField(required=False)
+
+
 class PlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = Plan
