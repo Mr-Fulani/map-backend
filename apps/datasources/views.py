@@ -1,0 +1,76 @@
+import os
+import tempfile
+
+from rest_framework import status
+from rest_framework.parsers import MultiPartParser
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.datasources.adapters.csv_adapter import CSVAdapter, CSVValidationError
+from apps.datasources.models import DataSourceConnection
+from apps.datasources.serializers import DataSourceConnectionSerializer, DataSourceConnectionUpdateSerializer
+from apps.datasources.services import ConnectionService
+
+
+class DataSourceListView(APIView):
+    def get(self, request):
+        qs = DataSourceConnection.objects.filter(tenant=request.tenant)
+        return Response(DataSourceConnectionSerializer(qs, many=True).data)
+
+    def post(self, request):
+        serializer = DataSourceConnectionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        conn = ConnectionService.create(request.tenant, serializer.validated_data)
+        return Response(DataSourceConnectionSerializer(conn).data, status=status.HTTP_201_CREATED)
+
+
+class DataSourceDetailView(APIView):
+    def get(self, request, pk):
+        conn = DataSourceConnection.objects.get(pk=pk, tenant=request.tenant)
+        return Response(DataSourceConnectionSerializer(conn).data)
+
+    def put(self, request, pk):
+        serializer = DataSourceConnectionUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        conn = ConnectionService.update(pk, request.tenant, serializer.validated_data)
+        return Response(DataSourceConnectionSerializer(conn).data)
+
+    def delete(self, request, pk):
+        ConnectionService.delete(pk, request.tenant)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class DataSourceTestView(APIView):
+    def post(self, request, pk):
+        result = ConnectionService.test(pk, request.tenant)
+        http_status = status.HTTP_200_OK if result['ok'] else status.HTTP_502_BAD_GATEWAY
+        return Response(result, status=http_status)
+
+
+class CSVUploadView(APIView):
+    parser_classes = [MultiPartParser]
+
+    def post(self, request):
+        file_obj = request.FILES.get('file')
+        if file_obj is None:
+            return Response({'detail': 'Файл обязателен.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        suffix = os.path.splitext(file_obj.name)[1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+            for chunk in file_obj.chunks():
+                tmp.write(chunk)
+            tmp_path = tmp.name
+
+        try:
+            adapter = CSVAdapter(connection=None)
+            preview = request.query_params.get('preview') == '1'
+            if preview:
+                result = adapter.preview(tmp_path)
+            else:
+                result = {'items': adapter.process_uploaded_file(tmp_path)}
+        except CSVValidationError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        finally:
+            os.unlink(tmp_path)
+
+        return Response(result)
