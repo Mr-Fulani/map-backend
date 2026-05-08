@@ -35,8 +35,8 @@ class TenantService:
 
         _, plaintext = APIKey.generate(tenant=tenant, name='Default Key')
 
-        # Биллинг: запускаем trial при создании тенанта (реализуется в Этапе 2)
-        # BillingService.start_trial(tenant)  # noqa: ERA001
+        from apps.billing.services import BillingService
+        BillingService.start_trial(tenant)
 
         return tenant, plaintext
 
