@@ -17,6 +17,8 @@ jobs:
           POSTGRES_DB: map_db
           POSTGRES_USER: map_user
           POSTGRES_PASSWORD: map_password
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd pg_isready
           --health-interval 10s
@@ -25,6 +27,8 @@ jobs:
 
       redis:
         image: redis:7-alpine
+        ports:
+          - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 10s
@@ -52,6 +56,9 @@ jobs:
 
       - name: Проверить линтером (flake8)
         run: flake8 apps/ config/
+
+      - name: Применить миграции
+        run: python manage.py migrate --noinput
 
       - name: Запустить тесты
         run: pytest --cov=apps --cov-fail-under=0 --cov-report=xml

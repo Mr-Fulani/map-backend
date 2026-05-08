@@ -8,8 +8,9 @@ RUN useradd --create-home --shell /bin/bash --uid 1000 app
 
 WORKDIR /app
 
-COPY requirements/base.txt requirements/base.txt
-RUN pip install --no-cache-dir -r requirements/base.txt
+ARG REQUIREMENTS=requirements/dev.txt
+COPY requirements/ requirements/
+RUN pip install --no-cache-dir -r ${REQUIREMENTS}
 
 COPY --chown=app:app . .
 
