@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p /Users/user/saas_poster/apps/ai_agent/tests)",
+      "Bash(touch /Users/user/saas_poster/apps/ai_agent/tests/__init__.py)",
+      "Bash(docker compose exec *)"
+    ]
+  }
+}

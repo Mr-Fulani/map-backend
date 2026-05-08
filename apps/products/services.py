@@ -6,6 +6,7 @@ from apps.products.models import Product
 
 
 def _compute_hash(data: dict) -> str:
+    """SHA256-хэш ключевых полей товара — используется для обнаружения изменений."""
     payload = {
         'name': data.get('name', ''),
         'brand': data.get('brand', ''),
@@ -18,8 +19,16 @@ def _compute_hash(data: dict) -> str:
 
 
 class ProductService:
+    """Сервис управления товарами: создание/обновление из источников данных."""
+
     @staticmethod
     def upsert_from_source(tenant, datasource, data: dict) -> tuple[Product, str]:
+        """
+        Создаёт или обновляет товар из данных адаптера.
+
+        Возвращает (product, status) где status: 'created' | 'updated' | 'unchanged'.
+        Unchanged означает что данные не изменились — задача в Celery не нужна.
+        """
         hash_new = _compute_hash(data)
         uuid_1c = data.get('uuid') or None
 
@@ -38,6 +47,7 @@ class ProductService:
         if uuid_1c is not None:
             defaults['uuid_1c'] = uuid_1c
 
+        # Читаем старый хэш ДО update_or_create — иначе всегда будет 'unchanged'
         try:
             existing = Product.objects.get(**lookup)
             old_hash = existing.hash_1c
@@ -54,6 +64,12 @@ class ProductService:
 
     @staticmethod
     def detect_change_type(old_data: dict, new_data: dict) -> str:
+        """
+        Определяет тип изменения товара.
+
+        Нужно для решения: надо ли перегенерировать описание и как обновить листинг.
+        Возвращает: 'price_only' | 'stock_only' | 'content' | 'category'
+        """
         price_changed = str(old_data.get('price')) != str(new_data.get('price'))
         stock_changed = old_data.get('stock_qty') != new_data.get('stock_qty')
         category_changed = old_data.get('category') != new_data.get('category')

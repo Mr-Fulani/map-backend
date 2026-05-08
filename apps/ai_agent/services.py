@@ -6,15 +6,24 @@ from apps.ai_agent.prompts import SYSTEM_PROMPT
 from apps.ai_agent.validators import BannedWordsError, ValidationError, validate_json_response
 from apps.billing.services import LimitChecker
 
-MAX_RETRIES = 2
+MAX_RETRIES = 2  # Максимум попыток через Claude перед fallback на OpenAI
 
 
 class AICreditsExhausted(Exception):
-    pass
+    """AI-кредиты тенанта исчерпаны."""
 
 
 class DescriptionAgent:
+    """Агент генерации описаний объявлений через Claude (fallback — GPT-4o)."""
+
     def generate(self, product, tenant, variation_index: int = 0) -> dict:
+        """
+        Генерирует описание для товара.
+
+        Сначала пробует Claude (до MAX_RETRIES попыток при BannedWordsError),
+        затем fallback на OpenAI если Claude недоступен.
+        Атомарно инкрементирует ai_credits_used тенанта.
+        """
         can, reason = LimitChecker().can_generate_ai(tenant)
         if not can:
             raise AICreditsExhausted(reason)
@@ -26,6 +35,7 @@ class DescriptionAgent:
                 self._increment_credits(tenant)
                 return result
             except BannedWordsError:
+                # Запрещённые слова — меняем вариацию и пробуем снова
                 variation_index += 1
                 last_error = 'banned_words'
                 continue
@@ -42,6 +52,7 @@ class DescriptionAgent:
             raise RuntimeError(f'Claude и OpenAI недоступны: {e}. Последняя ошибка: {last_error}')
 
     def _build_message(self, product, variation_index: int = 0) -> str:
+        """Формирует текст запроса к модели из полей товара."""
         lines = [
             f'Артикул: {product.article}',
             f'Название: {product.name}',
@@ -58,6 +69,7 @@ class DescriptionAgent:
         return '\n'.join(line for line in lines if line)
 
     def _call_claude(self, product, variation_index: int = 0) -> dict:
+        """Вызывает Claude API и парсит JSON-ответ."""
         client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
         response = client.messages.create(
             model='claude-sonnet-4-20250514',
@@ -68,6 +80,7 @@ class DescriptionAgent:
         return validate_json_response(response.content[0].text)
 
     def _call_openai(self, product, variation_index: int = 0) -> dict:
+        """Вызывает OpenAI API (fallback если Claude недоступен)."""
         from openai import OpenAI
         client = OpenAI(api_key=settings.OPENAI_API_KEY)
         response = client.chat.completions.create(
@@ -82,5 +95,6 @@ class DescriptionAgent:
 
     @staticmethod
     def _increment_credits(tenant):
+        """Атомарно увеличивает счётчик AI-кредитов через F() — без race condition."""
         from apps.tenants.models import Tenant
         Tenant.objects.filter(pk=tenant.pk).update(ai_credits_used=F('ai_credits_used') + 1)

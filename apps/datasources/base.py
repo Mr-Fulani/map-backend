@@ -3,6 +3,8 @@ from datetime import datetime
 
 
 class BaseDataSourceAdapter(ABC):
+    """Базовый класс для всех адаптеров источников данных (1С HTTP/XML, CSV)."""
+
     def __init__(self, connection):
         self.connection = connection
 

@@ -1,43 +1,47 @@
 from apps.marketplaces.adapters.avito.rate_limiter import RateLimitError
 
+# Расписание задержек при повторных попытках: 30s → 60s → 120s → 300s
 BACKOFF_SCHEDULE = [30, 60, 120, 300]
 
 
 class AvitoError(Exception):
-    pass
+    """Базовый класс ошибок Avito API."""
 
 
 class TokenExpiredError(AvitoError):
-    pass
+    """Токен истёк (HTTP 401) — нужно обновить и повторить."""
 
 
 class ForbiddenError(AvitoError):
-    pass
+    """Нет прав на операцию (HTTP 403) — требует ручного вмешательства."""
 
 
 class NotFoundError(AvitoError):
-    pass
+    """Объявление не найдено (HTTP 404) — нужно переопубликовать."""
 
 
 class DuplicateError(AvitoError):
-    pass
+    """Конфликт дублирования (HTTP 409) — проверить idempotency_key."""
 
 
 class PhotoTooLargeError(AvitoError):
-    pass
+    """Фото превышает допустимый размер (HTTP 413) — уменьшить до 1280px."""
 
 
 class RejectedError(AvitoError):
+    """Объявление отклонено модератором (HTTP 422)."""
+
     def __init__(self, reason: str):
         self.reason = reason
         super().__init__(reason)
 
 
 class ServerError(AvitoError):
-    pass
+    """Ошибка сервера Avito (5xx) — retry с backoff."""
 
 
 def handle_avito_error(response, listing=None):
+    """Преобразует HTTP-ответ Avito в соответствующее исключение."""
     code = response.status_code
 
     if code == 400:
@@ -68,5 +72,6 @@ def handle_avito_error(response, listing=None):
 
 
 def backoff(retry_count: int) -> int:
+    """Возвращает задержку в секундах по номеру попытки (экспоненциальный backoff)."""
     idx = min(retry_count, len(BACKOFF_SCHEDULE) - 1)
     return BACKOFF_SCHEDULE[idx]
