@@ -1,19 +1,28 @@
+import hmac
+import hashlib
+import json
+
+import requests
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.tenants.models import APIKey
+from apps.tenants.models import APIKey, WEBHOOK_EVENTS, WebhookEndpoint
 from apps.tenants.serializers import (
     APIKeyCreateSerializer,
     APIKeySerializer,
     RegisterSerializer,
     TenantSerializer,
     TenantUserSerializer,
+    WebhookEndpointSerializer,
+    WebhookEndpointWriteSerializer,
 )
 from apps.tenants.services import APIKeyService, TenantService
 
 
+@extend_schema(tags=['Auth'])
 class RegisterView(APIView):
     """POST /api/v1/auth/register/ — создать тенанта и получить API Key."""
 
@@ -41,6 +50,7 @@ class RegisterView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(tags=['Tenant'])
 class TenantDetailView(APIView):
     """GET /api/v1/tenant/ — информация о текущем тенанте."""
 
@@ -53,6 +63,7 @@ class TenantDetailView(APIView):
         })
 
 
+@extend_schema(tags=['Tenant'])
 class TenantUserListView(APIView):
     """GET /api/v1/tenant/users/ — список пользователей тенанта."""
 
@@ -66,6 +77,7 @@ class TenantUserListView(APIView):
         })
 
 
+@extend_schema(tags=['API Keys'])
 class APIKeyListView(APIView):
     """GET /api/v1/tenant/api-keys/ — список API ключей. POST — создать новый."""
 
@@ -97,6 +109,7 @@ class APIKeyListView(APIView):
         }, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(tags=['API Keys'])
 class APIKeyRevokeView(APIView):
     """DELETE /api/v1/tenant/api-keys/{id}/ — отозвать ключ."""
 
@@ -107,6 +120,115 @@ class APIKeyRevokeView(APIView):
         return Response({'status': 'ok'}, status=status.HTTP_200_OK)
 
 
+@extend_schema(tags=['Webhooks'])
+class WebhookEndpointListView(APIView):
+    """GET /api/v1/webhooks/ — список вебхуков. POST — создать."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Возвращает вебхук-эндпоинты текущего тенанта."""
+        qs = WebhookEndpoint.objects.filter(tenant=request.tenant).order_by('-created_at')
+        return Response({'status': 'ok', 'data': WebhookEndpointSerializer(qs, many=True).data})
+
+    def post(self, request):
+        """Создаёт новый вебхук-эндпоинт с автоматически сгенерированным секретом."""
+        serializer = WebhookEndpointWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        endpoint = WebhookEndpoint.objects.create(
+            tenant=request.tenant,
+            url=data['url'],
+            events=data['events'],
+            secret=WebhookEndpoint.generate_secret(),
+        )
+        return Response(
+            {'status': 'ok', 'data': WebhookEndpointSerializer(endpoint).data},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+@extend_schema(tags=['Webhooks'])
+class WebhookEndpointDetailView(APIView):
+    """DELETE /api/v1/webhooks/{id}/ — удалить. POST /test/ — тестовый запрос."""
+
+    permission_classes = [IsAuthenticated]
+
+    def _get(self, pk, tenant):
+        """Возвращает вебхук тенанта или None."""
+        try:
+            return WebhookEndpoint.objects.get(pk=pk, tenant=tenant)
+        except WebhookEndpoint.DoesNotExist:
+            return None
+
+    def delete(self, request, pk):
+        """Удаляет вебхук-эндпоинт."""
+        endpoint = self._get(pk, request.tenant)
+        if endpoint is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        endpoint.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@extend_schema(tags=['Webhooks'])
+class WebhookEndpointTestView(APIView):
+    """POST /api/v1/webhooks/{id}/test/ — отправить тестовый payload на URL вебхука."""
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, pk):
+        """Отправляет тестовый ping-запрос на зарегистрированный URL вебхука."""
+        try:
+            endpoint = WebhookEndpoint.objects.get(pk=pk, tenant=request.tenant)
+        except WebhookEndpoint.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        payload = json.dumps({
+            'event': 'test.ping',
+            'tenant': request.tenant.slug,
+            'data': {'message': 'MAP webhook test'},
+        })
+        signature = hmac.new(
+            endpoint.secret.encode(),
+            payload.encode(),
+            hashlib.sha256,
+        ).hexdigest()
+
+        try:
+            resp = requests.post(
+                endpoint.url,
+                data=payload,
+                headers={
+                    'Content-Type': 'application/json',
+                    'X-MAP-Signature': f'sha256={signature}',
+                    'X-MAP-Event': 'test.ping',
+                },
+                timeout=10,
+            )
+            return Response({
+                'status': 'ok',
+                'data': {'http_status': resp.status_code, 'ok': resp.status_code < 400},
+            })
+        except requests.RequestException as exc:
+            return Response(
+                {'status': 'error', 'detail': str(exc)},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+
+@extend_schema(tags=['Webhooks'])
+class WebhookEventsView(APIView):
+    """GET /api/v1/webhooks/events/ — список доступных типов событий."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        """Возвращает все поддерживаемые типы событий для вебхуков."""
+        return Response({'status': 'ok', 'data': WEBHOOK_EVENTS})
+
+
+@extend_schema(tags=['Auth'])
 class MeView(APIView):
     """
     GET /api/v1/auth/me/ — информация о текущем пользователе и тенанте.

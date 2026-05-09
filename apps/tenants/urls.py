@@ -8,6 +8,10 @@ from apps.tenants.views import (
     RegisterView,
     TenantDetailView,
     TenantUserListView,
+    WebhookEndpointDetailView,
+    WebhookEndpointListView,
+    WebhookEndpointTestView,
+    WebhookEventsView,
 )
 from apps.tenants.jwt_views import TenantTokenObtainPairView
 
@@ -22,4 +26,9 @@ urlpatterns = [
     path('tenant/users/', TenantUserListView.as_view(), name='tenant-users'),
     path('tenant/api-keys/', APIKeyListView.as_view(), name='api-keys-list'),
     path('tenant/api-keys/<int:key_id>/', APIKeyRevokeView.as_view(), name='api-key-revoke'),
+    # Webhooks
+    path('webhooks/', WebhookEndpointListView.as_view(), name='webhook-list'),
+    path('webhooks/events/', WebhookEventsView.as_view(), name='webhook-events'),
+    path('webhooks/<int:pk>/', WebhookEndpointDetailView.as_view(), name='webhook-detail'),
+    path('webhooks/<int:pk>/test/', WebhookEndpointTestView.as_view(), name='webhook-test'),
 ]
