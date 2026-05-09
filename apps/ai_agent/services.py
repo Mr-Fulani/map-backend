@@ -31,7 +31,7 @@ class DescriptionAgent:
         last_error = None
         for _attempt in range(MAX_RETRIES):
             try:
-                result = self._call_claude(product, variation_index)
+                result = self._call_claude(product, tenant.plan.slug, variation_index)
                 self._increment_credits(tenant)
                 return result
             except BannedWordsError:
@@ -45,7 +45,7 @@ class DescriptionAgent:
                 break
 
         try:
-            result = self._call_openai(product, variation_index)
+            result = self._call_openai(product, tenant.plan.slug, variation_index)
             self._increment_credits(tenant)
             return result
         except Exception as e:
@@ -68,23 +68,23 @@ class DescriptionAgent:
             lines.append(f'\nЭто вариант #{variation_index + 1}. Используй другую структуру первого абзаца.')
         return '\n'.join(line for line in lines if line)
 
-    def _call_claude(self, product, variation_index: int = 0) -> dict:
+    def _call_claude(self, product, plan_slug: str, variation_index: int = 0) -> dict:
         """Вызывает Claude API и парсит JSON-ответ."""
         client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
         response = client.messages.create(
-            model='claude-sonnet-4-20250514',
+            model='claude-3-5-sonnet-latest' if plan_slug == 'pro' else 'claude-3-5-haiku-latest',
             max_tokens=1000,
             system=SYSTEM_PROMPT,
             messages=[{'role': 'user', 'content': self._build_message(product, variation_index)}],
         )
         return validate_json_response(response.content[0].text)
 
-    def _call_openai(self, product, variation_index: int = 0) -> dict:
+    def _call_openai(self, product, plan_slug: str, variation_index: int = 0) -> dict:
         """Вызывает OpenAI API (fallback если Claude недоступен)."""
         from openai import OpenAI
         client = OpenAI(api_key=settings.OPENAI_API_KEY)
         response = client.chat.completions.create(
-            model='gpt-4o',
+            model='gpt-4o' if plan_slug == 'pro' else 'gpt-4o-mini',
             max_tokens=1000,
             messages=[
                 {'role': 'system', 'content': SYSTEM_PROMPT},
