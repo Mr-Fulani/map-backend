@@ -93,7 +93,7 @@ export function StepDatasource({ data, onNext, onBack }: StepDatasourceProps) {
         onNext({
           datasource_type: selectedType,
           datasource_name: connectionData.name,
-          datasource_id: result.data?.id,
+          datasource_id: result.id,
         });
       }
     } catch (err: unknown) {
