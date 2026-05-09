@@ -3,13 +3,15 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.datasources.encryption import encrypt
-from apps.marketplaces.models import CategoryMapping, MarketplaceAccount
+from apps.marketplaces.models import CategoryMapping, Listing, MarketplaceAccount
 from apps.marketplaces.serializers import (
     CategoryMappingSerializer,
     CategoryMappingWriteSerializer,
+    ListingSerializer,
     MarketplaceAccountSerializer,
     MarketplaceAccountWriteSerializer,
 )
+from apps.core.pagination import MapPagination
 from apps.marketplaces.services import CategoryMappingService
 
 
@@ -152,3 +154,33 @@ class CategoryMappingDetailView(APIView):
     def delete(self, request, pk):
         CategoryMapping.objects.filter(pk=pk, tenant=request.tenant).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ListingListView(APIView):
+    """
+    GET /api/v1/listings/ — листинги тенанта с фильтром по статусу и пагинацией.
+
+    Query params:
+        status   — draft | pending | active | rejected | archived | requires_review
+        account  — id аккаунта MarketplaceAccount
+    """
+
+    def get(self, request):
+        """Возвращает страницу листингов текущего тенанта."""
+        qs = (
+            Listing.objects.filter(tenant=request.tenant)
+            .select_related('product', 'account')
+            .order_by('-created_at')
+        )
+
+        listing_status = request.query_params.get('status', '').strip()
+        if listing_status:
+            qs = qs.filter(status=listing_status)
+
+        account_id = request.query_params.get('account', '').strip()
+        if account_id:
+            qs = qs.filter(account_id=account_id)
+
+        paginator = MapPagination()
+        page = paginator.paginate_queryset(qs, request)
+        return paginator.get_paginated_response(ListingSerializer(page, many=True).data)
