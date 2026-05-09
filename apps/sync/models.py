@@ -37,18 +37,26 @@ class SyncLog(models.Model):
     STATUS_ERROR = 'error'
     STATUS_CHOICES = [(STATUS_OK, 'OK'), (STATUS_WARN, 'Предупреждение'), (STATUS_ERROR, 'Ошибка')]
 
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='sync_logs')
-    product = models.ForeignKey('products.Product', null=True, blank=True,
-                                on_delete=models.SET_NULL, related_name='sync_logs')
-    listing = models.ForeignKey('marketplaces.Listing', null=True, blank=True,
-                                on_delete=models.SET_NULL, related_name='sync_logs')
-    event_type = models.CharField(max_length=30, choices=EVENT_CHOICES)
-    status = models.CharField(max_length=10, choices=STATUS_CHOICES)
-    message = models.TextField()
-    payload = models.JSONField(default=dict)
-    created_at = models.DateTimeField(auto_now_add=True)
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='sync_logs', verbose_name='Тенант',
+    )
+    product = models.ForeignKey(
+        'products.Product', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='sync_logs', verbose_name='Товар',
+    )
+    listing = models.ForeignKey(
+        'marketplaces.Listing', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='sync_logs', verbose_name='Листинг',
+    )
+    event_type = models.CharField(max_length=30, choices=EVENT_CHOICES, verbose_name='Тип события')
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, verbose_name='Статус')
+    message = models.TextField(verbose_name='Сообщение')
+    payload = models.JSONField(default=dict, verbose_name='Payload (JSON)')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Время события')
 
     class Meta:
+        verbose_name = 'Лог синхронизации'
+        verbose_name_plural = 'Логи синхронизации'
         indexes = [
             models.Index(fields=['tenant', '-created_at']),
             models.Index(fields=['tenant', 'event_type', 'status']),

@@ -7,13 +7,19 @@ from apps.tenants.models import Tenant
 
 
 class AvitoCategory(models.Model):
-    avito_id = models.IntegerField(unique=True)
-    name = models.CharField(max_length=200)
-    parent = models.ForeignKey('self', on_delete=models.CASCADE, null=True, blank=True,
-                               related_name='children')
-    is_leaf = models.BooleanField(default=False)
+    """Категория Avito из официального справочника."""
+
+    avito_id = models.IntegerField(unique=True, verbose_name='ID категории Avito')
+    name = models.CharField(max_length=200, verbose_name='Название')
+    parent = models.ForeignKey(
+        'self', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='children', verbose_name='Родительская категория',
+    )
+    is_leaf = models.BooleanField(default=False, verbose_name='Конечная категория')
 
     class Meta:
+        verbose_name = 'Категория Avito'
+        verbose_name_plural = 'Категории Avito'
         ordering = ['name']
 
     def __str__(self):
@@ -21,17 +27,24 @@ class AvitoCategory(models.Model):
 
 
 class CategoryMapping(TimestampedModel):
+    """Маппинг категорий источника данных на категории Avito."""
+
     MARKETPLACE_AVITO = 'avito'
 
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='category_mappings')
-    marketplace = models.CharField(max_length=50, default=MARKETPLACE_AVITO)
-    category_source = models.CharField(max_length=300)
-    category_target = models.CharField(max_length=200)
-    category_id = models.IntegerField()
-    attributes_map = models.JSONField(default=dict)
-    version = models.PositiveSmallIntegerField(default=1)
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE,
+        related_name='category_mappings', verbose_name='Тенант',
+    )
+    marketplace = models.CharField(max_length=50, default=MARKETPLACE_AVITO, verbose_name='Маркетплейс')
+    category_source = models.CharField(max_length=300, verbose_name='Категория источника')
+    category_target = models.CharField(max_length=200, verbose_name='Категория Avito')
+    category_id = models.IntegerField(verbose_name='ID категории Avito')
+    attributes_map = models.JSONField(default=dict, verbose_name='Маппинг атрибутов')
+    version = models.PositiveSmallIntegerField(default=1, verbose_name='Версия маппинга')
 
     class Meta:
+        verbose_name = 'Маппинг категорий'
+        verbose_name_plural = 'Маппинг категорий'
         unique_together = [('tenant', 'marketplace', 'category_source')]
 
     def __str__(self):
@@ -39,22 +52,30 @@ class CategoryMapping(TimestampedModel):
 
 
 class MarketplaceAccount(TimestampedModel):
+    """Аккаунт маркетплейса (Avito) привязанный к тенанту."""
+
     MARKETPLACE_AVITO = 'avito'
     MARKETPLACE_CHOICES = [(MARKETPLACE_AVITO, 'Avito')]
 
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE,
-                               related_name='marketplace_accounts')
-    marketplace = models.CharField(max_length=50, choices=MARKETPLACE_CHOICES,
-                                   default=MARKETPLACE_AVITO)
-    name = models.CharField(max_length=200)
-    external_id = models.CharField(max_length=100)
-    is_active = models.BooleanField(default=True)
-    credentials_enc = models.BinaryField()
-    token_expires_at = models.DateTimeField(null=True, blank=True)
-    requests_this_hour = models.PositiveIntegerField(default=0)
-    hour_bucket_reset_at = models.DateTimeField(null=True, blank=True)
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE,
+        related_name='marketplace_accounts', verbose_name='Тенант',
+    )
+    marketplace = models.CharField(
+        max_length=50, choices=MARKETPLACE_CHOICES,
+        default=MARKETPLACE_AVITO, verbose_name='Маркетплейс',
+    )
+    name = models.CharField(max_length=200, verbose_name='Название аккаунта')
+    external_id = models.CharField(max_length=100, verbose_name='ID пользователя на Avito')
+    is_active = models.BooleanField(default=True, verbose_name='Активен')
+    credentials_enc = models.BinaryField(verbose_name='Токены доступа (зашифровано)')
+    token_expires_at = models.DateTimeField(null=True, blank=True, verbose_name='Токен истекает')
+    requests_this_hour = models.PositiveIntegerField(default=0, verbose_name='Запросов за текущий час')
+    hour_bucket_reset_at = models.DateTimeField(null=True, blank=True, verbose_name='Сброс счётчика запросов')
 
     class Meta:
+        verbose_name = 'Avito-аккаунт'
+        verbose_name_plural = 'Avito-аккаунты'
         unique_together = [('tenant', 'marketplace', 'external_id')]
 
     def __str__(self):
@@ -81,29 +102,34 @@ class Listing(TimestampedModel):
         (STATUS_LIMIT_REACHED, 'Лимит достигнут'),
     ]
 
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='listings')
-    product = models.ForeignKey('products.Product', on_delete=models.CASCADE,
-                                related_name='listings')
-    account = models.ForeignKey(MarketplaceAccount, on_delete=models.CASCADE,
-                                related_name='listings')
-
-    external_id = models.CharField(max_length=100, null=True, blank=True, unique=True)
-    external_url = models.URLField(blank=True)
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DRAFT)
-    rejection_reason = models.TextField(blank=True)
-
-    title = models.CharField(max_length=300, blank=True)
-    description_ai = models.TextField(blank=True)
-    ai_confidence = models.FloatField(null=True, blank=True)
-    price_on_listing = models.DecimalField(max_digits=12, decimal_places=2)
-
-    publish_idempotency_key = models.UUIDField(default=uuid.uuid4, unique=True)
-    retry_count = models.PositiveSmallIntegerField(default=0)
-    next_retry_at = models.DateTimeField(null=True, blank=True)
-    published_at = models.DateTimeField(null=True, blank=True)
-    last_sync_at = models.DateTimeField(null=True, blank=True)
+    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='listings', verbose_name='Тенант')
+    product = models.ForeignKey(
+        'products.Product', on_delete=models.CASCADE,
+        related_name='listings', verbose_name='Товар',
+    )
+    account = models.ForeignKey(
+        MarketplaceAccount, on_delete=models.CASCADE,
+        related_name='listings', verbose_name='Аккаунт Avito',
+    )
+    external_id = models.CharField(
+        max_length=100, null=True, blank=True, unique=True, verbose_name='ID объявления Avito',
+    )
+    external_url = models.URLField(blank=True, verbose_name='Ссылка на Avito')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DRAFT, verbose_name='Статус')
+    rejection_reason = models.TextField(blank=True, verbose_name='Причина отклонения')
+    title = models.CharField(max_length=300, blank=True, verbose_name='Заголовок объявления')
+    description_ai = models.TextField(blank=True, verbose_name='AI-описание')
+    ai_confidence = models.FloatField(null=True, blank=True, verbose_name='Уверенность AI (0–1)')
+    price_on_listing = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Цена на объявлении, ₽')
+    publish_idempotency_key = models.UUIDField(default=uuid.uuid4, unique=True, verbose_name='Ключ идемпотентности')
+    retry_count = models.PositiveSmallIntegerField(default=0, verbose_name='Количество попыток')
+    next_retry_at = models.DateTimeField(null=True, blank=True, verbose_name='Следующая попытка')
+    published_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата публикации')
+    last_sync_at = models.DateTimeField(null=True, blank=True, verbose_name='Последняя синхронизация')
 
     class Meta:
+        verbose_name = 'Листинг'
+        verbose_name_plural = 'Листинги'
         unique_together = [('tenant', 'product', 'account')]
         indexes = [
             models.Index(fields=['tenant', 'status']),
@@ -112,23 +138,23 @@ class Listing(TimestampedModel):
         ]
 
     def __str__(self):
-        return f'Listing #{self.pk} [{self.status}]'
+        return f'Листинг #{self.pk} [{self.status}]'
 
 
 class ListingStats(models.Model):
     """Ежедневный снимок статистики листинга с Avito."""
 
     listing = models.ForeignKey(
-        Listing, on_delete=models.CASCADE, related_name='stats',
+        Listing, on_delete=models.CASCADE, related_name='stats', verbose_name='Листинг',
     )
     tenant = models.ForeignKey(
-        Tenant, on_delete=models.CASCADE, related_name='listing_stats',
+        Tenant, on_delete=models.CASCADE, related_name='listing_stats', verbose_name='Тенант',
     )
-    date = models.DateField()
-    views = models.PositiveIntegerField(default=0)
-    contacts = models.PositiveIntegerField(default=0)
-    impressions = models.PositiveIntegerField(default=0)
-    ctr = models.FloatField(default=0.0)
+    date = models.DateField(verbose_name='Дата')
+    views = models.PositiveIntegerField(default=0, verbose_name='Просмотры')
+    contacts = models.PositiveIntegerField(default=0, verbose_name='Контакты')
+    impressions = models.PositiveIntegerField(default=0, verbose_name='Показы')
+    ctr = models.FloatField(default=0.0, verbose_name='CTR')
 
     class Meta:
         unique_together = [('listing', 'date')]
