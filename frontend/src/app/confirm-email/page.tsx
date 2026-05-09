@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { profileApi } from '@/lib/api';
@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button';
 
 type State = 'loading' | 'success' | 'error';
 
-export default function ConfirmEmailPage() {
+function ConfirmEmailContent() {
   const searchParams = useSearchParams();
   const [state, setState] = useState<State>('loading');
   const [errorMessage, setErrorMessage] = useState('');
@@ -32,38 +32,53 @@ export default function ConfirmEmailPage() {
   }, [searchParams]);
 
   return (
+    <>
+      {state === 'loading' && (
+        <>
+          <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">Подтверждаем email...</p>
+        </>
+      )}
+
+      {state === 'success' && (
+        <>
+          <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-green-500" />
+          <h1 className="mb-2 text-xl font-bold">Email изменён</h1>
+          <p className="mb-6 text-sm text-muted-foreground">
+            Войдите заново с новым адресом.
+          </p>
+          <Button asChild className="w-full">
+            <Link href="/login">Войти</Link>
+          </Button>
+        </>
+      )}
+
+      {state === 'error' && (
+        <>
+          <XCircle className="mx-auto mb-4 h-12 w-12 text-destructive" />
+          <h1 className="mb-2 text-xl font-bold">Ошибка</h1>
+          <p className="mb-6 text-sm text-muted-foreground">{errorMessage}</p>
+          <Button asChild variant="outline" className="w-full">
+            <Link href="/dashboard/settings#profile">Вернуться в настройки</Link>
+          </Button>
+        </>
+      )}
+    </>
+  );
+}
+
+export default function ConfirmEmailPage() {
+  return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-md rounded-xl border bg-card p-8 text-center shadow-sm">
-        {state === 'loading' && (
+        <Suspense fallback={
           <>
             <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">Подтверждаем email...</p>
+            <p className="text-sm text-muted-foreground">Загрузка...</p>
           </>
-        )}
-
-        {state === 'success' && (
-          <>
-            <CheckCircle2 className="mx-auto mb-4 h-12 w-12 text-green-500" />
-            <h1 className="mb-2 text-xl font-bold">Email изменён</h1>
-            <p className="mb-6 text-sm text-muted-foreground">
-              Войдите заново с новым адресом.
-            </p>
-            <Button asChild className="w-full">
-              <Link href="/login">Войти</Link>
-            </Button>
-          </>
-        )}
-
-        {state === 'error' && (
-          <>
-            <XCircle className="mx-auto mb-4 h-12 w-12 text-destructive" />
-            <h1 className="mb-2 text-xl font-bold">Ошибка</h1>
-            <p className="mb-6 text-sm text-muted-foreground">{errorMessage}</p>
-            <Button asChild variant="outline" className="w-full">
-              <Link href="/dashboard/settings#profile">Вернуться в настройки</Link>
-            </Button>
-          </>
-        )}
+        }>
+          <ConfirmEmailContent />
+        </Suspense>
       </div>
     </div>
   );
