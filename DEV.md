@@ -17,11 +17,16 @@
 ## Docker / Бэкенд
 
 ```bash
-make up           # Поднять все Docker-сервисы (фоново)
-make down         # Остановить все сервисы
-make restart      # Перезапустить без пересборки образов
-make rebuild      # Пересобрать образы и перезапустить (после изменений Dockerfile/requirements)
-make shell        # bash внутри контейнера Django
+make up             # Поднять все Docker-сервисы (фоново)
+make down           # Остановить все сервисы
+make restart        # Перезапустить все сервисы (НЕ перечитывает .env)
+make restart-django # Перезапустить только Django (НЕ перечитывает .env)
+make rebuild        # Пересобрать образы и перезапустить (после изменений Dockerfile/requirements)
+make shell          # bash внутри контейнера Django
+
+# ⚠️ После изменения .env нужно пересоздать контейнер (не restart!):
+docker compose up -d django   # пересоздаёт только Django с новыми переменными
+docker compose up -d          # пересоздаёт все сервисы
 ```
 
 ### Логи
