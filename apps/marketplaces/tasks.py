@@ -15,6 +15,19 @@ from apps.marketplaces.adapters.avito.error_handler import (
 )
 from apps.marketplaces.adapters.avito.rate_limiter import RateLimitError
 from apps.marketplaces.models import Listing
+from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR
+
+
+def _notify_error(tenant, message: str) -> None:
+    """Асинхронно отправляет error-уведомление тенанту."""
+    from apps.notifications.tasks import send_notification_task
+    send_notification_task.delay(tenant.pk, LEVEL_ERROR, message)
+
+
+def _notify_critical(tenant, message: str) -> None:
+    """Асинхронно отправляет critical-уведомление тенанту."""
+    from apps.notifications.tasks import send_notification_task
+    send_notification_task.delay(tenant.pk, LEVEL_CRITICAL, message)
 
 
 def _get_listing(listing_id: int) -> Listing:
@@ -38,6 +51,10 @@ def publish_listing_task(self, listing_id: int):
         if not can:
             listing.status = Listing.STATUS_LIMIT_REACHED
             listing.save(update_fields=['status'])
+            _notify_critical(
+                listing.tenant,
+                f'Достигнут лимит публикаций: {reason}. Новые объявления заблокированы.',
+            )
             return
 
         # Проверка gradual ramp-up — лимит публикаций в первые дни работы тенанта
@@ -64,6 +81,10 @@ def publish_listing_task(self, listing_id: int):
         except RejectedError as exc:
             listing.status = Listing.STATUS_REJECTED
             listing.rejection_reason = exc.reason
+            _notify_error(
+                listing.tenant,
+                f'Объявление «{listing.title or listing.product.name}» отклонено Avito: {exc.reason}',
+            )
         except RateLimitError as exc:
             listing.retry_count += 1
             listing.next_retry_at = now()
@@ -155,6 +176,11 @@ def check_moderation_task(self, listing_id: int):
         elif avito_status in ('rejected', 'blocked'):
             listing.status = Listing.STATUS_REJECTED
             listing.rejection_reason = data.get('rejection_reason', '')
+            _notify_error(
+                listing.tenant,
+                f'Объявление «{listing.title or listing.product.name}» отклонено при модерации Avito'
+                + (f': {listing.rejection_reason}' if listing.rejection_reason else '.'),
+            )
         listing.last_sync_at = now()
         listing.save(update_fields=['status', 'rejection_reason', 'last_sync_at'])
     except (ServerError, RateLimitError) as exc:

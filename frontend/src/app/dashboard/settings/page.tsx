@@ -168,21 +168,30 @@ export default function SettingsPage() {
     }
   }
 
-  async function saveNotifSettings() {
+  async function saveNotifSettings(overrides?: Partial<{ notify_on_error: boolean; notify_on_critical: boolean }>) {
     setSavingNotif(true);
     try {
       const res = await notificationApi.updateSettings({
         notify_email: notifEmail,
-        notify_on_error: notifOnError,
-        notify_on_critical: notifOnCritical,
+        notify_on_error: overrides?.notify_on_error ?? notifOnError,
+        notify_on_critical: overrides?.notify_on_critical ?? notifOnCritical,
       });
       setNotifSettings(res.data.data as NotificationSettings);
-      toast.success('Настройки уведомлений сохранены');
     } catch {
       toast.error('Ошибка сохранения');
     } finally {
       setSavingNotif(false);
     }
+  }
+
+  async function toggleOnError(value: boolean) {
+    setNotifOnError(value);
+    await saveNotifSettings({ notify_on_error: value, notify_on_critical: notifOnCritical });
+  }
+
+  async function toggleOnCritical(value: boolean) {
+    setNotifOnCritical(value);
+    await saveNotifSettings({ notify_on_error: notifOnError, notify_on_critical: value });
   }
 
   function copyKey() {
@@ -476,7 +485,8 @@ export default function SettingsPage() {
                       </div>
                       <Switch
                         checked={notifOnError}
-                        onCheckedChange={setNotifOnError}
+                        disabled={savingNotif}
+                        onCheckedChange={toggleOnError}
                       />
                     </div>
                     <div className="flex items-center justify-between">
@@ -488,14 +498,15 @@ export default function SettingsPage() {
                       </div>
                       <Switch
                         checked={notifOnCritical}
-                        onCheckedChange={setNotifOnCritical}
+                        disabled={savingNotif}
+                        onCheckedChange={toggleOnCritical}
                       />
                     </div>
                   </div>
 
-                  <Button onClick={saveNotifSettings} disabled={savingNotif}>
+                  <Button onClick={() => saveNotifSettings()} disabled={savingNotif}>
                     {savingNotif && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                    Сохранить
+                    Сохранить email
                   </Button>
                 </>
               )}
