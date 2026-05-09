@@ -381,7 +381,9 @@ EMAIL_HOST_PASSWORD = os.environ.get('SENDPULSE_SMTP_PASSWORD', '')
 AUTH_USER_MODEL = 'users.User'
 
 # --- Локализация ---
-LANGUAGE_CODE = 'ru-ru'
+LANGUAGE_CODE = 'ru'
+# Ограничиваем доступные языки только русским — браузер не переключит на английский
+LANGUAGES = [('ru', 'Russian')]
 TIME_ZONE = 'Europe/Moscow'
 USE_I18N = True
 USE_TZ = True
