@@ -382,8 +382,8 @@ AUTH_USER_MODEL = 'users.User'
 
 # --- Локализация ---
 LANGUAGE_CODE = 'ru'
-# Ограничиваем доступные языки только русским — браузер не переключит на английский
 LANGUAGES = [('ru', 'Russian')]
+LOCALE_PATHS = [BASE_DIR / 'locale']
 TIME_ZONE = 'Europe/Moscow'
 USE_I18N = True
 USE_TZ = True
