@@ -323,6 +323,7 @@ SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8000')
 
 # --- Уведомления ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_BOT_USERNAME = os.environ.get('TELEGRAM_BOT_USERNAME', '')  # без @, напр. MyMapBot
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@yourdomain.ru')
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = os.environ.get('SENDPULSE_SMTP_HOST', 'smtp.sendpulse.com')
