@@ -217,7 +217,35 @@ export const categoryApi = {
     api.put(`/categories/mappings/${id}/`, data),
 };
 
+// Listings
+export const listingApi = {
+  list: (params?: Record<string, unknown>) => api.get('/listings/', { params }),
+};
+
 // Logs
 export const logApi = {
   list: (params?: Record<string, unknown>) => api.get('/logs/', { params }),
+};
+
+// Analytics
+export const analyticsApi = {
+  get: (params?: Record<string, unknown>) => api.get('/analytics/', { params }),
+};
+
+// Notifications
+export const notificationApi = {
+  getSettings: () => api.get('/notifications/settings/'),
+  updateSettings: (data: Record<string, unknown>) => api.put('/notifications/settings/', data),
+  telegramConnect: () => api.post('/notifications/settings/telegram/connect/'),
+  telegramDisconnect: () => api.delete('/notifications/settings/telegram/'),
+  test: () => api.post('/notifications/settings/test/'),
+};
+
+// Webhooks
+export const webhookApi = {
+  list: () => api.get('/webhooks/'),
+  events: () => api.get('/webhooks/events/'),
+  create: (data: { url: string; events: string[] }) => api.post('/webhooks/', data),
+  delete: (id: number) => api.delete(`/webhooks/${id}/`),
+  test: (id: number) => api.post(`/webhooks/${id}/test/`),
 };

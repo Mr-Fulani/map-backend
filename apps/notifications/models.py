@@ -1,6 +1,11 @@
+import secrets
+
 from django.db import models
+from django.utils import timezone
 
 from apps.tenants.models import Tenant
+
+CONNECT_TOKEN_TTL_MINUTES = 15
 
 
 class TenantNotificationSettings(models.Model):
@@ -9,6 +14,7 @@ class TenantNotificationSettings(models.Model):
 
     Хранит Telegram chat_id и email для отправки алертов.
     Флаги notify_on_error / notify_on_critical контролируют уровни уведомлений.
+    connect_token — одноразовый токен для привязки Telegram через бота.
     """
 
     tenant = models.OneToOneField(
@@ -17,6 +23,10 @@ class TenantNotificationSettings(models.Model):
     telegram_chat_id = models.CharField(
         max_length=50, blank=True, default='',
         help_text='ID чата Telegram для отправки алертов',
+    )
+    telegram_username = models.CharField(
+        max_length=100, blank=True, default='',
+        help_text='Username подключённого Telegram-аккаунта (для отображения)',
     )
     notify_email = models.EmailField(
         blank=True, default='',
@@ -30,6 +40,9 @@ class TenantNotificationSettings(models.Model):
         default=True,
         help_text='Отправлять Telegram + Email при критических событиях (level=critical)',
     )
+    # Одноразовый токен для привязки через /start в боте
+    connect_token = models.CharField(max_length=64, blank=True, default='')
+    connect_token_expires_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = 'Настройки уведомлений'
@@ -37,3 +50,36 @@ class TenantNotificationSettings(models.Model):
 
     def __str__(self):
         return f'Настройки уведомлений — {self.tenant.slug}'
+
+    def generate_connect_token(self) -> str:
+        """
+        Генерирует новый одноразовый токен для привязки Telegram.
+
+        TTL — 15 минут. Возвращает токен в plaintext.
+        """
+        token = secrets.token_urlsafe(32)
+        self.connect_token = token
+        self.connect_token_expires_at = (
+            timezone.now() + timezone.timedelta(minutes=CONNECT_TOKEN_TTL_MINUTES)
+        )
+        self.save(update_fields=['connect_token', 'connect_token_expires_at'])
+        return token
+
+    def is_connect_token_valid(self, token: str) -> bool:
+        """Проверяет токен на совпадение и срок действия."""
+        if not self.connect_token or self.connect_token != token:
+            return False
+        if not self.connect_token_expires_at:
+            return False
+        return timezone.now() < self.connect_token_expires_at
+
+    def complete_telegram_connect(self, chat_id: str, username: str) -> None:
+        """Сохраняет chat_id после успешной привязки и сбрасывает токен."""
+        self.telegram_chat_id = chat_id
+        self.telegram_username = username
+        self.connect_token = ''
+        self.connect_token_expires_at = None
+        self.save(update_fields=[
+            'telegram_chat_id', 'telegram_username',
+            'connect_token', 'connect_token_expires_at',
+        ])

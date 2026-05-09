@@ -1,18 +1,25 @@
+import datetime
+
+from django.db.models import Sum
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.datasources.encryption import encrypt
-from apps.marketplaces.models import CategoryMapping, MarketplaceAccount
+from apps.marketplaces.models import CategoryMapping, Listing, ListingStats, MarketplaceAccount
 from apps.marketplaces.serializers import (
     CategoryMappingSerializer,
     CategoryMappingWriteSerializer,
+    ListingSerializer,
     MarketplaceAccountSerializer,
     MarketplaceAccountWriteSerializer,
 )
+from apps.core.pagination import MapPagination
 from apps.marketplaces.services import CategoryMappingService
 
 
+@extend_schema(tags=['Accounts'])
 class MarketplaceAccountListView(APIView):
     """GET /api/v1/accounts/ — список аккаунтов. POST — создать."""
 
@@ -54,6 +61,7 @@ class MarketplaceAccountListView(APIView):
         )
 
 
+@extend_schema(tags=['Accounts'])
 class MarketplaceAccountDetailView(APIView):
     """GET/PUT/DELETE /api/v1/accounts/{id}/"""
 
@@ -152,3 +160,118 @@ class CategoryMappingDetailView(APIView):
     def delete(self, request, pk):
         CategoryMapping.objects.filter(pk=pk, tenant=request.tenant).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@extend_schema(tags=['Listings'])
+class ListingListView(APIView):
+    """
+    GET /api/v1/listings/ — листинги тенанта с фильтром по статусу и пагинацией.
+
+    Query params:
+        status   — draft | pending | active | rejected | archived | requires_review
+        account  — id аккаунта MarketplaceAccount
+    """
+
+    def get(self, request):
+        """Возвращает страницу листингов текущего тенанта."""
+        qs = (
+            Listing.objects.filter(tenant=request.tenant)
+            .select_related('product', 'account')
+            .order_by('-created_at')
+        )
+
+        listing_status = request.query_params.get('status', '').strip()
+        if listing_status:
+            qs = qs.filter(status=listing_status)
+
+        account_id = request.query_params.get('account', '').strip()
+        if account_id:
+            qs = qs.filter(account_id=account_id)
+
+        paginator = MapPagination()
+        page = paginator.paginate_queryset(qs, request)
+        return paginator.get_paginated_response(ListingSerializer(page, many=True).data)
+
+
+@extend_schema(tags=['Analytics'])
+class AnalyticsView(APIView):
+    """
+    GET /api/v1/analytics/ — агрегированная статистика листингов тенанта.
+
+    Query params:
+        date_from — YYYY-MM-DD (по умолчанию 30 дней назад)
+        date_to   — YYYY-MM-DD (по умолчанию сегодня)
+    """
+
+    def get(self, request):
+        """Возвращает сводку и помесячную/ежедневную статистику просмотров."""
+        today = datetime.date.today()
+        date_from_str = request.query_params.get('date_from', '')
+        date_to_str = request.query_params.get('date_to', '')
+
+        try:
+            date_from = (
+                datetime.date.fromisoformat(date_from_str)
+                if date_from_str else today - datetime.timedelta(days=29)
+            )
+            date_to = (
+                datetime.date.fromisoformat(date_to_str)
+                if date_to_str else today
+            )
+        except ValueError:
+            return Response(
+                {'status': 'error', 'code': 'invalid_date',
+                 'detail': 'Формат даты: YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        qs = ListingStats.objects.filter(
+            tenant=request.tenant,
+            date__gte=date_from,
+            date__lte=date_to,
+        )
+
+        totals = qs.aggregate(
+            total_views=Sum('views'),
+            total_contacts=Sum('contacts'),
+            total_impressions=Sum('impressions'),
+        )
+        total_views = totals['total_views'] or 0
+        total_contacts = totals['total_contacts'] or 0
+        total_impressions = totals['total_impressions'] or 0
+        avg_ctr = round(total_views / total_impressions * 100, 2) if total_impressions else 0.0
+
+        # Активные листинги тенанта
+        active_listings = Listing.objects.filter(
+            tenant=request.tenant, status=Listing.STATUS_ACTIVE,
+        ).count()
+
+        # Дневные точки для графика
+        daily = list(
+            qs.values('date')
+            .annotate(
+                views=Sum('views'),
+                contacts=Sum('contacts'),
+                impressions=Sum('impressions'),
+            )
+            .order_by('date')
+            .values('date', 'views', 'contacts', 'impressions')
+        )
+        for row in daily:
+            row['date'] = str(row['date'])
+
+        return Response({
+            'status': 'ok',
+            'data': {
+                'summary': {
+                    'views': total_views,
+                    'contacts': total_contacts,
+                    'impressions': total_impressions,
+                    'avg_ctr': avg_ctr,
+                    'active_listings': active_listings,
+                },
+                'daily': daily,
+                'date_from': str(date_from),
+                'date_to': str(date_to),
+            },
+        })

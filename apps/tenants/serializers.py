@@ -1,7 +1,7 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from apps.tenants.models import APIKey, Tenant, TenantUser
+from apps.tenants.models import APIKey, Tenant, TenantUser, WEBHOOK_EVENTS, WebhookEndpoint
 
 User = get_user_model()
 
@@ -54,3 +54,23 @@ class APIKeySerializer(serializers.ModelSerializer):
 
 class APIKeyCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100)
+
+
+class WebhookEndpointSerializer(serializers.ModelSerializer):
+    """Сериализатор вебхук-эндпоинта для чтения."""
+
+    class Meta:
+        model = WebhookEndpoint
+        fields = ['id', 'url', 'secret', 'events', 'is_active', 'created_at']
+        read_only_fields = ['id', 'secret', 'is_active', 'created_at']
+
+
+class WebhookEndpointWriteSerializer(serializers.Serializer):
+    """Сериализатор создания вебхук-эндпоинта."""
+
+    url = serializers.URLField(max_length=500)
+    events = serializers.ListField(
+        child=serializers.ChoiceField(choices=WEBHOOK_EVENTS),
+        min_length=1,
+        max_length=len(WEBHOOK_EVENTS),
+    )

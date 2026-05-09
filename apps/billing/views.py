@@ -1,4 +1,5 @@
 from django.conf import settings
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -10,6 +11,7 @@ from apps.billing.services import BillingService, LimitChecker
 from apps.billing.webhook import is_yookassa_ip
 
 
+@extend_schema(tags=['Billing'])
 class PlanListView(APIView):
     """GET /api/v1/billing/plans/ — список доступных тарифов."""
 
@@ -23,6 +25,7 @@ class PlanListView(APIView):
         })
 
 
+@extend_schema(tags=['Billing'])
 class SubscriptionView(APIView):
     """GET /api/v1/billing/subscription/ — текущая подписка тенанта."""
 
@@ -40,6 +43,7 @@ class SubscriptionView(APIView):
         })
 
 
+@extend_schema(tags=['Billing'])
 class UsageView(APIView):
     """GET /api/v1/billing/usage/ — использование лимитов тенантом."""
 
@@ -50,6 +54,7 @@ class UsageView(APIView):
         return Response({'status': 'ok', 'data': summary})
 
 
+@extend_schema(tags=['Billing'])
 class InvoiceListView(APIView):
     """GET /api/v1/billing/invoices/ — история платежей тенанта."""
 
@@ -63,6 +68,7 @@ class InvoiceListView(APIView):
         })
 
 
+@extend_schema(tags=['Billing'])
 class CheckoutView(APIView):
     """
     POST /api/v1/billing/checkout/ — создать платёж YooKassa.
@@ -92,6 +98,7 @@ class CheckoutView(APIView):
         return Response({'status': 'ok', 'data': {'payment_url': confirmation_url}})
 
 
+@extend_schema(tags=['Billing'], exclude=True)
 class YooKassaWebhookView(APIView):
     """
     POST /api/v1/billing/webhook/yookassa/ — вебхук от YooKassa.

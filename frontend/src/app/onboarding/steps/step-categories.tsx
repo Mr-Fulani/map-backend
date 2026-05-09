@@ -52,7 +52,7 @@ export function StepCategories({ onNext, onBack }: StepCategoriesProps) {
   async function loadUnmapped() {
     try {
       const { data: result } = await categoryApi.getUnmapped();
-      const items = result.data || [];
+      const items = result.unmapped || [];
       setUnmapped(items);
       // Pre-fill default mapping (all as "Запчасти" for auto parts)
       const defaults: Record<string, string> = {};

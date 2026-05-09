@@ -5,6 +5,8 @@ from apps.tenants.models import Tenant
 
 
 class DataSourceConnection(TimestampedModel):
+    """Подключение к источнику данных для импорта товаров (1С, CSV и т.д.)."""
+
     TYPE_1C_HTTP = '1c_http'
     TYPE_1C_XML = '1c_xml'
     TYPE_CSV = 'csv'
@@ -18,16 +20,23 @@ class DataSourceConnection(TimestampedModel):
     STATUS_OK = 'ok'
     STATUS_ERROR = 'error'
 
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='datasource_connections')
-    name = models.CharField(max_length=200)
-    type = models.CharField(max_length=20, choices=TYPE_CHOICES)
-    is_active = models.BooleanField(default=True)
-    credentials = models.BinaryField()
-    last_sync_at = models.DateTimeField(null=True, blank=True)
-    last_sync_status = models.CharField(max_length=20, default=STATUS_NEVER)
-    last_error = models.TextField(blank=True)
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE,
+        related_name='datasource_connections', verbose_name='Тенант',
+    )
+    name = models.CharField(max_length=200, verbose_name='Название')
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES, verbose_name='Тип источника')
+    is_active = models.BooleanField(default=True, verbose_name='Активен')
+    credentials = models.BinaryField(verbose_name='Учётные данные (зашифровано)')
+    last_sync_at = models.DateTimeField(null=True, blank=True, verbose_name='Последняя синхронизация')
+    last_sync_status = models.CharField(
+        max_length=20, default=STATUS_NEVER, verbose_name='Статус последней синхронизации',
+    )
+    last_error = models.TextField(blank=True, verbose_name='Последняя ошибка')
 
     class Meta:
+        verbose_name = 'Источник данных'
+        verbose_name_plural = 'Источники данных'
         ordering = ['name']
 
     def __str__(self):

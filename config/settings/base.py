@@ -51,10 +51,32 @@ LOCAL_APPS = [
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 UNFOLD = {
+    "SITE_TITLE": "MAP Админ",
+    "SITE_HEADER": "MAP — Панель управления",
+    "SITE_SYMBOL": "hub",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    # Цветовая схема — sky-blue, хорошо читается в светлой и тёмной теме
+    "COLORS": {
+        "primary": {
+            "50": "240 249 255",
+            "100": "224 242 254",
+            "200": "186 230 253",
+            "300": "125 211 252",
+            "400": "56 189 248",
+            "500": "14 165 233",
+            "600": "2 132 199",
+            "700": "3 105 161",
+            "800": "7 89 133",
+            "900": "12 74 110",
+            "950": "8 47 73",
+        },
+    },
     "SIDEBAR": {
         "navigation": [
             {
                 "title": "Аналитика",
+                "separator": False,
                 "items": [
                     {
                         "title": "Статистика платформы",
@@ -70,6 +92,11 @@ UNFOLD = {
                     {"title": "Тенанты", "icon": "domain", "link": "/admin/tenants/tenant/"},
                     {"title": "Пользователи", "icon": "person", "link": "/admin/users/user/"},
                     {"title": "API-ключи", "icon": "key", "link": "/admin/tenants/apikey/"},
+                    {
+                        "title": "Вебхук-эндпоинты",
+                        "icon": "webhook",
+                        "link": "/admin/tenants/webhookendpoint/",
+                    },
                 ],
             },
             {
@@ -77,7 +104,11 @@ UNFOLD = {
                 "collapsible": True,
                 "items": [
                     {"title": "Тарифные планы", "icon": "sell", "link": "/admin/billing/plan/"},
-                    {"title": "Подписки", "icon": "subscriptions", "link": "/admin/billing/subscription/"},
+                    {
+                        "title": "Подписки",
+                        "icon": "subscriptions",
+                        "link": "/admin/billing/subscription/",
+                    },
                     {"title": "Счета", "icon": "receipt", "link": "/admin/billing/invoice/"},
                 ],
             },
@@ -86,8 +117,16 @@ UNFOLD = {
                 "collapsible": True,
                 "items": [
                     {"title": "Товары", "icon": "inventory_2", "link": "/admin/products/product/"},
-                    {"title": "Листинги", "icon": "storefront", "link": "/admin/marketplaces/listing/"},
-                    {"title": "Аккаунты", "icon": "manage_accounts", "link": "/admin/marketplaces/marketplaceaccount/"},
+                    {
+                        "title": "Листинги",
+                        "icon": "storefront",
+                        "link": "/admin/marketplaces/listing/",
+                    },
+                    {
+                        "title": "Avito-аккаунты",
+                        "icon": "manage_accounts",
+                        "link": "/admin/marketplaces/marketplaceaccount/",
+                    },
                     {
                         "title": "Источники данных",
                         "icon": "database",
@@ -99,9 +138,13 @@ UNFOLD = {
                 "title": "Система",
                 "collapsible": True,
                 "items": [
-                    {"title": "Логи синхронизации", "icon": "sync", "link": "/admin/sync/synclog/"},
                     {
-                        "title": "Настройки уведомлений",
+                        "title": "Логи синхронизации",
+                        "icon": "sync",
+                        "link": "/admin/sync/synclog/",
+                    },
+                    {
+                        "title": "Уведомления",
                         "icon": "notifications",
                         "link": "/admin/notifications/tenantnotificationsettings/",
                     },
@@ -240,9 +283,42 @@ CORS_ALLOW_CREDENTIALS = True
 # --- Swagger ---
 SPECTACULAR_SETTINGS = {
     'TITLE': 'MAP API',
-    'DESCRIPTION': 'Marketplace Automation Platform — API для автоматизации объявлений',
+    'DESCRIPTION': (
+        'Marketplace Automation Platform — API для автоматизации товарных объявлений на Avito.\n\n'
+        '## Аутентификация\n\n'
+        'Поддерживаются два метода:\n\n'
+        '**API Key** (рекомендуется для интеграций):\n'
+        '```\nAuthorization: Bearer map_sk_<ваш_ключ>\n```\n\n'
+        '**JWT Token** (для веб-приложений):\n'
+        '```\nAuthorization: Bearer <access_token>\n```\n\n'
+        'Получить JWT: `POST /api/v1/auth/token/`  \n'
+        'Создать API Key: `POST /api/v1/tenant/api-keys/`'
+    ),
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
+    'SECURITY': [{'Bearer': []}],
+    'COMPONENTS': {
+        'securitySchemes': {
+            'Bearer': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'API Key or JWT',
+                'description': 'API Key (map_sk_...) или JWT access token',
+            },
+        },
+    },
+    'TAGS': [
+        {'name': 'Auth', 'description': 'Регистрация, JWT, информация о текущем пользователе'},
+        {'name': 'Tenant', 'description': 'Организация и её пользователи'},
+        {'name': 'API Keys', 'description': 'Управление API-ключами'},
+        {'name': 'Webhooks', 'description': 'Вебхук-эндпоинты для получения событий'},
+        {'name': 'Products', 'description': 'Каталог товаров'},
+        {'name': 'Listings', 'description': 'Объявления на маркетплейсах'},
+        {'name': 'Accounts', 'description': 'Аккаунты маркетплейсов (Avito)'},
+        {'name': 'Analytics', 'description': 'Статистика просмотров и CTR'},
+        {'name': 'Billing', 'description': 'Тарифы, подписки, платежи'},
+    ],
+    'SORT_OPERATIONS': False,
 }
 
 # --- Файловое хранилище (Yandex Cloud S3) ---
@@ -290,6 +366,7 @@ SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8000')
 
 # --- Уведомления ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
+TELEGRAM_BOT_USERNAME = os.environ.get('TELEGRAM_BOT_USERNAME', '')  # без @, напр. MyMapBot
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@yourdomain.ru')
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
 EMAIL_HOST = os.environ.get('SENDPULSE_SMTP_HOST', 'smtp.sendpulse.com')
