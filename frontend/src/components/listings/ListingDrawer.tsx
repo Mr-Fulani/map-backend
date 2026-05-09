@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { listingApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -81,27 +81,27 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
 
   const open = listingId !== null;
 
-  // Загружаем данные при открытии дровера
-  const handleOpenChange = async (isOpen: boolean) => {
-    if (!isOpen) {
-      onClose();
+  // Загрузка данных при изменении listingId — onOpenChange не срабатывает при программном открытии
+  useEffect(() => {
+    if (listingId === null) {
       setListing(null);
       setEditing(false);
       return;
     }
-    if (listingId === null) return;
     setLoading(true);
-    try {
-      const res = await listingApi.get(listingId);
-      const data: ListingDetail = res.data.data;
-      setListing(data);
-      setEditTitle(data.title);
-      setEditDesc(data.description_ai);
-    } catch {
-      onClose();
-    } finally {
-      setLoading(false);
-    }
+    listingApi.get(listingId)
+      .then((res) => {
+        const data: ListingDetail = res.data.data;
+        setListing(data);
+        setEditTitle(data.title);
+        setEditDesc(data.description_ai);
+      })
+      .catch(() => onClose())
+      .finally(() => setLoading(false));
+  }, [listingId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleOpenChange = (isOpen: boolean) => {
+    if (!isOpen) onClose();
   };
 
   const handleApprove = async () => {
