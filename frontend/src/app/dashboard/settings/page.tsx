@@ -488,7 +488,7 @@ export default function SettingsPage() {
                     <Label>Email для уведомлений</Label>
                     <Input
                       type="email"
-                      placeholder="alerts@company.ru"
+                      placeholder={user?.email ?? 'alerts@company.ru'}
                       value={notifEmail}
                       onChange={(e) => setNotifEmail(e.target.value)}
                     />

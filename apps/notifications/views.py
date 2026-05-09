@@ -13,9 +13,15 @@ from apps.notifications.telegram import TelegramNotifier
 logger = logging.getLogger(__name__)
 
 
-def _get_or_create_settings(tenant) -> TenantNotificationSettings:
-    """Возвращает настройки уведомлений тенанта, создавая запись при необходимости."""
-    ns, _ = TenantNotificationSettings.objects.get_or_create(tenant=tenant)
+def _get_or_create_settings(tenant, default_email: str = '') -> TenantNotificationSettings:
+    """Возвращает настройки уведомлений тенанта, создавая запись при необходимости.
+
+    При первом создании подставляет email владельца как значение по умолчанию.
+    """
+    ns, created = TenantNotificationSettings.objects.get_or_create(tenant=tenant)
+    if created and default_email:
+        ns.notify_email = default_email
+        ns.save(update_fields=['notify_email'])
     return ns
 
 
@@ -43,7 +49,7 @@ class NotificationSettingsView(APIView):
 
     def get(self, request):
         """Возвращает текущие настройки уведомлений тенанта."""
-        ns = _get_or_create_settings(request.tenant)
+        ns = _get_or_create_settings(request.tenant, default_email=request.user.email)
         return Response({'status': 'ok', 'data': _serialize(ns)})
 
     def put(self, request):
@@ -52,7 +58,7 @@ class NotificationSettingsView(APIView):
 
         Telegram привязывается отдельно через /telegram/connect/.
         """
-        ns = _get_or_create_settings(request.tenant)
+        ns = _get_or_create_settings(request.tenant, default_email=request.user.email)
         data = request.data
 
         if 'notify_email' in data:
@@ -86,7 +92,7 @@ class TelegramConnectView(APIView):
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
 
-        ns = _get_or_create_settings(request.tenant)
+        ns = _get_or_create_settings(request.tenant, default_email=request.user.email)
         token = ns.generate_connect_token()
 
         return Response({
@@ -106,7 +112,7 @@ class TelegramDisconnectView(APIView):
 
     def delete(self, request):
         """Сбрасывает telegram_chat_id и username."""
-        ns = _get_or_create_settings(request.tenant)
+        ns = _get_or_create_settings(request.tenant, default_email=request.user.email)
         ns.telegram_chat_id = ''
         ns.telegram_username = ''
         ns.connect_token = ''
@@ -126,7 +132,7 @@ class NotificationTestView(APIView):
 
     def post(self, request):
         """Отправляет тестовое сообщение в подключённый Telegram чат тенанта."""
-        ns = _get_or_create_settings(request.tenant)
+        ns = _get_or_create_settings(request.tenant, default_email=request.user.email)
         if not ns.telegram_chat_id:
             return Response(
                 {'status': 'error', 'detail': 'Telegram не подключён.'},
