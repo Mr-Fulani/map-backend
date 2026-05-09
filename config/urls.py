@@ -15,5 +15,6 @@ urlpatterns = [
     path('api/v1/datasources/', include('apps.datasources.urls')),
     path('api/v1/products/', include('apps.products.urls')),
     path('api/v1/categories/', include('apps.marketplaces.urls')),
+    path('api/v1/accounts/', include('apps.marketplaces.account_urls')),
     path('api/v1/', include('apps.sync.urls')),
 ]
