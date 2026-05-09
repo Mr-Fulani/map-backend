@@ -192,17 +192,18 @@ export default function AnalyticsPage() {
                 <YAxis tick={{ fontSize: 12 }} allowDecimals={false} />
                 <Tooltip
                   labelFormatter={(v) => new Date(v as string).toLocaleDateString('ru-RU')}
-                  formatter={(value: number, name: string) => {
+                  formatter={(value, name) => {
                     const labels: Record<string, string> = {
                       views: 'Просмотры',
                       contacts: 'Контакты',
                       impressions: 'Показы',
                     };
-                    return [value.toLocaleString('ru-RU'), labels[name] ?? name];
+                    const label = labels[name as string] ?? String(name);
+                    return [Number(value).toLocaleString('ru-RU'), label];
                   }}
                 />
                 <Legend
-                  formatter={(v) => ({ views: 'Просмотры', contacts: 'Контакты', impressions: 'Показы' }[v] ?? v)}
+                  formatter={(v) => (({ views: 'Просмотры', contacts: 'Контакты', impressions: 'Показы' } as Record<string, string>)[v] ?? v)}
                 />
                 <Line type="monotone" dataKey="views" stroke="#6366f1" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="contacts" stroke="#22c55e" strokeWidth={2} dot={false} />
