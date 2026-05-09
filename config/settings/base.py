@@ -93,8 +93,7 @@ UNFOLD = {
                 "collapsible": True,
                 "items": [
                     {"title": "Логи синхронизации", "icon": "sync", "link": "/admin/sync/synclog/"},
-                    {"title": "Уведомления", "icon": "notifications", "link": "/admin/notifications/notificationlog/"},
-                    {"title": "Настройки уведомлений", "icon": "settings", "link": "/admin/notifications/tenantnotificationsettings/"},
+                    {"title": "Настройки уведомлений", "icon": "notifications", "link": "/admin/notifications/tenantnotificationsettings/"},
                     {"title": "Периодические задачи", "icon": "schedule", "link": "/admin/django_celery_beat/periodictask/"},
                 ],
             },
