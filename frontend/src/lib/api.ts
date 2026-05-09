@@ -155,6 +155,15 @@ export const authApi = {
   me: () => api.get('/auth/me/'),
 };
 
+// Profile
+export const profileApi = {
+  updatePhone: (phone: string) => api.patch('/auth/profile/', { phone }),
+  changePassword: (current_password: string, new_password: string) =>
+    api.post('/auth/change-password/', { current_password, new_password }),
+  changeEmail: (new_email: string) => api.post('/auth/change-email/', { new_email }),
+  confirmEmail: (token: string) => api.get('/auth/confirm-email/', { params: { token } }),
+};
+
 // Tenant
 export const tenantApi = {
   get: () => api.get('/tenant/'),
