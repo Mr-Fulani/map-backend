@@ -3,7 +3,7 @@ from django.http import JsonResponse
 
 class TenantMiddleware:
     """
-    Определяет тенанта по API Key из заголовка или по поддомену.
+    Определяет тенанта по API Key из заголовка, JWT claims, или по поддомену.
     Устанавливает request.tenant для всех последующих обработчиков.
     """
 
@@ -33,41 +33,86 @@ class TenantMiddleware:
         return self.get_response(request)
 
     def _resolve_tenant(self, request):
-        """Определяет тенанта в порядке приоритета: API Key → поддомен → сессия."""
-        from apps.tenants.models import APIKey
+        """Определяет тенанта в порядке приоритета: API Key → JWT → поддомен → сессия."""
+        from apps.tenants.models import APIKey, Tenant
 
-        # 1. По API Key из заголовка Authorization: Bearer map_sk_...
         auth_header = request.META.get('HTTP_AUTHORIZATION', '')
+
         if auth_header.startswith('Bearer '):
             plaintext = auth_header[7:].strip()
+
+            # 1. По API Key (map_sk_...)
             if plaintext.startswith(APIKey.KEY_PREFIX):
                 api_key = APIKey.verify(plaintext)
                 if api_key:
                     return api_key.tenant
 
-        # 2. По поддомену (slug.map.domain.ru)
+            # 2. По JWT token — декодируем прямо здесь, т.к. DRF ещё не запускался
+            else:
+                tenant = self._resolve_from_jwt(plaintext)
+                if tenant:
+                    return tenant
+
+        # 3. По поддомену (slug.map.domain.ru)
         host = request.get_host().split(':')[0]
         parts = host.split('.')
         if len(parts) >= 3:
             slug = parts[0]
             try:
-                from apps.tenants.models import Tenant
                 return Tenant.objects.get(slug=slug)
             except Tenant.DoesNotExist:
                 pass
 
-        # 3. Для Django Admin — по сессии (tenant в сессии устанавливается при логине)
+        # 4. Для Django Admin — по сессии
         if request.path.startswith('/admin/') and hasattr(request, 'user') and request.user.is_authenticated:
             tenant_id = request.session.get('tenant_id')
             if tenant_id:
                 try:
-                    from apps.tenants.models import Tenant
                     return Tenant.objects.get(pk=tenant_id)
                 except Tenant.DoesNotExist:
                     pass
 
         return None
 
+    def _resolve_from_jwt(self, token_string):
+        """Декодирует JWT и извлекает tenant_id из claims."""
+        from apps.tenants.models import Tenant
+
+        try:
+            from rest_framework_simplejwt.tokens import AccessToken
+            token = AccessToken(token_string)
+            tenant_id = token.get('tenant_id')
+            if tenant_id:
+                return Tenant.objects.get(pk=tenant_id)
+        except Exception:
+            pass
+
+        # Fallback: если tenant_id нет в claims, ищем по user_id
+        try:
+            from rest_framework_simplejwt.tokens import AccessToken
+            token = AccessToken(token_string)
+            user_id = token.get('user_id')
+            if user_id:
+                from apps.tenants.models import TenantUser
+                membership = TenantUser.objects.filter(
+                    user_id=user_id
+                ).select_related('tenant').first()
+                if membership:
+                    return membership.tenant
+        except Exception:
+            pass
+
+        return None
+
     def _is_public_path(self, path):
-        PUBLIC_PREFIXES = ('/admin/', '/api/docs/', '/api/schema/', '/api/v1/health/')
+        PUBLIC_PREFIXES = (
+            '/admin/',
+            '/api/docs/',
+            '/api/schema/',
+            '/api/v1/health/',
+            '/api/v1/auth/register/',
+            '/api/v1/auth/token/',
+            '/api/v1/billing/plans/',
+            '/api/v1/billing/webhook/',
+        )
         return any(path.startswith(p) for p in PUBLIC_PREFIXES)
