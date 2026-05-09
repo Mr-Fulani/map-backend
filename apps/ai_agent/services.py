@@ -28,10 +28,15 @@ class DescriptionAgent:
         if not can:
             raise AICreditsExhausted(reason)
 
+        try:
+            plan_slug = tenant.subscription.plan.slug
+        except Exception:
+            plan_slug = 'starter'
+
         last_error = None
         for _attempt in range(MAX_RETRIES):
             try:
-                result = self._call_claude(product, tenant.plan.slug, variation_index)
+                result = self._call_claude(product, plan_slug, variation_index)
                 self._increment_credits(tenant)
                 return result
             except BannedWordsError:
@@ -45,7 +50,7 @@ class DescriptionAgent:
                 break
 
         try:
-            result = self._call_openai(product, tenant.plan.slug, variation_index)
+            result = self._call_openai(product, plan_slug, variation_index)
             self._increment_credits(tenant)
             return result
         except Exception as e:
