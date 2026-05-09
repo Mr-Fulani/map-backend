@@ -192,7 +192,6 @@ export default function SettingsPage() {
 
   async function saveNotifSettings(overrides?: Partial<{ notify_on_error: boolean; notify_on_critical: boolean }>) {
     setSavingNotif(true);
-    const isToggleOnly = overrides !== undefined;
     try {
       const res = await notificationApi.updateSettings({
         notify_email: notifEmail,
@@ -200,9 +199,7 @@ export default function SettingsPage() {
         notify_on_critical: overrides?.notify_on_critical ?? notifOnCritical,
       });
       setNotifSettings(res.data.data as NotificationSettings);
-      if (!isToggleOnly) {
-        toast.success('Email сохранён');
-      }
+      toast.success(overrides !== undefined ? 'Настройки сохранены' : 'Email сохранён');
     } catch {
       toast.error('Ошибка сохранения');
     } finally {
