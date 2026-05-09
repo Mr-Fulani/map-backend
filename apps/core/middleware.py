@@ -116,4 +116,3 @@ class TenantMiddleware:
             '/api/v1/billing/webhook/',
         )
         return any(path.startswith(p) for p in PUBLIC_PREFIXES)
-

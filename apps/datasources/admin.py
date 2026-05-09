@@ -2,6 +2,7 @@ from django.contrib import admin
 from unfold.admin import ModelAdmin
 from .models import DataSourceConnection
 
+
 @admin.register(DataSourceConnection)
 class DataSourceConnectionAdmin(ModelAdmin):
     list_display = ['name', 'tenant', 'type', 'is_active', 'last_sync_status', 'last_sync_at']

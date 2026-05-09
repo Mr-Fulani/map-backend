@@ -23,4 +23,3 @@ urlpatterns = [
     path('tenant/api-keys/', APIKeyListView.as_view(), name='api-keys-list'),
     path('tenant/api-keys/<int:key_id>/', APIKeyRevokeView.as_view(), name='api-key-revoke'),
 ]
-

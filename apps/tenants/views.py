@@ -159,4 +159,3 @@ class MeView(APIView):
                 'subscription': subscription_data,
             },
         })
-
