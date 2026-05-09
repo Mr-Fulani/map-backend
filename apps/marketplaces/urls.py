@@ -7,3 +7,4 @@ urlpatterns = [
     path('mappings/', CategoryMappingListView.as_view(), name='category-mapping-list'),
     path('mappings/<int:pk>/', CategoryMappingDetailView.as_view(), name='category-mapping-detail'),
 ]
+
