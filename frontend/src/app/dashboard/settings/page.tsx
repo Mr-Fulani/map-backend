@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { tenantApi, accountApi, notificationApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -40,8 +40,12 @@ interface NotificationSettings {
   notify_on_critical: boolean;
 }
 
+const SETTINGS_TABS = ['organization', 'api-keys', 'accounts', 'notifications'] as const;
+type SettingsTab = typeof SETTINGS_TABS[number];
+
 export default function SettingsPage() {
   const { user, tenant } = useAuth();
+  const [activeTab, setActiveTab] = useState<SettingsTab>('organization');
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
@@ -52,6 +56,24 @@ export default function SettingsPage() {
   const [copied, setCopied] = useState(false);
   const [revokingId, setRevokingId] = useState<number | null>(null);
   const [deletingAccountId, setDeletingAccountId] = useState<number | null>(null);
+
+  // Синхронизация активной вкладки с URL-хэшем
+  const didMount = useRef(false);
+  useEffect(() => {
+    function syncTab() {
+      const hash = window.location.hash.slice(1) as SettingsTab;
+      if (SETTINGS_TABS.includes(hash)) setActiveTab(hash);
+    }
+    syncTab();
+    window.addEventListener('hashchange', syncTab);
+    return () => window.removeEventListener('hashchange', syncTab);
+  }, []);
+
+  // При смене вкладки обновляем хэш (кроме первого рендера)
+  useEffect(() => {
+    if (!didMount.current) { didMount.current = true; return; }
+    window.history.replaceState(null, '', `#${activeTab}`);
+  }, [activeTab]);
 
   // Notifications state
   const [notifSettings, setNotifSettings] = useState<NotificationSettings | null>(null);
@@ -208,13 +230,15 @@ export default function SettingsPage() {
         <p className="text-muted-foreground">Управление организацией и интеграциями</p>
       </div>
 
-      <Tabs defaultValue="organization">
-        <TabsList>
-          <TabsTrigger value="organization">Организация</TabsTrigger>
-          <TabsTrigger value="api-keys">API-ключи</TabsTrigger>
-          <TabsTrigger value="accounts">Avito-аккаунты</TabsTrigger>
-          <TabsTrigger value="notifications">Уведомления</TabsTrigger>
-        </TabsList>
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SettingsTab)}>
+        <div className="overflow-x-auto">
+          <TabsList className="w-full sm:w-auto">
+            <TabsTrigger value="organization">Организация</TabsTrigger>
+            <TabsTrigger value="api-keys">API-ключи</TabsTrigger>
+            <TabsTrigger value="accounts">Avito-аккаунты</TabsTrigger>
+            <TabsTrigger value="notifications">Уведомления</TabsTrigger>
+          </TabsList>
+        </div>
 
         {/* Организация */}
         <TabsContent value="organization" className="mt-4">

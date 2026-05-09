@@ -122,11 +122,13 @@ export default function ApiPage() {
       </div>
 
       <Tabs defaultValue="webhooks">
-        <TabsList>
-          <TabsTrigger value="webhooks">Вебхуки</TabsTrigger>
-          <TabsTrigger value="docs">Документация API</TabsTrigger>
-          <TabsTrigger value="examples">Примеры кода</TabsTrigger>
-        </TabsList>
+        <div className="overflow-x-auto">
+          <TabsList className="w-full sm:w-auto">
+            <TabsTrigger value="webhooks">Вебхуки</TabsTrigger>
+            <TabsTrigger value="docs">Документация API</TabsTrigger>
+            <TabsTrigger value="examples">Примеры кода</TabsTrigger>
+          </TabsList>
+        </div>
 
         {/* Вебхуки */}
         <TabsContent value="webhooks" className="mt-4 space-y-4">

@@ -104,7 +104,7 @@ export default function ProductsPage() {
       </div>
 
       {/* Таблица */}
-      <div className="rounded-lg border">
+      <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50 text-left text-muted-foreground">
