@@ -47,6 +47,25 @@ class DataSourceTestView(APIView):
         return Response(result, status=http_status)
 
 
+class DataSourceSyncView(APIView):
+    """POST /api/v1/datasources/{pk}/sync/ — запустить импорт в Celery."""
+
+    def post(self, request, pk):
+        from apps.datasources.models import DataSourceConnection
+        from apps.products.tasks import import_from_datasource
+
+        try:
+            conn = DataSourceConnection.objects.get(pk=pk, tenant=request.tenant)
+        except DataSourceConnection.DoesNotExist:
+            return Response(
+                {'status': 'error', 'code': 'not_found', 'message': 'Источник данных не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        import_from_datasource.delay(conn.pk)
+        return Response({'status': 'ok', 'message': 'Синхронизация запущена'})
+
+
 class CSVUploadView(APIView):
     parser_classes = [MultiPartParser]
 
