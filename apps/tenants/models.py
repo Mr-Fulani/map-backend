@@ -20,15 +20,15 @@ WEBHOOK_EVENTS = [
 class Tenant(TimestampedModel):
     """Организация-тенант. Единица изоляции данных в системе."""
 
-    name = models.CharField(max_length=200)
-    slug = models.SlugField(unique=True)
-    is_active = models.BooleanField(default=True)
-    trial_ends_at = models.DateTimeField(null=True, blank=True)
+    name = models.CharField(max_length=200, verbose_name='Название')
+    slug = models.SlugField(unique=True, verbose_name='Slug')
+    is_active = models.BooleanField(default=True, verbose_name='Активен')
+    trial_ends_at = models.DateTimeField(null=True, blank=True, verbose_name='Окончание триала')
 
     # Кэш счётчиков — обновляется задачей update_tenant_counters
-    active_listings_count = models.PositiveIntegerField(default=0)
-    sku_count = models.PositiveIntegerField(default=0)
-    ai_credits_used = models.PositiveIntegerField(default=0)
+    active_listings_count = models.PositiveIntegerField(default=0, verbose_name='Активных листингов')
+    sku_count = models.PositiveIntegerField(default=0, verbose_name='SKU (товаров)')
+    ai_credits_used = models.PositiveIntegerField(default=0, verbose_name='Использовано AI-кредитов')
 
     class Meta:
         verbose_name = 'Тенант'
@@ -51,10 +51,10 @@ class TenantUser(TimestampedModel):
     ROLE_VIEWER = 'viewer'
 
     ROLES = [
-        (ROLE_OWNER, 'Owner'),
-        (ROLE_ADMIN, 'Admin'),
-        (ROLE_OPERATOR, 'Operator'),
-        (ROLE_VIEWER, 'Viewer'),
+        (ROLE_OWNER, 'Владелец'),
+        (ROLE_ADMIN, 'Администратор'),
+        (ROLE_OPERATOR, 'Оператор'),
+        (ROLE_VIEWER, 'Наблюдатель'),
     ]
 
     user = models.ForeignKey(
@@ -101,11 +101,11 @@ class APIKey(TimestampedModel):
         on_delete=models.CASCADE,
         related_name='api_keys',
     )
-    name = models.CharField(max_length=100)
-    key_prefix = models.CharField(max_length=12)   # первые символы для отображения
-    key_hash = models.CharField(max_length=64)      # SHA256 от полного ключа
-    is_active = models.BooleanField(default=True)
-    last_used_at = models.DateTimeField(null=True, blank=True)
+    name = models.CharField(max_length=100, verbose_name='Название')
+    key_prefix = models.CharField(max_length=12, verbose_name='Префикс ключа')
+    key_hash = models.CharField(max_length=64, verbose_name='SHA256-хэш ключа')
+    is_active = models.BooleanField(default=True, verbose_name='Активен')
+    last_used_at = models.DateTimeField(null=True, blank=True, verbose_name='Последнее использование')
 
     class Meta:
         verbose_name = 'API-ключ'

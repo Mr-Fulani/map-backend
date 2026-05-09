@@ -220,6 +220,7 @@ export default function BillingPage() {
             {invoices.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">Платежей пока нет</p>
             ) : (
+              <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/50 text-left text-muted-foreground">
@@ -246,6 +247,7 @@ export default function BillingPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
           </CardContent>
         </Card>

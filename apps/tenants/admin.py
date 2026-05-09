@@ -23,12 +23,33 @@ class TenantAdmin(ModelAdmin):
 
     list_display = [
         'name', 'slug', 'is_active', 'get_plan',
-        'active_listings_count', 'sku_count', 'ai_credits_used', 'created_at',
+        'active_listings_count', 'sku_count', 'ai_credits_used', 'trial_ends_at', 'created_at',
     ]
     list_filter = ['is_active']
     search_fields = ['name', 'slug']
-    readonly_fields = ['active_listings_count', 'sku_count', 'ai_credits_used', 'created_at', 'updated_at']
+    readonly_fields = [
+        'active_listings_count', 'sku_count', 'ai_credits_used',
+        'created_at', 'updated_at',
+    ]
     inlines = [TenantUserInline]
+    fieldsets = [
+        ('Основное', {
+            'fields': ['name', 'slug', 'is_active'],
+        }),
+        ('Подписка и триал', {
+            'fields': ['trial_ends_at'],
+            'description': 'Дата окончания триала устанавливается автоматически при регистрации.',
+        }),
+        ('Счётчики (кэш)', {
+            'fields': ['active_listings_count', 'sku_count', 'ai_credits_used'],
+            'classes': ['collapse'],
+            'description': 'Обновляются фоновой задачей. Не редактировать вручную.',
+        }),
+        ('Служебное', {
+            'fields': ['created_at', 'updated_at'],
+            'classes': ['collapse'],
+        }),
+    ]
 
     @admin.display(description='Тариф')
     def get_plan(self, obj):

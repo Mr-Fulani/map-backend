@@ -12,17 +12,17 @@ class Plan(TimestampedModel):
     SLUG_PRO = 'pro'
     SLUG_ENTERPRISE = 'enterprise'
 
-    name = models.CharField(max_length=50)
-    slug = models.SlugField(unique=True)
-    price_monthly = models.DecimalField(max_digits=10, decimal_places=2)
-    price_yearly = models.DecimalField(max_digits=10, decimal_places=2)
+    name = models.CharField(max_length=50, verbose_name='Название')
+    slug = models.SlugField(unique=True, verbose_name='Slug')
+    price_monthly = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Цена в месяц')
+    price_yearly = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Цена в год')
 
     # null = без лимита (Enterprise)
-    limit_listings = models.PositiveIntegerField(null=True, blank=True)
-    limit_sku = models.PositiveIntegerField(null=True, blank=True)
-    limit_ai_credits = models.PositiveIntegerField(null=True, blank=True)
+    limit_listings = models.PositiveIntegerField(null=True, blank=True, verbose_name='Лимит листингов')
+    limit_sku = models.PositiveIntegerField(null=True, blank=True, verbose_name='Лимит SKU')
+    limit_ai_credits = models.PositiveIntegerField(null=True, blank=True, verbose_name='Лимит AI-кредитов')
 
-    is_active = models.BooleanField(default=True)
+    is_active = models.BooleanField(default=True, verbose_name='Активен')
 
     class Meta:
         verbose_name = 'Тарифный план'
@@ -60,16 +60,21 @@ class Subscription(TimestampedModel):
         Tenant,
         on_delete=models.CASCADE,
         related_name='subscription',
+        verbose_name='Тенант',
     )
-    plan = models.ForeignKey(Plan, on_delete=models.PROTECT)
-    status = models.CharField(choices=STATUS_CHOICES, default=STATUS_TRIAL, max_length=20)
-    billing_period = models.CharField(choices=PERIOD_CHOICES, default=PERIOD_MONTHLY, max_length=10)
-
-    current_period_start = models.DateField()
-    current_period_end = models.DateField()
-
-    yookassa_subscription_id = models.CharField(max_length=200, blank=True)
-    cancelled_at = models.DateTimeField(null=True, blank=True)
+    plan = models.ForeignKey(Plan, on_delete=models.PROTECT, verbose_name='Тарифный план')
+    status = models.CharField(
+        choices=STATUS_CHOICES, default=STATUS_TRIAL, max_length=20, verbose_name='Статус',
+    )
+    billing_period = models.CharField(
+        choices=PERIOD_CHOICES, default=PERIOD_MONTHLY, max_length=10, verbose_name='Период оплаты',
+    )
+    current_period_start = models.DateField(verbose_name='Начало периода')
+    current_period_end = models.DateField(verbose_name='Конец периода')
+    yookassa_subscription_id = models.CharField(
+        max_length=200, blank=True, verbose_name='ID подписки ЮKassa',
+    )
+    cancelled_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата отмены')
 
     class Meta:
         verbose_name = 'Подписка'
@@ -96,12 +101,16 @@ class Invoice(TimestampedModel):
         (STATUS_FAILED, 'Ошибка оплаты'),
     ]
 
-    tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='invoices')
-    amount = models.DecimalField(max_digits=10, decimal_places=2)
-    status = models.CharField(choices=STATUS_CHOICES, default=STATUS_PENDING, max_length=10)
-    yookassa_payment_id = models.CharField(max_length=200, blank=True)
-    pdf_s3_key = models.CharField(max_length=500, blank=True)
-    paid_at = models.DateTimeField(null=True, blank=True)
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='invoices', verbose_name='Тенант',
+    )
+    amount = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Сумма, ₽')
+    status = models.CharField(
+        choices=STATUS_CHOICES, default=STATUS_PENDING, max_length=10, verbose_name='Статус',
+    )
+    yookassa_payment_id = models.CharField(max_length=200, blank=True, verbose_name='ID платежа ЮKassa')
+    pdf_s3_key = models.CharField(max_length=500, blank=True, verbose_name='Ключ PDF в S3')
+    paid_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата оплаты')
 
     class Meta:
         verbose_name = 'Счёт'
