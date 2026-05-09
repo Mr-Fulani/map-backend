@@ -240,9 +240,42 @@ CORS_ALLOW_CREDENTIALS = True
 # --- Swagger ---
 SPECTACULAR_SETTINGS = {
     'TITLE': 'MAP API',
-    'DESCRIPTION': 'Marketplace Automation Platform — API для автоматизации объявлений',
+    'DESCRIPTION': (
+        'Marketplace Automation Platform — API для автоматизации товарных объявлений на Avito.\n\n'
+        '## Аутентификация\n\n'
+        'Поддерживаются два метода:\n\n'
+        '**API Key** (рекомендуется для интеграций):\n'
+        '```\nAuthorization: Bearer map_sk_<ваш_ключ>\n```\n\n'
+        '**JWT Token** (для веб-приложений):\n'
+        '```\nAuthorization: Bearer <access_token>\n```\n\n'
+        'Получить JWT: `POST /api/v1/auth/token/`  \n'
+        'Создать API Key: `POST /api/v1/tenant/api-keys/`'
+    ),
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
+    'SECURITY': [{'Bearer': []}],
+    'COMPONENTS': {
+        'securitySchemes': {
+            'Bearer': {
+                'type': 'http',
+                'scheme': 'bearer',
+                'bearerFormat': 'API Key or JWT',
+                'description': 'API Key (map_sk_...) или JWT access token',
+            },
+        },
+    },
+    'TAGS': [
+        {'name': 'Auth', 'description': 'Регистрация, JWT, информация о текущем пользователе'},
+        {'name': 'Tenant', 'description': 'Организация и её пользователи'},
+        {'name': 'API Keys', 'description': 'Управление API-ключами'},
+        {'name': 'Webhooks', 'description': 'Вебхук-эндпоинты для получения событий'},
+        {'name': 'Products', 'description': 'Каталог товаров'},
+        {'name': 'Listings', 'description': 'Объявления на маркетплейсах'},
+        {'name': 'Accounts', 'description': 'Аккаунты маркетплейсов (Avito)'},
+        {'name': 'Analytics', 'description': 'Статистика просмотров и CTR'},
+        {'name': 'Billing', 'description': 'Тарифы, подписки, платежи'},
+    ],
+    'SORT_OPERATIONS': False,
 }
 
 # --- Файловое хранилище (Yandex Cloud S3) ---

@@ -1,6 +1,7 @@
 import datetime
 
 from django.db.models import Sum
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -18,6 +19,7 @@ from apps.core.pagination import MapPagination
 from apps.marketplaces.services import CategoryMappingService
 
 
+@extend_schema(tags=['Accounts'])
 class MarketplaceAccountListView(APIView):
     """GET /api/v1/accounts/ — список аккаунтов. POST — создать."""
 
@@ -59,6 +61,7 @@ class MarketplaceAccountListView(APIView):
         )
 
 
+@extend_schema(tags=['Accounts'])
 class MarketplaceAccountDetailView(APIView):
     """GET/PUT/DELETE /api/v1/accounts/{id}/"""
 
@@ -159,6 +162,7 @@ class CategoryMappingDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@extend_schema(tags=['Listings'])
 class ListingListView(APIView):
     """
     GET /api/v1/listings/ — листинги тенанта с фильтром по статусу и пагинацией.
@@ -189,6 +193,7 @@ class ListingListView(APIView):
         return paginator.get_paginated_response(ListingSerializer(page, many=True).data)
 
 
+@extend_schema(tags=['Analytics'])
 class AnalyticsView(APIView):
     """
     GET /api/v1/analytics/ — агрегированная статистика листингов тенанта.

@@ -231,3 +231,12 @@ export const logApi = {
 export const analyticsApi = {
   get: (params?: Record<string, unknown>) => api.get('/analytics/', { params }),
 };
+
+// Webhooks
+export const webhookApi = {
+  list: () => api.get('/webhooks/'),
+  events: () => api.get('/webhooks/events/'),
+  create: (data: { url: string; events: string[] }) => api.post('/webhooks/', data),
+  delete: (id: number) => api.delete(`/webhooks/${id}/`),
+  test: (id: number) => api.post(`/webhooks/${id}/test/`),
+};

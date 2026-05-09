@@ -6,6 +6,16 @@ from django.db import models
 
 from apps.core.models import TimestampedModel
 
+WEBHOOK_EVENTS = [
+    'listing.published',
+    'listing.rejected',
+    'listing.archived',
+    'import.completed',
+    'import.failed',
+    'billing.payment_success',
+    'billing.payment_failed',
+]
+
 
 class Tenant(TimestampedModel):
     """Организация-тенант. Единица изоляции данных в системе."""
@@ -133,3 +143,32 @@ class APIKey(TimestampedModel):
         """Проверяет ключ по хэшу. Возвращает объект или None."""
         key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
         return cls.objects.filter(key_hash=key_hash, is_active=True).select_related('tenant').first()
+
+
+class WebhookEndpoint(TimestampedModel):
+    """Вебхук-эндпоинт тенанта для получения событий системы."""
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='webhook_endpoints',
+    )
+    url = models.URLField(max_length=500)
+    secret = models.CharField(max_length=64)  # HMAC-секрет в plaintext (генерируется один раз)
+    events = models.JSONField(default=list)   # список событий, напр. ['listing.published']
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        verbose_name = 'Вебхук-эндпоинт'
+        verbose_name_plural = 'Вебхук-эндпоинты'
+        indexes = [
+            models.Index(fields=['tenant', 'is_active']),
+        ]
+
+    def __str__(self):
+        return f'{self.tenant.slug}: {self.url}'
+
+    @classmethod
+    def generate_secret(cls) -> str:
+        """Генерирует случайный HMAC-секрет для подписи вебхуков."""
+        return secrets.token_hex(32)
