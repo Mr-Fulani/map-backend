@@ -184,14 +184,19 @@ class BillingService:
         plan = Plan.objects.get(slug=Plan.SLUG_BUSINESS)
         today = date.today()
 
+        trial_end = today + timedelta(days=TRIAL_DAYS)
         subscription = Subscription.objects.create(
             tenant=tenant,
             plan=plan,
             status=Subscription.STATUS_TRIAL,
             billing_period=Subscription.PERIOD_MONTHLY,
             current_period_start=today,
-            current_period_end=today + timedelta(days=TRIAL_DAYS),
+            current_period_end=trial_end,
         )
+        tenant.trial_ends_at = timezone.make_aware(
+            timezone.datetime.combine(trial_end, timezone.datetime.min.time())
+        )
+        tenant.save(update_fields=['trial_ends_at'])
         logger.info('Trial запущен для тенанта %s, план %s', tenant.slug, plan.slug)
         return subscription
 

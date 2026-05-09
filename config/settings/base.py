@@ -51,10 +51,32 @@ LOCAL_APPS = [
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 UNFOLD = {
+    "SITE_TITLE": "MAP Админ",
+    "SITE_HEADER": "MAP — Панель управления",
+    "SITE_SYMBOL": "hub",
+    "SHOW_HISTORY": True,
+    "SHOW_VIEW_ON_SITE": False,
+    # Цветовая схема — sky-blue, хорошо читается в светлой и тёмной теме
+    "COLORS": {
+        "primary": {
+            "50": "240 249 255",
+            "100": "224 242 254",
+            "200": "186 230 253",
+            "300": "125 211 252",
+            "400": "56 189 248",
+            "500": "14 165 233",
+            "600": "2 132 199",
+            "700": "3 105 161",
+            "800": "7 89 133",
+            "900": "12 74 110",
+            "950": "8 47 73",
+        },
+    },
     "SIDEBAR": {
         "navigation": [
             {
                 "title": "Аналитика",
+                "separator": False,
                 "items": [
                     {
                         "title": "Статистика платформы",
@@ -70,6 +92,11 @@ UNFOLD = {
                     {"title": "Тенанты", "icon": "domain", "link": "/admin/tenants/tenant/"},
                     {"title": "Пользователи", "icon": "person", "link": "/admin/users/user/"},
                     {"title": "API-ключи", "icon": "key", "link": "/admin/tenants/apikey/"},
+                    {
+                        "title": "Вебхук-эндпоинты",
+                        "icon": "webhook",
+                        "link": "/admin/tenants/webhookendpoint/",
+                    },
                 ],
             },
             {
@@ -77,7 +104,11 @@ UNFOLD = {
                 "collapsible": True,
                 "items": [
                     {"title": "Тарифные планы", "icon": "sell", "link": "/admin/billing/plan/"},
-                    {"title": "Подписки", "icon": "subscriptions", "link": "/admin/billing/subscription/"},
+                    {
+                        "title": "Подписки",
+                        "icon": "subscriptions",
+                        "link": "/admin/billing/subscription/",
+                    },
                     {"title": "Счета", "icon": "receipt", "link": "/admin/billing/invoice/"},
                 ],
             },
@@ -86,8 +117,16 @@ UNFOLD = {
                 "collapsible": True,
                 "items": [
                     {"title": "Товары", "icon": "inventory_2", "link": "/admin/products/product/"},
-                    {"title": "Листинги", "icon": "storefront", "link": "/admin/marketplaces/listing/"},
-                    {"title": "Аккаунты", "icon": "manage_accounts", "link": "/admin/marketplaces/marketplaceaccount/"},
+                    {
+                        "title": "Листинги",
+                        "icon": "storefront",
+                        "link": "/admin/marketplaces/listing/",
+                    },
+                    {
+                        "title": "Avito-аккаунты",
+                        "icon": "manage_accounts",
+                        "link": "/admin/marketplaces/marketplaceaccount/",
+                    },
                     {
                         "title": "Источники данных",
                         "icon": "database",
@@ -99,9 +138,13 @@ UNFOLD = {
                 "title": "Система",
                 "collapsible": True,
                 "items": [
-                    {"title": "Логи синхронизации", "icon": "sync", "link": "/admin/sync/synclog/"},
                     {
-                        "title": "Настройки уведомлений",
+                        "title": "Логи синхронизации",
+                        "icon": "sync",
+                        "link": "/admin/sync/synclog/",
+                    },
+                    {
+                        "title": "Уведомления",
                         "icon": "notifications",
                         "link": "/admin/notifications/tenantnotificationsettings/",
                     },
