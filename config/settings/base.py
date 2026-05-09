@@ -162,6 +162,7 @@ UNFOLD = {
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.locale.LocaleMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -363,6 +364,7 @@ AVITO_CLIENT_SECRET = os.environ.get('AVITO_CLIENT_SECRET', '')
 YOOKASSA_SHOP_ID = os.environ.get('YOOKASSA_SHOP_ID', '')
 YOOKASSA_SECRET_KEY = os.environ.get('YOOKASSA_SECRET_KEY', '')
 SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8000')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 # --- Уведомления ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -379,7 +381,9 @@ EMAIL_HOST_PASSWORD = os.environ.get('SENDPULSE_SMTP_PASSWORD', '')
 AUTH_USER_MODEL = 'users.User'
 
 # --- Локализация ---
-LANGUAGE_CODE = 'ru-ru'
+LANGUAGE_CODE = 'ru'
+LANGUAGES = [('ru', 'Russian')]
+LOCALE_PATHS = [BASE_DIR / 'locale']
 TIME_ZONE = 'Europe/Moscow'
 USE_I18N = True
 USE_TZ = True

@@ -13,7 +13,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound } from 'lucide-react';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff } from 'lucide-react';
+import { profileApi } from '@/lib/api';
 
 interface ApiKey {
   id: number;
@@ -40,12 +41,12 @@ interface NotificationSettings {
   notify_on_critical: boolean;
 }
 
-const SETTINGS_TABS = ['organization', 'api-keys', 'accounts', 'notifications'] as const;
+const SETTINGS_TABS = ['profile', 'organization', 'api-keys', 'accounts', 'notifications'] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
 
 export default function SettingsPage() {
   const { user, tenant } = useAuth();
-  const [activeTab, setActiveTab] = useState<SettingsTab>('organization');
+  const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
@@ -75,6 +76,18 @@ export default function SettingsPage() {
     window.history.replaceState(null, '', `#${activeTab}`);
   }, [activeTab]);
 
+  // Profile state
+  const [phone, setPhone] = useState('');
+  const [savingPhone, setSavingPhone] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPasswords, setShowPasswords] = useState(false);
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [newEmail, setNewEmail] = useState('');
+  const [requestingEmail, setRequestingEmail] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
+
   // Notifications state
   const [notifSettings, setNotifSettings] = useState<NotificationSettings | null>(null);
   const [loadingNotif, setLoadingNotif] = useState(true);
@@ -85,6 +98,13 @@ export default function SettingsPage() {
   const [notifEmail, setNotifEmail] = useState('');
   const [notifOnError, setNotifOnError] = useState(true);
   const [notifOnCritical, setNotifOnCritical] = useState(true);
+
+  // Подставляем телефон из данных пользователя при загрузке
+  useEffect(() => {
+    if (user && 'phone' in user) {
+      setPhone((user as { phone?: string }).phone ?? '');
+    }
+  }, [user]);
 
   useEffect(() => {
     tenantApi.getApiKeys()
@@ -108,6 +128,52 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setLoadingNotif(false));
   }, []);
+
+  async function savePhone() {
+    setSavingPhone(true);
+    try {
+      await profileApi.updatePhone(phone);
+      toast.success('Телефон сохранён');
+    } catch {
+      toast.error('Ошибка сохранения');
+    } finally {
+      setSavingPhone(false);
+    }
+  }
+
+  async function changePassword() {
+    if (newPassword !== confirmPassword) {
+      toast.error('Пароли не совпадают');
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      await profileApi.changePassword(currentPassword, newPassword);
+      toast.success('Пароль изменён');
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(msg ?? 'Ошибка смены пароля');
+    } finally {
+      setChangingPassword(false);
+    }
+  }
+
+  async function requestEmailChange() {
+    setRequestingEmail(true);
+    try {
+      await profileApi.changeEmail(newEmail);
+      setEmailSent(true);
+      toast.success('Письмо отправлено');
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      toast.error(msg ?? 'Ошибка отправки письма');
+    } finally {
+      setRequestingEmail(false);
+    }
+  }
 
   async function createKey() {
     if (!newKeyName.trim()) return;
@@ -234,12 +300,142 @@ export default function SettingsPage() {
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SettingsTab)}>
         <div className="overflow-x-auto">
           <TabsList className="w-full sm:w-auto">
+            <TabsTrigger value="profile">Профиль</TabsTrigger>
             <TabsTrigger value="organization">Организация</TabsTrigger>
             <TabsTrigger value="api-keys">API-ключи</TabsTrigger>
             <TabsTrigger value="accounts">Avito-аккаунты</TabsTrigger>
             <TabsTrigger value="notifications">Уведомления</TabsTrigger>
           </TabsList>
         </div>
+
+        {/* Профиль */}
+        <TabsContent value="profile" className="mt-4 space-y-4">
+          {/* Личные данные */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Личные данные</CardTitle>
+              <CardDescription>Email — только через подтверждение. Телефон меняется сразу.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div className="space-y-2">
+                  <Label>Email</Label>
+                  <Input value={user?.email ?? ''} readOnly className="bg-muted" />
+                </div>
+                <div className="space-y-2">
+                  <Label>Телефон</Label>
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="+7 999 000-00-00"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                    />
+                    <Button onClick={savePhone} disabled={savingPhone}>
+                      {savingPhone ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Сохранить'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Смена email */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Изменить email</CardTitle>
+              <CardDescription>
+                Письмо с подтверждением придёт на новый адрес. Ссылка действительна 24 часа.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {emailSent ? (
+                <div className="rounded-lg border border-green-500/30 bg-green-500/5 p-4">
+                  <p className="text-sm font-medium text-green-700">Письмо отправлено на {newEmail}</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Перейдите по ссылке в письме для подтверждения. После подтверждения войдите заново.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="mt-2"
+                    onClick={() => { setEmailSent(false); setNewEmail(''); }}
+                  >
+                    Отправить на другой адрес
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex gap-2">
+                  <Input
+                    type="email"
+                    placeholder="new@example.com"
+                    value={newEmail}
+                    onChange={(e) => setNewEmail(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && requestEmailChange()}
+                  />
+                  <Button
+                    onClick={requestEmailChange}
+                    disabled={requestingEmail || !newEmail.trim()}
+                  >
+                    {requestingEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Отправить'}
+                  </Button>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Смена пароля */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Изменить пароль</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-3">
+                <div className="space-y-2">
+                  <Label>Текущий пароль</Label>
+                  <div className="relative">
+                    <Input
+                      type={showPasswords ? 'text' : 'password'}
+                      value={currentPassword}
+                      onChange={(e) => setCurrentPassword(e.target.value)}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPasswords((v) => !v)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
+                    >
+                      {showPasswords ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Новый пароль</Label>
+                  <Input
+                    type={showPasswords ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Минимум 8 символов"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Подтвердите новый пароль</Label>
+                  <Input
+                    type={showPasswords ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                  />
+                </div>
+              </div>
+              <Button
+                onClick={changePassword}
+                disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
+              >
+                {changingPassword && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                Изменить пароль
+              </Button>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         {/* Организация */}
         <TabsContent value="organization" className="mt-4">

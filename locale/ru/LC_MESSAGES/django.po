@@ -1,0 +1,96 @@
+# Russian translations for Unfold admin strings
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Language: ru\n"
+
+msgid "Type to search"
+msgstr "Начните вводить..."
+
+msgid "Select action"
+msgstr "Выберите действие"
+
+msgid "Select action to run"
+msgstr "Выберите действие"
+
+msgid "Select record"
+msgstr "Выберите запись"
+
+msgid "Select value"
+msgstr "Выберите значение"
+
+msgid "Select all rows"
+msgstr "Выбрать все строки"
+
+msgid "Apply Filters"
+msgstr "Применить фильтры"
+
+msgid "Filter results"
+msgstr "Фильтр"
+
+msgid "Filters"
+msgstr "Фильтры"
+
+msgid "No records found."
+msgstr "Записей не найдено."
+
+msgid "All applications"
+msgstr "Все приложения"
+
+msgid "More actions"
+msgstr "Ещё действия"
+
+msgid "Run"
+msgstr "Применить"
+
+msgid "Remove"
+msgstr "Удалить"
+
+msgid "Home"
+msgstr "Главная"
+
+msgid "Return to site"
+msgstr "Вернуться на сайт"
+
+msgid "View on site"
+msgstr "Смотреть на сайте"
+
+msgid "Choose file to upload"
+msgstr "Выберите файл"
+
+msgid "Image preview"
+msgstr "Предпросмотр"
+
+msgid "Record picture"
+msgstr "Фото записи"
+
+msgid "Dark"
+msgstr "Тёмная"
+
+msgid "Light"
+msgstr "Светлая"
+
+msgid "System"
+msgstr "Системная"
+
+msgid "Menu"
+msgstr "Меню"
+
+msgid "General"
+msgstr "Общее"
+
+msgid "Welcome back to"
+msgstr "Добро пожаловать в"
+
+msgid "You have been successfully logged out from the administration"
+msgstr "Вы успешно вышли из панели администратора"
+
+msgid "Unknown"
+msgstr "Неизвестно"
+
+msgid "True"
+msgstr "Да"
+
+msgid "False"
+msgstr "Нет"
