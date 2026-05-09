@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListOrdered, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
+import ListingDrawer from '@/components/listings/ListingDrawer';
 
 interface Listing {
   id: number;
@@ -57,6 +58,7 @@ export default function ListingsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [selectedId, setSelectedId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -134,7 +136,11 @@ export default function ListingsPage() {
                   </tr>
                 )
                 : listings.map((l) => (
-                  <tr key={l.id} className="border-b transition-colors hover:bg-muted/30">
+                  <tr
+                    key={l.id}
+                    className="border-b transition-colors hover:bg-muted/30 cursor-pointer"
+                    onClick={() => setSelectedId(l.id)}
+                  >
                     <td className="px-4 py-3">
                       <Badge variant={STATUS_VARIANT[l.status] ?? 'outline'}>
                         {l.status_display}
@@ -160,7 +166,7 @@ export default function ListingsPage() {
                         ? new Date(l.published_at).toLocaleDateString('ru-RU')
                         : '—'}
                     </td>
-                    <td className="px-4 py-3">
+                    <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       {l.external_url && (
                         <a
                           href={l.external_url}
@@ -194,6 +200,12 @@ export default function ListingsPage() {
           </div>
         </div>
       )}
+
+      <ListingDrawer
+        listingId={selectedId}
+        onClose={() => setSelectedId(null)}
+        onActionDone={load}
+      />
     </div>
   );
 }

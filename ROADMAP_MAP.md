@@ -804,10 +804,114 @@ apps/notifications/
 |------|-----------|------|
 | 13 | Next.js проект, онбординг wizard (подключение Avito + источника данных) | 8 |
 | 14 | Dashboard: главная (KPI), каталог товаров, карточка товара | 7 |
-| 15 | Листинги, логи, настройки, биллинг-страницы | 6 |
-| 16 | Аналитика: CTR, просмотры, ROI из Avito Stats API | 5 |
-| 17 | Public API документация (Swagger + примеры), Webhook UI | 4 |
-| **∑** | | **30 дней** |
+| 15 | Листинги: таблица, фильтры, **визуальный предпросмотр requires_review** | 7 |
+| 16 | Логи, настройки, биллинг-страницы | 5 |
+| 17 | Аналитика: CTR, просмотры, ROI из Avito Stats API | 5 |
+| 18 | Public API документация (Swagger + примеры), Webhook UI | 4 |
+| **∑** | | **34 дня** |
+
+---
+
+## ЭТАП 15 — Листинги и визуальный предпросмотр (Дни 73–79)
+
+### Предусловия
+- Этап 6: `requires_review` — листинг создаётся при `ai_confidence < 0.5`
+- Этап 14: Dashboard открывается, навигация работает
+- Листинги с `description_ai`, `ai_confidence`, `ProductImage` существуют в БД
+
+### Задача
+
+AI-агент помечает объявление статусом `requires_review` когда уверенность (`ai_confidence`) ниже порога. Оператор должен **увидеть** сгенерированный текст, фото и цену — и принять решение: одобрить, отредактировать или перегенерировать.
+
+### Создаваемые / изменяемые файлы
+```
+Бэкенд:
+  apps/marketplaces/serializers.py  — ListingDetailSerializer
+  apps/marketplaces/services.py     — ListingService (approve, regenerate, update_content)
+  apps/marketplaces/views.py        — ListingDetailView, approve, regenerate
+  apps/marketplaces/urls.py         — новые маршруты
+
+Фронтенд:
+  frontend/src/lib/api.ts                           — новые методы listingApi
+  frontend/src/app/dashboard/listings/page.tsx      — кликабельная строка таблицы
+  frontend/src/components/listings/ListingDrawer.tsx — боковой дровер предпросмотра
+```
+
+### Бэкенд: новые эндпоинты
+
+**День 73–74 — ListingDetailSerializer и сервисный слой**
+- [ ] Расширить `ListingDetailSerializer`:
+  - Все поля `ListingSerializer`
+  - `description_ai` (полный текст AI-описания)
+  - `ai_confidence` (float 0–1)
+  - `ai_confidence_display` (строка: "87%" или "Низкая (34%)")
+  - `images` — список `{url, thumb_url, position}` из `ProductImage`
+- [ ] Создать `apps/marketplaces/services.py` → `ListingService`:
+  ```python
+  class ListingService:
+      @staticmethod
+      def approve(listing_id: int, tenant) -> Listing:
+          """Одобряет листинг requires_review и ставит в очередь публикации."""
+
+      @staticmethod
+      def request_regenerate(listing_id: int, tenant) -> Listing:
+          """Запрашивает перегенерацию AI-описания для листинга."""
+
+      @staticmethod
+      def update_content(listing_id: int, tenant, title: str, description_ai: str) -> Listing:
+          """Обновляет заголовок и описание листинга вручную."""
+  ```
+- [ ] Правило: `approve` и `request_regenerate` работают **только** если `status == requires_review`
+- [ ] `approve`: статус → `draft`, `transaction.on_commit(publish_listing_task.delay)`
+- [ ] `request_regenerate`: статус → `draft`, `transaction.on_commit(generate_description_task.delay(product_id))`
+- [ ] `update_content`: обновляет `title`, `description_ai`, статус остаётся `requires_review`
+
+**День 75 — API views и маршруты**
+- [ ] `GET  /api/v1/listings/{id}/` — детали листинга (ListingDetailSerializer)
+- [ ] `POST /api/v1/listings/{id}/approve/` — одобрить и опубликовать
+- [ ] `POST /api/v1/listings/{id}/regenerate/` — перегенерировать AI
+- [ ] `PATCH /api/v1/listings/{id}/` — изменить title и/или description_ai
+- [ ] Формат ответов по стандарту RULEBOOK (`{"status": "ok", "data": {...}}`)
+- [ ] Swagger-аннотации `@extend_schema(tags=['Listings'])`
+
+**День 76 — Тесты**
+- [ ] `test_approve_changes_status_and_enqueues_task`
+- [ ] `test_approve_blocked_for_non_review_status`
+- [ ] `test_regenerate_queues_ai_task`
+- [ ] `test_update_content_saves_fields`
+- [ ] `test_listing_detail_includes_images_and_ai_fields`
+- [ ] `test_tenant_isolation_on_detail`
+
+### Фронтенд: дровер предпросмотра
+
+**День 77–78 — ListingDrawer**
+- [ ] Компонент `ListingDrawer` (shadcn `Sheet`, side="right", width ≈ 520px):
+  - **Шапка**: артикул + название товара, статус-бейдж
+  - **AI-уверенность**: прогресс-бар (зелёный ≥ 70%, жёлтый 50–70%, красный < 50%)
+  - **Заголовок объявления**: текст или `<textarea>` в режиме редактирования
+  - **AI-описание**: `<pre>` с переносами или `<textarea>` в режиме редактирования
+  - **Фото**: горизонтальная галерея (до 10 миниатюр, клик → полный размер)
+  - **Цена**: крупно + аккаунт Avito
+  - **Блок кнопок** (только для `requires_review`):
+    - `Одобрить и опубликовать` (primary, зелёный)
+    - `Перегенерировать AI` (secondary, с иконкой refresh)
+    - `Редактировать` / `Сохранить` (outline, toggle)
+  - После успешного `approve` / `regenerate`: строка таблицы обновляется, дровер закрывается
+
+**День 79 — Интеграция с таблицей листингов**
+- [ ] Каждая строка таблицы кликабельна (`cursor-pointer`, hover highlight)
+- [ ] Клик → `listingApi.get(id)` → открытие `ListingDrawer` с данными
+- [ ] После действий в дровере → перезагрузить текущую страницу листингов
+
+### ✅ Критерий завершения этапа 15
+- [ ] `GET /api/v1/listings/{id}/` — возвращает `description_ai`, `ai_confidence`, список images
+- [ ] `POST /api/v1/listings/{id}/approve/` — меняет статус, ставит задачу в Celery
+- [ ] `POST /api/v1/listings/{id}/regenerate/` — ставит задачу генерации
+- [ ] `PATCH /api/v1/listings/{id}/` — обновляет title/description_ai
+- [ ] Листинги `requires_review` кликабельны в Dashboard
+- [ ] Дровер показывает: AI-текст, уверенность, фото, цену
+- [ ] Кнопки одобрения и перегенерации работают, статус в таблице обновляется
+- [ ] Тесты зелёные, CI зелёный
 
 ---
 
