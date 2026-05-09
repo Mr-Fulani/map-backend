@@ -61,13 +61,15 @@ class TenantUser(TimestampedModel):
         settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name='tenant_memberships',
+        verbose_name='Пользователь',
     )
     tenant = models.ForeignKey(
         Tenant,
         on_delete=models.CASCADE,
         related_name='members',
+        verbose_name='Тенант',
     )
-    role = models.CharField(choices=ROLES, default=ROLE_OPERATOR, max_length=20)
+    role = models.CharField(choices=ROLES, default=ROLE_OPERATOR, max_length=20, verbose_name='Роль')
 
     class Meta:
         verbose_name = 'Пользователь тенанта'
