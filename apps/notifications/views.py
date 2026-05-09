@@ -18,8 +18,8 @@ def _get_or_create_settings(tenant, default_email: str = '') -> TenantNotificati
 
     При первом создании подставляет email владельца как значение по умолчанию.
     """
-    ns, created = TenantNotificationSettings.objects.get_or_create(tenant=tenant)
-    if created and default_email:
+    ns, _ = TenantNotificationSettings.objects.get_or_create(tenant=tenant)
+    if default_email and not ns.notify_email:
         ns.notify_email = default_email
         ns.save(update_fields=['notify_email'])
     return ns
