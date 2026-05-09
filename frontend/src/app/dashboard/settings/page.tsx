@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff } from 'lucide-react';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound } from 'lucide-react';
 
 interface ApiKey {
   id: number;
@@ -271,8 +271,14 @@ export default function SettingsPage() {
           <Card>
             <CardHeader>
               <CardTitle>API-ключи</CardTitle>
-              <CardDescription>
-                Используются для прямого доступа к API без JWT. Показываются только при создании.
+              <CardDescription className="space-y-1">
+                <span className="block">
+                  Позволяют внешним системам обращаться к MAP API без входа в аккаунт —
+                  из скриптов, CI/CD, Postman или других сервисов.
+                </span>
+                <span className="block text-amber-600 dark:text-amber-400">
+                  Полное значение ключа показывается <strong>только один раз</strong> при создании — сохраните его сразу.
+                </span>
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -318,17 +324,21 @@ export default function SettingsPage() {
               ) : (
                 <div className="space-y-2">
                   {apiKeys.map((key) => (
-                    <div key={key.id} className="flex items-center justify-between rounded-lg border p-3">
-                      <div>
-                        <p className="text-sm font-medium">{key.name}</p>
-                        <p className="font-mono text-xs text-muted-foreground">
-                          {key.prefix}...
-                          {key.last_used_at && (
-                            <span className="ml-2">
-                              использован {new Date(key.last_used_at).toLocaleDateString('ru-RU')}
-                            </span>
-                          )}
-                        </p>
+                    <div key={key.id} className="flex items-center justify-between rounded-lg border p-3 gap-3">
+                      <div className="flex items-start gap-3 min-w-0">
+                        <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">{key.name}</p>
+                          <code className="text-xs font-mono text-muted-foreground bg-muted rounded px-1.5 py-0.5 mt-0.5 inline-block">
+                            {key.prefix}••••••••••••••••••••
+                          </code>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Создан {new Date(key.created_at).toLocaleDateString('ru-RU')}
+                            {key.last_used_at
+                              ? ` · использован ${new Date(key.last_used_at).toLocaleDateString('ru-RU')}`
+                              : ' · ещё не использован'}
+                          </p>
+                        </div>
                       </div>
                       <Button
                         size="sm"
