@@ -105,3 +105,58 @@ class APIKeyRevokeView(APIView):
     def delete(self, request, key_id):
         APIKeyService.revoke_key(key_id=key_id, tenant=request.tenant)
         return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+
+
+class MeView(APIView):
+    """
+    GET /api/v1/auth/me/ — информация о текущем пользователе и тенанте.
+
+    Используется фронтендом для восстановления auth-состояния после refresh.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.tenants.models import TenantUser
+
+        user = request.user
+        tenant = request.tenant
+
+        # Получаем role пользователя в текущем тенанте
+        role = None
+        if tenant:
+            membership = TenantUser.objects.filter(user=user, tenant=tenant).first()
+            role = membership.role if membership else None
+
+        # Subscription info
+        subscription_data = None
+        if tenant:
+            try:
+                sub = tenant.subscription
+                subscription_data = {
+                    'plan_slug': sub.plan.slug,
+                    'plan_name': sub.plan.name,
+                    'status': sub.status,
+                    'current_period_end': sub.current_period_end.isoformat() if sub.current_period_end else None,
+                }
+            except Exception:
+                pass
+
+        return Response({
+            'status': 'ok',
+            'data': {
+                'user': {
+                    'id': user.pk,
+                    'email': user.email,
+                    'phone': getattr(user, 'phone', ''),
+                },
+                'tenant': {
+                    'id': tenant.pk,
+                    'slug': tenant.slug,
+                    'name': tenant.name,
+                } if tenant else None,
+                'role': role,
+                'subscription': subscription_data,
+            },
+        })
+
