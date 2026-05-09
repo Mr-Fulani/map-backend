@@ -1,0 +1,169 @@
+/**
+ * Страница регистрации — создание тенанта и пользователя.
+ * После регистрации → redirect на /onboarding.
+ */
+
+'use client';
+
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import { authApi, setAccessToken, setRefreshToken } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Zap, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
+
+export default function RegisterPage() {
+  const [form, setForm] = useState({
+    name: '',
+    slug: '',
+    email: '',
+    password: '',
+  });
+  const [isLoading, setIsLoading] = useState(false);
+  const { refreshMe } = useAuth();
+  const router = useRouter();
+
+  function handleChange(field: string, value: string) {
+    setForm((prev) => ({ ...prev, [field]: value }));
+    // Автогенерация slug из name
+    if (field === 'name') {
+      const slug = value
+        .toLowerCase()
+        .replace(/[^a-zа-я0-9\s-]/g, '')
+        .replace(/\s+/g, '-')
+        .replace(/-+/g, '-')
+        .substring(0, 50);
+      setForm((prev) => ({ ...prev, slug }));
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setIsLoading(true);
+
+    try {
+      // 1. Регистрируем тенант
+      await authApi.register(form);
+
+      // 2. Сразу логинимся для получения JWT
+      const { data: loginData } = await authApi.login(form.email, form.password);
+      setAccessToken(loginData.access);
+      setRefreshToken(loginData.refresh);
+      await refreshMe();
+
+      toast.success('Регистрация успешна! Давайте настроим вашу платформу.');
+      router.push('/onboarding');
+    } catch (err: unknown) {
+      const errorData = (err as { response?: { data?: Record<string, unknown> } })?.response?.data;
+      const message =
+        typeof errorData === 'object'
+          ? Object.values(errorData || {}).flat().join('. ')
+          : 'Ошибка регистрации';
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-background via-background to-muted/50 px-4">
+      {/* Decorative elements */}
+      <div className="pointer-events-none fixed inset-0 overflow-hidden">
+        <div className="absolute -top-40 -right-40 h-80 w-80 rounded-full bg-primary/5 blur-3xl" />
+        <div className="absolute -bottom-40 -left-40 h-80 w-80 rounded-full bg-primary/5 blur-3xl" />
+      </div>
+
+      <Card className="relative w-full max-w-md">
+        <CardHeader className="text-center">
+          <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-primary shadow-lg shadow-primary/25">
+            <Zap className="h-6 w-6 text-primary-foreground" />
+          </div>
+          <CardTitle className="text-2xl">Регистрация в MAP</CardTitle>
+          <CardDescription>
+            Создайте аккаунт и начните автоматизацию за 5 минут
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="name">Название компании</Label>
+              <Input
+                id="name"
+                placeholder="ООО Автозапчасти"
+                value={form.name}
+                onChange={(e) => handleChange('name', e.target.value)}
+                required
+                autoFocus
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="slug">URL-идентификатор</Label>
+              <div className="flex items-center gap-1">
+                <Input
+                  id="slug"
+                  placeholder="avtozapchasti"
+                  value={form.slug}
+                  onChange={(e) => handleChange('slug', e.target.value)}
+                  required
+                  className="font-mono text-sm"
+                />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                map.domain.ru/t/{form.slug || 'your-slug'}/
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reg-email">Email</Label>
+              <Input
+                id="reg-email"
+                type="email"
+                placeholder="user@company.ru"
+                value={form.email}
+                onChange={(e) => handleChange('email', e.target.value)}
+                required
+                autoComplete="email"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="reg-password">Пароль</Label>
+              <Input
+                id="reg-password"
+                type="password"
+                placeholder="Минимум 8 символов"
+                value={form.password}
+                onChange={(e) => handleChange('password', e.target.value)}
+                required
+                minLength={8}
+                autoComplete="new-password"
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={isLoading}>
+              {isLoading ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Создание...
+                </>
+              ) : (
+                'Создать аккаунт'
+              )}
+            </Button>
+          </form>
+          <div className="mt-4 text-center text-xs text-muted-foreground">
+            14 дней бесплатно • План Business • Без ввода карты
+          </div>
+          <div className="mt-4 text-center text-sm text-muted-foreground">
+            Уже есть аккаунт?{' '}
+            <Link href="/login" className="text-primary hover:underline">
+              Войти
+            </Link>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

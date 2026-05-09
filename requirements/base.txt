@@ -51,5 +51,11 @@ lxml==5.2.2
 openpyxl==3.1.4
 pandas==2.2.2
 
+# JWT Auth (for Dashboard)
+djangorestframework-simplejwt==5.3.1
+
+# CORS (for Next.js frontend)
+django-cors-headers==4.4.0
+
 # Utilities
 python-dotenv==1.0.1

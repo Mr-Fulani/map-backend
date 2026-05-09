@@ -1,4 +1,5 @@
 import os
+from datetime import timedelta
 from pathlib import Path
 
 import dj_database_url
@@ -24,6 +25,8 @@ DJANGO_APPS = [
 
 THIRD_PARTY_APPS = [
     'rest_framework',
+    'rest_framework_simplejwt',
+    'corsheaders',
     'drf_spectacular',
     'django_celery_beat',
     'storages',
@@ -47,9 +50,76 @@ LOCAL_APPS = [
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
+UNFOLD = {
+    "SIDEBAR": {
+        "navigation": [
+            {
+                "title": "Аналитика",
+                "items": [
+                    {
+                        "title": "Статистика платформы",
+                        "icon": "bar_chart",
+                        "link": "/admin/stats/",
+                    },
+                ],
+            },
+            {
+                "title": "Пользователи и тенанты",
+                "collapsible": True,
+                "items": [
+                    {"title": "Тенанты", "icon": "domain", "link": "/admin/tenants/tenant/"},
+                    {"title": "Пользователи", "icon": "person", "link": "/admin/users/user/"},
+                    {"title": "API-ключи", "icon": "key", "link": "/admin/tenants/apikey/"},
+                ],
+            },
+            {
+                "title": "Биллинг",
+                "collapsible": True,
+                "items": [
+                    {"title": "Тарифные планы", "icon": "sell", "link": "/admin/billing/plan/"},
+                    {"title": "Подписки", "icon": "subscriptions", "link": "/admin/billing/subscription/"},
+                    {"title": "Счета", "icon": "receipt", "link": "/admin/billing/invoice/"},
+                ],
+            },
+            {
+                "title": "Товары и маркетплейсы",
+                "collapsible": True,
+                "items": [
+                    {"title": "Товары", "icon": "inventory_2", "link": "/admin/products/product/"},
+                    {"title": "Листинги", "icon": "storefront", "link": "/admin/marketplaces/listing/"},
+                    {"title": "Аккаунты", "icon": "manage_accounts", "link": "/admin/marketplaces/marketplaceaccount/"},
+                    {
+                        "title": "Источники данных",
+                        "icon": "database",
+                        "link": "/admin/datasources/datasourceconnection/",
+                    },
+                ],
+            },
+            {
+                "title": "Система",
+                "collapsible": True,
+                "items": [
+                    {"title": "Логи синхронизации", "icon": "sync", "link": "/admin/sync/synclog/"},
+                    {
+                        "title": "Настройки уведомлений",
+                        "icon": "notifications",
+                        "link": "/admin/notifications/tenantnotificationsettings/",
+                    },
+                    {
+                        "title": "Периодические задачи",
+                        "icon": "schedule",
+                        "link": "/admin/django_celery_beat/periodictask/",
+                    },
+                ],
+            },
+        ],
+    },
+}
+
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
@@ -109,6 +179,13 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Europe/Moscow'
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+CELERY_BEAT_SCHEDULE = {
+    'cleanup-old-logs-daily': {
+        'task': 'apps.notifications.tasks.cleanup_old_logs',
+        'schedule': 60 * 60 * 24,  # раз в сутки
+        'options': {'queue': 'notifications'},
+    },
+}
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 3600
 CELERY_TASK_SOFT_TIME_LIMIT = 3300
@@ -130,6 +207,7 @@ CELERY_TASK_DEFAULT_QUEUE = 'sync_import'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'apps.tenants.authentication.APIKeyAuthentication',
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -142,6 +220,22 @@ REST_FRAMEWORK = {
     ],
     'EXCEPTION_HANDLER': 'apps.core.exceptions.map_exception_handler',
 }
+
+# --- JWT ---
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'TOKEN_OBTAIN_SERIALIZER': 'apps.tenants.jwt_serializers.TenantTokenObtainPairSerializer',
+}
+
+# --- CORS ---
+CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
+CORS_ALLOW_CREDENTIALS = True
 
 # --- Swagger ---
 SPECTACULAR_SETTINGS = {
@@ -192,6 +286,7 @@ AVITO_CLIENT_SECRET = os.environ.get('AVITO_CLIENT_SECRET', '')
 # --- Биллинг ---
 YOOKASSA_SHOP_ID = os.environ.get('YOOKASSA_SHOP_ID', '')
 YOOKASSA_SECRET_KEY = os.environ.get('YOOKASSA_SECRET_KEY', '')
+SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8000')
 
 # --- Уведомления ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')

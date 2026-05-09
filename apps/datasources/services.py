@@ -6,8 +6,11 @@ from apps.datasources.registry import get_adapter
 
 
 class ConnectionService:
+    """Сервис управления подключениями к источникам данных."""
+
     @staticmethod
     def create(tenant, data: dict) -> DataSourceConnection:
+        """Создаёт подключение с зашифрованными credentials."""
         credentials = data.pop('credentials')
         return DataSourceConnection.objects.create(
             tenant=tenant,
@@ -17,6 +20,7 @@ class ConnectionService:
 
     @staticmethod
     def update(connection_id: int, tenant, data: dict) -> DataSourceConnection:
+        """Обновляет поля подключения. Credentials шифруются если переданы."""
         conn = get_object_or_404(DataSourceConnection, pk=connection_id, tenant=tenant)
         credentials = data.pop('credentials', None)
         if credentials is not None:
@@ -31,10 +35,12 @@ class ConnectionService:
 
     @staticmethod
     def delete(connection_id: int, tenant) -> None:
+        """Удаляет подключение тенанта."""
         get_object_or_404(DataSourceConnection, pk=connection_id, tenant=tenant).delete()
 
     @staticmethod
     def test(connection_id: int, tenant) -> dict:
+        """Проверяет доступность источника и обновляет last_sync_status."""
         conn = get_object_or_404(DataSourceConnection, pk=connection_id, tenant=tenant)
         try:
             adapter = get_adapter(conn)
