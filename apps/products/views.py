@@ -1,4 +1,5 @@
 from django.db.models import Q
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -9,6 +10,7 @@ from apps.products.serializers import ProductSerializer
 from apps.products.tasks import import_from_datasource
 
 
+@extend_schema(tags=['Products'])
 class ProductListView(APIView):
     """
     GET /api/v1/products/ — список товаров тенанта с поиском и фильтрацией.
@@ -47,6 +49,7 @@ class ProductListView(APIView):
         return paginator.get_paginated_response(ProductSerializer(page, many=True).data)
 
 
+@extend_schema(tags=['Products'])
 class ProductDetailView(APIView):
     """GET /api/v1/products/{pk}/ — карточка товара."""
 
