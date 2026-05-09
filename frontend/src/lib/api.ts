@@ -217,6 +217,11 @@ export const categoryApi = {
     api.put(`/categories/mappings/${id}/`, data),
 };
 
+// Listings
+export const listingApi = {
+  list: (params?: Record<string, unknown>) => api.get('/listings/', { params }),
+};
+
 // Logs
 export const logApi = {
   list: (params?: Record<string, unknown>) => api.get('/logs/', { params }),
