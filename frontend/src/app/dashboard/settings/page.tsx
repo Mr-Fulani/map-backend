@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { tenantApi, accountApi } from '@/lib/api';
+import { tenantApi, accountApi, notificationApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -11,8 +11,9 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check } from 'lucide-react';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff } from 'lucide-react';
 
 interface ApiKey {
   id: number;
@@ -31,6 +32,14 @@ interface Account {
   created_at: string;
 }
 
+interface NotificationSettings {
+  telegram_connected: boolean;
+  telegram_username: string;
+  notify_email: string;
+  notify_on_error: boolean;
+  notify_on_critical: boolean;
+}
+
 export default function SettingsPage() {
   const { user, tenant } = useAuth();
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
@@ -44,6 +53,17 @@ export default function SettingsPage() {
   const [revokingId, setRevokingId] = useState<number | null>(null);
   const [deletingAccountId, setDeletingAccountId] = useState<number | null>(null);
 
+  // Notifications state
+  const [notifSettings, setNotifSettings] = useState<NotificationSettings | null>(null);
+  const [loadingNotif, setLoadingNotif] = useState(true);
+  const [connectingTg, setConnectingTg] = useState(false);
+  const [disconnectingTg, setDisconnectingTg] = useState(false);
+  const [testingNotif, setTestingNotif] = useState(false);
+  const [savingNotif, setSavingNotif] = useState(false);
+  const [notifEmail, setNotifEmail] = useState('');
+  const [notifOnError, setNotifOnError] = useState(true);
+  const [notifOnCritical, setNotifOnCritical] = useState(true);
+
   useEffect(() => {
     tenantApi.getApiKeys()
       .then((r) => setApiKeys(r.data.data ?? r.data))
@@ -54,6 +74,17 @@ export default function SettingsPage() {
       .then((r) => setAccounts(r.data.data ?? r.data))
       .catch(() => {})
       .finally(() => setLoadingAccounts(false));
+
+    notificationApi.getSettings()
+      .then((r) => {
+        const d = r.data.data as NotificationSettings;
+        setNotifSettings(d);
+        setNotifEmail(d.notify_email);
+        setNotifOnError(d.notify_on_error);
+        setNotifOnCritical(d.notify_on_critical);
+      })
+      .catch(() => {})
+      .finally(() => setLoadingNotif(false));
   }, []);
 
   async function createKey() {
@@ -98,6 +129,71 @@ export default function SettingsPage() {
     }
   }
 
+  async function connectTelegram() {
+    setConnectingTg(true);
+    try {
+      const res = await notificationApi.telegramConnect();
+      const botUrl = res.data.data?.bot_url as string;
+      window.open(botUrl, '_blank');
+      toast.info('Откройте бота в Telegram и нажмите START. После привязки обновите страницу.');
+    } catch {
+      toast.error('Не удалось создать ссылку. Проверьте настройки бота на сервере.');
+    } finally {
+      setConnectingTg(false);
+    }
+  }
+
+  async function disconnectTelegram() {
+    setDisconnectingTg(true);
+    try {
+      const res = await notificationApi.telegramDisconnect();
+      setNotifSettings(res.data.data as NotificationSettings);
+      toast.success('Telegram отвязан');
+    } catch {
+      toast.error('Ошибка при отвязке Telegram');
+    } finally {
+      setDisconnectingTg(false);
+    }
+  }
+
+  async function testNotification() {
+    setTestingNotif(true);
+    try {
+      await notificationApi.test();
+      toast.success('Тестовое сообщение отправлено в Telegram');
+    } catch {
+      toast.error('Не удалось отправить. Проверьте подключение Telegram.');
+    } finally {
+      setTestingNotif(false);
+    }
+  }
+
+  async function saveNotifSettings(overrides?: Partial<{ notify_on_error: boolean; notify_on_critical: boolean }>) {
+    setSavingNotif(true);
+    try {
+      const res = await notificationApi.updateSettings({
+        notify_email: notifEmail,
+        notify_on_error: overrides?.notify_on_error ?? notifOnError,
+        notify_on_critical: overrides?.notify_on_critical ?? notifOnCritical,
+      });
+      setNotifSettings(res.data.data as NotificationSettings);
+    } catch {
+      toast.error('Ошибка сохранения');
+    } finally {
+      setSavingNotif(false);
+    }
+  }
+
+  async function toggleOnError(value: boolean) {
+    setNotifOnError(value);
+    await saveNotifSettings({ notify_on_error: value, notify_on_critical: notifOnCritical });
+  }
+
+  async function toggleOnCritical(value: boolean) {
+    setNotifOnCritical(value);
+    await saveNotifSettings({ notify_on_error: notifOnError, notify_on_critical: value });
+  }
+
   function copyKey() {
     if (!newKeyValue) return;
     navigator.clipboard.writeText(newKeyValue);
@@ -117,6 +213,7 @@ export default function SettingsPage() {
           <TabsTrigger value="organization">Организация</TabsTrigger>
           <TabsTrigger value="api-keys">API-ключи</TabsTrigger>
           <TabsTrigger value="accounts">Avito-аккаунты</TabsTrigger>
+          <TabsTrigger value="notifications">Уведомления</TabsTrigger>
         </TabsList>
 
         {/* Организация */}
@@ -274,6 +371,144 @@ export default function SettingsPage() {
                     </div>
                   ))}
                 </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+        {/* Уведомления */}
+        <TabsContent value="notifications" className="mt-4 space-y-4">
+          {/* Telegram */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Telegram-уведомления</CardTitle>
+              <CardDescription>
+                Получайте алерты об ошибках и важных событиях прямо в Telegram.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingNotif ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-48" />
+                </div>
+              ) : notifSettings?.telegram_connected ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-3 rounded-lg border border-green-500/30 bg-green-500/5 p-4">
+                    <Bell className="h-5 w-5 shrink-0 text-green-600" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-green-700">Telegram подключён</p>
+                      {notifSettings.telegram_username && (
+                        <p className="text-xs text-muted-foreground">@{notifSettings.telegram_username}</p>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={testNotification}
+                        disabled={testingNotif}
+                      >
+                        {testingNotif ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Тест'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        onClick={disconnectTelegram}
+                        disabled={disconnectingTg}
+                      >
+                        {disconnectingTg
+                          ? <Loader2 className="h-4 w-4 animate-spin" />
+                          : <BellOff className="h-4 w-4" />
+                        }
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-lg border border-dashed p-6 text-center">
+                    <Bell className="mx-auto mb-3 h-8 w-8 text-muted-foreground opacity-50" />
+                    <p className="mb-1 text-sm font-medium">Telegram не подключён</p>
+                    <p className="mb-4 text-xs text-muted-foreground">
+                      Нажмите кнопку, откройте бота и нажмите START — привязка займёт 10 секунд.
+                    </p>
+                    <Button onClick={connectTelegram} disabled={connectingTg}>
+                      {connectingTg
+                        ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        : <ExternalLink className="mr-2 h-4 w-4" />
+                      }
+                      Подключить Telegram
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Email и флаги */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Email и уровни уведомлений</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-5">
+              {loadingNotif ? (
+                <div className="space-y-3">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-6 w-64" />
+                  <Skeleton className="h-6 w-64" />
+                </div>
+              ) : (
+                <>
+                  <div className="space-y-2">
+                    <Label>Email для уведомлений</Label>
+                    <Input
+                      type="email"
+                      placeholder="alerts@company.ru"
+                      value={notifEmail}
+                      onChange={(e) => setNotifEmail(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Используется для критических событий и уведомлений о биллинге.
+                    </p>
+                  </div>
+
+                  <Separator />
+
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium">Ошибки</p>
+                        <p className="text-xs text-muted-foreground">
+                          Telegram-уведомления при ошибках публикации
+                        </p>
+                      </div>
+                      <Switch
+                        checked={notifOnError}
+                        disabled={savingNotif}
+                        onCheckedChange={toggleOnError}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-sm font-medium">Критические события</p>
+                        <p className="text-xs text-muted-foreground">
+                          Telegram + Email при блокировке аккаунта, исчерпании лимитов
+                        </p>
+                      </div>
+                      <Switch
+                        checked={notifOnCritical}
+                        disabled={savingNotif}
+                        onCheckedChange={toggleOnCritical}
+                      />
+                    </div>
+                  </div>
+
+                  <Button onClick={() => saveNotifSettings()} disabled={savingNotif}>
+                    {savingNotif && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Сохранить email
+                  </Button>
+                </>
               )}
             </CardContent>
           </Card>

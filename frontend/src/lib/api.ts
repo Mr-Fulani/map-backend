@@ -232,6 +232,15 @@ export const analyticsApi = {
   get: (params?: Record<string, unknown>) => api.get('/analytics/', { params }),
 };
 
+// Notifications
+export const notificationApi = {
+  getSettings: () => api.get('/notifications/settings/'),
+  updateSettings: (data: Record<string, unknown>) => api.put('/notifications/settings/', data),
+  telegramConnect: () => api.post('/notifications/settings/telegram/connect/'),
+  telegramDisconnect: () => api.delete('/notifications/settings/telegram/'),
+  test: () => api.post('/notifications/settings/test/'),
+};
+
 // Webhooks
 export const webhookApi = {
   list: () => api.get('/webhooks/'),

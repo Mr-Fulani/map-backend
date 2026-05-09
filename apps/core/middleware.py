@@ -114,5 +114,6 @@ class TenantMiddleware:
             '/api/v1/auth/token/',
             '/api/v1/billing/plans/',
             '/api/v1/billing/webhook/',
+            '/api/v1/notifications/webhook/telegram/',
         )
         return any(path.startswith(p) for p in PUBLIC_PREFIXES)

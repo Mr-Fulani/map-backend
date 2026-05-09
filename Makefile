@@ -1,4 +1,4 @@
-.PHONY: up down dev frontend rebuild restart logs logs-django logs-celery shell migrate migrations test lint seed backup
+.PHONY: up down dev frontend rebuild restart restart-django logs logs-django logs-celery shell migrate migrations test lint seed backup telegram-poll
 
 up:
 	docker compose up -d
@@ -23,6 +23,10 @@ rebuild:
 # Перезапуск всех Docker-сервисов (без пересборки)
 restart:
 	docker compose restart
+
+# Перезапуск только Django (например, после изменения .env)
+restart-django:
+	docker compose restart django
 
 # Логи всех сервисов (live)
 logs:
@@ -54,6 +58,10 @@ lint:
 
 seed:
 	docker compose exec django python manage.py seed_plans
+
+# Telegram long polling для локальной разработки (вместо webhook)
+telegram-poll:
+	docker compose exec django python manage.py telegram_poll
 
 backup:
 	docker compose exec db pg_dump -U map_user map_db | gzip > backup_$$(date +%Y%m%d_%H%M%S).sql.gz
