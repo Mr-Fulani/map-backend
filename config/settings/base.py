@@ -85,7 +85,11 @@ UNFOLD = {
                     {"title": "Товары", "icon": "inventory_2", "link": "/admin/products/product/"},
                     {"title": "Листинги", "icon": "storefront", "link": "/admin/marketplaces/listing/"},
                     {"title": "Аккаунты", "icon": "manage_accounts", "link": "/admin/marketplaces/marketplaceaccount/"},
-                    {"title": "Источники данных", "icon": "database", "link": "/admin/datasources/datasourceconnection/"},
+                    {
+                        "title": "Источники данных",
+                        "icon": "database",
+                        "link": "/admin/datasources/datasourceconnection/",
+                    },
                 ],
             },
             {
@@ -93,8 +97,16 @@ UNFOLD = {
                 "collapsible": True,
                 "items": [
                     {"title": "Логи синхронизации", "icon": "sync", "link": "/admin/sync/synclog/"},
-                    {"title": "Настройки уведомлений", "icon": "notifications", "link": "/admin/notifications/tenantnotificationsettings/"},
-                    {"title": "Периодические задачи", "icon": "schedule", "link": "/admin/django_celery_beat/periodictask/"},
+                    {
+                        "title": "Настройки уведомлений",
+                        "icon": "notifications",
+                        "link": "/admin/notifications/tenantnotificationsettings/",
+                    },
+                    {
+                        "title": "Периодические задачи",
+                        "icon": "schedule",
+                        "link": "/admin/django_celery_beat/periodictask/",
+                    },
                 ],
             },
         ],
