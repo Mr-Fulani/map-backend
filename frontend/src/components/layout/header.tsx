@@ -4,6 +4,7 @@
 
 'use client';
 
+import Link from 'next/link';
 import { Moon, Sun, LogOut, User, Building2, Menu } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useAuth } from '@/lib/auth-context';
@@ -105,9 +106,11 @@ export function Header() {
               </div>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
-            <DropdownMenuItem>
-              <User className="mr-2 h-4 w-4" />
-              Профиль
+            <DropdownMenuItem asChild>
+              <Link href="/dashboard/settings#profile">
+                <User className="mr-2 h-4 w-4" />
+                Профиль
+              </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={logout} className="text-destructive">
