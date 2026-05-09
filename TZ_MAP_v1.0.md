@@ -175,8 +175,10 @@ class AvitoAdapter(BaseMarketplaceAdapter): pass     # MVP
 | Брокер | Redis | 7.x | |
 | СУБД | PostgreSQL | 16 | |
 | Файлы | django-storages + boto3 | latest | Yandex Cloud S3 |
-| AI (основной) | Anthropic Claude API | claude-sonnet-4 | |
-| AI (резерв) | OpenAI GPT-4o | latest | |
+| AI (основной, базовые тарифы) | Anthropic Claude API | claude-3-5-haiku-latest | В 10 раз дешевле Sonnet |
+| AI (основной, тариф Pro) | Anthropic Claude API | claude-3-5-sonnet-latest | Для сложных генераций |
+| AI (резерв) | OpenAI API | gpt-4o-mini | Fallback для базовых тарифов |
+| AI (резерв, тариф Pro) | OpenAI API | gpt-4o | Fallback для тарифа Pro |
 | Платежи | YooKassa SDK | latest | РФ рынок |
 | Уведомления | Telegram Bot API | 7.x | |
 | Email | SendPulse SMTP | — | Российский провайдер, без санкционных рисков |
@@ -662,9 +664,15 @@ class DescriptionAgent:
             raise AICreditsExhausted(reason)
 
         try:
-            result = self._call_claude(product)
+            if tenant.plan.slug == 'pro':
+                result = self._call_claude(product, model='claude-3-5-sonnet-latest')
+            else:
+                result = self._call_claude(product, model='claude-3-5-haiku-latest')
         except (anthropic.APIError, anthropic.RateLimitError):
-            result = self._call_openai(product)   # fallback
+            if tenant.plan.slug == 'pro':
+                result = self._call_openai(product, model='gpt-4o')   # fallback
+            else:
+                result = self._call_openai(product, model='gpt-4o-mini')   # fallback
 
         # Инкрементировать счётчик
         Tenant.objects.filter(pk=tenant.pk).update(
@@ -672,9 +680,9 @@ class DescriptionAgent:
         )
         return result
 
-    def _call_claude(self, product) -> dict:
+    def _call_claude(self, product, model) -> dict:
         response = anthropic.messages.create(
-            model='claude-sonnet-4-20250514',
+            model=model,
             max_tokens=1000,
             system=self.SYSTEM_PROMPT,
             messages=[{'role': 'user', 'content': self._build_message(product)}]

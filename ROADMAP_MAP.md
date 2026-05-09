@@ -446,8 +446,8 @@ apps/ai_agent/
 **День 27 — DescriptionAgent**
 - [ ] `apps/ai_agent/services.py`:
   - `DescriptionAgent.generate(product, tenant, variation_index=0) -> dict`
-  - `_call_claude(product) -> dict`
-  - `_call_openai(product) -> dict` (fallback)
+  - `_call_claude(product, model) -> dict`
+  - `_call_openai(product, model) -> dict` (fallback)
   - Инкремент `tenant.ai_credits_used` через `F()` атомарно
 - [ ] `apps/ai_agent/prompts.py` — полный system prompt из ТЗ
 - [ ] `apps/ai_agent/validators.py`:
@@ -489,7 +489,7 @@ apps/ai_agent/
 ### ✅ Критерий завершения этапа 6
 - [ ] 10 тестовых товаров → 10 корректных описаний (title 50–100, description ≤ 7500)
 - [ ] confidence < 0.5 → статус `requires_review`
-- [ ] Claude недоступен → fallback GPT-4o без исключения
+- [ ] Claude недоступен → fallback GPT-4o / GPT-4o-mini без исключения
 - [ ] AI-кредиты учитываются per-tenant
 
 ---
