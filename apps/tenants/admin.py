@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.contrib import admin
 from django.utils import timezone
@@ -93,8 +93,9 @@ class TenantAdmin(ModelAdmin):
         if not end_date:
             return '—'
 
-        now = timezone.now()
-        days = (end_date - now).days
+        # current_period_end — DateField, сравниваем с date()
+        today = timezone.now().date()
+        days = (end_date - today).days
 
         if days < 0:
             return format_html(
@@ -130,18 +131,20 @@ class TenantAdmin(ModelAdmin):
     @admin.action(description='Продлить триал на 14 дней')
     def extend_trial_14_days(self, request, queryset):
         """Продлевает триал выбранных тенантов на 14 дней и синхронизирует подписку."""
-        now = timezone.now()
+        today = timezone.now().date()
         extended = 0
         for tenant in queryset:
             try:
                 sub = tenant.subscription
-                base = sub.current_period_end if sub.current_period_end and sub.current_period_end > now else now
+                base = sub.current_period_end if sub.current_period_end and sub.current_period_end > today else today
                 new_end = base + timedelta(days=14)
                 sub.current_period_end = new_end
                 sub.status = 'trial'
                 sub.save(update_fields=['current_period_end', 'status'])
-                # Синхронизируем trial_ends_at
-                tenant.trial_ends_at = new_end
+                # trial_ends_at — DateTimeField, конвертируем date → datetime
+                tenant.trial_ends_at = timezone.make_aware(
+                    timezone.datetime.combine(new_end, timezone.datetime.min.time())
+                )
                 tenant.save(update_fields=['trial_ends_at'])
                 extended += 1
             except Exception:
