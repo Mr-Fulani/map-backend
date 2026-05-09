@@ -1,10 +1,40 @@
-.PHONY: up down shell migrate migrations test lint seed backup
+.PHONY: up down dev frontend rebuild restart logs logs-django logs-celery shell migrate migrations test lint seed backup
 
 up:
 	docker compose up -d
 
 down:
 	docker compose down
+
+# Запустить бэкенд + фронтенд одной командой
+dev:
+	./dev.sh
+
+# Только Next.js dev server
+frontend:
+	cd frontend && npm run dev
+
+# Пересобрать Docker-образы и перезапустить
+rebuild:
+	docker compose down
+	docker compose build --no-cache
+	docker compose up -d
+
+# Перезапуск всех Docker-сервисов (без пересборки)
+restart:
+	docker compose restart
+
+# Логи всех сервисов (live)
+logs:
+	docker compose logs -f
+
+# Логи только Django
+logs-django:
+	docker compose logs -f django
+
+# Логи Celery (worker + beat)
+logs-celery:
+	docker compose logs -f celery_worker celery_beat
 
 shell:
 	docker compose exec django bash

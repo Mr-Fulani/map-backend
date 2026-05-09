@@ -113,3 +113,28 @@ class Listing(TimestampedModel):
 
     def __str__(self):
         return f'Listing #{self.pk} [{self.status}]'
+
+
+class ListingStats(models.Model):
+    """Ежедневный снимок статистики листинга с Avito."""
+
+    listing = models.ForeignKey(
+        Listing, on_delete=models.CASCADE, related_name='stats',
+    )
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='listing_stats',
+    )
+    date = models.DateField()
+    views = models.PositiveIntegerField(default=0)
+    contacts = models.PositiveIntegerField(default=0)
+    impressions = models.PositiveIntegerField(default=0)
+    ctr = models.FloatField(default=0.0)
+
+    class Meta:
+        unique_together = [('listing', 'date')]
+        indexes = [
+            models.Index(fields=['tenant', 'date']),
+        ]
+
+    def __str__(self):
+        return f'Stats listing#{self.listing_id} {self.date}'

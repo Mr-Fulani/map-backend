@@ -226,3 +226,8 @@ export const listingApi = {
 export const logApi = {
   list: (params?: Record<string, unknown>) => api.get('/logs/', { params }),
 };
+
+// Analytics
+export const analyticsApi = {
+  get: (params?: Record<string, unknown>) => api.get('/analytics/', { params }),
+};
