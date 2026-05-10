@@ -1,6 +1,8 @@
 .PHONY: up down dev frontend rebuild restart restart-django logs logs-django logs-celery shell migrate migrations test lint seed backup telegram-poll
 
 up:
+	docker image prune -f > /dev/null 2>&1 || true
+	docker builder prune -f --filter "until=168h" > /dev/null 2>&1 || true
 	docker compose up -d
 
 down:

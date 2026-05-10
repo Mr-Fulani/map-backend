@@ -13,8 +13,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff } from 'lucide-react';
-import { profileApi } from '@/lib/api';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2 } from 'lucide-react';
+import { profileApi, datasourceApi } from '@/lib/api';
 
 interface ApiKey {
   id: number;
@@ -33,6 +33,14 @@ interface Account {
   created_at: string;
 }
 
+interface DataSource {
+  id: number;
+  name: string;
+  type: string;
+  url?: string;
+  is_active?: boolean;
+}
+
 interface NotificationSettings {
   telegram_connected: boolean;
   telegram_username: string;
@@ -41,7 +49,7 @@ interface NotificationSettings {
   notify_on_critical: boolean;
 }
 
-const SETTINGS_TABS = ['profile', 'organization', 'api-keys', 'accounts', 'notifications'] as const;
+const SETTINGS_TABS = ['profile', 'organization', 'api-keys', 'accounts', 'datasources', 'notifications'] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
 
 export default function SettingsPage() {
@@ -49,14 +57,28 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [datasources, setDatasources] = useState<DataSource[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
+  const [loadingDatasources, setLoadingDatasources] = useState(true);
   const [newKeyName, setNewKeyName] = useState('');
   const [creatingKey, setCreatingKey] = useState(false);
   const [newKeyValue, setNewKeyValue] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [revokingId, setRevokingId] = useState<number | null>(null);
   const [deletingAccountId, setDeletingAccountId] = useState<number | null>(null);
+  const [deletingDatasourceId, setDeletingDatasourceId] = useState<number | null>(null);
+  
+  // File upload state
+  const [csvFile, setCsvFile] = useState<File | null>(null);
+  const [uploadingCsv, setUploadingCsv] = useState(false);
+  
+  // Add Avito Account state
+  const [showAddAccount, setShowAddAccount] = useState(false);
+  const [newAccountName, setNewAccountName] = useState('');
+  const [newClientId, setNewClientId] = useState('');
+  const [newClientSecret, setNewClientSecret] = useState('');
+  const [creatingAccount, setCreatingAccount] = useState(false);
 
   // Синхронизация активной вкладки с URL-хэшем
   const didMount = useRef(false);
@@ -116,6 +138,11 @@ export default function SettingsPage() {
       .then((r) => setAccounts(r.data.data ?? r.data))
       .catch(() => {})
       .finally(() => setLoadingAccounts(false));
+
+    datasourceApi.list()
+      .then((r) => setDatasources(r.data.data ?? r.data))
+      .catch(() => {})
+      .finally(() => setLoadingDatasources(false));
 
     notificationApi.getSettings()
       .then((r) => {
@@ -204,6 +231,35 @@ export default function SettingsPage() {
     }
   }
 
+  async function createAccount(e: React.FormEvent) {
+    e.preventDefault();
+    setCreatingAccount(true);
+    try {
+      const { data: result } = await accountApi.create({
+        marketplace: 'avito',
+        name: newAccountName || 'Новый аккаунт',
+        external_id: newClientId,
+        client_id: newClientId,
+        client_secret: newClientSecret,
+      });
+      toast.success('Аккаунт добавлен');
+      setAccounts((prev) => [...prev, result.data ?? result]);
+      setShowAddAccount(false);
+      setNewAccountName('');
+      setNewClientId('');
+      setNewClientSecret('');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { status?: number; data?: Record<string, unknown> } };
+      if (axiosErr?.response?.status === 409) {
+        toast.error('Аккаунт с таким Client ID уже существует');
+        return;
+      }
+      toast.error('Ошибка при добавлении аккаунта');
+    } finally {
+      setCreatingAccount(false);
+    }
+  }
+
   async function deleteAccount(id: number) {
     setDeletingAccountId(id);
     try {
@@ -214,6 +270,39 @@ export default function SettingsPage() {
       toast.error('Ошибка при удалении аккаунта');
     } finally {
       setDeletingAccountId(null);
+    }
+  }
+
+  async function deleteDatasource(id: number) {
+    setDeletingDatasourceId(id);
+    try {
+      await datasourceApi.delete(id);
+      setDatasources((prev) => prev.filter((d) => d.id !== id));
+      toast.success('Источник данных удалён');
+    } catch {
+      toast.error('Ошибка при удалении источника данных');
+    } finally {
+      setDeletingDatasourceId(null);
+    }
+  }
+
+  async function handleUploadCsv(e: React.FormEvent) {
+    e.preventDefault();
+    if (!csvFile) return;
+    setUploadingCsv(true);
+    try {
+      const { data: uploadResult } = await datasourceApi.uploadCsv(csvFile);
+      toast.success(`Файл загружен: ${uploadResult.data?.rows_count || uploadResult.items?.length || 0} строк`);
+      setCsvFile(null);
+      
+      const r = await datasourceApi.list();
+      setDatasources(r.data.data ?? r.data);
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string; message?: string } } };
+      const message = axiosErr?.response?.data?.detail || axiosErr?.response?.data?.message || 'Ошибка загрузки файла';
+      toast.error(message);
+    } finally {
+      setUploadingCsv(false);
     }
   }
 
@@ -304,6 +393,7 @@ export default function SettingsPage() {
             <TabsTrigger value="organization">Организация</TabsTrigger>
             <TabsTrigger value="api-keys">API-ключи</TabsTrigger>
             <TabsTrigger value="accounts">Avito-аккаунты</TabsTrigger>
+            <TabsTrigger value="datasources">Источники данных</TabsTrigger>
             <TabsTrigger value="notifications">Уведомления</TabsTrigger>
           </TabsList>
         </div>
@@ -557,11 +647,73 @@ export default function SettingsPage() {
         </TabsContent>
 
         {/* Avito аккаунты */}
-        <TabsContent value="accounts" className="mt-4">
+        <TabsContent value="accounts" className="mt-4 space-y-4">
+          {showAddAccount && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Добавить аккаунт Avito</CardTitle>
+                <CardDescription>
+                  Введите данные из кабинета разработчика Avito
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <form onSubmit={createAccount} className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Название аккаунта</Label>
+                    <Input 
+                      placeholder="Например: Основной магазин" 
+                      value={newAccountName}
+                      onChange={(e) => setNewAccountName(e.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Client ID</Label>
+                    <Input 
+                      placeholder="Client ID" 
+                      value={newClientId}
+                      onChange={(e) => setNewClientId(e.target.value)}
+                      required
+                      className="font-mono"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Client Secret</Label>
+                    <Input 
+                      type="password"
+                      placeholder="Client Secret" 
+                      value={newClientSecret}
+                      onChange={(e) => setNewClientSecret(e.target.value)}
+                      required
+                      className="font-mono"
+                    />
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => setShowAddAccount(false)}>
+                      Отмена
+                    </Button>
+                    <Button type="submit" disabled={creatingAccount || !newClientId || !newClientSecret}>
+                      {creatingAccount ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                      Добавить
+                    </Button>
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
+          )}
+
           <Card>
-            <CardHeader>
-              <CardTitle>Avito-аккаунты</CardTitle>
-              <CardDescription>Подключённые аккаунты маркетплейсов</CardDescription>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <CardTitle>Avito-аккаунты</CardTitle>
+                <CardDescription>Подключённые аккаунты маркетплейсов</CardDescription>
+              </div>
+              {!showAddAccount && (
+                <Button onClick={() => setShowAddAccount(true)} size="sm">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Добавить
+                </Button>
+              )}
             </CardHeader>
             <CardContent>
               {loadingAccounts ? (
@@ -606,6 +758,117 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* Источники данных */}
+        <TabsContent value="datasources" className="mt-4 space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Загрузить прайс-лист (CSV/Excel)</CardTitle>
+              <CardDescription>
+                Ручная загрузка файла с товарами. Обязательные колонки: article, name, price, stock_qty.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleUploadCsv} className="space-y-4">
+                <div className="flex items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors hover:border-primary/50">
+                  <label
+                    htmlFor="csv-upload"
+                    className="flex cursor-pointer flex-col items-center gap-2 text-center"
+                  >
+                    <Upload className="h-8 w-8 text-muted-foreground" />
+                    <span className="text-sm font-medium">
+                      {csvFile ? csvFile.name : 'Нажмите для выбора файла'}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      Форматы: .csv, .xls, .xlsx
+                    </span>
+                    <input
+                      id="csv-upload"
+                      type="file"
+                      accept=".csv,.xlsx,.xls"
+                      className="hidden"
+                      onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
+                    />
+                  </label>
+                </div>
+                <div className="flex justify-end">
+                  <Button type="submit" disabled={!csvFile || uploadingCsv}>
+                    {uploadingCsv ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Загрузка...
+                      </>
+                    ) : (
+                      'Загрузить файл'
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Источники данных</CardTitle>
+              <CardDescription>Подключённые системы и загруженные файлы</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingDatasources ? (
+                <div className="space-y-2">
+                  {[1, 2].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
+                </div>
+              ) : datasources.length === 0 ? (
+                <p className="py-8 text-center text-sm text-muted-foreground">
+                  Источников данных нет.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  {datasources.map((ds) => (
+                    <div key={ds.id} className="flex items-center justify-between rounded-lg border p-4">
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1">
+                          {ds.type === 'csv' ? (
+                            <FileSpreadsheet className="h-5 w-5 text-muted-foreground" />
+                          ) : ds.type === '1c_http' ? (
+                            <Server className="h-5 w-5 text-muted-foreground" />
+                          ) : (
+                            <FileCode2 className="h-5 w-5 text-muted-foreground" />
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{ds.name}</span>
+                            {ds.is_active !== undefined && (
+                              <Badge variant={ds.is_active ? 'default' : 'secondary'}>
+                                {ds.is_active ? 'Активен' : 'Неактивен'}
+                              </Badge>
+                            )}
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground uppercase">
+                            {ds.type} {ds.url ? `· ${ds.url}` : ''}
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive hover:text-destructive"
+                        onClick={() => deleteDatasource(ds.id)}
+                        disabled={deletingDatasourceId === ds.id}
+                      >
+                        {deletingDatasourceId === ds.id
+                          ? <Loader2 className="h-4 w-4 animate-spin" />
+                          : <Trash2 className="h-4 w-4" />
+                        }
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
         {/* Уведомления */}
         <TabsContent value="notifications" className="mt-4 space-y-4">
           {/* Telegram */}

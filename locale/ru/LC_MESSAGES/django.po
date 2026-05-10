@@ -94,3 +94,12 @@ msgstr "Да"
 
 msgid "False"
 msgstr "Нет"
+
+msgid ""
+"Raw passwords are not stored, so there is no way to see this user’s "
+"password, but you can change the password using <a href=\"{}\" class="
+"\"text-primary-600 dark:text-primary-500\">this form</a>."
+msgstr ""
+"Пароли хранятся в зашифрованном виде, поэтому нет возможности посмотреть "
+"пароль этого пользователя, но вы можете изменить его, используя <a "
+"href=\"{}\" class=\"text-primary-600 dark:text-primary-500\">эту форму</a>."
