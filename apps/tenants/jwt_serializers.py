@@ -21,9 +21,13 @@ class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
     def validate(self, attrs):
         # Извлекаем tenant_slug до вызова super(), т.к. super() не знает о нём
         tenant_slug = attrs.pop('tenant_slug', None)
-        data = super().validate(attrs)
 
-        # Определяем tenant для пользователя
+        # 1. Аутентифицируем пользователя через базовый класс (проверяет email/password)
+        # Для этого используем TokenObtainSerializer, чтобы пока не генерировать токены
+        from rest_framework_simplejwt.serializers import TokenObtainSerializer
+        data = super(TokenObtainPairSerializer, self).validate(attrs)
+
+        # 2. Теперь self.user доступен, определяем его тенант
         from apps.tenants.models import TenantUser
         memberships = TenantUser.objects.filter(
             user=self.user
@@ -50,7 +54,16 @@ class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
                 {'detail': 'Организация заблокирована.'}
             )
 
-        # Добавляем tenant info в response (не в token)
+        # 3. Сохраняем membership в user, чтобы get_token мог его использовать
+        self.user._current_tenant_membership = membership
+
+        # 4. Генерируем токены с правильным payload
+        refresh = self.get_token(self.user)
+
+        data["refresh"] = str(refresh)
+        data["access"] = str(refresh.access_token)
+
+        # 5. Добавляем tenant info в response
         data['tenant'] = {
             'id': tenant.pk,
             'slug': tenant.slug,
@@ -68,9 +81,13 @@ class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
     def get_token(cls, user):
         token = super().get_token(user)
 
-        # Добавляем claims в JWT payload
-        from apps.tenants.models import TenantUser
-        membership = TenantUser.objects.filter(user=user).select_related('tenant').first()
+        # Добавляем claims в JWT payload из сохраненного контекста
+        if hasattr(user, '_current_tenant_membership'):
+            membership = user._current_tenant_membership
+        else:
+            from apps.tenants.models import TenantUser
+            membership = TenantUser.objects.filter(user=user).select_related('tenant').first()
+            
         if membership:
             token['tenant_id'] = membership.tenant.pk
             token['tenant_slug'] = membership.tenant.slug
