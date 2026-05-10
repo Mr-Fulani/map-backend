@@ -1,0 +1,10 @@
+__pycache__
+*.pyc
+*.pyo
+.git
+.env
+frontend/node_modules
+frontend/.next
+media
+staticfiles
+.DS_Store
