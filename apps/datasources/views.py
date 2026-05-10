@@ -88,13 +88,13 @@ class CSVUploadView(APIView):
             else:
                 items = adapter.process_uploaded_file(tmp_path)
                 from apps.datasources.services import ConnectionService
-                
+
                 result_data = ConnectionService.process_csv_upload(
                     tenant=request.tenant,
                     file_name=file_obj.name,
                     items=items
                 )
-                
+
                 result = {
                     'data': result_data
                 }

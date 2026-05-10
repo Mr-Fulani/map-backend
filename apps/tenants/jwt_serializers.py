@@ -23,8 +23,7 @@ class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
         tenant_slug = attrs.pop('tenant_slug', None)
 
         # 1. Аутентифицируем пользователя через базовый класс (проверяет email/password)
-        # Для этого используем TokenObtainSerializer, чтобы пока не генерировать токены
-        from rest_framework_simplejwt.serializers import TokenObtainSerializer
+        # super() вызывается через TokenObtainPairSerializer, чтобы пока не генерировать токены
         data = super(TokenObtainPairSerializer, self).validate(attrs)
 
         # 2. Теперь self.user доступен, определяем его тенант
@@ -87,7 +86,7 @@ class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
         else:
             from apps.tenants.models import TenantUser
             membership = TenantUser.objects.filter(user=user).select_related('tenant').first()
-            
+
         if membership:
             token['tenant_id'] = membership.tenant.pk
             token['tenant_slug'] = membership.tenant.slug

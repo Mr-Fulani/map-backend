@@ -9,7 +9,7 @@ from .models import User
 @admin.register(User)
 class UserAdmin(ModelAdmin, BaseUserAdmin):
     """Администрирование пользователей системы."""
-    
+
     form = UserChangeForm
     add_form = UserCreationForm
     change_password_form = AdminPasswordChangeForm

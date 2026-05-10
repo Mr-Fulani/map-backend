@@ -90,9 +90,7 @@ class CSVAdapter(BaseDataSourceAdapter):
     def _normalize(self, rows: list[dict]) -> list[dict]:
         if not rows:
             return []
-            
-        headers = {k.lower().strip() for k in rows[0].keys() if k}
-        
+
         # Переименовываем колонки по алиасам для каждой строки
         normalized_rows = []
         for row in rows:
@@ -105,7 +103,7 @@ class CSVAdapter(BaseDataSourceAdapter):
                 mapped_key = self.COLUMN_ALIASES.get(k_lower, k_lower)
                 mapped_row[mapped_key] = v
             normalized_rows.append(mapped_row)
-            
+
         mapped_headers = set(normalized_rows[0].keys()) if normalized_rows else set()
         missing = [col for col in self.REQUIRED_COLUMNS if col not in mapped_headers]
         if missing:
@@ -114,7 +112,7 @@ class CSVAdapter(BaseDataSourceAdapter):
         result = []
         for i, row in enumerate(normalized_rows, start=2):
             normalized = {k: (v.strip() if isinstance(v, str) else v) for k, v in row.items()}
-            
+
             # Если цена пустая, пропускаем или ставим 0? Поставим 0 или выкинем ошибку
             price_val = str(normalized.get('price', 0)).replace(',', '.').replace(' ', '')
             try:
