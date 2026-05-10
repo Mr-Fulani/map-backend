@@ -49,6 +49,24 @@ services:
       redis:
         condition: service_healthy
 
+  celery_worker_images:
+    build: .
+    command: celery -A config worker -l info -Q image_search,image_search_bulk --concurrency=2 -n worker-images@%h
+    volumes:
+      - .:/app
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "celery", "-A", "config", "inspect", "ping", "-d", "celery@worker-images"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
   frontend:
     build:
       context: ./frontend

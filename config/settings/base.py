@@ -46,6 +46,7 @@ LOCAL_APPS = [
     'apps.notifications',
     'apps.api',
     'apps.analytics',
+    'apps.image_search',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -131,6 +132,22 @@ UNFOLD = {
                         "title": "Источники данных",
                         "icon": "database",
                         "link": "/admin/datasources/datasourceconnection/",
+                    },
+                ],
+            },
+            {
+                "title": "Изображения",
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Логи поиска",
+                        "icon": "image_search",
+                        "link": "/admin/image_search/imagesearchlog/",
+                    },
+                    {
+                        "title": "Кеш поиска",
+                        "icon": "cached",
+                        "link": "/admin/image_search/imagesearchcache/",
                     },
                 ],
             },
@@ -236,14 +253,16 @@ CELERY_TASK_SOFT_TIME_LIMIT = 3300
 
 # Очереди и их приоритеты
 CELERY_TASK_QUEUES = {
-    'sync_import':   {'exchange': 'sync_import',   'routing_key': 'sync_import'},
-    'avito_publish': {'exchange': 'avito_publish', 'routing_key': 'avito_publish'},
-    'avito_update':  {'exchange': 'avito_update',  'routing_key': 'avito_update'},
-    'avito_price':   {'exchange': 'avito_price',   'routing_key': 'avito_price'},
-    'avito_delete':  {'exchange': 'avito_delete',  'routing_key': 'avito_delete'},
-    'ai_generate':   {'exchange': 'ai_generate',   'routing_key': 'ai_generate'},
-    'notifications': {'exchange': 'notifications', 'routing_key': 'notifications'},
-    'billing':       {'exchange': 'billing',       'routing_key': 'billing'},
+    'sync_import':        {'exchange': 'sync_import',        'routing_key': 'sync_import'},
+    'avito_publish':      {'exchange': 'avito_publish',      'routing_key': 'avito_publish'},
+    'avito_update':       {'exchange': 'avito_update',       'routing_key': 'avito_update'},
+    'avito_price':        {'exchange': 'avito_price',        'routing_key': 'avito_price'},
+    'avito_delete':       {'exchange': 'avito_delete',       'routing_key': 'avito_delete'},
+    'ai_generate':        {'exchange': 'ai_generate',        'routing_key': 'ai_generate'},
+    'notifications':      {'exchange': 'notifications',      'routing_key': 'notifications'},
+    'billing':            {'exchange': 'billing',            'routing_key': 'billing'},
+    'image_search':       {'exchange': 'image_search',       'routing_key': 'image_search'},
+    'image_search_bulk':  {'exchange': 'image_search_bulk',  'routing_key': 'image_search_bulk'},
 }
 CELERY_TASK_DEFAULT_QUEUE = 'sync_import'
 
@@ -401,3 +420,6 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
 ]
+
+# --- Поиск изображений ---
+from config.settings.image_search import *  # noqa: E402, F403
