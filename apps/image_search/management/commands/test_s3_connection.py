@@ -39,7 +39,7 @@ class Command(BaseCommand):
             if content == test_content:
                 self.stdout.write(self.style.SUCCESS('   OK: содержимое совпадает'))
             else:
-                self.stdout.write(self.style.WARNING(f'   ПРЕДУПРЕЖДЕНИЕ: содержимое отличается'))
+                self.stdout.write(self.style.WARNING('   ПРЕДУПРЕЖДЕНИЕ: содержимое отличается'))
         except Exception as e:
             self.stdout.write(self.style.ERROR(f'   ОШИБКА чтения: {e}'))
 

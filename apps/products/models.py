@@ -166,4 +166,3 @@ class ProductImage(models.Model):
 
     def __str__(self):
         return f'Image #{self.pk} [{self.status}] — {self.product_id}'
-

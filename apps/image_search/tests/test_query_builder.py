@@ -1,7 +1,5 @@
 """Тесты для query_builder: построение поисковых запросов по товару."""
 
-import pytest
-
 from apps.image_search.services.query_builder import (
     _extract_keywords,
     _is_unreliable_article,
