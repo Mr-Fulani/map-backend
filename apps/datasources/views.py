@@ -86,7 +86,18 @@ class CSVUploadView(APIView):
             if preview:
                 result = adapter.preview(tmp_path)
             else:
-                result = {'items': adapter.process_uploaded_file(tmp_path)}
+                items = adapter.process_uploaded_file(tmp_path)
+                from apps.datasources.services import ConnectionService
+                
+                result_data = ConnectionService.process_csv_upload(
+                    tenant=request.tenant,
+                    file_name=file_obj.name,
+                    items=items
+                )
+                
+                result = {
+                    'data': result_data
+                }
         except CSVValidationError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         finally:
