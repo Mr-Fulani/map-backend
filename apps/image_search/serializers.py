@@ -24,10 +24,19 @@ class ProductImageSerializer(serializers.ModelSerializer):
             'url', 'thumb_url', 'url_source', 'uploaded_at',
         ]
 
+    def _abs(self, path: str) -> str:
+        """Строит абсолютный URL: для S3 уже абсолютный, для FileSystem — через request."""
+        url = default_storage.url(path)
+        if url.startswith('/'):
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(url)
+        return url
+
     def get_url(self, obj: ProductImage) -> str:
-        """Возвращает публичный URL оригинала через CDN."""
-        return default_storage.url(obj.s3_key) if obj.s3_key else ''
+        """Возвращает публичный URL оригинала."""
+        return self._abs(obj.s3_key) if obj.s3_key else ''
 
     def get_thumb_url(self, obj: ProductImage) -> str:
-        """Возвращает публичный URL миниатюры через CDN."""
-        return default_storage.url(obj.s3_key_thumb) if obj.s3_key_thumb else ''
+        """Возвращает публичный URL миниатюры."""
+        return self._abs(obj.s3_key_thumb) if obj.s3_key_thumb else ''

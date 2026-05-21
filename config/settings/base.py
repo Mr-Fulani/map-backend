@@ -358,7 +358,7 @@ if YC_S3_BUCKET:
                 'access_key': YC_S3_ACCESS_KEY,
                 'secret_key': YC_S3_SECRET_KEY,
                 'file_overwrite': False,
-                'default_acl': 'private',
+                'default_acl': 'public-read',
                 'custom_domain': YC_CDN_DOMAIN or None,
             },
         },

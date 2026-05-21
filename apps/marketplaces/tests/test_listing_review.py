@@ -128,9 +128,9 @@ class TestListingServiceRegenerate:
         mock_enqueue.assert_called_once_with(listing.product_id)
 
     def test_regenerate_blocked_for_non_review_status(self):
-        """Нельзя перегенерировать листинг не в requires_review."""
+        """Нельзя перегенерировать листинг в статусе active или pending."""
         tenant = make_tenant('regen-blocked-co')
-        listing = make_listing(tenant, status=Listing.STATUS_DRAFT)
+        listing = make_listing(tenant, status=Listing.STATUS_ACTIVE)
 
         with pytest.raises(InvalidListingStatus):
             ListingService.request_regenerate(listing.pk, tenant)

@@ -61,8 +61,11 @@ class PhotoUploadPipeline:
         s3_key = f'{base_key}.jpg'
         s3_key_thumb = f'{base_key}_thumb.jpg'
 
-        self._storage.save(s3_key, io.BytesIO(original_bytes))
-        self._storage.save(s3_key_thumb, io.BytesIO(thumb_bytes))
+        try:
+            self._storage.save(s3_key, io.BytesIO(original_bytes))
+            self._storage.save(s3_key_thumb, io.BytesIO(thumb_bytes))
+        except Exception:
+            return None
 
         position = product.images.count()
         return ProductImage.objects.create(

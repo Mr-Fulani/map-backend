@@ -46,7 +46,9 @@ class ProductListView(APIView):
 
         paginator = MapPagination()
         page = paginator.paginate_queryset(qs, request)
-        return paginator.get_paginated_response(ProductSerializer(page, many=True).data)
+        return paginator.get_paginated_response(
+            ProductSerializer(page, many=True, context={'request': request}).data
+        )
 
 
 @extend_schema(tags=['Products'])
@@ -63,7 +65,7 @@ class ProductDetailView(APIView):
                 {'status': 'error', 'code': 'not_found', 'message': 'Товар не найден'},
                 status=status.HTTP_404_NOT_FOUND,
             )
-        return Response({'status': 'ok', 'data': ProductSerializer(product).data})
+        return Response({'status': 'ok', 'data': ProductSerializer(product, context={'request': request}).data})
 
 
 class ProductSyncView(APIView):

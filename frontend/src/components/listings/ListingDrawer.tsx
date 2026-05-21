@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { listingApi } from '@/lib/api';
+import { useState, useEffect, useRef } from 'react';
+import { toast } from 'sonner';
+import { listingApi, imageApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Progress } from '@/components/ui/progress';
 import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import {
@@ -13,18 +13,24 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { CheckCircle, RefreshCw, Pencil } from 'lucide-react';
+import {
+  CheckCircle, RefreshCw, Pencil, Crown, Trash2, Plus,
+  ChevronLeft, ChevronRight, ImageOff, Send,
+} from 'lucide-react';
 
 interface ListingImage {
+  id: number;
   url: string;
   thumb_url: string;
   position: number;
+  is_primary: boolean;
 }
 
 interface ListingDetail {
   id: number;
   status: string;
   status_display: string;
+  product_id: number;
   product_article: string;
   product_name: string;
   account_name: string;
@@ -78,14 +84,17 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [previewImg, setPreviewImg] = useState<string | null>(null);
+  const [activeIdx, setActiveIdx] = useState(0);
+  const [photoLoading, setPhotoLoading] = useState<number | 'upload' | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const open = listingId !== null;
 
-  // Загрузка данных при изменении listingId — onOpenChange не срабатывает при программном открытии
   useEffect(() => {
     if (listingId === null) {
       setListing(null);
       setEditing(false);
+      setActiveIdx(0);
       return;
     }
     setLoading(true);
@@ -95,6 +104,9 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
         setListing(data);
         setEditTitle(data.title);
         setEditDesc(data.description_ai);
+        // Ставим главное фото активным
+        const primaryIdx = data.images.findIndex((i) => i.is_primary);
+        setActiveIdx(primaryIdx >= 0 ? primaryIdx : 0);
       })
       .catch(() => onClose())
       .finally(() => setLoading(false));
@@ -104,29 +116,42 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     if (!isOpen) onClose();
   };
 
-  const handleApprove = async () => {
-    if (!listing) return;
-    setActionLoading('approve');
+  // --- Действия с листингом ---
+
+  const callAction = async (
+    key: string,
+    fn: () => Promise<unknown>,
+    successMsg: string,
+    closeAfter = true,
+  ) => {
+    setActionLoading(key);
     try {
-      await listingApi.approve(listing.id);
+      await fn();
+      toast.success(successMsg);
       onActionDone();
-      onClose();
+      if (closeAfter) onClose();
+    } catch (err: unknown) {
+      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      if (code === 'quota_exceeded') {
+        toast.error('AI-кредиты исчерпаны. Обновите тариф в разделе Биллинг.');
+      } else if (code === 'invalid_status') {
+        toast.error('Действие недоступно для текущего статуса.');
+      } else {
+        toast.error('Техническая ошибка. Обратитесь в поддержку.');
+      }
     } finally {
       setActionLoading(null);
     }
   };
 
-  const handleRegenerate = async () => {
-    if (!listing) return;
-    setActionLoading('regenerate');
-    try {
-      await listingApi.regenerate(listing.id);
-      onActionDone();
-      onClose();
-    } finally {
-      setActionLoading(null);
-    }
-  };
+  const handleApprove = () =>
+    callAction('approve', () => listingApi.approve(listing!.id), 'Одобрено, задача публикации поставлена');
+
+  const handlePublish = () =>
+    callAction('publish', () => listingApi.publish(listing!.id), 'Задача публикации поставлена');
+
+  const handleRegenerate = () =>
+    callAction('regenerate', () => listingApi.regenerate(listing!.id), 'Задача генерации поставлена в очередь');
 
   const handleSaveEdit = async () => {
     if (!listing) return;
@@ -138,12 +163,76 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       });
       setListing(res.data.data);
       setEditing(false);
+      toast.success('Сохранено');
+    } catch {
+      toast.error('Не удалось сохранить');
     } finally {
       setActionLoading(null);
     }
   };
 
+  // --- Управление фото ---
+
+  const handleUploadPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!listing) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setPhotoLoading('upload');
+    try {
+      const res = await imageApi.upload(listing.product_id, file);
+      const img = res.data.data;
+      setListing((prev) => prev ? { ...prev, images: [...prev.images, img] } : prev);
+      toast.success('Фото добавлено');
+    } catch {
+      toast.error('Не удалось загрузить фото');
+    } finally {
+      setPhotoLoading(null);
+    }
+  };
+
+  const handleDeletePhoto = async (imageId: number) => {
+    if (!listing) return;
+    setPhotoLoading(imageId);
+    try {
+      await imageApi.delete(listing.product_id, imageId);
+      setListing((prev) => {
+        if (!prev) return prev;
+        const imgs = prev.images.filter((i) => i.id !== imageId);
+        setActiveIdx((idx) => Math.min(idx, Math.max(0, imgs.length - 1)));
+        return { ...prev, images: imgs };
+      });
+    } catch {
+      toast.error('Не удалось удалить фото');
+    } finally {
+      setPhotoLoading(null);
+    }
+  };
+
+  const handleSetPrimary = async (imageId: number) => {
+    if (!listing) return;
+    setPhotoLoading(imageId);
+    try {
+      await imageApi.setPrimary(listing.product_id, imageId);
+      setListing((prev) => prev ? {
+        ...prev,
+        images: prev.images.map((i) => ({ ...i, is_primary: i.id === imageId })),
+      } : prev);
+    } catch {
+      toast.error('Не удалось установить главное фото');
+    } finally {
+      setPhotoLoading(null);
+    }
+  };
+
+  const activeImage = listing?.images[activeIdx] ?? null;
+
   const isReview = listing?.status === 'requires_review';
+  const isDraft = listing?.status === 'draft';
+  const isRejected = listing?.status === 'rejected';
+  const isArchived = listing?.status === 'archived';
+  const canPublish = isDraft || isRejected || isArchived;
+  const canRegenerate = isReview || isDraft || isRejected;
   const busy = actionLoading !== null;
 
   return (
@@ -170,10 +259,121 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                 </div>
               </SheetHeader>
 
+              {/* Фотографии — Avito-стиль */}
+              <div className="space-y-2">
+                {/* Главное фото */}
+                <div
+                  className="relative w-full rounded-lg overflow-hidden bg-muted border"
+                  style={{ aspectRatio: '4/3' }}
+                >
+                  {activeImage?.url ? (
+                    <button
+                      type="button"
+                      className="w-full h-full"
+                      onClick={() => setPreviewImg(activeImage.url)}
+                    >
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={activeImage.url}
+                        alt=""
+                        className="w-full h-full object-contain"
+                      />
+                    </button>
+                  ) : (
+                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
+                      <ImageOff className="h-10 w-10 opacity-30" />
+                      <span className="text-sm">Нет фотографий</span>
+                    </div>
+                  )}
+                  {/* Стрелки навигации */}
+                  {listing.images.length > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setActiveIdx((i) => (i - 1 + listing.images.length) % listing.images.length)}
+                        className="absolute left-2 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white rounded-full p-1 transition-colors"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveIdx((i) => (i + 1) % listing.images.length)}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white rounded-full p-1 transition-colors"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
+                      <span className="absolute bottom-2 right-2 bg-black/50 text-white text-xs px-2 py-0.5 rounded-full">
+                        {activeIdx + 1} / {listing.images.length}
+                      </span>
+                    </>
+                  )}
+                </div>
+
+                {/* Миниатюры + кнопка добавить */}
+                <div className="flex gap-2 overflow-x-auto pb-1">
+                  {listing.images.map((img, idx) => (
+                    <div key={img.id} className="relative flex-shrink-0 group">
+                      <button
+                        type="button"
+                        onClick={() => setActiveIdx(idx)}
+                        className={`w-14 h-14 rounded-md overflow-hidden border-2 transition-colors bg-muted ${
+                          idx === activeIdx ? 'border-primary' : 'border-transparent hover:border-muted-foreground/40'
+                        }`}
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={img.thumb_url || img.url} alt="" className="w-full h-full object-cover" />
+                      </button>
+                      {img.is_primary && (
+                        <Crown className="absolute top-0.5 left-0.5 h-3 w-3 text-yellow-500 drop-shadow" />
+                      )}
+                      {/* Управление — появляется при наведении */}
+                      <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-md flex items-center justify-center gap-0.5">
+                        {!img.is_primary && (
+                          <button
+                            type="button"
+                            onClick={() => handleSetPrimary(img.id)}
+                            disabled={photoLoading === img.id}
+                            className="p-1 bg-white/20 rounded hover:bg-white/40 disabled:opacity-50"
+                            title="Сделать главным"
+                          >
+                            <Crown className="h-3 w-3 text-white" />
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePhoto(img.id)}
+                          disabled={photoLoading === img.id}
+                          className="p-1 bg-white/20 rounded hover:bg-red-500/70 disabled:opacity-50"
+                          title="Удалить"
+                        >
+                          <Trash2 className="h-3 w-3 text-white" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                  {/* Добавить фото */}
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={photoLoading === 'upload'}
+                    className="flex-shrink-0 w-14 h-14 rounded-md border-2 border-dashed border-muted-foreground/30 hover:border-primary/50 flex items-center justify-center transition-colors"
+                  >
+                    <Plus className="h-5 w-5 text-muted-foreground/50" />
+                  </button>
+                </div>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleUploadPhoto}
+                />
+              </div>
+
               {/* Уверенность AI */}
               <ConfidenceBar value={listing.ai_confidence} label={listing.ai_confidence_display} />
 
-              {/* Заголовок объявления */}
+              {/* Заголовок */}
               <div className="space-y-1">
                 <p className="text-sm text-muted-foreground">Заголовок</p>
                 {editing ? (
@@ -198,37 +398,11 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                     className="text-sm resize-none"
                   />
                 ) : (
-                  <pre className="whitespace-pre-wrap text-sm bg-muted/40 rounded-md p-3 font-sans leading-relaxed max-h-64 overflow-y-auto">
+                  <pre className="whitespace-pre-wrap text-sm bg-muted/40 rounded-md p-3 font-sans leading-relaxed max-h-48 overflow-y-auto">
                     {listing.description_ai || '—'}
                   </pre>
                 )}
               </div>
-
-              {/* Фотографии */}
-              {listing.images.length > 0 && (
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Фотографии ({listing.images.length})</p>
-                  <div className="flex gap-2 overflow-x-auto pb-1">
-                    {listing.images.map((img) => (
-                      <button
-                        key={img.position}
-                        type="button"
-                        onClick={() => setPreviewImg(img.url)}
-                        className="flex-shrink-0 w-16 h-16 rounded-md overflow-hidden border bg-muted hover:opacity-80 transition-opacity"
-                      >
-                        {img.thumb_url ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={img.thumb_url} alt="" className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-xs text-muted-foreground">
-                            Фото
-                          </div>
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               {/* Цена и аккаунт */}
               <div className="flex items-center justify-between rounded-md border p-3">
@@ -238,7 +412,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                 </span>
               </div>
 
-              {/* Причина отклонения (если есть) */}
+              {/* Причина отклонения */}
               {listing.rejection_reason && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
                   <span className="font-medium">Причина отклонения: </span>
@@ -250,20 +424,12 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
               <div className="flex flex-col gap-2 pt-2">
                 {editing ? (
                   <>
-                    <Button
-                      onClick={handleSaveEdit}
-                      disabled={busy}
-                      className="w-full"
-                    >
+                    <Button onClick={handleSaveEdit} disabled={busy} className="w-full">
                       {actionLoading === 'save' ? 'Сохранение...' : 'Сохранить изменения'}
                     </Button>
                     <Button
                       variant="outline"
-                      onClick={() => {
-                        setEditing(false);
-                        setEditTitle(listing.title);
-                        setEditDesc(listing.description_ai);
-                      }}
+                      onClick={() => { setEditing(false); setEditTitle(listing.title); setEditDesc(listing.description_ai); }}
                       disabled={busy}
                       className="w-full"
                     >
@@ -273,25 +439,35 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                 ) : (
                   <>
                     {isReview && (
-                      <>
-                        <Button
-                          onClick={handleApprove}
-                          disabled={busy}
-                          className="w-full bg-green-600 hover:bg-green-700 text-white"
-                        >
-                          <CheckCircle className="mr-2 h-4 w-4" />
-                          {actionLoading === 'approve' ? 'Публикация...' : 'Одобрить и опубликовать'}
-                        </Button>
-                        <Button
-                          variant="secondary"
-                          onClick={handleRegenerate}
-                          disabled={busy}
-                          className="w-full"
-                        >
-                          <RefreshCw className="mr-2 h-4 w-4" />
-                          {actionLoading === 'regenerate' ? 'Отправка задачи...' : 'Перегенерировать AI'}
-                        </Button>
-                      </>
+                      <Button
+                        onClick={handleApprove}
+                        disabled={busy}
+                        className="w-full bg-green-600 hover:bg-green-700 text-white"
+                      >
+                        <CheckCircle className="mr-2 h-4 w-4" />
+                        {actionLoading === 'approve' ? 'Публикация...' : 'Одобрить и опубликовать'}
+                      </Button>
+                    )}
+                    {canPublish && (
+                      <Button
+                        onClick={handlePublish}
+                        disabled={busy}
+                        className="w-full"
+                      >
+                        <Send className="mr-2 h-4 w-4" />
+                        {actionLoading === 'publish' ? 'Отправка...' : 'Опубликовать на Avito'}
+                      </Button>
+                    )}
+                    {canRegenerate && (
+                      <Button
+                        variant="secondary"
+                        onClick={handleRegenerate}
+                        disabled={busy}
+                        className="w-full"
+                      >
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        {actionLoading === 'regenerate' ? 'Отправка задачи...' : 'Перегенерировать AI'}
+                      </Button>
                     )}
                     <Button
                       variant="outline"
@@ -310,7 +486,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
         </SheetContent>
       </Sheet>
 
-      {/* Предпросмотр фото */}
+      {/* Fullscreen предпросмотр */}
       {previewImg && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
