@@ -11,12 +11,18 @@ from apps.marketplaces.models import CategoryMapping, Listing, ListingStats, Mar
 from apps.marketplaces.serializers import (
     CategoryMappingSerializer,
     CategoryMappingWriteSerializer,
+    ListingDetailSerializer,
     ListingSerializer,
     MarketplaceAccountSerializer,
     MarketplaceAccountWriteSerializer,
 )
 from apps.core.pagination import MapPagination
-from apps.marketplaces.services import CategoryMappingService
+from apps.marketplaces.services import (
+    CategoryMappingService,
+    InvalidListingStatus,
+    ListingNotFound,
+    ListingService,
+)
 
 
 @extend_schema(tags=['Accounts'])
@@ -191,6 +197,71 @@ class ListingListView(APIView):
         paginator = MapPagination()
         page = paginator.paginate_queryset(qs, request)
         return paginator.get_paginated_response(ListingSerializer(page, many=True).data)
+
+
+@extend_schema(tags=['Listings'])
+class ListingDetailView(APIView):
+    """
+    GET  /api/v1/listings/{id}/ — детали листинга с AI-полями и фотографиями.
+    PATCH /api/v1/listings/{id}/ — обновить title / description_ai.
+    """
+
+    def get(self, request, pk):
+        """Возвращает полные данные листинга включая AI-описание и изображения товара."""
+        try:
+            listing = ListingService.get_for_tenant(pk, request.tenant)
+        except ListingNotFound:
+            return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing).data})
+
+    def patch(self, request, pk):
+        """
+        Обновляет заголовок и/или AI-описание листинга.
+
+        Доступно в любом статусе кроме active и deleted.
+        """
+        title = request.data.get('title')
+        description_ai = request.data.get('description_ai')
+        try:
+            listing = ListingService.update_content(pk, request.tenant, title, description_ai)
+        except ListingNotFound:
+            return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        except InvalidListingStatus as exc:
+            return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing).data})
+
+
+@extend_schema(tags=['Listings'])
+class ListingApproveView(APIView):
+    """POST /api/v1/listings/{id}/approve/ — одобрить листинг requires_review и опубликовать."""
+
+    def post(self, request, pk):
+        """Одобряет листинг и ставит задачу публикации в Celery."""
+        try:
+            listing = ListingService.approve(pk, request.tenant)
+        except ListingNotFound:
+            return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        except InvalidListingStatus as exc:
+            return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing).data})
+
+
+@extend_schema(tags=['Listings'])
+class ListingRegenerateView(APIView):
+    """POST /api/v1/listings/{id}/regenerate/ — перегенерировать AI-описание."""
+
+    def post(self, request, pk):
+        """Ставит задачу генерации AI-описания для товара в очередь Celery."""
+        try:
+            ListingService.request_regenerate(pk, request.tenant)
+        except ListingNotFound:
+            return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        except InvalidListingStatus as exc:
+            return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'ok', 'message': 'Задача генерации поставлена в очередь'})
 
 
 @extend_schema(tags=['Analytics'])

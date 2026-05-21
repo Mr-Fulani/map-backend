@@ -155,6 +155,15 @@ export const authApi = {
   me: () => api.get('/auth/me/'),
 };
 
+// Profile
+export const profileApi = {
+  updatePhone: (phone: string) => api.patch('/auth/profile/', { phone }),
+  changePassword: (current_password: string, new_password: string) =>
+    api.post('/auth/change-password/', { current_password, new_password }),
+  changeEmail: (new_email: string) => api.post('/auth/change-email/', { new_email }),
+  confirmEmail: (token: string) => api.get('/auth/confirm-email/', { params: { token } }),
+};
+
 // Tenant
 export const tenantApi = {
   get: () => api.get('/tenant/'),
@@ -220,6 +229,11 @@ export const categoryApi = {
 // Listings
 export const listingApi = {
   list: (params?: Record<string, unknown>) => api.get('/listings/', { params }),
+  get: (id: number) => api.get(`/listings/${id}/`),
+  approve: (id: number) => api.post(`/listings/${id}/approve/`),
+  regenerate: (id: number) => api.post(`/listings/${id}/regenerate/`),
+  updateContent: (id: number, data: { title?: string; description_ai?: string }) =>
+    api.patch(`/listings/${id}/`, data),
 };
 
 // Logs
@@ -239,6 +253,33 @@ export const notificationApi = {
   telegramConnect: () => api.post('/notifications/settings/telegram/connect/'),
   telegramDisconnect: () => api.delete('/notifications/settings/telegram/'),
   test: () => api.post('/notifications/settings/test/'),
+};
+
+// Images
+export const imageApi = {
+  list: (productId: number) =>
+    api.get(`/products/${productId}/images/`),
+  search: (productId: number) =>
+    api.post(`/products/${productId}/images/search/`),
+  searchStatus: (productId: number, taskId: string) =>
+    api.get(`/products/${productId}/images/search/${taskId}/`),
+  approve: (productId: number, imageId: number) =>
+    api.post(`/products/${productId}/images/${imageId}/approve/`),
+  reject: (productId: number, imageId: number) =>
+    api.post(`/products/${productId}/images/${imageId}/reject/`),
+  setPrimary: (productId: number, imageId: number) =>
+    api.put(`/products/${productId}/images/${imageId}/set_primary/`),
+  delete: (productId: number, imageId: number) =>
+    api.delete(`/products/${productId}/images/${imageId}/`),
+  upload: (productId: number, file: File) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    return api.post(`/products/${productId}/images/upload/`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  bulkSearch: (productIds: number[]) =>
+    api.post('/images/bulk-search/', { product_ids: productIds }),
 };
 
 // Webhooks

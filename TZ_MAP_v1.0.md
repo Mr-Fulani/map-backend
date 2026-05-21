@@ -175,8 +175,10 @@ class AvitoAdapter(BaseMarketplaceAdapter): pass     # MVP
 | Брокер | Redis | 7.x | |
 | СУБД | PostgreSQL | 16 | |
 | Файлы | django-storages + boto3 | latest | Yandex Cloud S3 |
-| AI (основной) | Anthropic Claude API | claude-sonnet-4 | |
-| AI (резерв) | OpenAI GPT-4o | latest | |
+| AI (основной, базовые тарифы) | Anthropic Claude API | claude-3-5-haiku-latest | В 10 раз дешевле Sonnet |
+| AI (основной, тариф Pro) | Anthropic Claude API | claude-3-5-sonnet-latest | Для сложных генераций |
+| AI (резерв) | OpenAI API | gpt-4o-mini | Fallback для базовых тарифов |
+| AI (резерв, тариф Pro) | OpenAI API | gpt-4o | Fallback для тарифа Pro |
 | Платежи | YooKassa SDK | latest | РФ рынок |
 | Уведомления | Telegram Bot API | 7.x | |
 | Email | SendPulse SMTP | — | Российский провайдер, без санкционных рисков |
@@ -662,9 +664,15 @@ class DescriptionAgent:
             raise AICreditsExhausted(reason)
 
         try:
-            result = self._call_claude(product)
+            if tenant.plan.slug == 'pro':
+                result = self._call_claude(product, model='claude-3-5-sonnet-latest')
+            else:
+                result = self._call_claude(product, model='claude-3-5-haiku-latest')
         except (anthropic.APIError, anthropic.RateLimitError):
-            result = self._call_openai(product)   # fallback
+            if tenant.plan.slug == 'pro':
+                result = self._call_openai(product, model='gpt-4o')   # fallback
+            else:
+                result = self._call_openai(product, model='gpt-4o-mini')   # fallback
 
         # Инкрементировать счётчик
         Tenant.objects.filter(pk=tenant.pk).update(
@@ -672,9 +680,9 @@ class DescriptionAgent:
         )
         return result
 
-    def _call_claude(self, product) -> dict:
+    def _call_claude(self, product, model) -> dict:
         response = anthropic.messages.create(
-            model='claude-sonnet-4-20250514',
+            model=model,
             max_tokens=1000,
             system=self.SYSTEM_PROMPT,
             messages=[{'role': 'user', 'content': self._build_message(product)}]
@@ -708,6 +716,30 @@ class DescriptionAgent:
 | Категория изменилась | Перегенерировать + переопубликовать |
 | Добавлены/удалены фото | Обновить фото, описание не трогать |
 | confidence < 0.5 | Статус `requires_review`, оператор проверяет вручную |
+
+### 8.X Визуальный предпросмотр требующих проверки (requires_review)
+
+Когда AI-агент устанавливает `requires_review`, оператор должен получить полный контекст и возможность действовать прямо в Dashboard.
+
+**UX-сценарий:**
+1. Оператор видит в таблице листингов строки с бейджем «Требует проверки» (красный).
+2. Клик на строку → открывается боковой дровер (Sheet, 520px справа).
+3. Дровер показывает:
+   - Заголовок объявления (`title`)
+   - AI-уверенность в виде прогресс-бара с подписью (< 50% — красный, 50–70% — жёлтый, ≥ 70% — зелёный)
+   - Полный текст AI-описания (`description_ai`)
+   - Фотографии товара (горизонтальная галерея, до 10 штук)
+   - Цена и аккаунт Avito
+4. Кнопки действий (доступны только в статусе `requires_review`):
+   - **Одобрить и опубликовать** — статус → `draft`, ставит `publish_listing_task` в Celery
+   - **Перегенерировать AI** — ставит `generate_description_task` в Celery
+   - **Редактировать** — инлайн-редактирование title и description_ai, кнопка **Сохранить** (`PATCH`)
+5. После действия дровер закрывается, строка в таблице обновляется.
+
+**Правила:**
+- `approve` и `regenerate` принимают только листинги со статусом `requires_review`; иначе — 400 Bad Request.
+- Редактировать текст (`PATCH`) можно в любом статусе, кроме `active` и `deleted`.
+- После `regenerate` листинг не публикуется автоматически — он ждёт нового цикла AI и снова попадёт на проверку (если confidence всё ещё < 0.5) или сразу в `draft` → `publish`.
 
 ---
 
@@ -1033,6 +1065,10 @@ sentry_sdk.init(
 | POST | `/api/v1/products/{id}/archive/` | Принудительная архивация |
 | POST | `/api/v1/products/{id}/regenerate/` | Перегенерировать описание |
 | GET | `/api/v1/listings/` | Список листингов с фильтрами |
+| GET | `/api/v1/listings/{id}/` | Детали листинга: description_ai, ai_confidence, images |
+| POST | `/api/v1/listings/{id}/approve/` | Одобрить листинг requires_review и опубликовать |
+| POST | `/api/v1/listings/{id}/regenerate/` | Перегенерировать AI-описание для листинга |
+| PATCH | `/api/v1/listings/{id}/` | Обновить title / description_ai вручную |
 | GET | `/api/v1/logs/` | Лог событий |
 | GET | `/api/v1/stats/` | Сводная статистика |
 | GET | `/api/v1/stats/sync-health/` | Состояние синхронизации |

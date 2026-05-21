@@ -46,6 +46,7 @@ LOCAL_APPS = [
     'apps.notifications',
     'apps.api',
     'apps.analytics',
+    'apps.image_search',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -135,6 +136,22 @@ UNFOLD = {
                 ],
             },
             {
+                "title": "Изображения",
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Логи поиска",
+                        "icon": "image_search",
+                        "link": "/admin/image_search/imagesearchlog/",
+                    },
+                    {
+                        "title": "Кеш поиска",
+                        "icon": "cached",
+                        "link": "/admin/image_search/imagesearchcache/",
+                    },
+                ],
+            },
+            {
                 "title": "Система",
                 "collapsible": True,
                 "items": [
@@ -162,6 +179,7 @@ UNFOLD = {
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.locale.LocaleMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.middleware.csrf.CsrfViewMiddleware',
@@ -235,14 +253,16 @@ CELERY_TASK_SOFT_TIME_LIMIT = 3300
 
 # Очереди и их приоритеты
 CELERY_TASK_QUEUES = {
-    'sync_import':   {'exchange': 'sync_import',   'routing_key': 'sync_import'},
-    'avito_publish': {'exchange': 'avito_publish', 'routing_key': 'avito_publish'},
-    'avito_update':  {'exchange': 'avito_update',  'routing_key': 'avito_update'},
-    'avito_price':   {'exchange': 'avito_price',   'routing_key': 'avito_price'},
-    'avito_delete':  {'exchange': 'avito_delete',  'routing_key': 'avito_delete'},
-    'ai_generate':   {'exchange': 'ai_generate',   'routing_key': 'ai_generate'},
-    'notifications': {'exchange': 'notifications', 'routing_key': 'notifications'},
-    'billing':       {'exchange': 'billing',       'routing_key': 'billing'},
+    'sync_import':        {'exchange': 'sync_import',        'routing_key': 'sync_import'},
+    'avito_publish':      {'exchange': 'avito_publish',      'routing_key': 'avito_publish'},
+    'avito_update':       {'exchange': 'avito_update',       'routing_key': 'avito_update'},
+    'avito_price':        {'exchange': 'avito_price',        'routing_key': 'avito_price'},
+    'avito_delete':       {'exchange': 'avito_delete',       'routing_key': 'avito_delete'},
+    'ai_generate':        {'exchange': 'ai_generate',        'routing_key': 'ai_generate'},
+    'notifications':      {'exchange': 'notifications',      'routing_key': 'notifications'},
+    'billing':            {'exchange': 'billing',            'routing_key': 'billing'},
+    'image_search':       {'exchange': 'image_search',       'routing_key': 'image_search'},
+    'image_search_bulk':  {'exchange': 'image_search_bulk',  'routing_key': 'image_search_bulk'},
 }
 CELERY_TASK_DEFAULT_QUEUE = 'sync_import'
 
@@ -363,6 +383,7 @@ AVITO_CLIENT_SECRET = os.environ.get('AVITO_CLIENT_SECRET', '')
 YOOKASSA_SHOP_ID = os.environ.get('YOOKASSA_SHOP_ID', '')
 YOOKASSA_SECRET_KEY = os.environ.get('YOOKASSA_SECRET_KEY', '')
 SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8000')
+FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 
 # --- Уведомления ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -379,7 +400,9 @@ EMAIL_HOST_PASSWORD = os.environ.get('SENDPULSE_SMTP_PASSWORD', '')
 AUTH_USER_MODEL = 'users.User'
 
 # --- Локализация ---
-LANGUAGE_CODE = 'ru-ru'
+LANGUAGE_CODE = 'ru'
+LANGUAGES = [('ru', 'Russian')]
+LOCALE_PATHS = [BASE_DIR / 'locale']
 TIME_ZONE = 'Europe/Moscow'
 USE_I18N = True
 USE_TZ = True
@@ -397,3 +420,6 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
 ]
+
+# --- Поиск изображений ---
+from config.settings.image_search import *  # noqa: E402, F403

@@ -5,8 +5,8 @@ from django.utils import timezone
 class TimestampedModel(models.Model):
     """Базовая модель с временными метками создания и обновления."""
 
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Создано')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Обновлено')
 
     class Meta:
         abstract = True

@@ -1,9 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { productApi } from '@/lib/api';
+import { productApi, imageApi } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,13 +18,23 @@ import {
   Loader2,
   Package,
   ImageOff,
+  Search,
+  Crown,
+  Check,
+  X,
+  Trash2,
 } from 'lucide-react';
 
 interface ProductImage {
   id: number;
-  url_source: string;
-  s3_key: string | null;
+  status: string;
+  source_id: string | null;
+  quality_score: number | null;
+  is_primary: boolean;
   position: number;
+  url: string;
+  thumb_url: string;
+  url_source: string | null;
 }
 
 interface ProductDetail {
@@ -39,7 +49,6 @@ interface ProductDetail {
   warehouse: string | null;
   export_enabled: boolean;
   sync_at: string | null;
-  images: ProductImage[];
   created_at: string;
   updated_at: string;
 }
@@ -48,6 +57,22 @@ const CONDITION_LABELS: Record<string, string> = {
   new: 'Новый',
   used: 'Б/у',
   refurbished: 'Восстановленный',
+};
+
+const IMAGE_STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  auto_approved: 'default',
+  manually_set: 'default',
+  needs_review: 'secondary',
+  low_confidence: 'outline',
+  rejected: 'destructive',
+};
+
+const IMAGE_STATUS_LABELS: Record<string, string> = {
+  auto_approved: 'Одобрено',
+  manually_set: 'Вручную',
+  needs_review: 'На проверке',
+  low_confidence: 'Низкое качество',
+  rejected: 'Отклонено',
 };
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
@@ -66,6 +91,16 @@ export default function ProductDetailPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
+  const [images, setImages] = useState<ProductImage[]>([]);
+  const [imagesLoading, setImagesLoading] = useState(false);
+  const [imageActionId, setImageActionId] = useState<number | null>(null);
+
+  const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
+  const searching = searchTaskId !== null;
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [previewImg, setPreviewImg] = useState<string | null>(null);
+
   useEffect(() => {
     productApi
       .get(Number(id))
@@ -73,6 +108,46 @@ export default function ProductDetailPage() {
       .catch(() => toast.error('Товар не найден'))
       .finally(() => setLoading(false));
   }, [id]);
+
+  const loadImages = useCallback(async () => {
+    setImagesLoading(true);
+    try {
+      const res = await imageApi.list(Number(id));
+      setImages(res.data.data);
+    } catch {
+      // ignore
+    } finally {
+      setImagesLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    loadImages();
+  }, [loadImages]);
+
+  // Polling статуса поиска каждые 2с
+  useEffect(() => {
+    if (!searchTaskId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await imageApi.searchStatus(Number(id), searchTaskId);
+        const state: string = res.data.data.state;
+        if (state !== 'running') {
+          setSearchTaskId(null);
+          if (state === 'done') {
+            toast.success('Поиск завершён');
+            loadImages();
+          } else {
+            toast.error('Поиск завершился с ошибкой');
+          }
+        }
+      } catch {
+        setSearchTaskId(null);
+        toast.error('Ошибка при опросе статуса');
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [searchTaskId, id, loadImages]);
 
   async function runAction(action: 'publish' | 'archive' | 'regenerate') {
     setActionLoading(action);
@@ -85,12 +160,59 @@ export default function ProductDetailPage() {
           ? 'Задача на публикацию поставлена'
           : action === 'archive'
             ? 'Товар архивируется'
-            : 'Генерация описания запущена'
+            : 'Генерация описания запущена',
       );
     } catch {
       toast.error('Ошибка выполнения действия');
     } finally {
       setActionLoading(null);
+    }
+  }
+
+  async function startSearch() {
+    setActionLoading('search');
+    try {
+      const res = await imageApi.search(Number(id));
+      setSearchTaskId(res.data.data.task_id);
+      toast.info('Поиск фотографий запущен');
+    } catch {
+      toast.error('Не удалось запустить поиск');
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setActionLoading('upload');
+    try {
+      await imageApi.upload(Number(id), file);
+      toast.success('Фото загружено');
+      loadImages();
+    } catch {
+      toast.error('Ошибка загрузки фото');
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function handleImageAction(
+    imageId: number,
+    action: 'approve' | 'reject' | 'setPrimary' | 'delete',
+  ) {
+    setImageActionId(imageId);
+    try {
+      if (action === 'approve') await imageApi.approve(Number(id), imageId);
+      else if (action === 'reject') await imageApi.reject(Number(id), imageId);
+      else if (action === 'setPrimary') await imageApi.setPrimary(Number(id), imageId);
+      else await imageApi.delete(Number(id), imageId);
+      loadImages();
+    } catch {
+      toast.error('Ошибка');
+    } finally {
+      setImageActionId(null);
     }
   }
 
@@ -122,6 +244,8 @@ export default function ProductDetailPage() {
     );
   }
 
+  const busy = actionLoading !== null;
+
   return (
     <div className="space-y-6">
       {/* Навигация */}
@@ -137,7 +261,7 @@ export default function ProductDetailPage() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Основная информация */}
+        {/* Основная информация + Фото */}
         <div className="space-y-6 lg:col-span-2">
           <Card>
             <CardHeader className="flex flex-row items-start justify-between">
@@ -184,33 +308,111 @@ export default function ProductDetailPage() {
             </CardContent>
           </Card>
 
-          {/* Фото */}
+          {/* Фотографии */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">Фотографии</CardTitle>
+              <CardTitle className="text-sm font-medium">
+                Фотографии {images.length > 0 && `(${images.length})`}
+              </CardTitle>
             </CardHeader>
             <CardContent>
-              {product.images.length === 0 ? (
+              {imagesLoading ? (
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <Skeleton key={i} className="aspect-square rounded-lg" />
+                  ))}
+                </div>
+              ) : images.length === 0 ? (
                 <div className="flex flex-col items-center gap-2 py-8 text-center text-muted-foreground">
                   <ImageOff className="h-8 w-8 opacity-30" />
                   <p className="text-sm">Фотографии не загружены</p>
+                  {searching && (
+                    <p className="text-xs flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Идёт поиск...
+                    </p>
+                  )}
                 </div>
               ) : (
-                <div className="grid grid-cols-3 gap-2 sm:grid-cols-4 md:grid-cols-5">
-                  {product.images
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                  {images
                     .sort((a, b) => a.position - b.position)
                     .map((img) => (
-                      <div
-                        key={img.id}
-                        className="aspect-square overflow-hidden rounded-lg border bg-muted"
-                      >
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={img.url_source}
-                          alt=""
-                          className="h-full w-full object-cover"
-                          loading="lazy"
-                        />
+                      <div key={img.id} className="space-y-1">
+                        <div className="relative aspect-square overflow-hidden rounded-lg border bg-muted">
+                          {img.is_primary && (
+                            <div className="absolute top-1 left-1 z-10">
+                              <Crown className="h-4 w-4 text-yellow-500 drop-shadow" />
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => setPreviewImg(img.url || img.thumb_url)}
+                            className="w-full h-full"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={img.thumb_url || img.url_source || ''}
+                              alt=""
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                            />
+                          </button>
+                        </div>
+                        <Badge
+                          variant={IMAGE_STATUS_VARIANTS[img.status] ?? 'outline'}
+                          className="text-xs w-full justify-center"
+                        >
+                          {IMAGE_STATUS_LABELS[img.status] ?? img.status}
+                        </Badge>
+                        <div className="flex gap-1">
+                          {!img.is_primary && (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 flex-1"
+                              title="Сделать главным"
+                              disabled={imageActionId === img.id}
+                              onClick={() => handleImageAction(img.id, 'setPrimary')}
+                            >
+                              <Crown className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {(img.status === 'needs_review' || img.status === 'low_confidence') && (
+                            <>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7 flex-1 text-green-600 hover:text-green-700"
+                                title="Одобрить"
+                                disabled={imageActionId === img.id}
+                                onClick={() => handleImageAction(img.id, 'approve')}
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-7 w-7 flex-1 text-destructive hover:text-destructive"
+                                title="Отклонить"
+                                disabled={imageActionId === img.id}
+                                onClick={() => handleImageAction(img.id, 'reject')}
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </Button>
+                            </>
+                          )}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            className="h-7 w-7 flex-1 text-destructive hover:text-destructive"
+                            title="Удалить"
+                            disabled={imageActionId === img.id}
+                            onClick={() => handleImageAction(img.id, 'delete')}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </Button>
+                        </div>
                       </div>
                     ))}
                 </div>
@@ -229,7 +431,7 @@ export default function ProductDetailPage() {
               <Button
                 className="w-full"
                 onClick={() => runAction('publish')}
-                disabled={actionLoading !== null}
+                disabled={busy || searching}
               >
                 {actionLoading === 'publish' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -242,7 +444,7 @@ export default function ProductDetailPage() {
                 className="w-full"
                 variant="outline"
                 onClick={() => runAction('regenerate')}
-                disabled={actionLoading !== null}
+                disabled={busy || searching}
               >
                 {actionLoading === 'regenerate' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -254,8 +456,41 @@ export default function ProductDetailPage() {
               <Button
                 className="w-full"
                 variant="outline"
+                onClick={startSearch}
+                disabled={busy || searching}
+              >
+                {searching || actionLoading === 'search' ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Search className="mr-2 h-4 w-4" />
+                )}
+                {searching ? 'Поиск фото...' : 'Найти фото'}
+              </Button>
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={busy || searching}
+              >
+                {actionLoading === 'upload' ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Upload className="mr-2 h-4 w-4" />
+                )}
+                Загрузить фото
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleUpload}
+              />
+              <Button
+                className="w-full"
+                variant="outline"
                 onClick={() => runAction('archive')}
-                disabled={actionLoading !== null}
+                disabled={busy || searching}
               >
                 {actionLoading === 'archive' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -285,6 +520,21 @@ export default function ProductDetailPage() {
           </Card>
         </div>
       </div>
+
+      {/* Предпросмотр фото */}
+      {previewImg && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80"
+          onClick={() => setPreviewImg(null)}
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={previewImg}
+            alt="Предпросмотр"
+            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
+          />
+        </div>
+      )}
     </div>
   );
 }

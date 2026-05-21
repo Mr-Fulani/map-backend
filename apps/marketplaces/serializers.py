@@ -1,3 +1,4 @@
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.marketplaces.models import AvitoCategory, CategoryMapping, Listing, MarketplaceAccount
@@ -49,6 +50,57 @@ class ListingSerializer(serializers.ModelSerializer):
             'rejection_reason', 'retry_count', 'published_at', 'created_at',
         ]
         read_only_fields = fields
+
+
+def _image_url(s3_key: str, fallback: str) -> str:
+    """Строит URL изображения через CDN-домен или возвращает исходный URL."""
+    cdn = getattr(settings, 'YC_CDN_DOMAIN', '')
+    if cdn and s3_key:
+        return f'https://{cdn}/{s3_key}'
+    return fallback or ''
+
+
+class ListingDetailSerializer(ListingSerializer):
+    """
+    Расширенный сериализатор листинга для дровера предпросмотра.
+
+    Добавляет AI-поля и список изображений товара.
+    """
+
+    description_ai = serializers.CharField(read_only=True)
+    ai_confidence = serializers.FloatField(read_only=True)
+    ai_confidence_display = serializers.SerializerMethodField()
+    images = serializers.SerializerMethodField()
+
+    class Meta(ListingSerializer.Meta):
+        fields = ListingSerializer.Meta.fields + [
+            'description_ai', 'ai_confidence', 'ai_confidence_display', 'images',
+        ]
+        read_only_fields = fields
+
+    def get_ai_confidence_display(self, obj) -> str:
+        """Возвращает уверенность AI в виде строки с процентами."""
+        if obj.ai_confidence is None:
+            return '—'
+        pct = round(obj.ai_confidence * 100)
+        if pct >= 70:
+            label = 'Высокая'
+        elif pct >= 50:
+            label = 'Средняя'
+        else:
+            label = 'Низкая'
+        return f'{label} ({pct}%)'
+
+    def get_images(self, obj) -> list:
+        """Возвращает список изображений товара с CDN-ссылками."""
+        return [
+            {
+                'url': _image_url(img.s3_key, img.url_source),
+                'thumb_url': _image_url(img.s3_key_thumb, img.url_source),
+                'position': img.position,
+            }
+            for img in obj.product.images.all()
+        ]
 
 
 class MarketplaceAccountWriteSerializer(serializers.Serializer):
