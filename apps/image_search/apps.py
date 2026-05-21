@@ -10,3 +10,4 @@ class ImageSearchConfig(AppConfig):
 
     def ready(self):
         import apps.image_search.signals  # noqa: F401
+        import apps.image_search.sources.duckduckgo  # noqa: F401  — регистрирует источник в реестре
