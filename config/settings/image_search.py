@@ -5,10 +5,10 @@
 
 # Список активных источников (в порядке tier)
 IMAGE_SOURCES_ENABLED = [
-    'autodoc',      # Tier 1 — scraping autodoc.ru
-    'exist',        # Tier 2 — scraping exist.ru
-    'emex',         # Tier 3 — scraping emex.ru
-    'duckduckgo',   # Tier 4 — unofficial image search
+    'duckduckgo',   # Tier 4 — единственный активный источник MVP
+    # 'autodoc',    # Tier 1 — изображения с вотермарком autodoc.ru, непригодны для объявлений
+    # 'exist',      # Tier 2 — не проверен (возможно SPA)
+    # 'emex',       # Tier 3 — не проверен (возможно SPA)
     # 'tecdoc',     # ← добавить когда будет API-ключ
     # 'google_cse', # ← добавить когда будет бюджет
 ]
