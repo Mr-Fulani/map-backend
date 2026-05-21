@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { Search, Package, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, Package, ChevronLeft, ChevronRight, ImageOff } from 'lucide-react';
 import { useDebounce } from '@/lib/hooks';
 
 interface Product {
@@ -20,6 +20,8 @@ interface Product {
   stock_qty: number;
   export_enabled: boolean;
   sync_at: string | null;
+  images_count: number;
+  primary_thumb_url: string;
 }
 
 interface Meta {
@@ -108,6 +110,7 @@ export default function ProductsPage() {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50 text-left text-muted-foreground">
+              <th className="px-4 py-3 font-medium">Фото</th>
               <th className="px-4 py-3 font-medium">Артикул</th>
               <th className="px-4 py-3 font-medium">Название</th>
               <th className="hidden px-4 py-3 font-medium md:table-cell">Бренд</th>
@@ -121,7 +124,7 @@ export default function ProductsPage() {
             {loading
               ? Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="border-b">
-                    {Array.from({ length: 7 }).map((_, j) => (
+                    {Array.from({ length: 8 }).map((_, j) => (
                       <td key={j} className="px-4 py-3">
                         <Skeleton className="h-4 w-full" />
                       </td>
@@ -131,7 +134,7 @@ export default function ProductsPage() {
               : products.length === 0
                 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-16 text-center text-muted-foreground">
+                    <td colSpan={8} className="px-4 py-16 text-center text-muted-foreground">
                       <Package className="mx-auto mb-3 h-10 w-10 opacity-30" />
                       {search ? 'Ничего не найдено' : 'Товаров пока нет'}
                     </td>
@@ -142,6 +145,23 @@ export default function ProductsPage() {
                     key={p.id}
                     className="border-b transition-colors hover:bg-muted/30"
                   >
+                    <td className="px-4 py-2">
+                      <Link href={`/dashboard/products/${p.id}`} className="block">
+                        <div className="relative w-10 h-10 rounded-md overflow-hidden border bg-muted flex-shrink-0">
+                          {p.primary_thumb_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={p.primary_thumb_url} alt="" className="w-full h-full object-cover" />
+                          ) : (
+                            <ImageOff className="w-4 h-4 m-auto mt-3 text-muted-foreground/40" />
+                          )}
+                          {p.images_count > 0 && (
+                            <span className="absolute bottom-0 right-0 bg-black/60 text-white text-[10px] leading-none px-1 py-0.5 rounded-tl">
+                              {p.images_count}
+                            </span>
+                          )}
+                        </div>
+                      </Link>
+                    </td>
                     <td className="px-4 py-3">
                       <Link
                         href={`/dashboard/products/${p.id}`}

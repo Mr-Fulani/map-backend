@@ -131,11 +131,15 @@ export default function ProductDetailPage() {
     const interval = setInterval(async () => {
       try {
         const res = await imageApi.searchStatus(Number(id), searchTaskId);
-        const state: string = res.data.data.state;
+        const { state, saved_count } = res.data.data;
         if (state !== 'running') {
           setSearchTaskId(null);
           if (state === 'done') {
-            toast.success('Поиск завершён');
+            if (saved_count > 0) {
+              toast.success(`Найдено фото: ${saved_count}`);
+            } else {
+              toast.warning('Фото не найдены — попробуйте загрузить вручную');
+            }
             loadImages();
           } else {
             toast.error('Поиск завершился с ошибкой');
@@ -162,8 +166,13 @@ export default function ProductDetailPage() {
             ? 'Товар архивируется'
             : 'Генерация описания запущена',
       );
-    } catch {
-      toast.error('Ошибка выполнения действия');
+    } catch (err: unknown) {
+      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      if (code === 'quota_exceeded') {
+        toast.error('AI-кредиты исчерпаны. Обновите тариф в разделе Биллинг.');
+      } else {
+        toast.error('Техническая ошибка. Обратитесь в поддержку.');
+      }
     } finally {
       setActionLoading(null);
     }

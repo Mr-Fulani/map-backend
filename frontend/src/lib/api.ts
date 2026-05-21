@@ -231,6 +231,7 @@ export const listingApi = {
   list: (params?: Record<string, unknown>) => api.get('/listings/', { params }),
   get: (id: number) => api.get(`/listings/${id}/`),
   approve: (id: number) => api.post(`/listings/${id}/approve/`),
+  publish: (id: number) => api.post(`/listings/${id}/publish/`),
   regenerate: (id: number) => api.post(`/listings/${id}/regenerate/`),
   updateContent: (id: number, data: { title?: string; description_ai?: string }) =>
     api.patch(`/listings/${id}/`, data),

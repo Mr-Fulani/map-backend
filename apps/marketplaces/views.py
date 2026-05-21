@@ -212,7 +212,7 @@ class ListingDetailView(APIView):
             listing = ListingService.get_for_tenant(pk, request.tenant)
         except ListingNotFound:
             return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
-        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing).data})
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
 
     def patch(self, request, pk):
         """
@@ -229,7 +229,7 @@ class ListingDetailView(APIView):
         except InvalidListingStatus as exc:
             return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
                             status=status.HTTP_400_BAD_REQUEST)
-        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing).data})
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
 
 
 @extend_schema(tags=['Listings'])
@@ -245,7 +245,23 @@ class ListingApproveView(APIView):
         except InvalidListingStatus as exc:
             return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
                             status=status.HTTP_400_BAD_REQUEST)
-        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing).data})
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
+
+
+@extend_schema(tags=['Listings'])
+class ListingPublishView(APIView):
+    """POST /api/v1/listings/{id}/publish/ — опубликовать черновик/отклонённый/архивный листинг."""
+
+    def post(self, request, pk):
+        """Ставит задачу публикации листинга в Celery."""
+        try:
+            listing = ListingService.publish(pk, request.tenant)
+        except ListingNotFound:
+            return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        except InvalidListingStatus as exc:
+            return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
 
 
 @extend_schema(tags=['Listings'])
@@ -254,6 +270,13 @@ class ListingRegenerateView(APIView):
 
     def post(self, request, pk):
         """Ставит задачу генерации AI-описания для товара в очередь Celery."""
+        from apps.billing.services import LimitChecker
+        can, reason = LimitChecker().can_generate_ai(request.tenant)
+        if not can:
+            return Response(
+                {'status': 'error', 'code': 'quota_exceeded', 'message': reason},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         try:
             ListingService.request_regenerate(pk, request.tenant)
         except ListingNotFound:

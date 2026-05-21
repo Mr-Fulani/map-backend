@@ -101,22 +101,51 @@ class ListingService:
         return listing
 
     @staticmethod
+    def publish(listing_id: int, tenant) -> Listing:
+        """
+        Публикует черновик, отклонённый или архивный листинг на Avito.
+
+        Raises:
+            ListingNotFound: листинг не принадлежит тенанту.
+            InvalidListingStatus: листинг не в подходящем статусе для публикации.
+        """
+        listing = ListingService.get_for_tenant(listing_id, tenant)
+        publishable = (
+            Listing.STATUS_DRAFT,
+            Listing.STATUS_REJECTED,
+            Listing.STATUS_ARCHIVED,
+        )
+        if listing.status not in publishable:
+            raise InvalidListingStatus(
+                f'Публикация доступна для draft/rejected/archived, '
+                f'текущий статус: {listing.status}'
+            )
+        lid = listing.pk
+        transaction.on_commit(lambda: _enqueue_publish_or_update(lid, is_new=True))
+        return listing
+
+    @staticmethod
     def request_regenerate(listing_id: int, tenant) -> Listing:
         """
-        Инициирует перегенерацию AI-описания для листинга requires_review.
+        Инициирует перегенерацию AI-описания.
 
+        Доступно для статусов requires_review, draft, rejected.
         После генерации листинг автоматически публикуется (если confidence ≥ 0.5)
         или снова попадёт на проверку.
 
         Raises:
             ListingNotFound: листинг не принадлежит тенанту.
-            InvalidListingStatus: листинг не в статусе requires_review.
+            InvalidListingStatus: листинг не в подходящем статусе.
         """
         listing = ListingService.get_for_tenant(listing_id, tenant)
-        if listing.status != Listing.STATUS_REQUIRES_REVIEW:
+        regenerable = (
+            Listing.STATUS_REQUIRES_REVIEW,
+            Listing.STATUS_DRAFT,
+            Listing.STATUS_REJECTED,
+        )
+        if listing.status not in regenerable:
             raise InvalidListingStatus(
-                f'Перегенерация доступна только для requires_review, '
-                f'текущий статус: {listing.status}'
+                f'Перегенерация недоступна для статуса {listing.status}'
             )
         product_id = listing.product_id
         transaction.on_commit(lambda: _enqueue_ai_generation(product_id))

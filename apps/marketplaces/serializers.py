@@ -36,6 +36,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
 class ListingSerializer(serializers.ModelSerializer):
     """Листинг для Dashboard — без credentials, с denormalized полями."""
 
+    product_id = serializers.IntegerField(source='product.pk', read_only=True)
     product_article = serializers.CharField(source='product.article', read_only=True)
     product_name = serializers.CharField(source='product.name', read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
@@ -45,18 +46,26 @@ class ListingSerializer(serializers.ModelSerializer):
         model = Listing
         fields = [
             'id', 'status', 'status_display',
-            'product_article', 'product_name', 'account_name',
+            'product_id', 'product_article', 'product_name', 'account_name',
             'title', 'price_on_listing', 'external_id', 'external_url',
             'rejection_reason', 'retry_count', 'published_at', 'created_at',
         ]
         read_only_fields = fields
 
 
-def _image_url(s3_key: str, fallback: str) -> str:
-    """Строит URL изображения через CDN-домен или возвращает исходный URL."""
+def _image_url(s3_key: str, fallback: str, request=None) -> str:
+    """Строит URL изображения: CDN (только при S3) → default_storage → fallback."""
+    from django.core.files.storage import default_storage
     cdn = getattr(settings, 'YC_CDN_DOMAIN', '')
-    if cdn and s3_key:
+    # CDN используем только если storage реально S3 (FileSystemStorage не имеет bucket_name)
+    is_s3 = hasattr(default_storage, 'bucket_name')
+    if cdn and s3_key and is_s3:
         return f'https://{cdn}/{s3_key}'
+    if s3_key:
+        url = default_storage.url(s3_key)
+        if url.startswith('/') and request:
+            return request.build_absolute_uri(url)
+        return url
     return fallback or ''
 
 
@@ -93,13 +102,16 @@ class ListingDetailSerializer(ListingSerializer):
 
     def get_images(self, obj) -> list:
         """Возвращает список изображений товара с CDN-ссылками."""
+        request = self.context.get('request')
         return [
             {
-                'url': _image_url(img.s3_key, img.url_source),
-                'thumb_url': _image_url(img.s3_key_thumb, img.url_source),
+                'id': img.pk,
+                'url': _image_url(img.s3_key, img.url_source, request),
+                'thumb_url': _image_url(img.s3_key_thumb, img.url_source, request),
                 'position': img.position,
+                'is_primary': img.is_primary,
             }
-            for img in obj.product.images.all()
+            for img in obj.product.images.order_by('position')
         ]
 
 
