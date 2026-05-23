@@ -18,6 +18,10 @@ def _compute_hash(data: dict) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
+class QuotaExceeded(Exception):
+    """Превышен лимит AI-генераций для тенанта."""
+
+
 class ProductService:
     """Сервис управления товарами: создание/обновление из источников данных."""
 
@@ -63,6 +67,23 @@ class ProductService:
         return product, 'unchanged'
 
     @staticmethod
+    def schedule_ai_generation(product, tenant) -> None:
+        """
+        Проверяет лимит AI-кредитов и ставит задачу генерации описания в очередь Celery.
+
+        Raises:
+            QuotaExceeded: превышен лимит AI-генераций тенанта.
+        """
+        from apps.billing.services import LimitChecker
+        from django.db import transaction
+
+        can, reason = LimitChecker().can_generate_ai(tenant)
+        if not can:
+            raise QuotaExceeded(reason)
+        product_id = product.pk
+        transaction.on_commit(lambda: _enqueue_ai_generation(product_id))
+
+    @staticmethod
     def detect_change_type(old_data: dict, new_data: dict) -> str:
         """
         Определяет тип изменения товара.
@@ -86,3 +107,9 @@ class ProductService:
         if stock_changed and not price_changed:
             return 'stock_only'
         return 'content'
+
+
+def _enqueue_ai_generation(product_id: int) -> None:
+    """Ставит задачу генерации AI-описания в Celery."""
+    from apps.ai_agent.tasks import generate_description_task
+    generate_description_task.delay(product_id)

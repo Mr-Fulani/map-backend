@@ -21,6 +21,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'id', 'uuid_1c', 'article', 'name', 'brand', 'category_1c',
             'condition', 'price', 'stock_qty', 'warehouse',
             'export_enabled', 'sync_at', 'images', 'images_count', 'primary_thumb_url',
+            'title_ai', 'description_ai',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['uuid_1c', 'sync_at', 'created_at', 'updated_at']

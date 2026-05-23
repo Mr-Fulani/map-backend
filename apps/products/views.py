@@ -77,3 +77,57 @@ class ProductSyncView(APIView):
         conn = get_object_or_404(DataSourceConnection, pk=connection_id, tenant=request.tenant)
         task = import_from_datasource.delay(conn.pk)
         return Response({'status': 'ok', 'data': {'task_id': task.id}})
+
+
+@extend_schema(tags=['Products'])
+class ProductPublishView(APIView):
+    """POST /api/v1/products/{pk}/publish/ — создать/обновить листинги для всех аккаунтов тенанта."""
+
+    def post(self, request, pk):
+        """Делегирует публикацию ListingService.publish_product."""
+        from apps.marketplaces.services import ListingService, NoActiveAccounts
+
+        try:
+            product = Product.objects.get(pk=pk, tenant=request.tenant)
+        except Product.DoesNotExist:
+            return Response(
+                {'status': 'error', 'code': 'not_found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            listing_ids = ListingService.publish_product(product, request.tenant)
+        except NoActiveAccounts:
+            return Response(
+                {'status': 'error', 'code': 'no_accounts',
+                 'message': 'Нет подключённых аккаунтов. Добавьте аккаунт в настройках.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response({'status': 'ok', 'data': {'listing_ids': listing_ids}})
+
+
+@extend_schema(tags=['Products'])
+class ProductRegenerateView(APIView):
+    """POST /api/v1/products/{pk}/regenerate/ — поставить задачу генерации AI-описания."""
+
+    def post(self, request, pk):
+        """Делегирует проверку лимита и постановку задачи ProductService.schedule_ai_generation."""
+        from apps.products.services import ProductService, QuotaExceeded
+
+        try:
+            product = Product.objects.get(pk=pk, tenant=request.tenant)
+        except Product.DoesNotExist:
+            return Response(
+                {'status': 'error', 'code': 'not_found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        try:
+            ProductService.schedule_ai_generation(product, request.tenant)
+        except QuotaExceeded as exc:
+            return Response(
+                {'status': 'error', 'code': 'quota_exceeded', 'message': str(exc)},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+        return Response({'status': 'ok', 'message': 'Задача генерации поставлена в очередь'})
