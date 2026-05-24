@@ -18,10 +18,19 @@ from apps.marketplaces.models import Listing
 from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR
 
 
-def _notify_error(tenant, message: str) -> None:
-    """Асинхронно отправляет error-уведомление тенанту."""
+def _notify_error(tenant, message: str, listing=None) -> None:
+    """Отправляет error-уведомление тенанту и записывает SyncLog с STATUS_ERROR."""
     from apps.notifications.tasks import send_notification_task
+    from apps.sync.models import SyncLog
+
     send_notification_task.delay(tenant.pk, LEVEL_ERROR, message)
+    SyncLog.objects.create(
+        tenant=tenant,
+        listing=listing,
+        event_type=SyncLog.EVENT_LISTING_ERROR,
+        status=SyncLog.STATUS_ERROR,
+        message=message,
+    )
 
 
 def _notify_critical(tenant, message: str) -> None:
@@ -84,6 +93,7 @@ def publish_listing_task(self, listing_id: int):
                 f'Не удалось опубликовать «{listing.title or listing.product.name}»: '
                 f'аккаунт {listing.account.name!r} не найден в Avito API (ошибка 404). '
                 f'Проверьте User ID в настройках аккаунта.',
+                listing=listing,
             )
         except RejectedError as exc:
             listing.status = Listing.STATUS_REJECTED
@@ -91,6 +101,7 @@ def publish_listing_task(self, listing_id: int):
             _notify_error(
                 listing.tenant,
                 f'Объявление «{listing.title or listing.product.name}» отклонено Avito: {exc.reason}',
+                listing=listing,
             )
         except RateLimitError as exc:
             listing.retry_count += 1
@@ -106,6 +117,7 @@ def publish_listing_task(self, listing_id: int):
                     listing.tenant,
                     f'Не удалось опубликовать «{listing.title or listing.product.name}» '
                     f'после {self.max_retries} попыток: {exc}',
+                    listing=listing,
                 )
             raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
         finally:
@@ -195,6 +207,7 @@ def check_moderation_task(self, listing_id: int):
                 listing.tenant,
                 f'Объявление «{listing.title or listing.product.name}» отклонено при модерации Avito'
                 + (f': {listing.rejection_reason}' if listing.rejection_reason else '.'),
+                listing=listing,
             )
         listing.last_sync_at = now()
         listing.save(update_fields=['status', 'rejection_reason', 'last_sync_at'])
