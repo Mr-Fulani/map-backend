@@ -46,3 +46,33 @@ def billing_check_expired():
         'billing_check_expired: past_due=%d, cancelled=%d', past_due_count, cancelled_count,
     )
     return {'past_due_updated': past_due_count, 'cancelled': cancelled_count}
+
+
+@shared_task(queue='billing')
+def reset_monthly_ai_credits():
+    """
+    Сбрасывает AI-кредиты для активных подписчиков в начале нового расчётного периода.
+
+    Запускается ежедневно. Сбрасывает кредиты тем тенантам, у которых сегодня
+    совпадает день начала расчётного периода (current_period_start.day == today.day).
+    """
+    from datetime import date
+    from apps.billing.models import Subscription
+    from apps.tenants.models import Tenant
+
+    today = date.today()
+    reset_count = 0
+
+    active_subs = Subscription.objects.filter(
+        status=Subscription.STATUS_ACTIVE,
+        current_period_start__isnull=False,
+    ).select_related('tenant')
+
+    for sub in active_subs:
+        if sub.current_period_start.day == today.day:
+            Tenant.objects.filter(pk=sub.tenant_id).update(ai_credits_used=0)
+            reset_count += 1
+
+    if reset_count:
+        logger.info('reset_monthly_ai_credits: сброшено кредитов для %d тенантов', reset_count)
+    return {'reset_count': reset_count}

@@ -54,8 +54,32 @@ class LimitChecker:
 
     def get_usage_summary(self, tenant: Tenant) -> dict:
         """Возвращает текущее использование лимитов тенантом."""
+        from apps.marketplaces.models import Listing
+        from django.utils import timezone
+
         sub = self._get_subscription(tenant)
         plan = sub.plan if sub else None
+
+        # Вычисляем эффективный статус подписки в реальном времени,
+        # не полагаясь на поле status — Celery Beat мог ещё не запуститься.
+        effective_status = sub.status if sub else None
+        if (
+            sub
+            and sub.status == sub.STATUS_TRIAL
+            and sub.current_period_end
+            and sub.current_period_end < timezone.now().date()
+        ):
+            effective_status = sub.STATUS_PAST_DUE
+
+        rejected_count = Listing.objects.filter(
+            tenant=tenant, status=Listing.STATUS_REJECTED,
+        ).count()
+
+        # Дней до принудительной отмены в grace period
+        grace_days_left = None
+        if effective_status == Subscription.STATUS_PAST_DUE and sub and sub.current_period_end:
+            elapsed = (timezone.now().date() - sub.current_period_end).days
+            grace_days_left = max(0, GRACE_PERIOD_DAYS - elapsed)
 
         return {
             'listings': {
@@ -70,7 +94,9 @@ class LimitChecker:
                 'used': tenant.ai_credits_used,
                 'limit': plan.limit_ai_credits if plan else None,
             },
-            'subscription_status': sub.status if sub else None,
+            'rejected_listings': rejected_count,
+            'subscription_status': effective_status,
+            'grace_days_left': grace_days_left,
             'plan': plan.slug if plan else None,
         }
 
@@ -220,6 +246,9 @@ class BillingService:
         sub.current_period_start = today
         sub.current_period_end = end
         sub.save()
+
+        # Новый расчётный период — сбрасываем счётчик AI-кредитов
+        Tenant.objects.filter(pk=tenant.pk).update(ai_credits_used=0)
 
         logger.info('Тенант %s перешёл на план %s', tenant.slug, plan.slug)
         return sub

@@ -193,13 +193,18 @@ export default function ProductDetailPage() {
         }, 2000);
         return;
       }
-      toast.success('Товар архивируется');
+      toast.success('Объявления сняты с публикации и уходят в архив.');
     } catch (err: unknown) {
-      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      const code = (err as { response?: { data?: { code?: string; message?: string } } })?.response?.data?.code;
+      const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
       if (code === 'quota_exceeded') {
         toast.error('AI-кредиты исчерпаны. Обновите тариф в разделе Биллинг.');
+      } else if (code === 'no_active_listings') {
+        toast.warning(message ?? 'Нет активных объявлений для архивации.');
+      } else if (code === 'no_accounts') {
+        toast.error('Нет подключённых аккаунтов. Добавьте аккаунт в настройках.');
       } else {
-        toast.error('Техническая ошибка. Обратитесь в поддержку.');
+        toast.error('Не удалось выполнить действие. Попробуйте ещё раз.');
       }
     } finally {
       setActionLoading(null);

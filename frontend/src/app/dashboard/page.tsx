@@ -5,13 +5,15 @@ import { billingApi, logApi } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ListOrdered, Package, Sparkles, AlertTriangle, TrendingUp } from 'lucide-react';
+import { ListOrdered, Package, Sparkles, AlertTriangle, TrendingUp, XCircle } from 'lucide-react';
 
 interface UsageData {
   listings: { used: number; limit: number | null };
   sku: { used: number; limit: number | null };
   ai_credits: { used: number; limit: number | null };
+  rejected_listings: number;
   subscription_status: string | null;
+  grace_days_left: number | null;
   plan: string | null;
 }
 
@@ -83,7 +85,7 @@ const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive'> =
 const STATUS_LABELS: Record<string, string> = {
   active: 'Активна',
   trial: 'Пробный период',
-  past_due: 'Просрочена',
+  past_due: 'Триал истёк',
   cancelled: 'Отменена',
 };
 
@@ -131,7 +133,22 @@ export default function DashboardPage() {
         )}
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      {/* Баннер grace period */}
+      {!loading && subStatus === 'past_due' && (
+        <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive flex items-center justify-between gap-4">
+          <div>
+            <span className="font-semibold">Триал истёк.</span>{' '}
+            {usage?.grace_days_left != null && usage.grace_days_left > 0
+              ? `Публикация и AI заблокированы. До полного отключения осталось ${usage.grace_days_left} дн. — оплатите подписку.`
+              : 'Подписка будет отменена. Оплатите подписку для восстановления доступа.'}
+          </div>
+          <a href="/dashboard/billing" className="shrink-0 font-semibold underline underline-offset-2">
+            Оплатить
+          </a>
+        </div>
+      )}
+
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <KpiCard
           title="Активные объявления"
           value={usage?.listings.used ?? 0}
@@ -152,6 +169,13 @@ export default function DashboardPage() {
           limit={usage?.ai_credits.limit}
           icon={<Sparkles className="h-4 w-4" />}
           loading={loading}
+        />
+        <KpiCard
+          title="Отклонено сейчас"
+          value={usage?.rejected_listings ?? 0}
+          icon={<XCircle className="h-4 w-4" />}
+          loading={loading}
+          warning={(usage?.rejected_listings ?? 0) > 0}
         />
         <KpiCard
           title="Ошибок за сегодня"

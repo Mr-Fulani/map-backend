@@ -255,10 +255,19 @@ class MeView(APIView):
         if tenant:
             try:
                 sub = tenant.subscription
+                from django.utils import timezone
+                from apps.billing.models import Subscription as Sub
+                effective_status = sub.status
+                if (
+                    sub.status == Sub.STATUS_TRIAL
+                    and sub.current_period_end
+                    and sub.current_period_end < timezone.now().date()
+                ):
+                    effective_status = Sub.STATUS_PAST_DUE
                 subscription_data = {
                     'plan_slug': sub.plan.slug,
                     'plan_name': sub.plan.name,
-                    'status': sub.status,
+                    'status': effective_status,
                     'current_period_end': sub.current_period_end.isoformat() if sub.current_period_end else None,
                 }
             except Exception:

@@ -41,6 +41,13 @@ export function Header() {
         ? 'secondary'
         : 'destructive';
 
+  const planStatusLabel =
+    subscription?.status === 'past_due'
+      ? ' (Триал истёк)'
+      : subscription?.status === 'trial'
+        ? ' (Trial)'
+        : '';
+
   return (
     <header className="flex h-14 items-center justify-between border-b bg-card px-4 lg:px-6">
       {/* Left: Mobile menu + Tenant */}
@@ -64,8 +71,7 @@ export function Header() {
             <span className="text-sm font-medium">{tenant.name}</span>
             {subscription && (
               <Badge variant={planBadgeVariant} className="text-xs">
-                {subscription.plan_name}
-                {subscription.status === 'trial' && ' (Trial)'}
+                {subscription.plan_name}{planStatusLabel}
               </Badge>
             )}
           </div>
