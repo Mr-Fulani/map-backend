@@ -62,6 +62,14 @@ class InvalidListingStatus(Exception):
     """Операция недопустима для текущего статуса листинга."""
 
 
+class NoActiveAccounts(Exception):
+    """У тенанта нет ни одного активного аккаунта маркетплейса."""
+
+
+class AccountAlreadyExists(Exception):
+    """Аккаунт с таким external_id уже существует у тенанта."""
+
+
 class ListingService:
     """Сервис управления объявлениями: создание, маршрутизация по типу изменения."""
 
@@ -101,22 +109,51 @@ class ListingService:
         return listing
 
     @staticmethod
+    def publish(listing_id: int, tenant) -> Listing:
+        """
+        Публикует черновик, отклонённый или архивный листинг на Avito.
+
+        Raises:
+            ListingNotFound: листинг не принадлежит тенанту.
+            InvalidListingStatus: листинг не в подходящем статусе для публикации.
+        """
+        listing = ListingService.get_for_tenant(listing_id, tenant)
+        publishable = (
+            Listing.STATUS_DRAFT,
+            Listing.STATUS_REJECTED,
+            Listing.STATUS_ARCHIVED,
+        )
+        if listing.status not in publishable:
+            raise InvalidListingStatus(
+                f'Публикация доступна для draft/rejected/archived, '
+                f'текущий статус: {listing.status}'
+            )
+        lid = listing.pk
+        transaction.on_commit(lambda: _enqueue_publish_or_update(lid, is_new=True))
+        return listing
+
+    @staticmethod
     def request_regenerate(listing_id: int, tenant) -> Listing:
         """
-        Инициирует перегенерацию AI-описания для листинга requires_review.
+        Инициирует перегенерацию AI-описания.
 
+        Доступно для статусов requires_review, draft, rejected.
         После генерации листинг автоматически публикуется (если confidence ≥ 0.5)
         или снова попадёт на проверку.
 
         Raises:
             ListingNotFound: листинг не принадлежит тенанту.
-            InvalidListingStatus: листинг не в статусе requires_review.
+            InvalidListingStatus: листинг не в подходящем статусе.
         """
         listing = ListingService.get_for_tenant(listing_id, tenant)
-        if listing.status != Listing.STATUS_REQUIRES_REVIEW:
+        regenerable = (
+            Listing.STATUS_REQUIRES_REVIEW,
+            Listing.STATUS_DRAFT,
+            Listing.STATUS_REJECTED,
+        )
+        if listing.status not in regenerable:
             raise InvalidListingStatus(
-                f'Перегенерация доступна только для requires_review, '
-                f'текущий статус: {listing.status}'
+                f'Перегенерация недоступна для статуса {listing.status}'
             )
         product_id = listing.product_id
         transaction.on_commit(lambda: _enqueue_ai_generation(product_id))
@@ -150,6 +187,24 @@ class ListingService:
         return listing
 
     @staticmethod
+    def publish_product(product, tenant) -> list[int]:
+        """
+        Создаёт или обновляет листинги товара для всех активных аккаунтов тенанта.
+
+        Raises:
+            NoActiveAccounts: у тенанта нет активных аккаунтов маркетплейсов.
+        """
+        from apps.marketplaces.models import MarketplaceAccount
+        accounts = MarketplaceAccount.objects.filter(tenant=tenant, is_active=True)
+        if not accounts.exists():
+            raise NoActiveAccounts('Нет подключённых активных аккаунтов')
+        listing_ids = []
+        for account in accounts:
+            listing = ListingService.create_or_update(product, account)
+            listing_ids.append(listing.pk)
+        return listing_ids
+
+    @staticmethod
     def create_or_update(product, account, change_type: str = 'content') -> Listing:
         """
         Создаёт листинг или обновляет существующий в зависимости от change_type.
@@ -164,7 +219,8 @@ class ListingService:
             account=account,
             defaults={
                 'price_on_listing': product.price,
-                'title': product.name[:300],
+                'title': (product.title_ai or product.name)[:300],
+                'description_ai': product.description_ai,
                 'status': Listing.STATUS_DRAFT,
             },
         )
@@ -181,6 +237,90 @@ class ListingService:
 
         transaction.on_commit(lambda: _enqueue_publish_or_update(listing.pk, created))
         return listing
+
+
+class MarketplaceAccountService:
+    """Сервис управления аккаунтами маркетплейсов: создание, обновление credentials."""
+
+    @staticmethod
+    def _fetch_avito_user_id(credentials_enc: str, fallback: str) -> str:
+        """Получает числовой user_id из Avito API по credentials; возвращает fallback при ошибке."""
+        import requests as req
+        from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
+
+        class _Tmp:
+            pk = None
+
+        tmp = _Tmp()
+        tmp.credentials_enc = credentials_enc
+        try:
+            token = AvitoAuthManager()._refresh(tmp)
+            resp = req.get(
+                'https://api.avito.ru/core/v1/accounts/self',
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return str(resp.json()['id'])
+        except Exception:
+            return fallback
+
+    @staticmethod
+    def create(tenant, data: dict):
+        """
+        Создаёт аккаунт маркетплейса с зашифрованными credentials.
+
+        Автоматически запрашивает реальный Avito user_id через API.
+        При конфликте external_id бросает AccountAlreadyExists.
+        """
+        from apps.datasources.encryption import encrypt
+        from apps.marketplaces.models import MarketplaceAccount
+
+        credentials_enc = encrypt({
+            'client_id': data['client_id'],
+            'client_secret': data['client_secret'],
+        })
+        external_id = MarketplaceAccountService._fetch_avito_user_id(
+            credentials_enc, data.get('external_id', '')
+        )
+        try:
+            return MarketplaceAccount.objects.create(
+                tenant=tenant,
+                name=data['name'],
+                marketplace=data['marketplace'],
+                external_id=external_id,
+                credentials_enc=credentials_enc,
+            )
+        except Exception:
+            raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
+
+    @staticmethod
+    def update_credentials(account, data: dict):
+        """Полностью обновляет аккаунт: имя, marketplace, external_id и credentials."""
+        from apps.datasources.encryption import encrypt
+        account.name = data['name']
+        account.marketplace = data['marketplace']
+        account.external_id = data['external_id']
+        account.credentials_enc = encrypt({
+            'client_id': data['client_id'],
+            'client_secret': data['client_secret'],
+        })
+        account.save(update_fields=['name', 'marketplace', 'external_id', 'credentials_enc'])
+        return account
+
+    @staticmethod
+    def update_partial(account, data: dict):
+        """Частично обновляет аккаунт: is_active и/или name."""
+        update_fields = []
+        if 'is_active' in data:
+            account.is_active = bool(data['is_active'])
+            update_fields.append('is_active')
+        if 'name' in data:
+            account.name = str(data['name'])[:200]
+            update_fields.append('name')
+        if update_fields:
+            account.save(update_fields=update_fields)
+        return account
 
 
 def _enqueue_publish_or_update(listing_id: int, is_new: bool) -> None:

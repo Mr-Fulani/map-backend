@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#374151"/>
+      <stop offset="100%" stop-color="#111827"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="300" fill="url(#bg)"/>
+  <!-- Box front face -->
+  <rect x="115" y="130" width="170" height="130" rx="4" fill="white" opacity="0.18"/>
+  <!-- Box top face -->
+  <path d="M115 130 L160 95 L330 95 L285 130Z" fill="white" opacity="0.12"/>
+  <!-- Box right face -->
+  <path d="M285 130 L330 95 L330 225 L285 260Z" fill="white" opacity="0.08"/>
+  <!-- Box top flap left -->
+  <path d="M115 130 L160 95 L200 115 L155 150Z" fill="white" opacity="0.06"/>
+  <!-- Box top flap right -->
+  <path d="M285 130 L245 150 L200 115 L240 95Z" fill="white" opacity="0.1"/>
+  <!-- Tape strip -->
+  <rect x="181" y="93" width="38" height="140" fill="white" opacity="0.05"/>
+  <!-- Star/asterisk center dot -->
+  <circle cx="200" cy="195" r="3" fill="white" opacity="0.2"/>
+</svg>

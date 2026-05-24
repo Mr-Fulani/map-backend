@@ -51,6 +51,8 @@ interface ProductDetail {
   sync_at: string | null;
   created_at: string;
   updated_at: string;
+  title_ai: string;
+  description_ai: string;
 }
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -97,6 +99,7 @@ export default function ProductDetailPage() {
 
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
   const searching = searchTaskId !== null;
+  const [generatingDescription, setGeneratingDescription] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
@@ -131,11 +134,15 @@ export default function ProductDetailPage() {
     const interval = setInterval(async () => {
       try {
         const res = await imageApi.searchStatus(Number(id), searchTaskId);
-        const state: string = res.data.data.state;
+        const { state, saved_count } = res.data.data;
         if (state !== 'running') {
           setSearchTaskId(null);
           if (state === 'done') {
-            toast.success('Поиск завершён');
+            if (saved_count > 0) {
+              toast.success(`Найдено фото: ${saved_count}`);
+            } else {
+              toast.warning('Фото не найдены — попробуйте загрузить вручную');
+            }
             loadImages();
           } else {
             toast.error('Поиск завершился с ошибкой');
@@ -152,18 +159,48 @@ export default function ProductDetailPage() {
   async function runAction(action: 'publish' | 'archive' | 'regenerate') {
     setActionLoading(action);
     try {
-      if (action === 'publish') await productApi.publish(Number(id));
-      else if (action === 'archive') await productApi.archive(Number(id));
-      else await productApi.regenerate(Number(id));
-      toast.success(
-        action === 'publish'
-          ? 'Задача на публикацию поставлена'
-          : action === 'archive'
-            ? 'Товар архивируется'
-            : 'Генерация описания запущена',
-      );
-    } catch {
-      toast.error('Ошибка выполнения действия');
+      if (action === 'publish') {
+        await productApi.publish(Number(id));
+        toast.success('Листинги созданы. Откройте вкладку «Листинги» чтобы опубликовать.');
+        return;
+      } else if (action === 'archive') await productApi.archive(Number(id));
+      else {
+        const prevDescription = product?.description_ai ?? '';
+        await productApi.regenerate(Number(id));
+        toast.info('Генерация описания запущена...');
+        setGeneratingDescription(true);
+        const deadline = Date.now() + 60_000;
+        const poll = setInterval(async () => {
+          if (Date.now() > deadline) {
+            clearInterval(poll);
+            setGeneratingDescription(false);
+            toast.warning('Генерация заняла слишком долго. Обновите страницу вручную.');
+            return;
+          }
+          try {
+            const res = await productApi.get(Number(id));
+            const updated = res.data.data as ProductDetail;
+            if (updated.description_ai && updated.description_ai !== prevDescription) {
+              clearInterval(poll);
+              setGeneratingDescription(false);
+              setProduct(updated);
+              toast.success('Описание сгенерировано');
+            }
+          } catch {
+            clearInterval(poll);
+            setGeneratingDescription(false);
+          }
+        }, 2000);
+        return;
+      }
+      toast.success('Товар архивируется');
+    } catch (err: unknown) {
+      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      if (code === 'quota_exceeded') {
+        toast.error('AI-кредиты исчерпаны. Обновите тариф в разделе Биллинг.');
+      } else {
+        toast.error('Техническая ошибка. Обратитесь в поддержку.');
+      }
     } finally {
       setActionLoading(null);
     }
@@ -308,6 +345,40 @@ export default function ProductDetailPage() {
             </CardContent>
           </Card>
 
+          {/* AI-описание */}
+          {(product.description_ai || generatingDescription) && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm font-medium">AI-описание</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {generatingDescription ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Генерация описания...
+                  </div>
+                ) : (
+                  <>
+                    {product.title_ai && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Заголовок</p>
+                        <p className="text-sm font-medium">{product.title_ai}</p>
+                      </div>
+                    )}
+                    {product.description_ai && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">Описание</p>
+                        <p className="text-sm whitespace-pre-wrap leading-relaxed">
+                          {product.description_ai}
+                        </p>
+                      </div>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Фотографии */}
           <Card>
             <CardHeader>
@@ -444,14 +515,14 @@ export default function ProductDetailPage() {
                 className="w-full"
                 variant="outline"
                 onClick={() => runAction('regenerate')}
-                disabled={busy || searching}
+                disabled={busy || searching || generatingDescription}
               >
-                {actionLoading === 'regenerate' ? (
+                {actionLoading === 'regenerate' || generatingDescription ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <RefreshCw className="mr-2 h-4 w-4" />
                 )}
-                Сгенерировать описание
+                {generatingDescription ? 'Генерация...' : 'Сгенерировать описание'}
               </Button>
               <Button
                 className="w-full"

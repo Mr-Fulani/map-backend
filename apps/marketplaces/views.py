@@ -6,7 +6,6 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.datasources.encryption import encrypt
 from apps.marketplaces.models import CategoryMapping, Listing, ListingStats, MarketplaceAccount
 from apps.marketplaces.serializers import (
     CategoryMappingSerializer,
@@ -18,10 +17,12 @@ from apps.marketplaces.serializers import (
 )
 from apps.core.pagination import MapPagination
 from apps.marketplaces.services import (
+    AccountAlreadyExists,
     CategoryMappingService,
     InvalidListingStatus,
     ListingNotFound,
     ListingService,
+    MarketplaceAccountService,
 )
 
 
@@ -35,36 +36,14 @@ class MarketplaceAccountListView(APIView):
         return Response(MarketplaceAccountSerializer(qs, many=True).data)
 
     def post(self, request):
-        """
-        Создаёт аккаунт Avito с зашифрованными client_id/client_secret.
-
-        Поля client_id и client_secret шифруются Fernet и не возвращаются в ответе.
-        """
+        """Создаёт аккаунт Avito, делегируя логику MarketplaceAccountService.create."""
         serializer = MarketplaceAccountWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-
         try:
-            account = MarketplaceAccount.objects.create(
-                tenant=request.tenant,
-                name=data['name'],
-                marketplace=data['marketplace'],
-                external_id=data['external_id'],
-                credentials_enc=encrypt({
-                    'client_id': data['client_id'],
-                    'client_secret': data['client_secret'],
-                }),
-            )
-        except Exception:
-            return Response(
-                {'detail': 'Аккаунт с таким external_id уже существует.'},
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        return Response(
-            MarketplaceAccountSerializer(account).data,
-            status=status.HTTP_201_CREATED,
-        )
+            account = MarketplaceAccountService.create(request.tenant, serializer.validated_data)
+        except AccountAlreadyExists as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(MarketplaceAccountSerializer(account).data, status=status.HTTP_201_CREATED)
 
 
 @extend_schema(tags=['Accounts'])
@@ -86,28 +65,21 @@ class MarketplaceAccountDetailView(APIView):
         return Response(MarketplaceAccountSerializer(account).data)
 
     def put(self, request, pk):
-        """
-        Обновляет аккаунт.
-
-        Если переданы client_id/client_secret — перешифровывает credentials.
-        """
+        """Обновляет аккаунт, делегируя логику MarketplaceAccountService.update_credentials."""
         account = self._get_account(pk, request.tenant)
         if account is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
-
         serializer = MarketplaceAccountWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
+        account = MarketplaceAccountService.update_credentials(account, serializer.validated_data)
+        return Response(MarketplaceAccountSerializer(account).data)
 
-        account.name = data['name']
-        account.marketplace = data['marketplace']
-        account.external_id = data['external_id']
-        account.credentials_enc = encrypt({
-            'client_id': data['client_id'],
-            'client_secret': data['client_secret'],
-        })
-        account.save(update_fields=['name', 'marketplace', 'external_id', 'credentials_enc'])
-
+    def patch(self, request, pk):
+        """Частичное обновление аккаунта, делегируя логику MarketplaceAccountService.update_partial."""
+        account = self._get_account(pk, request.tenant)
+        if account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        account = MarketplaceAccountService.update_partial(account, request.data)
         return Response(MarketplaceAccountSerializer(account).data)
 
     def delete(self, request, pk):
@@ -181,7 +153,7 @@ class ListingListView(APIView):
     def get(self, request):
         """Возвращает страницу листингов текущего тенанта."""
         qs = (
-            Listing.objects.filter(tenant=request.tenant)
+            Listing.objects.filter(tenant=request.tenant, account__is_active=True)
             .select_related('product', 'account')
             .order_by('-created_at')
         )
@@ -212,7 +184,7 @@ class ListingDetailView(APIView):
             listing = ListingService.get_for_tenant(pk, request.tenant)
         except ListingNotFound:
             return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
-        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing).data})
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
 
     def patch(self, request, pk):
         """
@@ -229,7 +201,7 @@ class ListingDetailView(APIView):
         except InvalidListingStatus as exc:
             return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
                             status=status.HTTP_400_BAD_REQUEST)
-        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing).data})
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
 
 
 @extend_schema(tags=['Listings'])
@@ -245,7 +217,23 @@ class ListingApproveView(APIView):
         except InvalidListingStatus as exc:
             return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
                             status=status.HTTP_400_BAD_REQUEST)
-        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing).data})
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
+
+
+@extend_schema(tags=['Listings'])
+class ListingPublishView(APIView):
+    """POST /api/v1/listings/{id}/publish/ — опубликовать черновик/отклонённый/архивный листинг."""
+
+    def post(self, request, pk):
+        """Ставит задачу публикации листинга в Celery."""
+        try:
+            listing = ListingService.publish(pk, request.tenant)
+        except ListingNotFound:
+            return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        except InvalidListingStatus as exc:
+            return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
 
 
 @extend_schema(tags=['Listings'])
@@ -254,6 +242,13 @@ class ListingRegenerateView(APIView):
 
     def post(self, request, pk):
         """Ставит задачу генерации AI-описания для товара в очередь Celery."""
+        from apps.billing.services import LimitChecker
+        can, reason = LimitChecker().can_generate_ai(request.tenant)
+        if not can:
+            return Response(
+                {'status': 'error', 'code': 'quota_exceeded', 'message': reason},
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
         try:
             ListingService.request_regenerate(pk, request.tenant)
         except ListingNotFound:

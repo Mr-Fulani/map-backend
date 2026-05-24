@@ -67,6 +67,9 @@ export default function SettingsPage() {
   const [copied, setCopied] = useState(false);
   const [revokingId, setRevokingId] = useState<number | null>(null);
   const [deletingAccountId, setDeletingAccountId] = useState<number | null>(null);
+  const [togglingAccountId, setTogglingAccountId] = useState<number | null>(null);
+  const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
+  const [editAccountName, setEditAccountName] = useState('');
   const [deletingDatasourceId, setDeletingDatasourceId] = useState<number | null>(null);
   
   // File upload state
@@ -257,6 +260,30 @@ export default function SettingsPage() {
       toast.error('Ошибка при добавлении аккаунта');
     } finally {
       setCreatingAccount(false);
+    }
+  }
+
+  async function toggleAccount(id: number, isActive: boolean) {
+    setTogglingAccountId(id);
+    try {
+      const res = await accountApi.patch(id, { is_active: isActive });
+      setAccounts((prev) => prev.map((a) => a.id === id ? (res.data.data ?? res.data) : a));
+    } catch {
+      toast.error('Не удалось изменить статус');
+    } finally {
+      setTogglingAccountId(null);
+    }
+  }
+
+  async function saveAccountName(id: number) {
+    if (!editAccountName.trim()) return;
+    try {
+      const res = await accountApi.patch(id, { name: editAccountName.trim() });
+      setAccounts((prev) => prev.map((a) => a.id === id ? (res.data.data ?? res.data) : a));
+      setEditingAccountId(null);
+      toast.success('Название сохранено');
+    } catch {
+      toast.error('Не удалось сохранить название');
     }
   }
 
@@ -727,30 +754,68 @@ export default function SettingsPage() {
               ) : (
                 <div className="space-y-3">
                   {accounts.map((acc) => (
-                    <div key={acc.id} className="flex items-center justify-between rounded-lg border p-4">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{acc.name}</span>
-                          <Badge variant={acc.is_active ? 'default' : 'secondary'}>
-                            {acc.is_active ? 'Активен' : 'Неактивен'}
-                          </Badge>
+                    <div key={acc.id} className="rounded-lg border p-4 space-y-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          {editingAccountId === acc.id ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                value={editAccountName}
+                                onChange={(e) => setEditAccountName(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') saveAccountName(acc.id);
+                                  if (e.key === 'Escape') setEditingAccountId(null);
+                                }}
+                                className="h-7 text-sm"
+                                autoFocus
+                              />
+                              <Button size="sm" className="h-7 px-2" onClick={() => saveAccountName(acc.id)}>
+                                <Check className="h-3 w-3" />
+                              </Button>
+                              <Button size="sm" variant="ghost" className="h-7 px-2" onClick={() => setEditingAccountId(null)}>
+                                ✕
+                              </Button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              className="font-medium text-left hover:underline"
+                              onClick={() => { setEditingAccountId(acc.id); setEditAccountName(acc.name); }}
+                            >
+                              {acc.name}
+                            </button>
+                          )}
+                          <p className="mt-1 font-mono text-xs text-muted-foreground">
+                            {acc.marketplace} · ID: {acc.external_id}
+                          </p>
                         </div>
-                        <p className="mt-1 font-mono text-xs text-muted-foreground">
-                          {acc.marketplace} · ID: {acc.external_id}
-                        </p>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="flex items-center gap-2">
+                            <Switch
+                              checked={acc.is_active}
+                              disabled={togglingAccountId === acc.id}
+                              onCheckedChange={(v) => toggleAccount(acc.id, v)}
+                            />
+                            <span className="text-sm text-muted-foreground whitespace-nowrap">
+                              {togglingAccountId === acc.id
+                                ? <Loader2 className="h-3 w-3 animate-spin inline" />
+                                : acc.is_active ? 'Активен' : 'Неактивен'}
+                            </span>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="text-destructive hover:text-destructive"
+                            onClick={() => deleteAccount(acc.id)}
+                            disabled={deletingAccountId === acc.id}
+                          >
+                            {deletingAccountId === acc.id
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : <Trash2 className="h-4 w-4" />
+                            }
+                          </Button>
+                        </div>
                       </div>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-destructive hover:text-destructive"
-                        onClick={() => deleteAccount(acc.id)}
-                        disabled={deletingAccountId === acc.id}
-                      >
-                        {deletingAccountId === acc.id
-                          ? <Loader2 className="h-4 w-4 animate-spin" />
-                          : <Trash2 className="h-4 w-4" />
-                        }
-                      </Button>
                     </div>
                   ))}
                 </div>

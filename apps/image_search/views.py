@@ -37,7 +37,7 @@ class ImageListView(APIView):
         images = product.images.order_by('position')
         return Response({
             'status': 'ok',
-            'data': ProductImageSerializer(images, many=True).data,
+            'data': ProductImageSerializer(images, many=True, context={'request': request}).data,
         })
 
 
@@ -49,7 +49,7 @@ class ImageDetailView(APIView):
         """Возвращает карточку одного изображения."""
         product = _get_product(product_pk, request.tenant)
         image = _get_image(product, image_pk)
-        return Response({'status': 'ok', 'data': ProductImageSerializer(image).data})
+        return Response({'status': 'ok', 'data': ProductImageSerializer(image, context={'request': request}).data})
 
     def delete(self, request, product_pk: int, image_pk: int):
         """Удаляет изображение и все его S3-файлы (через post_delete сигнал)."""
@@ -110,7 +110,7 @@ class ImageApproveView(APIView):
         image = _get_image(product, image_pk)
         reviewed_by = request.user if request.user.is_authenticated else None
         image = moderation.approve(image, reviewed_by=reviewed_by)
-        return Response({'status': 'ok', 'data': ProductImageSerializer(image).data})
+        return Response({'status': 'ok', 'data': ProductImageSerializer(image, context={'request': request}).data})
 
 
 @extend_schema(tags=['Images'])
@@ -123,7 +123,7 @@ class ImageRejectView(APIView):
         image = _get_image(product, image_pk)
         reviewed_by = request.user if request.user.is_authenticated else None
         image = moderation.reject(image, reviewed_by=reviewed_by)
-        return Response({'status': 'ok', 'data': ProductImageSerializer(image).data})
+        return Response({'status': 'ok', 'data': ProductImageSerializer(image, context={'request': request}).data})
 
 
 @extend_schema(tags=['Images'])
@@ -135,7 +135,7 @@ class ImageSetPrimaryView(APIView):
         product = _get_product(product_pk, request.tenant)
         image = _get_image(product, image_pk)
         image = moderation.set_primary(image)
-        return Response({'status': 'ok', 'data': ProductImageSerializer(image).data})
+        return Response({'status': 'ok', 'data': ProductImageSerializer(image, context={'request': request}).data})
 
 
 @extend_schema(tags=['Images'])
@@ -164,7 +164,7 @@ class ImageUploadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response(
-            {'status': 'ok', 'data': ProductImageSerializer(pi).data},
+            {'status': 'ok', 'data': ProductImageSerializer(pi, context={'request': request}).data},
             status=status.HTTP_201_CREATED,
         )
 

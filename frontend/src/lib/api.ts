@@ -214,6 +214,7 @@ export const productApi = {
 export const accountApi = {
   list: () => api.get('/accounts/'),
   create: (data: Record<string, unknown>) => api.post('/accounts/', data),
+  patch: (id: number, data: Record<string, unknown>) => api.patch(`/accounts/${id}/`, data),
   delete: (id: number) => api.delete(`/accounts/${id}/`),
 };
 
@@ -231,6 +232,7 @@ export const listingApi = {
   list: (params?: Record<string, unknown>) => api.get('/listings/', { params }),
   get: (id: number) => api.get(`/listings/${id}/`),
   approve: (id: number) => api.post(`/listings/${id}/approve/`),
+  publish: (id: number) => api.post(`/listings/${id}/publish/`),
   regenerate: (id: number) => api.post(`/listings/${id}/regenerate/`),
   updateContent: (id: number, data: { title?: string; description_ai?: string }) =>
     api.patch(`/listings/${id}/`, data),
