@@ -193,7 +193,6 @@ class ListingService:
 
         Возвращает количество затронутых листингов.
         """
-        from apps.marketplaces.models import MarketplaceAccount
         listings = Listing.objects.filter(
             tenant=tenant,
             product=product,
@@ -202,8 +201,7 @@ class ListingService:
         count = 0
         for listing in listings:
             lid = listing.pk
-            from django.db import transaction
-            transaction.on_commit(lambda l=lid: _enqueue_unpublish(l))
+            transaction.on_commit(lambda pk=lid: _enqueue_unpublish(pk))
             count += 1
         return count
 
