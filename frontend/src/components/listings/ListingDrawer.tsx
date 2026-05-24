@@ -15,8 +15,9 @@ import {
 } from '@/components/ui/sheet';
 import {
   CheckCircle, RefreshCw, Pencil, Crown, Trash2, Plus,
-  ChevronLeft, ChevronRight, ImageOff, Send,
+  ChevronLeft, ChevronRight, Send,
 } from 'lucide-react';
+import { getCategoryPlaceholder } from '@/lib/category-placeholder';
 
 interface ListingImage {
   id: number;
@@ -86,7 +87,9 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [previewImg, setPreviewImg] = useState<string | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [photoLoading, setPhotoLoading] = useState<number | 'upload' | null>(null);
+  const [publishing, setPublishing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const publishPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const open = listingId !== null;
 
@@ -95,6 +98,8 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       setListing(null);
       setEditing(false);
       setActiveIdx(0);
+      setPublishing(false);
+      if (publishPollRef.current) clearInterval(publishPollRef.current);
       return;
     }
     setLoading(true);
@@ -147,8 +152,56 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const handleApprove = () =>
     callAction('approve', () => listingApi.approve(listing!.id), 'Одобрено, задача публикации поставлена');
 
-  const handlePublish = () =>
-    callAction('publish', () => listingApi.publish(listing!.id), 'Задача публикации поставлена');
+  const handlePublish = async () => {
+    if (!listing) return;
+    setActionLoading('publish');
+    try {
+      await listingApi.publish(listing.id);
+    } catch (err: unknown) {
+      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      toast.error(code === 'invalid_status' ? 'Действие недоступно для текущего статуса.' : 'Техническая ошибка.');
+      setActionLoading(null);
+      return;
+    }
+    setActionLoading(null);
+    setPublishing(true);
+    onActionDone();
+
+    // Поллим статус каждые 3 секунды — максимум 2 минуты
+    let attempts = 0;
+    const MAX_ATTEMPTS = 40;
+    publishPollRef.current = setInterval(async () => {
+      attempts++;
+      try {
+        const res = await listingApi.get(listing.id);
+        const updated: ListingDetail = res.data.data;
+        if (updated.status !== 'draft') {
+          clearInterval(publishPollRef.current!);
+          setPublishing(false);
+          setListing(updated);
+          onActionDone();
+          if (updated.status === 'active') {
+            toast.success('Объявление опубликовано!');
+          } else if (updated.status === 'pending') {
+            toast.info('Объявление отправлено на модерацию.');
+          } else if (updated.status === 'rejected') {
+            toast.error(`Публикация отклонена: ${updated.rejection_reason || 'неизвестная причина'}`);
+          } else {
+            toast.error(`Статус изменился на: ${updated.status_display}`);
+          }
+        } else if (attempts >= MAX_ATTEMPTS) {
+          clearInterval(publishPollRef.current!);
+          setPublishing(false);
+          toast.error('Публикация занимает больше времени, чем ожидалось. Проверьте статус позже.');
+        }
+      } catch {
+        if (attempts >= MAX_ATTEMPTS) {
+          clearInterval(publishPollRef.current!);
+          setPublishing(false);
+        }
+      }
+    }, 3000);
+  };
 
   const handleRegenerate = () =>
     callAction('regenerate', () => listingApi.regenerate(listing!.id), 'Задача генерации поставлена в очередь');
@@ -280,10 +333,12 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                       />
                     </button>
                   ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center gap-2 text-muted-foreground">
-                      <ImageOff className="h-10 w-10 opacity-30" />
-                      <span className="text-sm">Нет фотографий</span>
-                    </div>
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={getCategoryPlaceholder('', listing.product_name)}
+                      alt=""
+                      className="w-full h-full object-cover opacity-80"
+                    />
                   )}
                   {/* Стрелки навигации */}
                   {listing.images.length > 1 && (
@@ -448,14 +503,18 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                         {actionLoading === 'approve' ? 'Публикация...' : 'Одобрить и опубликовать'}
                       </Button>
                     )}
-                    {canPublish && (
+                    {(canPublish || publishing) && (
                       <Button
                         onClick={handlePublish}
-                        disabled={busy}
+                        disabled={busy || publishing}
                         className="w-full"
                       >
-                        <Send className="mr-2 h-4 w-4" />
-                        {actionLoading === 'publish' ? 'Отправка...' : 'Опубликовать на Avito'}
+                        {publishing
+                          ? <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Публикуется...</>
+                          : actionLoading === 'publish'
+                            ? <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Отправка...</>
+                            : <><Send className="mr-2 h-4 w-4" />Опубликовать</>
+                        }
                       </Button>
                     )}
                     {canRegenerate && (

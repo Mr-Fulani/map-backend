@@ -76,8 +76,15 @@ def publish_listing_task(self, listing_id: int):
         except TokenExpiredError as exc:
             raise self.retry(exc=exc, countdown=5)
         except NotFoundError:
-            listing.external_id = None
-            listing.status = Listing.STATUS_DRAFT
+            # При первичной публикации 404 означает ошибку аккаунта (неверный user_id или нет доступа)
+            listing.status = Listing.STATUS_REJECTED
+            listing.rejection_reason = 'Аккаунт не найден в Avito API. Проверьте User ID аккаунта.'
+            _notify_error(
+                listing.tenant,
+                f'Не удалось опубликовать «{listing.title or listing.product.name}»: '
+                f'аккаунт {listing.account.name!r} не найден в Avito API (ошибка 404). '
+                f'Проверьте User ID в настройках аккаунта.',
+            )
         except RejectedError as exc:
             listing.status = Listing.STATUS_REJECTED
             listing.rejection_reason = exc.reason
@@ -92,6 +99,14 @@ def publish_listing_task(self, listing_id: int):
             raise self.retry(exc=exc, countdown=exc.retry_after)
         except (ServerError, Exception) as exc:
             listing.retry_count += 1
+            if self.request.retries >= self.max_retries:
+                listing.status = Listing.STATUS_REJECTED
+                listing.rejection_reason = f'Ошибка сервера после {self.max_retries} попыток: {exc}'
+                _notify_error(
+                    listing.tenant,
+                    f'Не удалось опубликовать «{listing.title or listing.product.name}» '
+                    f'после {self.max_retries} попыток: {exc}',
+                )
             raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
         finally:
             listing.save()

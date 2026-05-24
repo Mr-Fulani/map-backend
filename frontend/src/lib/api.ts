@@ -214,6 +214,7 @@ export const productApi = {
 export const accountApi = {
   list: () => api.get('/accounts/'),
   create: (data: Record<string, unknown>) => api.post('/accounts/', data),
+  patch: (id: number, data: Record<string, unknown>) => api.patch(`/accounts/${id}/`, data),
   delete: (id: number) => api.delete(`/accounts/${id}/`),
 };
 

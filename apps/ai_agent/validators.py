@@ -32,9 +32,20 @@ def validate_title(title: str) -> str:
     return title
 
 
+_MARKDOWN_BOLD_RE = re.compile(r'\*\*(.+?)\*\*')
+
+
+def strip_markdown(text: str) -> str:
+    """Убирает markdown-форматирование: **bold**, *italic*, # заголовки."""
+    text = _MARKDOWN_BOLD_RE.sub(r'\1', text)
+    text = re.sub(r'\*(.+?)\*', r'\1', text)
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    return text
+
+
 def validate_description(text: str) -> str:
     """Обрезает описание до 7500 символов и проверяет запрещённые слова."""
-    text = text.strip()
+    text = strip_markdown(text.strip())
     if len(text) > 7500:
         text = _truncate_at_paragraph(text, 7500)
     lower = text.lower()

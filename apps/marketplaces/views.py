@@ -6,7 +6,6 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.datasources.encryption import encrypt
 from apps.marketplaces.models import CategoryMapping, Listing, ListingStats, MarketplaceAccount
 from apps.marketplaces.serializers import (
     CategoryMappingSerializer,
@@ -18,10 +17,12 @@ from apps.marketplaces.serializers import (
 )
 from apps.core.pagination import MapPagination
 from apps.marketplaces.services import (
+    AccountAlreadyExists,
     CategoryMappingService,
     InvalidListingStatus,
     ListingNotFound,
     ListingService,
+    MarketplaceAccountService,
 )
 
 
@@ -35,36 +36,14 @@ class MarketplaceAccountListView(APIView):
         return Response(MarketplaceAccountSerializer(qs, many=True).data)
 
     def post(self, request):
-        """
-        Создаёт аккаунт Avito с зашифрованными client_id/client_secret.
-
-        Поля client_id и client_secret шифруются Fernet и не возвращаются в ответе.
-        """
+        """Создаёт аккаунт Avito, делегируя логику MarketplaceAccountService.create."""
         serializer = MarketplaceAccountWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
-
         try:
-            account = MarketplaceAccount.objects.create(
-                tenant=request.tenant,
-                name=data['name'],
-                marketplace=data['marketplace'],
-                external_id=data['external_id'],
-                credentials_enc=encrypt({
-                    'client_id': data['client_id'],
-                    'client_secret': data['client_secret'],
-                }),
-            )
-        except Exception:
-            return Response(
-                {'detail': 'Аккаунт с таким external_id уже существует.'},
-                status=status.HTTP_409_CONFLICT,
-            )
-
-        return Response(
-            MarketplaceAccountSerializer(account).data,
-            status=status.HTTP_201_CREATED,
-        )
+            account = MarketplaceAccountService.create(request.tenant, serializer.validated_data)
+        except AccountAlreadyExists as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+        return Response(MarketplaceAccountSerializer(account).data, status=status.HTTP_201_CREATED)
 
 
 @extend_schema(tags=['Accounts'])
@@ -86,28 +65,21 @@ class MarketplaceAccountDetailView(APIView):
         return Response(MarketplaceAccountSerializer(account).data)
 
     def put(self, request, pk):
-        """
-        Обновляет аккаунт.
-
-        Если переданы client_id/client_secret — перешифровывает credentials.
-        """
+        """Обновляет аккаунт, делегируя логику MarketplaceAccountService.update_credentials."""
         account = self._get_account(pk, request.tenant)
         if account is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
-
         serializer = MarketplaceAccountWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        data = serializer.validated_data
+        account = MarketplaceAccountService.update_credentials(account, serializer.validated_data)
+        return Response(MarketplaceAccountSerializer(account).data)
 
-        account.name = data['name']
-        account.marketplace = data['marketplace']
-        account.external_id = data['external_id']
-        account.credentials_enc = encrypt({
-            'client_id': data['client_id'],
-            'client_secret': data['client_secret'],
-        })
-        account.save(update_fields=['name', 'marketplace', 'external_id', 'credentials_enc'])
-
+    def patch(self, request, pk):
+        """Частичное обновление аккаунта, делегируя логику MarketplaceAccountService.update_partial."""
+        account = self._get_account(pk, request.tenant)
+        if account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        account = MarketplaceAccountService.update_partial(account, request.data)
         return Response(MarketplaceAccountSerializer(account).data)
 
     def delete(self, request, pk):
@@ -181,7 +153,7 @@ class ListingListView(APIView):
     def get(self, request):
         """Возвращает страницу листингов текущего тенанта."""
         qs = (
-            Listing.objects.filter(tenant=request.tenant)
+            Listing.objects.filter(tenant=request.tenant, account__is_active=True)
             .select_related('product', 'account')
             .order_by('-created_at')
         )

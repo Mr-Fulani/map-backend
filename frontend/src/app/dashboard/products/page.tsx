@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { Search, Package, ChevronLeft, ChevronRight, ImageOff } from 'lucide-react';
+import { Search, Package, ChevronLeft, ChevronRight } from 'lucide-react';
+import { getCategoryPlaceholder } from '@/lib/category-placeholder';
 import { useDebounce } from '@/lib/hooks';
 
 interface Product {
@@ -148,12 +149,12 @@ export default function ProductsPage() {
                     <td className="px-4 py-2">
                       <Link href={`/dashboard/products/${p.id}`} className="block">
                         <div className="relative w-10 h-10 rounded-md overflow-hidden border bg-muted flex-shrink-0">
-                          {p.primary_thumb_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={p.primary_thumb_url} alt="" className="w-full h-full object-cover" />
-                          ) : (
-                            <ImageOff className="w-4 h-4 m-auto mt-3 text-muted-foreground/40" />
-                          )}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={p.primary_thumb_url || getCategoryPlaceholder(p.category_1c ?? '', p.name)}
+                            alt=""
+                            className="w-full h-full object-cover"
+                          />
                           {p.images_count > 0 && (
                             <span className="absolute bottom-0 right-0 bg-black/60 text-white text-[10px] leading-none px-1 py-0.5 rounded-tl">
                               {p.images_count}
