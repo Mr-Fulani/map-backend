@@ -169,7 +169,6 @@ export default function ProductDetailPage() {
         await productApi.regenerate(Number(id));
         toast.info('Генерация описания запущена...');
         setGeneratingDescription(true);
-        // Поллинг пока описание не обновится (макс 60с)
         const deadline = Date.now() + 60_000;
         const poll = setInterval(async () => {
           if (Date.now() > deadline) {
