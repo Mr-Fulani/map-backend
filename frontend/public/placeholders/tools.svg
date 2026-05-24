@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#78350f"/>
+      <stop offset="100%" stop-color="#292524"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="300" fill="url(#bg)"/>
+  <!-- Wrench handle -->
+  <rect x="185" y="90" width="30" height="140" rx="10" fill="white" opacity="0.22" transform="rotate(-35 200 160)"/>
+  <!-- Wrench head top -->
+  <circle cx="145" cy="105" r="32" fill="white" opacity="0.22"/>
+  <circle cx="145" cy="105" r="18" fill="#292524" opacity="0.6"/>
+  <!-- Wrench head slot -->
+  <rect x="133" y="93" width="12" height="24" rx="3" fill="#292524" opacity="0.6"/>
+  <!-- Screwdriver -->
+  <rect x="225" y="72" width="12" height="160" rx="5" fill="white" opacity="0.15" transform="rotate(20 231 152)"/>
+  <polygon points="223,225 239,225 231,245" fill="white" opacity="0.2" transform="rotate(20 231 235)"/>
+</svg>

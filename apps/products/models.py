@@ -51,6 +51,8 @@ class Product(TimestampedModel):
             ('searching', 'Идёт поиск'),
         ],
     )
+    description_ai = models.TextField(blank=True, verbose_name='AI-описание')
+    title_ai = models.CharField(max_length=300, blank=True, verbose_name='AI-заголовок')
 
     class Meta:
         verbose_name = 'Товар'

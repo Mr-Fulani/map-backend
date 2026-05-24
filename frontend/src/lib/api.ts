@@ -214,6 +214,7 @@ export const productApi = {
 export const accountApi = {
   list: () => api.get('/accounts/'),
   create: (data: Record<string, unknown>) => api.post('/accounts/', data),
+  patch: (id: number, data: Record<string, unknown>) => api.patch(`/accounts/${id}/`, data),
   delete: (id: number) => api.delete(`/accounts/${id}/`),
 };
 
@@ -231,6 +232,7 @@ export const listingApi = {
   list: (params?: Record<string, unknown>) => api.get('/listings/', { params }),
   get: (id: number) => api.get(`/listings/${id}/`),
   approve: (id: number) => api.post(`/listings/${id}/approve/`),
+  publish: (id: number) => api.post(`/listings/${id}/publish/`),
   regenerate: (id: number) => api.post(`/listings/${id}/regenerate/`),
   updateContent: (id: number, data: { title?: string; description_ai?: string }) =>
     api.patch(`/listings/${id}/`, data),
@@ -253,6 +255,33 @@ export const notificationApi = {
   telegramConnect: () => api.post('/notifications/settings/telegram/connect/'),
   telegramDisconnect: () => api.delete('/notifications/settings/telegram/'),
   test: () => api.post('/notifications/settings/test/'),
+};
+
+// Images
+export const imageApi = {
+  list: (productId: number) =>
+    api.get(`/products/${productId}/images/`),
+  search: (productId: number) =>
+    api.post(`/products/${productId}/images/search/`),
+  searchStatus: (productId: number, taskId: string) =>
+    api.get(`/products/${productId}/images/search/${taskId}/`),
+  approve: (productId: number, imageId: number) =>
+    api.post(`/products/${productId}/images/${imageId}/approve/`),
+  reject: (productId: number, imageId: number) =>
+    api.post(`/products/${productId}/images/${imageId}/reject/`),
+  setPrimary: (productId: number, imageId: number) =>
+    api.put(`/products/${productId}/images/${imageId}/set_primary/`),
+  delete: (productId: number, imageId: number) =>
+    api.delete(`/products/${productId}/images/${imageId}/`),
+  upload: (productId: number, file: File) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    return api.post(`/products/${productId}/images/upload/`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  bulkSearch: (productIds: number[]) =>
+    api.post('/images/bulk-search/', { product_ids: productIds }),
 };
 
 // Webhooks

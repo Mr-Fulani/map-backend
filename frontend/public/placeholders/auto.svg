@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1e3a5f"/>
+      <stop offset="100%" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <rect width="400" height="300" fill="url(#bg)"/>
+  <!-- Road -->
+  <rect x="0" y="240" width="400" height="60" fill="#0f172a" opacity="0.6"/>
+  <rect x="160" y="257" width="80" height="8" rx="4" fill="white" opacity="0.15"/>
+  <!-- Car body -->
+  <rect x="70" y="165" width="260" height="75" rx="14" fill="white" opacity="0.22"/>
+  <!-- Cabin -->
+  <path d="M120 165 L152 108 L248 108 L280 165Z" fill="white" opacity="0.22"/>
+  <!-- Front window -->
+  <path d="M210 115 L242 115 L270 162 L210 162Z" fill="white" opacity="0.1"/>
+  <!-- Rear window -->
+  <path d="M130 162 L130 115 L207 115 L207 162Z" fill="white" opacity="0.1"/>
+  <!-- Door line -->
+  <line x1="208" y1="165" x2="208" y2="238" stroke="white" stroke-width="1.5" opacity="0.12"/>
+  <!-- Rear wheel arch -->
+  <path d="M70 220 Q70 240 115 240 Q160 240 160 220" fill="#0f172a" opacity="0.5"/>
+  <!-- Front wheel arch -->
+  <path d="M240 220 Q240 240 285 240 Q330 240 330 220" fill="#0f172a" opacity="0.5"/>
+  <!-- Rear wheel -->
+  <circle cx="115" cy="228" r="28" fill="#1e293b" stroke="white" stroke-width="2" stroke-opacity="0.25"/>
+  <circle cx="115" cy="228" r="16" fill="#334155" stroke="white" stroke-width="1.5" stroke-opacity="0.2"/>
+  <circle cx="115" cy="228" r="5" fill="white" opacity="0.3"/>
+  <!-- Front wheel -->
+  <circle cx="285" cy="228" r="28" fill="#1e293b" stroke="white" stroke-width="2" stroke-opacity="0.25"/>
+  <circle cx="285" cy="228" r="16" fill="#334155" stroke="white" stroke-width="1.5" stroke-opacity="0.2"/>
+  <circle cx="285" cy="228" r="5" fill="white" opacity="0.3"/>
+  <!-- Headlight -->
+  <rect x="316" y="175" width="22" height="12" rx="4" fill="#fde68a" opacity="0.7"/>
+  <rect x="314" y="173" width="26" height="16" rx="5" fill="none" stroke="#fde68a" stroke-width="1" opacity="0.4"/>
+  <!-- Taillight -->
+  <rect x="62" y="178" width="14" height="10" rx="3" fill="#f87171" opacity="0.7"/>
+</svg>
