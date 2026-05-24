@@ -243,8 +243,18 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 CELERY_BEAT_SCHEDULE = {
     'cleanup-old-logs-daily': {
         'task': 'apps.notifications.tasks.cleanup_old_logs',
-        'schedule': 60 * 60 * 24,  # раз в сутки
+        'schedule': 60 * 60 * 24,
         'options': {'queue': 'notifications'},
+    },
+    'billing-check-expired-daily': {
+        'task': 'apps.billing.tasks.billing_check_expired',
+        'schedule': 60 * 60 * 24,
+        'options': {'queue': 'billing'},
+    },
+    'reset-monthly-ai-credits-daily': {
+        'task': 'apps.billing.tasks.reset_monthly_ai_credits',
+        'schedule': 60 * 60 * 24,
+        'options': {'queue': 'billing'},
     },
 }
 CELERY_TASK_TRACK_STARTED = True

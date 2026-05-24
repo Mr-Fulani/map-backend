@@ -108,6 +108,33 @@ class ProductPublishView(APIView):
 
 
 @extend_schema(tags=['Products'])
+class ProductArchiveView(APIView):
+    """POST /api/v1/products/{pk}/archive/ — снять все активные листинги товара с публикации."""
+
+    def post(self, request, pk):
+        """Делегирует архивацию ListingService.archive_product."""
+        from apps.marketplaces.services import ListingService
+
+        try:
+            product = Product.objects.get(pk=pk, tenant=request.tenant)
+        except Product.DoesNotExist:
+            return Response(
+                {'status': 'error', 'code': 'not_found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        count = ListingService.archive_product(product, request.tenant)
+        if count == 0:
+            return Response(
+                {'status': 'error', 'code': 'no_active_listings',
+                 'message': 'Нет активных объявлений для архивации. '
+                            'Товар уже снят с публикации или никогда не публиковался.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({'status': 'ok', 'data': {'archived_count': count}})
+
+
+@extend_schema(tags=['Products'])
 class ProductRegenerateView(APIView):
     """POST /api/v1/products/{pk}/regenerate/ — поставить задачу генерации AI-описания."""
 

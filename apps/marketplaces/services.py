@@ -187,6 +187,27 @@ class ListingService:
         return listing
 
     @staticmethod
+    def archive_product(product, tenant) -> int:
+        """
+        Ставит задачу снятия с публикации для всех активных листингов товара тенанта.
+
+        Возвращает количество затронутых листингов.
+        """
+        from apps.marketplaces.models import MarketplaceAccount
+        listings = Listing.objects.filter(
+            tenant=tenant,
+            product=product,
+            status=Listing.STATUS_ACTIVE,
+        )
+        count = 0
+        for listing in listings:
+            lid = listing.pk
+            from django.db import transaction
+            transaction.on_commit(lambda l=lid: _enqueue_unpublish(l))
+            count += 1
+        return count
+
+    @staticmethod
     def publish_product(product, tenant) -> list[int]:
         """
         Создаёт или обновляет листинги товара для всех активных аккаунтов тенанта.
@@ -342,3 +363,9 @@ def _enqueue_ai_generation(product_id: int) -> None:
     """Ставит задачу генерации AI-описания в Celery."""
     from apps.ai_agent.tasks import generate_description_task
     generate_description_task.delay(product_id)
+
+
+def _enqueue_unpublish(listing_id: int) -> None:
+    """Ставит задачу снятия листинга с публикации в Celery."""
+    from apps.marketplaces.tasks import unpublish_listing_task
+    unpublish_listing_task.delay(listing_id)

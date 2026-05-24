@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { billingApi } from '@/lib/api';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
@@ -37,20 +37,6 @@ interface Invoice {
   paid_at: string | null;
   created_at: string;
 }
-
-const STATUS_LABEL: Record<string, string> = {
-  trial: 'Пробный период',
-  active: 'Активна',
-  past_due: 'Просрочена',
-  cancelled: 'Отменена',
-};
-
-const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
-  trial: 'secondary',
-  active: 'default',
-  past_due: 'destructive',
-  cancelled: 'destructive',
-};
 
 const INVOICE_STATUS: Record<string, string> = {
   pending: 'Ожидает',
@@ -116,43 +102,6 @@ export default function BillingPage() {
         <h1 className="text-2xl font-bold tracking-tight">Биллинг</h1>
         <p className="text-muted-foreground">Управление подпиской и платежами</p>
       </div>
-
-      {/* Текущая подписка */}
-      {subscription && (
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
-            <div>
-              <CardTitle>{subscription.plan.name}</CardTitle>
-              <CardDescription>Текущий тариф</CardDescription>
-            </div>
-            <Badge variant={STATUS_VARIANT[subscription.status] ?? 'secondary'}>
-              {STATUS_LABEL[subscription.status] ?? subscription.status}
-            </Badge>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="grid gap-4 sm:grid-cols-3 text-sm">
-              <div>
-                <p className="text-muted-foreground">Объявления</p>
-                <p className="font-bold">{fmt(subscription.plan.limit_listings)}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">SKU в каталоге</p>
-                <p className="font-bold">{fmt(subscription.plan.limit_sku)}</p>
-              </div>
-              <div>
-                <p className="text-muted-foreground">AI-генераций</p>
-                <p className="font-bold">{fmt(subscription.plan.limit_ai_credits)}</p>
-              </div>
-            </div>
-            {subscription.current_period_end && (
-              <p className="text-xs text-muted-foreground">
-                Период до:{' '}
-                {new Date(subscription.current_period_end).toLocaleDateString('ru-RU')}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      )}
 
       {/* Тарифные планы */}
       <div>
