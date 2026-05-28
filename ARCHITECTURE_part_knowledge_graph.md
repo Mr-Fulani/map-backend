@@ -112,6 +112,42 @@ ProductKnowledgeGraphService.apply_known_fitments_to_product(product)
 - Если тип связи неизвестен, запись получает `needs_review=True`.
 - Данные из графа применяются к tenant-товару только как enrichment-копия,
   чтобы не смешивать tenant-данные на уровне UI/API.
+- Автоматическое применение проходит через `source_policy`: источник должен быть
+  известен, запись не должна требовать review, confidence должен быть выше порога.
+
+## Source Quality Policy
+
+`apps/products/source_policy.py` — единое место для правил источников.
+
+Сейчас policy хранит:
+
+- `source_id`;
+- человекочитаемый `label`;
+- `priority` и `trust_score`;
+- batch/rate-limit параметры;
+- transport (`httpx` по умолчанию);
+- capabilities источника;
+- `auto_apply_min_confidence`.
+
+Для `tachka` включены product page, search fallback, fitments, images и related
+parts. Это не означает, что данные источника всегда истинны: конкретная запись
+все равно проходит проверку `needs_review`, `confidence` и типа связи.
+
+Правила auto-apply:
+
+```text
+relation.needs_review == false
+relation.relation_type != Unknown
+relation.confidence >= source.auto_apply_min_confidence
+
+fitment.needs_review == false
+fitment.model is not empty
+fitment.confidence >= source.auto_apply_min_confidence
+```
+
+`CloakBrowser` и похожие browser/stealth runtimes должны подключаться только как
+optional transport для конкретного source policy. Они не должны попадать в core
+parser как обязательная зависимость.
 
 ## Где смотреть в коде
 

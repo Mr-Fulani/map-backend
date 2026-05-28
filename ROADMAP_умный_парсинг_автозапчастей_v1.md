@@ -1,11 +1,11 @@
 # ROADMAP v1: Умный парсинг автозапчастей и применяемости
 
-> **Проект:** MAP  
-> **Версия:** 1.1  
-> **Оценка:** 6-8 недель на production-ready MVP с запасом на разбор верстки источника  
-> **Подход:** сначала надежное enrichment-ядро без коммерческих данных, потом масштабирование и AI  
+> **Проект:** MAP
+> **Версия:** 1.2
+> **Оценка:** 6-8 недель на production-ready MVP с запасом на разбор верстки источника
+> **Подход:** сначала надежное enrichment-ядро без коммерческих данных, потом масштабирование и AI
 > **Multi-tenant:** фича общая для платформы, но результаты записываются в каталог конкретного tenant
-> **Статус на 28.05.2026:** MVP-ядро реализовано частично/преимущественно; начат platform-level knowledge graph для артикулов, дальше нужен справочник авто и глобальный индекс применяемости
+> **Статус на 28.05.2026:** enrichment MVP и первая версия platform knowledge graph реализованы; следующий P0 — source quality policy, затем нормализованный справочник авто
 
 ---
 
@@ -19,7 +19,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 ## Текущая стадия реализации
 
-На 28.05.2026 проект находится между `PHASE 4` и `PHASE 5`.
+На 28.05.2026 проект находится между `PHASE 6` и `PHASE 7`.
 
 Уже реализовано:
 
@@ -44,6 +44,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - `[x]` `ParsedRelatedPart` для аналогов/OEM-связей, которые могут отсутствовать на странице товара.
 - `[x]` `GlobalPartFitment` для platform-level применяемости артикула.
 - `[x]` применение известных OEM/Cross и fitment данных до внешнего fetch.
+- `[x]` локальная БД после merge обновлена миграциями `products.0006` и `products.0007`.
 
 Частично реализовано:
 
@@ -56,9 +57,54 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 Не реализовано:
 
+- `[ ]` source quality policy: приоритет источников, confidence rules и конфликт-стратегия.
 - `[ ]` platform-level справочник `VehicleMake/VehicleModel/VehicleGeneration/VehicleModification`.
-- `[ ]` source priority и merge strategy между несколькими источниками.
 - `[ ]` мониторинг/алерты качества источников.
+
+---
+
+## Следующий P0 — Source Quality Policy
+
+**Цель:** не дать platform knowledge graph накопить мусор, когда появятся новые источники.
+
+### P0.1 Реестр качества источников
+
+- [ ] Ввести единое описание источника: `source_id`, `label`, `priority`, `trust_score`.
+- [ ] Хранить правила rate limit: `batch_size`, `min_pause_seconds`, `default_pause_seconds`.
+- [ ] Хранить capability flags: `supports_product_page`, `supports_search`, `supports_fitments`, `supports_images`.
+- [ ] Хранить transport: `httpx` по умолчанию, будущий `browser`/`cloak` только для сложных источников.
+- [ ] Не смешивать platform parser source с tenant-owned `DataSourceConnection`.
+
+**Verify:** новый источник можно описать конфигом без изменения `ProductEnrichmentService`.
+
+### P0.2 Confidence policy
+
+- [ ] Задать минимальный confidence для автоматического применения relation/fitment к tenant-товару.
+- [ ] Автоматически ставить `needs_review=True`, если источник низкого trust или parser не уверен.
+- [ ] Не применять `Unknown` и `needs_review` записи автоматически.
+- [ ] Повышать confidence только если новый источник равен или надежнее текущего.
+- [ ] Не понижать уже подтвержденные полезные данные без ручного review.
+
+**Verify:** сомнительная связь сохраняется в global graph, но не попадает в tenant `ProductCrossCode`/`VehicleFitment`.
+
+### P0.3 Conflict policy
+
+- [ ] При конфликте источников не удалять старую связь.
+- [ ] Помечать конфликтующие факты `needs_review`.
+- [ ] Сохранять provenance: `source_id`, `source_url`, `raw_text`, `last_seen_at`.
+- [ ] Для fitments не считать аналог доказательством применяемости.
+- [ ] Для AI отдавать только trusted факты или явно маркировать reviewable данные.
+
+**Verify:** два источника с разными fitments не перетирают друг друга и не ломают описание.
+
+### P0.4 Fetcher abstraction
+
+- [ ] Ввести интерфейс fetcher/transport отдельно от parser logic.
+- [ ] Оставить `HttpxFetcher` как default.
+- [ ] Добавить возможность source-level выбора browser transport позже.
+- [ ] Рассматривать `CloakBrowser` как optional future transport для JS/anti-bot источников, не как core dependency.
+
+**Verify:** parser можно тестировать на HTML fixtures без сети и без browser runtime.
 
 ---
 
@@ -76,7 +122,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - [ ] Зафиксировать, что парсер является platform-level фичей, а записи enrichment всегда tenant-scoped.
 - [ ] Определить, нужен ли общий cache результатов парсинга между tenant-ами.
 
-**Рекомендация эксперта:**  
+**Рекомендация эксперта:**
 В MVP использовать парсер как enrichment-слой: характеристики, OEM/cross, применяемость, изображения и факты для описания. Коммерческие поля не трогать вообще, даже если источник их показывает.
 
 ### 0.2 Собрать HTML fixtures
