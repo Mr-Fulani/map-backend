@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.products.models import Product, ProductBulkActionJob
+from apps.products.models import Product, ProductBulkActionJob, ProductCatalogClassification
 from apps.products.services import AutoPartsEnrichmentDisabled, ProductBulkActionService
 from apps.tenants.services import TenantService
 
@@ -128,3 +128,6 @@ def test_bulk_enrichment_skips_non_auto_parts_products_for_mixed_tenant():
 
     assert job.product_ids == [auto_part.pk]
     assert job.skipped_count == 1
+    classification = auto_part.catalog_classification
+    assert classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
+    assert classification.reason

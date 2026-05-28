@@ -2,8 +2,8 @@ from django.core.files.storage import default_storage
 from rest_framework import serializers
 
 from apps.products.models import (
-    Product, ProductAttribute, ProductBulkActionJob, ProductCrossCode,
-    ProductImage, ProductParseJob, VehicleFitment,
+    Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
+    ProductCrossCode, ProductImage, ProductParseJob, VehicleFitment,
 )
 
 
@@ -13,6 +13,12 @@ class ProductImageSerializer(serializers.ModelSerializer):
         fields = ['id', 's3_key', 's3_key_thumb', 'url_source', 'position', 'uploaded_at']
 
 
+class ProductCatalogClassificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductCatalogClassification
+        fields = ['domain', 'confidence', 'source', 'reason', 'needs_review', 'updated_at']
+
+
 class ProductSerializer(serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     images_count = serializers.SerializerMethodField()
@@ -20,6 +26,7 @@ class ProductSerializer(serializers.ModelSerializer):
     ai_status = serializers.SerializerMethodField()
     enrichment_status = serializers.SerializerMethodField()
     enrichment_summary = serializers.SerializerMethodField()
+    catalog_classification = ProductCatalogClassificationSerializer(read_only=True)
 
     class Meta:
         model = Product
@@ -28,7 +35,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'condition', 'price', 'stock_qty', 'warehouse',
             'export_enabled', 'sync_at', 'images', 'images_count', 'primary_thumb_url',
             'title_ai', 'description_ai', 'ai_status', 'enrichment_status',
-            'enrichment_summary',
+            'enrichment_summary', 'catalog_classification',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['uuid_1c', 'sync_at', 'created_at', 'updated_at']

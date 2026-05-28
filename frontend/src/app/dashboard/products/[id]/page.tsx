@@ -57,6 +57,14 @@ interface ProductDetail {
   cross_codes: ProductCrossCode[];
   fitments: VehicleFitment[];
   latest_parse_job: ProductParseJob | null;
+  catalog_classification: ProductCatalogClassification | null;
+}
+
+interface ProductCatalogClassification {
+  domain: string;
+  confidence: number;
+  reason: string;
+  needs_review: boolean;
 }
 
 interface ProductAttribute {
@@ -125,6 +133,14 @@ const ENRICHMENT_STATUS_LABELS: Record<string, string> = {
   need_review: 'Данные найдены частично',
   not_found: 'Источник не нашёл товар',
   failed: 'Ошибка обогащения',
+};
+
+const CATALOG_DOMAIN_LABELS: Record<string, string> = {
+  auto_parts: 'Автозапчасть',
+  jewellery: 'Украшение',
+  apparel: 'Одежда',
+  generic: 'Обычный товар',
+  unknown: 'Не определено',
 };
 
 function getSourceImageUrls(product: ProductDetail) {
@@ -763,6 +779,34 @@ export default function ProductDetailPage() {
 
         {/* Действия */}
         <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-medium">Классификация товара</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              {product.catalog_classification ? (
+                <>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant={product.catalog_classification.needs_review ? 'outline' : 'secondary'}>
+                      {CATALOG_DOMAIN_LABELS[product.catalog_classification.domain]
+                        ?? product.catalog_classification.domain}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      Уверенность: {Math.round(product.catalog_classification.confidence * 100)}%
+                    </span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {product.catalog_classification.reason}
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Домен товара ещё не классифицирован.
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="text-sm font-medium">Действия</CardTitle>

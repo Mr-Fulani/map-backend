@@ -77,6 +77,59 @@ class Product(TimestampedModel):
         return f'{self.article} — {self.name}'
 
 
+class ProductCatalogClassification(TimestampedModel):
+    """Классификация домена товара для безопасного запуска domain-specific фич."""
+
+    class Domain(models.TextChoices):
+        AUTO_PARTS = 'auto_parts', 'Автозапчасть'
+        GENERIC = 'generic', 'Обычный товар'
+        JEWELLERY = 'jewellery', 'Украшение'
+        APPAREL = 'apparel', 'Одежда'
+        UNKNOWN = 'unknown', 'Не определено'
+
+    class Source(models.TextChoices):
+        RULES = 'rules', 'Правила'
+        MANUAL = 'manual', 'Вручную'
+        AI = 'ai', 'AI'
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='product_catalog_classifications',
+        verbose_name='Тенант',
+    )
+    product = models.OneToOneField(
+        Product, on_delete=models.CASCADE, related_name='catalog_classification',
+        verbose_name='Товар',
+    )
+    domain = models.CharField(
+        max_length=30, choices=Domain.choices, default=Domain.UNKNOWN,
+        verbose_name='Домен товара',
+    )
+    confidence = models.FloatField(default=0, verbose_name='Уверенность')
+    source = models.CharField(
+        max_length=30, choices=Source.choices, default=Source.RULES,
+        verbose_name='Источник классификации',
+    )
+    reason = models.TextField(blank=True, verbose_name='Причина')
+    needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
+
+    class Meta:
+        verbose_name = 'Классификация товара'
+        verbose_name_plural = 'Классификации товаров'
+        indexes = [
+            models.Index(fields=['tenant', 'domain']),
+            models.Index(fields=['tenant', 'needs_review']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'product'],
+                name='unique_product_catalog_classification',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.product_id}: {self.domain} ({self.confidence:.2f})'
+
+
 class ProductImage(models.Model):
     """Изображение товара, хранится в S3.
 

@@ -5,7 +5,7 @@ import pytest
 from django.test import Client
 
 from apps.products.enrichment import normalize_part_code
-from apps.products.models import Product, ProductCrossCode
+from apps.products.models import Product, ProductCatalogClassification, ProductCrossCode
 from apps.products.services import ProductEnrichmentService
 from apps.tenants.services import TenantService
 
@@ -200,6 +200,8 @@ def test_parse_endpoint_rejects_non_auto_parts_product_for_mixed_tenant():
     assert response.status_code == 400
     assert response.json()['code'] == 'product_is_not_auto_part'
     assert tenant.product_parse_jobs.count() == 0
+    product.refresh_from_db()
+    assert product.catalog_classification.domain == ProductCatalogClassification.Domain.JEWELLERY
 
 
 @pytest.mark.django_db
@@ -229,6 +231,8 @@ def test_regenerate_endpoint_for_mixed_non_auto_part_queues_ai_without_enrichmen
     assert response.status_code == 202
     assert response.json()['data']['job_id'] is None
     assert tenant.product_parse_jobs.count() == 0
+    product.refresh_from_db()
+    assert product.catalog_classification.domain == ProductCatalogClassification.Domain.JEWELLERY
     delay.assert_called_once_with(product.pk)
 
 
