@@ -4,8 +4,9 @@ from decimal import Decimal
 
 from django.utils.timezone import now
 
-from apps.products.enrichment import make_value_hash
+from apps.products.enrichment import make_value_hash, normalize_part_code
 from apps.products.models import (
+    GlobalPart, GlobalPartRelation,
     Product, ProductAttribute, ProductCrossCode, ProductEnrichmentFact,
     ProductBulkActionJob, ProductParseJob, VehicleFitment,
 )
@@ -243,6 +244,11 @@ class ProductEnrichmentService:
 
             cls.refresh_product_denormalized_enrichment(product)
             product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability'])
+            ProductKnowledgeGraphService.learn_from_parsed_part(
+                product=product,
+                parsed=parsed,
+                source_id=source_id,
+            )
 
     @staticmethod
     def refresh_product_denormalized_enrichment(product: Product) -> None:
@@ -481,9 +487,180 @@ class ProductBulkActionService:
 
 
 def normalize_cross_code(code: str) -> str:
-    from apps.products.enrichment import normalize_part_code
-
     return normalize_part_code(code)
+
+
+class ProductKnowledgeGraphService:
+    """Platform-level граф артикулов: OEM, аналоги, заменители и trade-связи."""
+
+    CROSS_TO_RELATION = {
+        ProductCrossCode.CodeType.OEM: GlobalPartRelation.RelationType.OEM,
+        ProductCrossCode.CodeType.CROSS: GlobalPartRelation.RelationType.CROSS,
+        ProductCrossCode.CodeType.TRADE: GlobalPartRelation.RelationType.TRADE,
+        ProductCrossCode.CodeType.UNKNOWN: GlobalPartRelation.RelationType.UNKNOWN,
+    }
+
+    @staticmethod
+    def normalize_brand(brand: str) -> str:
+        return normalize_part_code(brand)
+
+    @classmethod
+    def upsert_part(
+        cls, brand: str, article: str, title: str = '', source_id: str = '',
+        source_url: str = '', confidence: float = 1.0, needs_review: bool = False,
+    ) -> GlobalPart:
+        normalized_brand = cls.normalize_brand(brand)
+        normalized_article = normalize_part_code(article)
+        if not normalized_article:
+            raise ValueError('Global part article is required')
+
+        part, created = GlobalPart.objects.get_or_create(
+            normalized_brand=normalized_brand,
+            normalized_article=normalized_article,
+            defaults={
+                'brand': brand[:100],
+                'article': article[:100],
+                'title': title[:500],
+                'source_id': source_id[:50],
+                'source_url': source_url,
+                'confidence': confidence,
+                'needs_review': needs_review,
+                'last_seen_at': now(),
+            },
+        )
+        if not created:
+            update_fields = ['last_seen_at', 'updated_at']
+            part.last_seen_at = now()
+            if title and not part.title:
+                part.title = title[:500]
+                update_fields.append('title')
+            if source_id and not part.source_id:
+                part.source_id = source_id[:50]
+                update_fields.append('source_id')
+            if source_url and not part.source_url:
+                part.source_url = source_url
+                update_fields.append('source_url')
+            part.needs_review = part.needs_review or needs_review
+            if needs_review:
+                update_fields.append('needs_review')
+            part.confidence = max(part.confidence, confidence)
+            update_fields.append('confidence')
+            part.save(update_fields=sorted(set(update_fields)))
+        return part
+
+    @classmethod
+    def upsert_relation(
+        cls, source_part: GlobalPart, target_part: GlobalPart, relation_type: str,
+        source_id: str = '', source_url: str = '', raw_text: str = '',
+        confidence: float = 1.0, needs_review: bool = False,
+    ) -> GlobalPartRelation:
+        relation, created = GlobalPartRelation.objects.get_or_create(
+            source_part=source_part,
+            target_part=target_part,
+            relation_type=relation_type,
+            source_id=source_id[:50],
+            defaults={
+                'source_url': source_url,
+                'raw_text': raw_text,
+                'confidence': confidence,
+                'needs_review': needs_review,
+                'last_seen_at': now(),
+            },
+        )
+        if not created:
+            relation.last_seen_at = now()
+            relation.confidence = max(relation.confidence, confidence)
+            relation.needs_review = relation.needs_review or needs_review
+            if source_url and not relation.source_url:
+                relation.source_url = source_url
+            if raw_text and not relation.raw_text:
+                relation.raw_text = raw_text
+            relation.save(update_fields=[
+                'last_seen_at', 'confidence', 'needs_review',
+                'source_url', 'raw_text', 'updated_at',
+            ])
+        return relation
+
+    @classmethod
+    def learn_from_parsed_part(
+        cls, product: Product, parsed: ParsedPart, source_id: str = DEFAULT_PART_SOURCE,
+    ) -> None:
+        source_part = cls.upsert_part(
+            brand=product.brand or parsed.brand,
+            article=product.article or parsed.article,
+            title=parsed.title,
+            source_id=source_id,
+            source_url=parsed.source_url,
+        )
+        for cross in parsed.cross_codes:
+            normalized = normalize_part_code(cross.code)
+            if not normalized:
+                continue
+            target_part = cls.upsert_part(
+                brand=cross.manufacturer,
+                article=cross.code,
+                source_id=source_id,
+                source_url=parsed.source_url,
+            )
+            relation_type = cls.CROSS_TO_RELATION.get(
+                cross.code_type,
+                GlobalPartRelation.RelationType.UNKNOWN,
+            )
+            cls.upsert_relation(
+                source_part=source_part,
+                target_part=target_part,
+                relation_type=relation_type,
+                source_id=source_id,
+                source_url=parsed.source_url,
+                raw_text=f'{cross.manufacturer}: {cross.code}'.strip(': '),
+                confidence=0.8 if cross.code_type == ProductCrossCode.CodeType.UNKNOWN else 1.0,
+                needs_review=cross.code_type == ProductCrossCode.CodeType.UNKNOWN,
+            )
+
+    @classmethod
+    def apply_known_relations_to_product(cls, product: Product) -> int:
+        source_part = GlobalPart.objects.filter(
+            normalized_brand=cls.normalize_brand(product.brand),
+            normalized_article=normalize_part_code(product.article),
+        ).first()
+        if source_part is None:
+            return 0
+
+        created = 0
+        for relation in source_part.outgoing_relations.select_related('target_part'):
+            if relation.needs_review or relation.relation_type == GlobalPartRelation.RelationType.UNKNOWN:
+                continue
+            code_type = cls._relation_to_cross_code_type(relation.relation_type)
+            _, was_created = ProductCrossCode.objects.get_or_create(
+                tenant=product.tenant,
+                product=product,
+                source_id=relation.source_id or 'knowledge_graph',
+                manufacturer=relation.target_part.brand[:100],
+                normalized_code=relation.target_part.normalized_article,
+                code_type=code_type,
+                defaults={'code': relation.target_part.article[:100]},
+            )
+            if was_created:
+                created += 1
+
+        if created:
+            ProductEnrichmentService.refresh_product_denormalized_enrichment(product)
+            product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability'])
+        return created
+
+    @classmethod
+    def _relation_to_cross_code_type(cls, relation_type: str) -> str:
+        if relation_type == GlobalPartRelation.RelationType.OEM:
+            return ProductCrossCode.CodeType.OEM
+        if relation_type == GlobalPartRelation.RelationType.TRADE:
+            return ProductCrossCode.CodeType.TRADE
+        if relation_type in [
+            GlobalPartRelation.RelationType.CROSS,
+            GlobalPartRelation.RelationType.ANALOGUE,
+            GlobalPartRelation.RelationType.REPLACEMENT,
+        ]:
+            return ProductCrossCode.CodeType.CROSS
+        return ProductCrossCode.CodeType.UNKNOWN
 
 
 def _enqueue_ai_generation(product_id: int) -> None:

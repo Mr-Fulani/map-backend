@@ -2,8 +2,9 @@ from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
 
 from apps.products.models import (
-    Product, ProductAttribute, ProductCrossCode, ProductEnrichmentFact,
-    ProductImage, ProductParseJob, VehicleFitment,
+    GlobalPart, GlobalPartRelation, Product, ProductAttribute,
+    ProductCrossCode, ProductEnrichmentFact, ProductImage, ProductParseJob,
+    VehicleFitment,
 )
 
 
@@ -48,6 +49,18 @@ class ProductEnrichmentFactInline(TabularInline):
     model = ProductEnrichmentFact
     extra = 0
     fields = ['source_id', 'fact_type', 'name', 'value', 'confidence', 'needs_review']
+    readonly_fields = fields
+    can_delete = False
+
+
+class GlobalPartRelationInline(TabularInline):
+    model = GlobalPartRelation
+    fk_name = 'source_part'
+    extra = 0
+    fields = [
+        'target_part', 'relation_type', 'source_id',
+        'confidence', 'needs_review', 'last_seen_at',
+    ]
     readonly_fields = fields
     can_delete = False
 
@@ -150,6 +163,47 @@ class ProductParseJobAdmin(ModelAdmin):
         'source_id', 'source_url', 'status', 'error_message', 'raw_html',
         'raw_text', 'parsed_data', 'duration_ms', 'created_at', 'updated_at',
         'started_at', 'finished_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(GlobalPart)
+class GlobalPartAdmin(ModelAdmin):
+    list_display = [
+        'brand', 'article', 'source_id', 'confidence',
+        'needs_review', 'last_seen_at',
+    ]
+    list_filter = ['source_id', 'needs_review', 'created_at']
+    search_fields = ['brand', 'article', 'normalized_brand', 'normalized_article', 'title']
+    readonly_fields = [
+        'brand', 'normalized_brand', 'article', 'normalized_article',
+        'title', 'source_id', 'source_url', 'confidence', 'needs_review',
+        'last_seen_at', 'created_at', 'updated_at',
+    ]
+    inlines = [GlobalPartRelationInline]
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(GlobalPartRelation)
+class GlobalPartRelationAdmin(ModelAdmin):
+    list_display = [
+        'source_part', 'target_part', 'relation_type',
+        'source_id', 'confidence', 'needs_review', 'last_seen_at',
+    ]
+    list_filter = ['relation_type', 'source_id', 'needs_review', 'created_at']
+    search_fields = [
+        'source_part__brand', 'source_part__article',
+        'target_part__brand', 'target_part__article',
+        'raw_text',
+    ]
+    readonly_fields = [
+        'source_part', 'target_part', 'relation_type', 'source_id',
+        'source_url', 'raw_text', 'confidence', 'needs_review',
+        'last_seen_at', 'created_at', 'updated_at',
     ]
 
     def has_add_permission(self, request):
