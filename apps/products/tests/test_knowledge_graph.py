@@ -3,9 +3,11 @@ from decimal import Decimal
 import pytest
 
 from apps.products.models import (
-    GlobalPart, GlobalPartRelation, Product, ProductCrossCode,
+    GlobalPart, GlobalPartFitment, GlobalPartRelation, Product, ProductCrossCode,
 )
-from apps.products.part_parsers import ParsedCrossCode, ParsedPart, ParsedRelatedPart
+from apps.products.part_parsers import (
+    ParsedCrossCode, ParsedFitment, ParsedPart, ParsedRelatedPart,
+)
 from apps.products.services import (
     ProductEnrichmentService, ProductKnowledgeGraphService,
 )
@@ -119,6 +121,106 @@ def test_save_parsed_part_learns_global_related_parts():
     )
     assert relation.relation_type == GlobalPartRelation.RelationType.ANALOGUE
     assert relation.needs_review is False
+
+
+@pytest.mark.django_db
+def test_save_parsed_part_learns_global_fitments():
+    tenant = make_tenant('kg-fitment-learn')
+    product = make_product(tenant)
+    parsed = ParsedPart(
+        brand='BREMBO',
+        article='P50136',
+        source_url='https://tachka.ru/brembo/P50136',
+        fitments=[
+            ParsedFitment(
+                make='MERCEDES-BENZ',
+                model='E-CLASS',
+                generation='W213',
+                date_from='01.2016',
+                date_to='2023',
+                modification='E 220 d 4-matic',
+                engine_code='213.005',
+                power_hp=194,
+                raw_text='E-CLASS (W213) 01.2016-2023 E 220 d 4-matic (213.005) 194 л.с',
+                confidence=0.95,
+            ),
+        ],
+    )
+
+    ProductEnrichmentService.save_parsed_part(tenant, product, parsed)
+
+    fitment = GlobalPartFitment.objects.get(
+        part__normalized_brand='BREMBO',
+        part__normalized_article='P50136',
+        make='MERCEDES-BENZ',
+        model='E-CLASS',
+    )
+    assert fitment.generation == 'W213'
+    assert fitment.power_hp == 194
+    assert fitment.needs_review is False
+
+
+@pytest.mark.django_db
+def test_known_global_fitments_apply_to_other_tenant_product():
+    tenant_a = make_tenant('kg-fitment-owner')
+    tenant_b = make_tenant('kg-fitment-consumer')
+    product_a = make_product(tenant_a)
+    product_b = make_product(tenant_b)
+    parsed = ParsedPart(
+        brand='BREMBO',
+        article='P50136',
+        fitments=[
+            ParsedFitment(
+                make='MERCEDES-BENZ',
+                model='E-CLASS',
+                generation='W213',
+                modification='E 220 d',
+                engine_code='213.005',
+                power_hp=194,
+                confidence=0.95,
+            ),
+        ],
+    )
+    ProductEnrichmentService.save_parsed_part(tenant_a, product_a, parsed)
+
+    created = ProductKnowledgeGraphService.apply_known_fitments_to_product(product_b)
+
+    assert created == 1
+    assert product_b.fitments.filter(
+        tenant=tenant_b,
+        make='MERCEDES-BENZ',
+        model='E-CLASS',
+        generation='W213',
+    ).exists()
+    product_b.refresh_from_db()
+    assert product_b.applicability[0]['make'] == 'MERCEDES-BENZ'
+    assert product_b.applicability[0]['model'] == 'E-CLASS'
+
+
+@pytest.mark.django_db
+def test_reviewable_global_fitments_are_not_applied_to_tenant_product():
+    tenant = make_tenant('kg-fitment-review')
+    product = make_product(tenant)
+    part = ProductKnowledgeGraphService.upsert_part(
+        brand='BREMBO',
+        article='P50136',
+        source_id='tachka',
+    )
+    ProductKnowledgeGraphService.upsert_fitment(
+        part=part,
+        fitment=ParsedFitment(
+            make='',
+            model='E-CLASS',
+            generation='W213',
+            needs_review=True,
+        ),
+        source_id='tachka',
+    )
+
+    created = ProductKnowledgeGraphService.apply_known_fitments_to_product(product)
+
+    assert created == 0
+    assert product.fitments.count() == 0
 
 
 @pytest.mark.django_db

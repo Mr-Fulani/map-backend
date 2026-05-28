@@ -386,6 +386,50 @@ class VehicleFitment(TimestampedModel):
         return f'{self.make} {self.model} {self.generation}'.strip()
 
 
+class GlobalPartFitment(TimestampedModel):
+    """Platform-level применяемость артикула без привязки к tenant-товару."""
+
+    part = models.ForeignKey(
+        GlobalPart, on_delete=models.CASCADE, related_name='fitments',
+        verbose_name='Глобальная запчасть',
+    )
+    make = models.CharField(max_length=100, blank=True, db_index=True, verbose_name='Марка')
+    model = models.CharField(max_length=150, db_index=True, verbose_name='Модель')
+    generation = models.CharField(max_length=100, blank=True, verbose_name='Поколение')
+    date_from = models.CharField(max_length=20, blank=True, verbose_name='Дата с')
+    date_to = models.CharField(max_length=20, blank=True, verbose_name='Дата по')
+    modification = models.CharField(max_length=255, blank=True, verbose_name='Модификация')
+    engine_code = models.CharField(max_length=100, blank=True, verbose_name='Код двигателя/кузова')
+    power_hp = models.PositiveIntegerField(null=True, blank=True, verbose_name='Мощность, л.с.')
+    source_id = models.CharField(max_length=50, blank=True, verbose_name='Источник')
+    source_url = models.URLField(blank=True, verbose_name='URL источника')
+    raw_text = models.TextField(blank=True, verbose_name='Исходная строка')
+    confidence = models.FloatField(default=1.0, verbose_name='Уверенность')
+    needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
+    last_seen_at = models.DateTimeField(null=True, blank=True, verbose_name='Последний раз найдено')
+
+    class Meta:
+        verbose_name = 'Глобальная применяемость'
+        verbose_name_plural = 'Глобальная применяемость'
+        indexes = [
+            models.Index(fields=['make', 'model']),
+            models.Index(fields=['part', 'needs_review']),
+            models.Index(fields=['source_id', 'needs_review']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'part', 'source_id', 'make', 'model', 'generation',
+                    'modification', 'engine_code', 'power_hp',
+                ],
+                name='unique_global_part_fitment',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.part} -> {self.make} {self.model} {self.generation}'.strip()
+
+
 class ProductEnrichmentFact(TimestampedModel):
     """Факт для достоверного AI-описания товара."""
 

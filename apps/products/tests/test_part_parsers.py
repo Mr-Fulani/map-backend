@@ -206,6 +206,44 @@ def test_run_parse_job_enriches_existing_tenant_product(monkeypatch):
 
 
 @pytest.mark.django_db
+def test_run_parse_job_applies_known_knowledge_before_external_fetch(monkeypatch):
+    tenant_a = make_tenant('job-kg-owner')
+    product_a = make_product(tenant_a)
+    parsed = TachkaPartParser().parse_html(SAMPLE_HTML, brand='BREMBO', article='P50136')
+    ProductEnrichmentService.save_parsed_part(tenant_a, product_a, parsed)
+
+    tenant_b = make_tenant('job-kg-consumer')
+    product_b = make_product(tenant_b)
+    job = ProductEnrichmentService.create_parse_job(
+        tenant=tenant_b,
+        product=product_b,
+        brand='BREMBO',
+        article='P50136',
+        normalized_article='P50136',
+    )
+
+    fetch_called = False
+
+    class FakeParser:
+        def fetch(self, brand, article):
+            nonlocal fetch_called
+            fetch_called = True
+            return SAMPLE_HTML, 'https://tachka.ru/example'
+
+    monkeypatch.setattr('apps.products.services.get_part_parser', lambda source_id: FakeParser())
+
+    result = ProductEnrichmentService.run_parse_job(job.pk)
+
+    job.refresh_from_db()
+    product_b.refresh_from_db()
+    assert fetch_called is False
+    assert result['status'] == 'success'
+    assert result['fitments_count'] == 1
+    assert job.parsed_data['applied_from'] == 'knowledge_graph'
+    assert product_b.fitments.filter(model='E-CLASS').exists()
+
+
+@pytest.mark.django_db
 def test_run_parse_job_falls_back_to_search_results(monkeypatch):
     tenant = make_tenant('job-search-fallback')
     product = Product.objects.create(
