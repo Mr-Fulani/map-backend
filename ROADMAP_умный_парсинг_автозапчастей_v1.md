@@ -40,6 +40,8 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - `[x]` первая итерация platform-level `GlobalPart` / `GlobalPartRelation` для переиспользования OEM/Cross-связей между tenant-ами.
 - `[x]` read-only Django admin для просмотра глобальных артикулов и связей.
 - `[x]` сервис применения уже известных глобальных связей к tenant-scoped `ProductCrossCode`.
+- `[x]` fallback на поисковую выдачу источника при `not_found` прямой карточки.
+- `[x]` `ParsedRelatedPart` для аналогов/OEM-связей, которые могут отсутствовать на странице товара.
 
 Частично реализовано:
 
@@ -47,7 +49,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - `[~]` поддержка нескольких источников: архитектура источников есть, но реально подключен только `tachka`.
 - `[~]` качество данных: есть `need_review`, `confidence`, guardrails агента, но нет полноценного операционного workflow проверки.
 - `[~]` массовые действия: batch/cooldown есть, но pause/resume/cancel еще нужно довести в API/UI.
-- `[~]` глобальный граф артикулов: модель и обучение из parsed data есть, но еще нет parser fallback по поисковой выдаче/аналогам источника.
+- `[~]` глобальный граф артикулов: модель, обучение и search fallback есть; дальше нужны source priority и правила конфликтов между источниками.
 
 Не реализовано:
 

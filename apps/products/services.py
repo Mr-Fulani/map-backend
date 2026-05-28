@@ -296,8 +296,16 @@ class ProductEnrichmentService:
         try:
             product = job.product or cls._find_single_product_for_job(job)
             parser = get_part_parser(job.source_id)
-            html, source_url = parser.fetch(job.brand, job.article)
-            parsed = parser.parse_html(html, job.brand, job.article, source_url=source_url)
+            try:
+                html, source_url = parser.fetch(job.brand, job.article)
+                parsed = parser.parse_html(html, job.brand, job.article, source_url=source_url)
+            except PartNotFound:
+                if not hasattr(parser, 'fetch_search'):
+                    raise
+                html, source_url = parser.fetch_search(job.article)
+                parsed = parser.parse_search_html(
+                    html, job.brand, job.article, source_url=source_url,
+                )
             cls.save_parsed_part(job.tenant, product, parsed, source_id=job.source_id)
         except PartNotFound as exc:
             cls._finish_job(job, ProductParseJob.Status.NOT_FOUND, error_message=str(exc))
@@ -615,6 +623,28 @@ class ProductKnowledgeGraphService:
                 raw_text=f'{cross.manufacturer}: {cross.code}'.strip(': '),
                 confidence=0.8 if cross.code_type == ProductCrossCode.CodeType.UNKNOWN else 1.0,
                 needs_review=cross.code_type == ProductCrossCode.CodeType.UNKNOWN,
+            )
+        for related in parsed.related_parts:
+            if not normalize_part_code(related.article):
+                continue
+            target_part = cls.upsert_part(
+                brand=related.brand,
+                article=related.article,
+                title=related.title,
+                source_id=source_id,
+                source_url=parsed.source_url,
+                confidence=related.confidence,
+                needs_review=related.needs_review,
+            )
+            cls.upsert_relation(
+                source_part=source_part,
+                target_part=target_part,
+                relation_type=related.relation_type,
+                source_id=source_id,
+                source_url=parsed.source_url,
+                raw_text=related.raw_text,
+                confidence=related.confidence,
+                needs_review=related.needs_review,
             )
 
     @classmethod

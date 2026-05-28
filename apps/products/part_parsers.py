@@ -1,13 +1,14 @@
 import json
 import re
 from dataclasses import dataclass, field
+from urllib.parse import quote
 
 import httpx
 from django.utils.text import slugify
 from selectolax.parser import HTMLParser
 
 from apps.products.enrichment import normalize_part_code
-from apps.products.models import ProductCrossCode
+from apps.products.models import GlobalPartRelation, ProductCrossCode
 
 
 DEFAULT_PART_SOURCE = 'tachka'
@@ -31,6 +32,10 @@ CROSS_PAIR_RE = re.compile(
     r'(?P<manufacturer>[A-ZА-ЯЁ][A-ZА-ЯЁ0-9 /().-]{1,70}?)\s+-\s*'
     r'(?P<code>[A-Z0-9][A-Z0-9 ./-]{2,40}?)(?=\s+[A-ZА-ЯЁ][A-ZА-ЯЁ0-9 /().-]{1,70}?\s+-|$)'
 )
+PRODUCT_RESULT_RE = re.compile(
+    r'(?P<title>.+?)\s+Артикул:?\s*(?P<article>[A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9 ./-]{2,40})',
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -38,6 +43,17 @@ class ParsedCrossCode:
     manufacturer: str
     code: str
     code_type: str = ProductCrossCode.CodeType.UNKNOWN
+
+
+@dataclass
+class ParsedRelatedPart:
+    brand: str
+    article: str
+    title: str = ''
+    relation_type: str = GlobalPartRelation.RelationType.UNKNOWN
+    raw_text: str = ''
+    confidence: float = 0.8
+    needs_review: bool = False
 
 
 @dataclass
@@ -63,6 +79,7 @@ class ParsedPart:
     category: str = ''
     attributes: dict[str, str] = field(default_factory=dict)
     cross_codes: list[ParsedCrossCode] = field(default_factory=list)
+    related_parts: list[ParsedRelatedPart] = field(default_factory=list)
     fitments: list[ParsedFitment] = field(default_factory=list)
     image_urls: list[str] = field(default_factory=list)
     description_facts: dict[str, str] = field(default_factory=dict)
@@ -82,6 +99,7 @@ class ParsedPart:
             'category': self.category,
             'attributes': self.attributes,
             'cross_codes': [cross.__dict__ for cross in self.cross_codes],
+            'related_parts': [related.__dict__ for related in self.related_parts],
             'fitments': [fitment.__dict__ for fitment in self.fitments],
             'image_urls': self.image_urls,
             'description_facts': self.description_facts,
@@ -103,6 +121,16 @@ class TachkaPartParser:
         brand_slug = slugify(brand).lower() or brand.strip().lower()
         return f'{self.base_url}/{brand_slug}/{normalize_part_code(article)}'
 
+    def build_search_urls(self, article: str) -> list[str]:
+        encoded = quote(article.strip())
+        normalized = quote(normalize_part_code(article))
+        return [
+            f'{self.base_url}/poisk?search={encoded}',
+            f'{self.base_url}/poisk?q={encoded}',
+            f'{self.base_url}/poisk?query={encoded}',
+            f'{self.base_url}/poisk?article={normalized}',
+        ]
+
     def fetch(self, brand: str, article: str) -> tuple[str, str]:
         url = self.build_url(brand, article)
         response = httpx.get(
@@ -115,6 +143,21 @@ class TachkaPartParser:
             raise PartNotFound(f'Part not found: {url}')
         response.raise_for_status()
         return response.text, str(response.url)
+
+    def fetch_search(self, article: str) -> tuple[str, str]:
+        for url in self.build_search_urls(article):
+            response = httpx.get(
+                url,
+                timeout=20,
+                follow_redirects=True,
+                headers={'User-Agent': 'MAP enrichment bot (+https://map.local)'},
+            )
+            if response.status_code == 404:
+                continue
+            response.raise_for_status()
+            if self.search_html_has_results(response.text):
+                return response.text, str(response.url)
+        raise PartNotFound(f'Part not found in tachka search: {article}')
 
     def parse_html(self, html: str, brand: str, article: str, source_url: str = '') -> ParsedPart:
         tree = HTMLParser(html)
@@ -139,6 +182,99 @@ class TachkaPartParser:
         if not parsed.title:
             parsed.title = f'{parsed.brand} {parsed.article}'
         return parsed
+
+    def search_html_has_results(self, html: str) -> bool:
+        tree = HTMLParser(html)
+        raw_text = _normalize_lines(tree.body.text(separator='\n')) if tree.body else ''
+        return bool(
+            raw_text
+            and 'товары не найдены' not in raw_text.lower()
+            and (
+                'результаты поиска' in raw_text.lower()
+                or 'аналоги по oem' in raw_text.lower()
+                or 'артикул:' in raw_text.lower()
+            )
+        )
+
+    def parse_search_html(self, html: str, brand: str, article: str, source_url: str = '') -> ParsedPart:
+        tree = HTMLParser(html)
+        raw_text = _normalize_lines(tree.body.text(separator='\n')) if tree.body else ''
+        normalized_article = normalize_part_code(article)
+        parsed = ParsedPart(
+            brand=brand.strip().upper(),
+            article=normalized_article,
+            title=f'{brand} {article}'.strip(),
+            source_url=source_url,
+            raw_text=raw_text[:20000],
+            related_parts=self._parse_related_parts_from_search(raw_text, normalized_article),
+            description_facts=self._parse_search_description_facts(raw_text),
+        )
+        parsed.cross_codes = [
+            ParsedCrossCode(
+                manufacturer=related.brand,
+                code=related.article,
+                code_type=_relation_to_code_type(related.relation_type),
+            )
+            for related in parsed.related_parts
+            if related.relation_type in [
+                GlobalPartRelation.RelationType.OEM,
+                GlobalPartRelation.RelationType.CROSS,
+                GlobalPartRelation.RelationType.ANALOGUE,
+                GlobalPartRelation.RelationType.REPLACEMENT,
+            ]
+        ][:50]
+        return parsed
+
+    def _parse_related_parts_from_search(
+        self, raw_text: str, normalized_article: str,
+    ) -> list[ParsedRelatedPart]:
+        related_parts = []
+        current_relation_type = GlobalPartRelation.RelationType.UNKNOWN
+        lines = raw_text.splitlines()
+        for line in lines:
+            lowered = line.lower()
+            if 'аналоги по oem' in lowered or 'аналоги' in lowered:
+                current_relation_type = GlobalPartRelation.RelationType.ANALOGUE
+                continue
+            if 'результаты по артикулу' in lowered:
+                current_relation_type = GlobalPartRelation.RelationType.OEM
+                continue
+
+            match = PRODUCT_RESULT_RE.search(line)
+            if not match:
+                continue
+            found_article = _normalize_spaces(match.group('article')).strip(' .,-)')
+            normalized_found_article = normalize_part_code(found_article)
+            if not normalized_found_article or normalized_found_article == normalized_article:
+                continue
+
+            title = _normalize_spaces(match.group('title'))
+            brand = _extract_brand_from_search_title(title)
+            if not brand:
+                continue
+            needs_review = current_relation_type == GlobalPartRelation.RelationType.UNKNOWN
+            related_parts.append(ParsedRelatedPart(
+                brand=brand,
+                article=found_article,
+                title=title,
+                relation_type=current_relation_type,
+                raw_text=line,
+                confidence=0.7 if needs_review else 0.9,
+                needs_review=needs_review,
+            ))
+        return _dedupe_related_parts(related_parts)
+
+    def _parse_search_description_facts(self, raw_text: str) -> dict[str, str]:
+        facts = {}
+        for line in raw_text.splitlines():
+            normalized = _normalize_spaces(line)
+            if not normalized:
+                continue
+            lowered = normalized.lower()
+            if any(marker in lowered for marker in ['toyota camry', 'hyundai', 'kia', 'mercedes']):
+                facts['search_hint'] = normalized[:3000]
+                break
+        return facts
 
     def _first_text(self, tree: HTMLParser, selectors: list[str]) -> str:
         for selector in selectors:
@@ -319,6 +455,20 @@ def _guess_code_type(label: str) -> str:
     return ProductCrossCode.CodeType.UNKNOWN
 
 
+def _relation_to_code_type(relation_type: str) -> str:
+    if relation_type == GlobalPartRelation.RelationType.OEM:
+        return ProductCrossCode.CodeType.OEM
+    if relation_type == GlobalPartRelation.RelationType.TRADE:
+        return ProductCrossCode.CodeType.TRADE
+    if relation_type in [
+        GlobalPartRelation.RelationType.CROSS,
+        GlobalPartRelation.RelationType.ANALOGUE,
+        GlobalPartRelation.RelationType.REPLACEMENT,
+    ]:
+        return ProductCrossCode.CodeType.CROSS
+    return ProductCrossCode.CodeType.UNKNOWN
+
+
 def _looks_like_cross_label(label: str) -> bool:
     label = label.lower()
     markers = ('oem', 'oe', 'ориг', 'cross', 'аналог', 'замен', 'кросс')
@@ -335,6 +485,43 @@ def _dedupe_cross_codes(codes: list[ParsedCrossCode]) -> list[ParsedCrossCode]:
         seen.add(key)
         result.append(code)
     return result[:200]
+
+
+def _dedupe_related_parts(parts: list[ParsedRelatedPart]) -> list[ParsedRelatedPart]:
+    seen = set()
+    result = []
+    for part in parts:
+        key = (part.brand, normalize_part_code(part.article), part.relation_type)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(part)
+    return result[:100]
+
+
+def _extract_brand_from_search_title(title: str) -> str:
+    normalized = _normalize_spaces(title)
+    if not normalized:
+        return ''
+
+    patterns = [
+        r'\([A-Za-zА-Яа-яЁё0-9 -]{2,40}\)\s+([A-Za-zА-Яа-яЁё0-9 -]{2,40})\.',
+        r'\b(?:Aмортизатор|Амортизатор|Стойка|Колодки|Диск|Рейка)\s+([A-Za-zА-Яа-яЁё0-9 -]{2,40})\.',
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, normalized)
+        if not match:
+            continue
+        candidate = _normalize_spaces(match.group(match.lastindex)).strip(' .,-()')
+        if _looks_like_manufacturer(candidate):
+            return candidate
+
+    chunks = normalized.split()
+    for chunk in reversed(chunks):
+        candidate = chunk.strip(' .,-()')
+        if candidate.isupper() and _looks_like_manufacturer(candidate):
+            return candidate
+    return ''
 
 
 def _extract_cross_sections(raw_text: str) -> list[str]:

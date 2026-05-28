@@ -5,7 +5,7 @@ import pytest
 from apps.products.models import (
     GlobalPart, GlobalPartRelation, Product, ProductCrossCode,
 )
-from apps.products.part_parsers import ParsedCrossCode, ParsedPart
+from apps.products.part_parsers import ParsedCrossCode, ParsedPart, ParsedRelatedPart
 from apps.products.services import (
     ProductEnrichmentService, ProductKnowledgeGraphService,
 )
@@ -88,6 +88,37 @@ def test_known_global_relations_apply_to_other_tenant_product():
     ).exists()
     product_b.refresh_from_db()
     assert product_b.oem_numbers == ['A0004206000']
+
+
+@pytest.mark.django_db
+def test_save_parsed_part_learns_global_related_parts():
+    tenant = make_tenant('kg-related')
+    product = make_product(tenant, article='485108Z460', brand='TOYOTA-LEXUS')
+    parsed = ParsedPart(
+        brand='TOYOTA-LEXUS',
+        article='485108Z460',
+        source_url='https://tachka.ru/poisk?search=485108Z460',
+        related_parts=[
+            ParsedRelatedPart(
+                brand='KYB',
+                article='3350048',
+                title='Амортизатор TOYOTA CAMRY 17- газ.пер.прав. KYB',
+                relation_type=GlobalPartRelation.RelationType.ANALOGUE,
+                raw_text='Амортизатор TOYOTA CAMRY 17- газ.пер.прав. KYB. Артикул 3350048',
+                confidence=0.9,
+            ),
+        ],
+    )
+
+    ProductEnrichmentService.save_parsed_part(tenant, product, parsed)
+
+    relation = GlobalPartRelation.objects.get(
+        source_part__normalized_article='485108Z460',
+        target_part__normalized_brand='KYB',
+        target_part__normalized_article='3350048',
+    )
+    assert relation.relation_type == GlobalPartRelation.RelationType.ANALOGUE
+    assert relation.needs_review is False
 
 
 @pytest.mark.django_db
