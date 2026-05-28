@@ -3,8 +3,8 @@ from unfold.admin import ModelAdmin, TabularInline
 
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, Product, ProductAttribute,
-    PartCategory, ProductCrossCode, ProductEnrichmentFact, ProductImage, ProductParseJob,
-    VehicleFitment, VehicleMake, VehicleModel,
+    PartCategory, ProductCatalogClassification, ProductCrossCode, ProductEnrichmentFact,
+    ProductImage, ProductParseJob, VehicleFitment, VehicleMake, VehicleModel,
 )
 
 
@@ -50,6 +50,14 @@ class ProductEnrichmentFactInline(TabularInline):
     extra = 0
     fields = ['source_id', 'fact_type', 'name', 'value', 'confidence', 'needs_review']
     readonly_fields = fields
+    can_delete = False
+
+
+class ProductCatalogClassificationInline(TabularInline):
+    model = ProductCatalogClassification
+    extra = 0
+    fields = ['domain', 'confidence', 'source', 'reason', 'needs_review', 'updated_at']
+    readonly_fields = ['domain', 'confidence', 'source', 'reason', 'needs_review', 'updated_at']
     can_delete = False
 
 
@@ -100,11 +108,15 @@ class ProductAdmin(ModelAdmin):
     и перегенерировать описание выбранных товаров.
     """
 
-    list_display = ['article', 'name', 'tenant', 'price', 'stock_qty', 'export_enabled', 'sync_at']
-    list_filter = ['tenant', 'export_enabled', 'condition']
+    list_display = [
+        'article', 'name', 'tenant', 'get_catalog_domain',
+        'price', 'stock_qty', 'export_enabled', 'sync_at',
+    ]
+    list_filter = ['tenant', 'export_enabled', 'condition', 'catalog_classification__domain']
     search_fields = ['article', 'name', 'brand']
     readonly_fields = ['hash_1c', 'sync_at', 'created_at', 'updated_at']
     inlines = [
+        ProductCatalogClassificationInline,
         ProductImageInline,
         ProductAttributeInline,
         ProductCrossCodeInline,
@@ -116,7 +128,24 @@ class ProductAdmin(ModelAdmin):
         'force_archive_selected',
         'regenerate_description_selected',
         'parse_enrichment_selected',
+        'classify_catalog_domain_selected',
     ]
+
+    @admin.display(description='Домен товара')
+    def get_catalog_domain(self, obj):
+        classification = getattr(obj, 'catalog_classification', None)
+        return classification.domain if classification else 'unknown'
+
+    @admin.action(description='Классифицировать домен выбранных товаров')
+    def classify_catalog_domain_selected(self, request, queryset):
+        """Обновляет rule-based классификацию домена товара."""
+        from apps.products.services import ProductEnrichmentService
+
+        updated = 0
+        for product in queryset.select_related('tenant'):
+            ProductEnrichmentService.classify_product_catalog_domain(product)
+            updated += 1
+        self.message_user(request, f'Классификация обновлена для товаров: {updated}.')
 
     @admin.action(description='Принудительно опубликовать выбранные товары')
     def force_publish_selected(self, request, queryset):

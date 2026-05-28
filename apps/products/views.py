@@ -40,6 +40,7 @@ class ProductListView(APIView):
         qs = (
             Product.objects
             .filter(tenant=request.tenant)
+            .select_related('catalog_classification')
             .prefetch_related('images', Prefetch('parse_jobs', queryset=latest_jobs))
             .annotate(
                 attributes_count=Count('attributes', distinct=True),
@@ -79,7 +80,7 @@ class ProductDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            product = Product.objects.prefetch_related(
+            product = Product.objects.select_related('catalog_classification').prefetch_related(
                 'images', 'attributes', 'cross_codes', 'fitments', 'parse_jobs',
             ).get(
                 pk=pk, tenant=request.tenant
@@ -120,7 +121,7 @@ class ProductSearchView(APIView):
             tenant=request.tenant,
             brand__iexact=brand,
             article__iexact=article,
-        ).prefetch_related('images').first()
+        ).select_related('catalog_classification').prefetch_related('images').first()
         if product is None:
             return Response(
                 {'status': 'error', 'code': 'not_found', 'message': 'Товар не найден'},

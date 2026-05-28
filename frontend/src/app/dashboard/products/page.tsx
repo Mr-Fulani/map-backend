@@ -50,6 +50,12 @@ interface Product {
     latest_parse_status: string;
     latest_parse_at: string | null;
   };
+  catalog_classification: {
+    domain: string;
+    confidence: number;
+    reason: string;
+    needs_review: boolean;
+  } | null;
 }
 
 interface Meta {
@@ -99,6 +105,22 @@ const ENRICHMENT_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive
   missing: 'outline',
   not_found: 'outline',
   failed: 'destructive',
+};
+
+const CATALOG_DOMAIN_LABELS: Record<string, string> = {
+  auto_parts: 'Авто',
+  jewellery: 'Украш.',
+  apparel: 'Одежда',
+  generic: 'Общий',
+  unknown: 'Не ясно',
+};
+
+const CATALOG_DOMAIN_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  auto_parts: 'default',
+  jewellery: 'secondary',
+  apparel: 'secondary',
+  generic: 'outline',
+  unknown: 'outline',
 };
 
 function enrichmentTitle(product: Product) {
@@ -487,6 +509,13 @@ export default function ProductsPage() {
                         >
                           <Database className="h-3 w-3" />
                           {ENRICHMENT_LABELS[p.enrichment_status] ?? p.enrichment_status}
+                        </Badge>
+                        <Badge
+                          variant={CATALOG_DOMAIN_VARIANTS[p.catalog_classification?.domain ?? 'unknown'] ?? 'outline'}
+                          className="whitespace-nowrap"
+                          title={p.catalog_classification?.reason || 'Домен товара ещё не классифицирован'}
+                        >
+                          {CATALOG_DOMAIN_LABELS[p.catalog_classification?.domain ?? 'unknown'] ?? 'Не ясно'}
                         </Badge>
                       </div>
                     </td>

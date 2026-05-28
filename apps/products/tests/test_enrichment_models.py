@@ -4,7 +4,7 @@ import pytest
 
 from apps.products.enrichment import make_value_hash, normalize_part_code
 from apps.products.models import (
-    Product, ProductCrossCode, ProductEnrichmentFact,
+    Product, ProductCatalogClassification, ProductCrossCode, ProductEnrichmentFact,
 )
 from apps.products.services import ProductEnrichmentService
 from apps.tenants.services import TenantService
@@ -91,6 +91,34 @@ def test_parse_job_rejects_cross_tenant_product():
             article='P50136',
             normalized_article='P50136',
         )
+
+
+@pytest.mark.django_db
+def test_catalog_classification_detects_auto_part():
+    tenant = make_tenant('classify-auto')
+    product = make_product(tenant, article='P50136', brand='BREMBO')
+    product.name = 'Колодки тормозные BREMBO P50136'
+    product.save(update_fields=['name'])
+
+    classification = ProductEnrichmentService.classify_product_catalog_domain(product)
+
+    assert classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
+    assert classification.confidence >= 0.7
+    assert classification.reason
+
+
+@pytest.mark.django_db
+def test_catalog_classification_detects_jewellery():
+    tenant = make_tenant('classify-jewellery')
+    product = make_product(tenant, article='RING1', brand='NO_BRAND')
+    product.name = 'Золотое кольцо'
+    product.category_1c = 'Украшения'
+    product.save(update_fields=['name', 'category_1c'])
+
+    classification = ProductEnrichmentService.classify_product_catalog_domain(product)
+
+    assert classification.domain == ProductCatalogClassification.Domain.JEWELLERY
+    assert classification.needs_review is False
 
 
 @pytest.mark.django_db

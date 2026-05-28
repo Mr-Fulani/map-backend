@@ -240,10 +240,19 @@ Tenant.catalog_domain = mixed
 ```
 
 В этом режиме платформа разрешает auto-parts capability, но перед запуском parser
-проверяет конкретный `Product`. Если товар не похож на автозапчасть по названию,
-категории, описанию или бренду, одиночный parser-запуск отклоняется, regenerate
-переходит в обычную AI-генерацию, а bulk job пропускает такой товар и увеличивает
-`skipped_count`.
+проверяет конкретный `Product` через `ProductCatalogClassification`.
+
+`ProductCatalogClassification` хранит:
+
+- `domain`: auto_parts/generic/jewellery/apparel/unknown;
+- `confidence`;
+- `source`: rules/manual/ai;
+- `reason`;
+- `needs_review`.
+
+Если товар не классифицирован как `auto_parts` с достаточной уверенностью,
+одиночный parser-запуск отклоняется, regenerate переходит в обычную AI-генерацию,
+а bulk job пропускает такой товар и увеличивает `skipped_count`.
 
 ## Что не решено в этой итерации
 

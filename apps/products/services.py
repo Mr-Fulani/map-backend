@@ -8,9 +8,9 @@ from django.utils.timezone import now
 from apps.products.enrichment import make_value_hash, normalize_part_code
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation,
-    Product, ProductAttribute, ProductCrossCode, ProductEnrichmentFact,
-    ProductBulkActionJob, ProductParseJob, VehicleFitment, VehicleMake,
-    VehicleModel,
+    Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
+    ProductCrossCode, ProductEnrichmentFact, ProductParseJob, VehicleFitment,
+    VehicleMake, VehicleModel,
 )
 from apps.products.part_parsers import ParsedPart, PartNotFound, get_part_parser
 from apps.products.source_policy import (
@@ -152,15 +152,75 @@ class ProductEnrichmentService:
                 'Автозапчастное обогащение доступно только для каталога автозапчастей.'
             )
 
+    NON_AUTO_PARTS_MARKERS = [
+        'кольц', 'серьг', 'браслет', 'цепоч', 'ожерель', 'подвеск',
+        'украшен', 'ювелир', 'золот', 'серебр',
+        'плать', 'рубаш', 'брюк', 'куртк', 'обув', 'одежд',
+    ]
+
     @classmethod
-    def is_product_auto_part_candidate(cls, product: Product) -> bool:
+    def classify_product_catalog_domain(
+        cls, product: Product, save: bool = True,
+    ) -> ProductCatalogClassification:
         text = ' '.join([
             product.name or '',
             product.category_1c or '',
             product.description_1c or '',
             product.brand or '',
         ]).lower()
-        return any(marker in text for marker in cls.AUTO_PARTS_MARKERS)
+        auto_matches = [marker for marker in cls.AUTO_PARTS_MARKERS if marker in text]
+        non_auto_matches = [marker for marker in cls.NON_AUTO_PARTS_MARKERS if marker in text]
+
+        if auto_matches:
+            domain = ProductCatalogClassification.Domain.AUTO_PARTS
+            confidence = 0.9 if len(auto_matches) > 1 else 0.75
+            reason = f'Найдены признаки автозапчасти: {", ".join(auto_matches[:5])}.'
+            needs_review = confidence < 0.8
+        elif non_auto_matches:
+            domain = ProductCatalogClassification.Domain.JEWELLERY
+            confidence = 0.85
+            reason = f'Найдены признаки неавтомобильного товара: {", ".join(non_auto_matches[:5])}.'
+            needs_review = False
+        else:
+            domain = ProductCatalogClassification.Domain.UNKNOWN
+            confidence = 0.3
+            reason = 'Не найдено достаточно признаков автозапчасти или другого домена.'
+            needs_review = True
+
+        defaults = {
+            'domain': domain,
+            'confidence': confidence,
+            'source': ProductCatalogClassification.Source.RULES,
+            'reason': reason,
+            'needs_review': needs_review,
+        }
+        if save:
+            classification, _ = ProductCatalogClassification.objects.update_or_create(
+                tenant=product.tenant,
+                product=product,
+                defaults=defaults,
+            )
+            return classification
+        return ProductCatalogClassification(
+            tenant=product.tenant,
+            product=product,
+            **defaults,
+        )
+
+    @classmethod
+    def get_or_classify_product_catalog_domain(cls, product: Product) -> ProductCatalogClassification:
+        try:
+            return product.catalog_classification
+        except ProductCatalogClassification.DoesNotExist:
+            return cls.classify_product_catalog_domain(product)
+
+    @classmethod
+    def is_product_auto_part_candidate(cls, product: Product) -> bool:
+        classification = cls.get_or_classify_product_catalog_domain(product)
+        return (
+            classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
+            and classification.confidence >= 0.7
+        )
 
     @classmethod
     def ensure_product_auto_parts_eligible(cls, tenant, product: Product | None) -> None:
