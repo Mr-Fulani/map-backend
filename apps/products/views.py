@@ -16,7 +16,7 @@ from apps.products.serializers import (
 )
 from apps.products.services import (
     AutoPartsEnrichmentDisabled, ProductBulkActionService, ProductEnrichmentService,
-    ProductService,
+    ProductIsNotAutoPart, ProductService,
 )
 from apps.products.tasks import import_from_datasource
 from apps.products.source_policy import DEFAULT_PART_SOURCE, get_part_source_config
@@ -184,6 +184,11 @@ class ProductParseView(APIView):
         except AutoPartsEnrichmentDisabled as exc:
             return Response(
                 {'status': 'error', 'code': 'auto_parts_enrichment_disabled', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ProductIsNotAutoPart as exc:
+            return Response(
+                {'status': 'error', 'code': 'product_is_not_auto_part', 'message': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -377,7 +382,14 @@ class ProductRegenerateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not request.tenant.supports_auto_parts_enrichment:
+        product_needs_plain_ai = (
+            not request.tenant.supports_auto_parts_enrichment
+            or (
+                request.tenant.requires_product_auto_parts_check
+                and not ProductEnrichmentService.is_product_auto_part_candidate(product)
+            )
+        )
+        if product_needs_plain_ai:
             ProductService.schedule_ai_generation(product, request.tenant)
             return Response({
                 'status': 'ok',
@@ -401,6 +413,11 @@ class ProductRegenerateView(APIView):
         except AutoPartsEnrichmentDisabled as exc:
             return Response(
                 {'status': 'error', 'code': 'auto_parts_enrichment_disabled', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ProductIsNotAutoPart as exc:
+            return Response(
+                {'status': 'error', 'code': 'product_is_not_auto_part', 'message': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

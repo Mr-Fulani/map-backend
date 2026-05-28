@@ -15,12 +15,13 @@ def make_tenant(slug):
     return tenant, api_key
 
 
-def make_product(tenant, article='P50136', brand='BREMBO'):
+def make_product(tenant, article='P50136', brand='BREMBO', name=None, category_1c=''):
     return Product.objects.create(
         tenant=tenant,
         article=article,
         brand=brand,
-        name=f'{brand} {article}',
+        name=name or f'{brand} {article}',
+        category_1c=category_1c,
         price=Decimal('0'),
         stock_qty=0,
     )
@@ -171,6 +172,62 @@ def test_regenerate_endpoint_for_non_auto_parts_tenant_queues_ai_without_enrichm
     data = response.json()['data']
     assert data['job_id'] is None
     assert data['state'] == 'queued'
+    assert tenant.product_parse_jobs.count() == 0
+    delay.assert_called_once_with(product.pk)
+
+
+@pytest.mark.django_db
+def test_parse_endpoint_rejects_non_auto_parts_product_for_mixed_tenant():
+    tenant, api_key = make_tenant('parse-mixed-jewellery')
+    tenant.catalog_domain = 'mixed'
+    tenant.save(update_fields=['catalog_domain'])
+    product = make_product(
+        tenant,
+        article='RING1',
+        brand='NO_BRAND',
+        name='Золотое кольцо',
+        category_1c='Украшения',
+    )
+    client = Client()
+
+    response = client.post(
+        '/api/v1/products/parse/',
+        {'product_id': product.pk},
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 400
+    assert response.json()['code'] == 'product_is_not_auto_part'
+    assert tenant.product_parse_jobs.count() == 0
+
+
+@pytest.mark.django_db
+def test_regenerate_endpoint_for_mixed_non_auto_part_queues_ai_without_enrichment(
+    django_capture_on_commit_callbacks,
+):
+    tenant, api_key = make_tenant('regenerate-mixed-jewellery')
+    tenant.catalog_domain = 'mixed'
+    tenant.save(update_fields=['catalog_domain'])
+    product = make_product(
+        tenant,
+        article='RING2',
+        brand='NO_BRAND',
+        name='Серебряное кольцо',
+        category_1c='Украшения',
+    )
+    client = Client()
+
+    with patch('apps.ai_agent.tasks.generate_description_task.delay') as delay:
+        with django_capture_on_commit_callbacks(execute=True):
+            response = client.post(
+                f'/api/v1/products/{product.pk}/regenerate/',
+                content_type='application/json',
+                HTTP_AUTHORIZATION=f'Bearer {api_key}',
+            )
+
+    assert response.status_code == 202
+    assert response.json()['data']['job_id'] is None
     assert tenant.product_parse_jobs.count() == 0
     delay.assert_called_once_with(product.pk)
 

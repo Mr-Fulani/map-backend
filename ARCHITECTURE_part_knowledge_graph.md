@@ -233,6 +233,18 @@ Tenant.catalog_domain = auto_parts
 Это важно для SaaS: неавтомобильный tenant не должен попадать в автомобильные
 предметные правила, а auto-parts tenant сохраняет текущий enrichment pipeline.
 
+Для tenant-а со смешанным ассортиментом используется:
+
+```text
+Tenant.catalog_domain = mixed
+```
+
+В этом режиме платформа разрешает auto-parts capability, но перед запуском parser
+проверяет конкретный `Product`. Если товар не похож на автозапчасть по названию,
+категории, описанию или бренду, одиночный parser-запуск отклоняется, regenerate
+переходит в обычную AI-генерацию, а bulk job пропускает такой товар и увеличивает
+`skipped_count`.
+
 ## Что не решено в этой итерации
 
 - Нормализованный справочник `VehicleGeneration/VehicleModification`.

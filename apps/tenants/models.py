@@ -22,6 +22,7 @@ class Tenant(TimestampedModel):
 
     class CatalogDomain(models.TextChoices):
         AUTO_PARTS = 'auto_parts', 'Автозапчасти'
+        MIXED = 'mixed', 'Смешанный каталог'
         GENERIC = 'generic', 'Обычный каталог'
         JEWELLERY = 'jewellery', 'Украшения'
         APPAREL = 'apparel', 'Одежда'
@@ -54,7 +55,14 @@ class Tenant(TimestampedModel):
 
     @property
     def supports_auto_parts_enrichment(self) -> bool:
-        return self.catalog_domain == self.CatalogDomain.AUTO_PARTS
+        return self.catalog_domain in [
+            self.CatalogDomain.AUTO_PARTS,
+            self.CatalogDomain.MIXED,
+        ]
+
+    @property
+    def requires_product_auto_parts_check(self) -> bool:
+        return self.catalog_domain == self.CatalogDomain.MIXED
 
 
 class TenantUser(TimestampedModel):

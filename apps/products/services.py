@@ -40,6 +40,10 @@ class AutoPartsEnrichmentDisabled(Exception):
     """Автозапчастное обогащение отключено для домена каталога tenant-а."""
 
 
+class ProductIsNotAutoPart(Exception):
+    """Товар не похож на автозапчасть для смешанного каталога tenant-а."""
+
+
 class ProductService:
     """Сервис управления товарами: создание/обновление из источников данных."""
 
@@ -130,11 +134,48 @@ class ProductService:
 class ProductEnrichmentService:
     """Сервис tenant-scoped сохранения данных обогащения товара."""
 
+    AUTO_PARTS_MARKERS = [
+        'авто', 'автомоб', 'запчаст', 'oem', 'кросс',
+        'тормоз', 'колод', 'диск торм', 'суппорт',
+        'амортиз', 'стойк', 'подвес', 'рычаг', 'шаровая',
+        'рулев', 'рейка', 'тяга', 'наконечник',
+        'двигател', 'мотор', 'фильтр', 'свеч', 'ремень',
+        'toyota', 'lexus', 'hyundai', 'kia', 'mercedes', 'benz',
+        'bmw', 'audi', 'volkswagen', 'nissan', 'renault',
+        'brembo', 'trw', 'kyb',
+    ]
+
     @staticmethod
     def ensure_auto_parts_enabled(tenant) -> None:
         if not getattr(tenant, 'supports_auto_parts_enrichment', True):
             raise AutoPartsEnrichmentDisabled(
                 'Автозапчастное обогащение доступно только для каталога автозапчастей.'
+            )
+
+    @classmethod
+    def is_product_auto_part_candidate(cls, product: Product) -> bool:
+        text = ' '.join([
+            product.name or '',
+            product.category_1c or '',
+            product.description_1c or '',
+            product.brand or '',
+        ]).lower()
+        return any(marker in text for marker in cls.AUTO_PARTS_MARKERS)
+
+    @classmethod
+    def ensure_product_auto_parts_eligible(cls, tenant, product: Product | None) -> None:
+        cls.ensure_auto_parts_enabled(tenant)
+        if product is None and getattr(tenant, 'requires_product_auto_parts_check', False):
+            raise ProductIsNotAutoPart(
+                'Для смешанного каталога нужно указать товар, чтобы проверить, что это автозапчасть.'
+            )
+        if (
+            product is not None
+            and getattr(tenant, 'requires_product_auto_parts_check', False)
+            and not cls.is_product_auto_part_candidate(product)
+        ):
+            raise ProductIsNotAutoPart(
+                'Товар не похож на автозапчасть, поэтому parser не запускается для смешанного каталога.'
             )
 
     @staticmethod
@@ -171,7 +212,7 @@ class ProductEnrichmentService:
         cls, tenant, product: Product | None, brand: str, article: str,
         normalized_article: str, source_id: str = DEFAULT_PART_SOURCE,
     ) -> ProductParseJob:
-        cls.ensure_auto_parts_enabled(tenant)
+        cls.ensure_product_auto_parts_eligible(tenant, product)
         if product is not None:
             cls._ensure_product_tenant(product, tenant)
         return ProductParseJob.objects.create(
@@ -426,11 +467,17 @@ class ProductBulkActionService:
         ]:
             ProductEnrichmentService.ensure_auto_parts_enabled(tenant)
         source_config = get_part_source_config(source_id)
-        valid_ids = list(
-            Product.objects.filter(tenant=tenant, pk__in=product_ids)
-            .order_by('pk')
-            .values_list('pk', flat=True)
-        )
+        products = list(Product.objects.filter(tenant=tenant, pk__in=product_ids).order_by('pk'))
+        if action in [
+            ProductBulkActionJob.Action.ENRICH_SELECTED,
+            ProductBulkActionJob.Action.ENRICH_MISSING_DATA,
+            ProductBulkActionJob.Action.ENRICH_THEN_GENERATE,
+        ] and getattr(tenant, 'requires_product_auto_parts_check', False):
+            products = [
+                product for product in products
+                if ProductEnrichmentService.is_product_auto_part_candidate(product)
+            ]
+        valid_ids = [product.pk for product in products]
         skipped_count = max(len(set(product_ids)) - len(valid_ids), 0)
         return ProductBulkActionJob.objects.create(
             tenant=tenant,
@@ -489,14 +536,18 @@ class ProductBulkActionService:
                     ProductBulkActionJob.Action.ENRICH_MISSING_DATA,
                     ProductBulkActionJob.Action.ENRICH_THEN_GENERATE,
                 ]:
-                    parse_job = ProductEnrichmentService.create_parse_job(
-                        tenant=job.tenant,
-                        product=product,
-                        brand=product.brand,
-                        article=product.article,
-                        normalized_article=normalize_cross_code(product.article),
-                        source_id=job.source_id,
-                    )
+                    try:
+                        parse_job = ProductEnrichmentService.create_parse_job(
+                            tenant=job.tenant,
+                            product=product,
+                            brand=product.brand,
+                            article=product.article,
+                            normalized_article=normalize_cross_code(product.article),
+                            source_id=job.source_id,
+                        )
+                    except ProductIsNotAutoPart:
+                        job.skipped_count += 1
+                        continue
                     from apps.products.tasks import (
                         parse_single_part, parse_single_part_then_generate_description,
                     )

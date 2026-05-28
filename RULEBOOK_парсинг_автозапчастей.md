@@ -193,6 +193,7 @@ global index нашел применяемость -> создать/обнов�
 
 ```text
 Tenant.catalog_domain == auto_parts
+Tenant.catalog_domain == mixed, если конкретный Product похож на автозапчасть
 ```
 
 Для tenant-ов с `generic`, `jewellery`, `apparel` или `other` запрещено:
@@ -215,6 +216,14 @@ Tenant.catalog_domain == auto_parts
 Если нужен новый неавтомобильный домен, нельзя переиспользовать auto-parts parser.
 Нужно добавить отдельную domain-specific enrichment-логику и явно подключить ее к
 tenant capability.
+
+Для `catalog_domain == mixed` обязательно проверять конкретный товар перед parser:
+
+```text
+одиночный parse неавтомобильного товара -> 400 product_is_not_auto_part
+regenerate неавтомобильного товара -> обычная AI-генерация без parser
+bulk enrichment -> пропустить неавтомобильные товары и увеличить skipped_count
+```
 
 ---
 

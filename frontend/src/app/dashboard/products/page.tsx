@@ -139,7 +139,7 @@ export default function ProductsPage() {
   const [bulkError, setBulkError] = useState('');
   const [bulkUpdatedAt, setBulkUpdatedAt] = useState<string | null>(null);
   const supportsAutoPartsEnrichment = tenant?.catalog_domain
-    ? tenant.catalog_domain === 'auto_parts'
+    ? ['auto_parts', 'mixed'].includes(tenant.catalog_domain)
     : true;
 
   const debouncedSearch = useDebounce(search, 300);
