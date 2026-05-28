@@ -54,7 +54,12 @@ class ProductSerializer(serializers.ModelSerializer):
         return 'ready' if obj.title_ai and obj.description_ai else 'missing'
 
     def get_enrichment_status(self, obj) -> str:
-        if getattr(obj, 'attributes_count', 0) or getattr(obj, 'cross_codes_count', 0) or getattr(obj, 'fitments_count', 0):
+        has_enrichment = (
+            getattr(obj, 'attributes_count', 0)
+            or getattr(obj, 'cross_codes_count', 0)
+            or getattr(obj, 'fitments_count', 0)
+        )
+        if has_enrichment:
             return 'ready'
         latest_jobs = list(getattr(obj, '_prefetched_objects_cache', {}).get('parse_jobs', []))
         if latest_jobs:
