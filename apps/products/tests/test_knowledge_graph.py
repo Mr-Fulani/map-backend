@@ -4,12 +4,14 @@ import pytest
 
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, Product, ProductCrossCode,
+    VehicleMake, VehicleModel,
 )
 from apps.products.part_parsers import (
     ParsedCrossCode, ParsedFitment, ParsedPart, ParsedRelatedPart,
 )
 from apps.products.services import (
     ProductEnrichmentService, ProductKnowledgeGraphService,
+    VehicleKnowledgeService,
 )
 from apps.tenants.services import TenantService
 
@@ -158,6 +160,36 @@ def test_save_parsed_part_learns_global_fitments():
     assert fitment.generation == 'W213'
     assert fitment.power_hp == 194
     assert fitment.needs_review is False
+    assert fitment.vehicle_make.normalized_name == 'MERCEDESBENZ'
+    assert fitment.vehicle_model.normalized_name == 'ECLASS'
+
+
+@pytest.mark.django_db
+def test_vehicle_knowledge_service_merges_make_aliases():
+    first = VehicleKnowledgeService.upsert_make('MERCEDES-BENZ')
+    second = VehicleKnowledgeService.upsert_make('MB')
+    third = VehicleKnowledgeService.upsert_make('Mercedes')
+
+    assert first == second == third
+    assert VehicleMake.objects.count() == 1
+    assert first.normalized_name == 'MERCEDESBENZ'
+    first.refresh_from_db()
+    assert 'MB' in first.aliases
+    assert 'Mercedes' in first.aliases
+
+
+@pytest.mark.django_db
+def test_vehicle_knowledge_service_scopes_models_by_make():
+    mercedes = VehicleKnowledgeService.upsert_make('Mercedes-Benz')
+    toyota = VehicleKnowledgeService.upsert_make('Toyota')
+
+    mercedes_model = VehicleKnowledgeService.upsert_model(mercedes, 'E-CLASS')
+    same_mercedes_model = VehicleKnowledgeService.upsert_model(mercedes, 'E CLASS')
+    toyota_model = VehicleKnowledgeService.upsert_model(toyota, 'E-CLASS')
+
+    assert mercedes_model == same_mercedes_model
+    assert toyota_model != mercedes_model
+    assert VehicleModel.objects.count() == 2
 
 
 @pytest.mark.django_db

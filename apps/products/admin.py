@@ -4,7 +4,7 @@ from unfold.admin import ModelAdmin, TabularInline
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, Product, ProductAttribute,
     ProductCrossCode, ProductEnrichmentFact, ProductImage, ProductParseJob,
-    VehicleFitment,
+    VehicleFitment, VehicleMake, VehicleModel,
 )
 
 
@@ -69,8 +69,9 @@ class GlobalPartFitmentInline(TabularInline):
     model = GlobalPartFitment
     extra = 0
     fields = [
-        'source_id', 'make', 'model', 'generation', 'modification',
-        'engine_code', 'power_hp', 'confidence', 'needs_review',
+        'source_id', 'vehicle_make', 'vehicle_model', 'make', 'model',
+        'generation', 'modification', 'engine_code', 'power_hp',
+        'confidence', 'needs_review',
     ]
     readonly_fields = fields
     can_delete = False
@@ -230,13 +231,39 @@ class GlobalPartFitmentAdmin(ModelAdmin):
     list_filter = ['source_id', 'needs_review', 'make', 'created_at']
     search_fields = [
         'part__brand', 'part__article', 'make', 'model',
-        'generation', 'modification', 'engine_code', 'raw_text',
+        'vehicle_make__name', 'vehicle_model__name', 'generation',
+        'modification', 'engine_code', 'raw_text',
     ]
     readonly_fields = [
-        'part', 'make', 'model', 'generation', 'date_from', 'date_to',
-        'modification', 'engine_code', 'power_hp', 'source_id',
-        'source_url', 'raw_text', 'confidence', 'needs_review',
-        'last_seen_at', 'created_at', 'updated_at',
+        'part', 'vehicle_make', 'vehicle_model', 'make', 'model',
+        'generation', 'date_from', 'date_to', 'modification',
+        'engine_code', 'power_hp', 'source_id', 'source_url',
+        'raw_text', 'confidence', 'needs_review', 'last_seen_at',
+        'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(VehicleMake)
+class VehicleMakeAdmin(ModelAdmin):
+    list_display = ['name', 'normalized_name', 'updated_at']
+    search_fields = ['name', 'normalized_name', 'aliases']
+    readonly_fields = ['name', 'normalized_name', 'aliases', 'created_at', 'updated_at']
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(VehicleModel)
+class VehicleModelAdmin(ModelAdmin):
+    list_display = ['make', 'name', 'normalized_name', 'updated_at']
+    list_filter = ['make']
+    search_fields = ['make__name', 'name', 'normalized_name', 'aliases']
+    readonly_fields = [
+        'make', 'name', 'normalized_name', 'aliases',
+        'created_at', 'updated_at',
     ]
 
     def has_add_permission(self, request):

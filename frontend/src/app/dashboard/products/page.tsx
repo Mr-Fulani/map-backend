@@ -12,7 +12,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -308,18 +307,8 @@ export default function ProductsPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-72">
                 <DropdownMenuLabel>Массовые действия</DropdownMenuLabel>
-                <DropdownMenuItem onClick={() => runBulkEnrichment('enrich_selected')} disabled={bulkLoading}>
-                  Обогатить данные выбранных товаров
-                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => runBulkEnrichment('enrich_then_generate_description')} disabled={bulkLoading}>
                   Обогатить и сгенерировать описание
-                </DropdownMenuItem>
-                <DropdownMenuSeparator />
-                <DropdownMenuItem disabled>
-                  Найти изображения
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled>
-                  Сгенерировать описания
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
