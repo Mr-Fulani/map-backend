@@ -255,6 +255,91 @@ class ProductCrossCode(TimestampedModel):
         return f'{self.manufacturer} {self.code}'.strip()
 
 
+class GlobalPart(TimestampedModel):
+    """Platform-level справочная запчасть без tenant-коммерческих данных."""
+
+    brand = models.CharField(max_length=100, blank=True, verbose_name='Бренд/производитель')
+    normalized_brand = models.CharField(
+        max_length=100, blank=True, db_index=True, verbose_name='Нормализованный бренд',
+    )
+    article = models.CharField(max_length=100, verbose_name='Артикул')
+    normalized_article = models.CharField(
+        max_length=100, db_index=True, verbose_name='Нормализованный артикул',
+    )
+    title = models.CharField(max_length=500, blank=True, verbose_name='Название из источника')
+    source_id = models.CharField(max_length=50, blank=True, verbose_name='Первичный источник')
+    source_url = models.URLField(blank=True, verbose_name='URL источника')
+    confidence = models.FloatField(default=1.0, verbose_name='Уверенность')
+    needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
+    last_seen_at = models.DateTimeField(null=True, blank=True, verbose_name='Последний раз найдено')
+
+    class Meta:
+        verbose_name = 'Глобальная запчасть'
+        verbose_name_plural = 'Глобальные запчасти'
+        indexes = [
+            models.Index(fields=['normalized_article']),
+            models.Index(fields=['normalized_brand', 'normalized_article']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['normalized_brand', 'normalized_article'],
+                name='unique_global_part_identity',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.brand} {self.article}'.strip()
+
+
+class GlobalPartRelation(TimestampedModel):
+    """Platform-level связь между артикулами: OEM, аналог, заменитель, trade number."""
+
+    class RelationType(models.TextChoices):
+        OEM = 'OEM', 'OEM'
+        CROSS = 'Cross', 'Cross'
+        ANALOGUE = 'Analogue', 'Аналог'
+        REPLACEMENT = 'Replacement', 'Замена'
+        TRADE = 'Trade', 'Trade'
+        UNKNOWN = 'Unknown', 'Unknown'
+
+    source_part = models.ForeignKey(
+        GlobalPart, on_delete=models.CASCADE, related_name='outgoing_relations',
+        verbose_name='Исходная запчасть',
+    )
+    target_part = models.ForeignKey(
+        GlobalPart, on_delete=models.CASCADE, related_name='incoming_relations',
+        verbose_name='Связанная запчасть',
+    )
+    relation_type = models.CharField(
+        max_length=30, choices=RelationType.choices, default=RelationType.UNKNOWN,
+        verbose_name='Тип связи',
+    )
+    source_id = models.CharField(max_length=50, blank=True, verbose_name='Источник')
+    source_url = models.URLField(blank=True, verbose_name='URL источника')
+    raw_text = models.TextField(blank=True, verbose_name='Исходный текст')
+    confidence = models.FloatField(default=1.0, verbose_name='Уверенность')
+    needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
+    last_seen_at = models.DateTimeField(null=True, blank=True, verbose_name='Последний раз найдено')
+
+    class Meta:
+        verbose_name = 'Глобальная связь запчастей'
+        verbose_name_plural = 'Глобальные связи запчастей'
+        indexes = [
+            models.Index(fields=['relation_type', 'source_id']),
+            models.Index(fields=['source_part', 'relation_type']),
+            models.Index(fields=['target_part', 'relation_type']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['source_part', 'target_part', 'relation_type', 'source_id'],
+                name='unique_global_part_relation',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.source_part} -> {self.target_part} [{self.relation_type}]'
+
+
 class VehicleFitment(TimestampedModel):
     """Применяемость товара к автомобилю."""
 
