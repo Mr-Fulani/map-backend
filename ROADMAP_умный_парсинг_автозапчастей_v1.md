@@ -59,6 +59,8 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 - `[ ]` source quality policy: приоритет источников, confidence rules и конфликт-стратегия.
 - `[ ]` platform-level справочник `VehicleMake/VehicleModel/VehicleGeneration/VehicleModification`.
+- `[ ]` легкая taxonomy категорий запчастей `PartCategory` с флагом `fitment_required`.
+- `[ ]` tenant/catalog capability для отключения автозапчастного enrichment в неавтомобильных нишах.
 - `[ ]` мониторинг/алерты качества источников.
 
 ---
@@ -105,6 +107,47 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - [ ] Рассматривать `CloakBrowser` как optional future transport для JS/anti-bot источников, не как core dependency.
 
 **Verify:** parser можно тестировать на HTML fixtures без сети и без browser runtime.
+
+---
+
+## Следующий P0 — Vehicle Knowledge Base v1
+
+**Цель:** перестать хранить применяемость только строками и начать нормализовать
+марки/модели авто.
+
+### P0.1 VehicleMake / VehicleModel
+
+- [ ] Добавить `VehicleMake`.
+- [ ] Добавить `VehicleModel`.
+- [ ] Хранить `normalized_name`.
+- [ ] Хранить aliases.
+- [ ] Сопоставлять `MB`, `Mercedes`, `MERCEDES-BENZ` в одну марку.
+
+**Verify:** разные написания одной марки дают одну запись `VehicleMake`.
+
+### P0.2 Связь с GlobalPartFitment
+
+- [ ] Добавить nullable links `GlobalPartFitment.vehicle_make`.
+- [ ] Добавить nullable links `GlobalPartFitment.vehicle_model`.
+- [ ] Не удалять raw поля `make/model/generation`.
+- [ ] Если нормализация не уверена, оставить raw строки без FK.
+
+**Verify:** raw применяемость сохраняется всегда, normalized FK появляется только при уверенном match.
+
+### P0.3 Frontend cleanup
+
+- [ ] В массовых действиях оставить единый сценарий `Обогатить и сгенерировать`.
+- [ ] Убрать старые/дублирующие пункты, которые теперь входят в объединенный pipeline.
+
+**Verify:** пользователь не видит конкурирующие действия, которые запускают разные части одного pipeline.
+
+### P0.4 Нишевая безопасность
+
+- [ ] Зафиксировать, что auto-parts enrichment не должен запускаться автоматически для generic/jewellery/apparel tenant-ов.
+- [ ] Спроектировать будущий `catalog_domain`.
+- [ ] До появления поля запускать auto-parts enrichment только по явному действию пользователя/API.
+
+**Verify:** обычный tenant с неавтомобильными товарами может использовать импорт, AI и изображения без парсера автозапчастей.
 
 ---
 

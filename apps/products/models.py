@@ -340,6 +340,58 @@ class GlobalPartRelation(TimestampedModel):
         return f'{self.source_part} -> {self.target_part} [{self.relation_type}]'
 
 
+class VehicleMake(TimestampedModel):
+    """Нормализованная марка авто для platform-level справочника."""
+
+    name = models.CharField(max_length=100, verbose_name='Марка')
+    normalized_name = models.CharField(
+        max_length=100, unique=True, db_index=True, verbose_name='Нормализованная марка',
+    )
+    aliases = ArrayField(
+        models.CharField(max_length=100), default=list, blank=True,
+        verbose_name='Алиасы',
+    )
+
+    class Meta:
+        verbose_name = 'Марка авто'
+        verbose_name_plural = 'Марки авто'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class VehicleModel(TimestampedModel):
+    """Нормализованная модель авто внутри марки."""
+
+    make = models.ForeignKey(
+        VehicleMake, on_delete=models.CASCADE, related_name='models',
+        verbose_name='Марка',
+    )
+    name = models.CharField(max_length=150, verbose_name='Модель')
+    normalized_name = models.CharField(
+        max_length=150, db_index=True, verbose_name='Нормализованная модель',
+    )
+    aliases = ArrayField(
+        models.CharField(max_length=150), default=list, blank=True,
+        verbose_name='Алиасы',
+    )
+
+    class Meta:
+        verbose_name = 'Модель авто'
+        verbose_name_plural = 'Модели авто'
+        ordering = ['make__name', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['make', 'normalized_name'],
+                name='unique_vehicle_model_per_make',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.make} {self.name}'.strip()
+
+
 class VehicleFitment(TimestampedModel):
     """Применяемость товара к автомобилю."""
 
@@ -393,6 +445,14 @@ class GlobalPartFitment(TimestampedModel):
         GlobalPart, on_delete=models.CASCADE, related_name='fitments',
         verbose_name='Глобальная запчасть',
     )
+    vehicle_make = models.ForeignKey(
+        VehicleMake, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='global_fitments', verbose_name='Нормализованная марка',
+    )
+    vehicle_model = models.ForeignKey(
+        VehicleModel, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='global_fitments', verbose_name='Нормализованная модель',
+    )
     make = models.CharField(max_length=100, blank=True, db_index=True, verbose_name='Марка')
     model = models.CharField(max_length=150, db_index=True, verbose_name='Модель')
     generation = models.CharField(max_length=100, blank=True, verbose_name='Поколение')
@@ -413,6 +473,7 @@ class GlobalPartFitment(TimestampedModel):
         verbose_name_plural = 'Глобальная применяемость'
         indexes = [
             models.Index(fields=['make', 'model']),
+            models.Index(fields=['vehicle_make', 'vehicle_model']),
             models.Index(fields=['part', 'needs_review']),
             models.Index(fields=['source_id', 'needs_review']),
         ]

@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 from decimal import Decimal
 
 from django.utils.timezone import now
@@ -8,7 +9,8 @@ from apps.products.enrichment import make_value_hash, normalize_part_code
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation,
     Product, ProductAttribute, ProductCrossCode, ProductEnrichmentFact,
-    ProductBulkActionJob, ProductParseJob, VehicleFitment,
+    ProductBulkActionJob, ProductParseJob, VehicleFitment, VehicleMake,
+    VehicleModel,
 )
 from apps.products.part_parsers import ParsedPart, PartNotFound, get_part_parser
 from apps.products.source_policy import (
@@ -522,6 +524,84 @@ def normalize_cross_code(code: str) -> str:
     return normalize_part_code(code)
 
 
+class VehicleKnowledgeService:
+    """Нормализует марки и модели авто для platform-level справочника."""
+
+    MAKE_ALIASES = {
+        'MB': 'MERCEDESBENZ',
+        'MERCEDES': 'MERCEDESBENZ',
+        'MERCEDESBENZ': 'MERCEDESBENZ',
+        'MERCEDES BENZ': 'MERCEDESBENZ',
+        'MERCEDES-BENZ': 'MERCEDESBENZ',
+        'HYUNDAI KIA': 'HYUNDAIKIA',
+        'HYUNDAI/KIA': 'HYUNDAIKIA',
+        'HYUNDAI / KIA': 'HYUNDAIKIA',
+        'TOYOTA LEXUS': 'TOYOTALEXUS',
+        'TOYOTA-LEXUS': 'TOYOTALEXUS',
+    }
+    MAKE_DISPLAY_NAMES = {
+        'HYUNDAIKIA': 'HYUNDAI / KIA',
+        'MERCEDESBENZ': 'MERCEDES-BENZ',
+        'TOYOTALEXUS': 'TOYOTA-LEXUS',
+    }
+
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        return re.sub(r'[^A-Z0-9]+', '', (value or '').upper())
+
+    @classmethod
+    def normalize_make(cls, value: str) -> str:
+        raw = (value or '').strip().upper()
+        return cls.MAKE_ALIASES.get(raw, cls.normalize_name(raw))
+
+    @classmethod
+    def normalize_model(cls, value: str) -> str:
+        return cls.normalize_name(value)
+
+    @classmethod
+    def upsert_make(cls, name: str) -> VehicleMake | None:
+        normalized = cls.normalize_make(name)
+        if not normalized:
+            return None
+        display_name = cls.MAKE_DISPLAY_NAMES.get(normalized, name.strip().upper())
+        make, created = VehicleMake.objects.get_or_create(
+            normalized_name=normalized,
+            defaults={'name': display_name[:100], 'aliases': [name.strip()] if name.strip() else []},
+        )
+        if not created:
+            cls._append_alias(make, name)
+        return make
+
+    @classmethod
+    def upsert_model(cls, make: VehicleMake, name: str) -> VehicleModel | None:
+        normalized = cls.normalize_model(name)
+        if not normalized:
+            return None
+        model, created = VehicleModel.objects.get_or_create(
+            make=make,
+            normalized_name=normalized,
+            defaults={'name': name.strip()[:150], 'aliases': [name.strip()] if name.strip() else []},
+        )
+        if not created:
+            cls._append_alias(model, name)
+        return model
+
+    @classmethod
+    def resolve_fitment(cls, fitment) -> tuple[VehicleMake | None, VehicleModel | None]:
+        make = cls.upsert_make(fitment.make)
+        if make is None:
+            return None, None
+        return make, cls.upsert_model(make, fitment.model)
+
+    @staticmethod
+    def _append_alias(instance, alias: str) -> None:
+        alias = (alias or '').strip()
+        if not alias or alias in instance.aliases:
+            return
+        instance.aliases = [*instance.aliases, alias][:50]
+        instance.save(update_fields=['aliases', 'updated_at'])
+
+
 class ProductKnowledgeGraphService:
     """Platform-level граф артикулов: OEM, аналоги, заменители и trade-связи."""
 
@@ -618,6 +698,7 @@ class ProductKnowledgeGraphService:
         cls, part: GlobalPart, fitment, source_id: str = '',
         source_url: str = '',
     ) -> GlobalPartFitment:
+        vehicle_make, vehicle_model = VehicleKnowledgeService.resolve_fitment(fitment)
         global_fitment, created = GlobalPartFitment.objects.get_or_create(
             part=part,
             source_id=source_id[:50],
@@ -628,6 +709,8 @@ class ProductKnowledgeGraphService:
             engine_code=fitment.engine_code[:100],
             power_hp=fitment.power_hp,
             defaults={
+                'vehicle_make': vehicle_make,
+                'vehicle_model': vehicle_model,
                 'date_from': fitment.date_from[:20],
                 'date_to': fitment.date_to[:20],
                 'source_url': source_url,
@@ -649,9 +732,14 @@ class ProductKnowledgeGraphService:
                 global_fitment.source_url = source_url
             if fitment.raw_text and not global_fitment.raw_text:
                 global_fitment.raw_text = fitment.raw_text
+            if vehicle_make and global_fitment.vehicle_make_id is None:
+                global_fitment.vehicle_make = vehicle_make
+            if vehicle_model and global_fitment.vehicle_model_id is None:
+                global_fitment.vehicle_model = vehicle_model
             global_fitment.save(update_fields=[
                 'last_seen_at', 'confidence', 'needs_review', 'date_from',
-                'date_to', 'source_url', 'raw_text', 'updated_at',
+                'date_to', 'source_url', 'raw_text', 'vehicle_make',
+                'vehicle_model', 'updated_at',
             ])
         return global_fitment
 
