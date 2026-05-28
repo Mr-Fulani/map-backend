@@ -1,7 +1,10 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
 
-from apps.products.models import Product, ProductImage
+from apps.products.models import (
+    Product, ProductAttribute, ProductCrossCode, ProductEnrichmentFact,
+    ProductImage, ProductParseJob, VehicleFitment,
+)
 
 
 class ProductImageInline(TabularInline):
@@ -11,6 +14,41 @@ class ProductImageInline(TabularInline):
     extra = 0
     readonly_fields = ['sha256', 'url_source', 'uploaded_at', 'position']
     fields = ['position', 'url_source', 'sha256', 'uploaded_at']
+    can_delete = False
+
+
+class ProductAttributeInline(TabularInline):
+    model = ProductAttribute
+    extra = 0
+    fields = ['source_id', 'name', 'value']
+    readonly_fields = ['source_id', 'name', 'value']
+    can_delete = False
+
+
+class ProductCrossCodeInline(TabularInline):
+    model = ProductCrossCode
+    extra = 0
+    fields = ['source_id', 'manufacturer', 'code', 'normalized_code', 'code_type']
+    readonly_fields = ['source_id', 'manufacturer', 'code', 'normalized_code', 'code_type']
+    can_delete = False
+
+
+class VehicleFitmentInline(TabularInline):
+    model = VehicleFitment
+    extra = 0
+    fields = [
+        'source_id', 'make', 'model', 'generation', 'date_from', 'date_to',
+        'modification', 'engine_code', 'power_hp', 'needs_review',
+    ]
+    readonly_fields = fields
+    can_delete = False
+
+
+class ProductEnrichmentFactInline(TabularInline):
+    model = ProductEnrichmentFact
+    extra = 0
+    fields = ['source_id', 'fact_type', 'name', 'value', 'confidence', 'needs_review']
+    readonly_fields = fields
     can_delete = False
 
 
@@ -27,8 +65,19 @@ class ProductAdmin(ModelAdmin):
     list_filter = ['tenant', 'export_enabled', 'condition']
     search_fields = ['article', 'name', 'brand']
     readonly_fields = ['hash_1c', 'sync_at', 'created_at', 'updated_at']
-    inlines = [ProductImageInline]
-    actions = ['force_publish_selected', 'force_archive_selected', 'regenerate_description_selected']
+    inlines = [
+        ProductImageInline,
+        ProductAttributeInline,
+        ProductCrossCodeInline,
+        VehicleFitmentInline,
+        ProductEnrichmentFactInline,
+    ]
+    actions = [
+        'force_publish_selected',
+        'force_archive_selected',
+        'regenerate_description_selected',
+        'parse_enrichment_selected',
+    ]
 
     @admin.action(description='Принудительно опубликовать выбранные товары')
     def force_publish_selected(self, request, queryset):
@@ -66,3 +115,42 @@ class ProductAdmin(ModelAdmin):
             generate_description_task.delay(product.pk)
             queued += 1
         self.message_user(request, f'Задачи генерации описания поставлены в очередь: {queued}.')
+
+    @admin.action(description='Обогатить данные выбранных товаров')
+    def parse_enrichment_selected(self, request, queryset):
+        """Ставит tenant-scoped задачи обогащения для выбранных товаров."""
+        from apps.products.enrichment import normalize_part_code
+        from apps.products.services import ProductEnrichmentService
+        from apps.products.tasks import parse_single_part
+
+        queued = 0
+        for product in queryset.select_related('tenant'):
+            job = ProductEnrichmentService.create_parse_job(
+                tenant=product.tenant,
+                product=product,
+                brand=product.brand,
+                article=product.article,
+                normalized_article=normalize_part_code(product.article),
+            )
+            parse_single_part.delay(job.pk)
+            queued += 1
+        self.message_user(request, f'Задачи обогащения поставлены в очередь: {queued}.')
+
+
+@admin.register(ProductParseJob)
+class ProductParseJobAdmin(ModelAdmin):
+    list_display = [
+        'created_at', 'tenant', 'brand', 'article', 'source_id',
+        'status', 'product', 'started_at', 'finished_at',
+    ]
+    list_filter = ['status', 'source_id', 'created_at', 'tenant']
+    search_fields = ['brand', 'article', 'normalized_article', 'product__name']
+    readonly_fields = [
+        'tenant', 'product', 'brand', 'article', 'normalized_article',
+        'source_id', 'source_url', 'status', 'error_message', 'raw_html',
+        'raw_text', 'parsed_data', 'duration_ms', 'created_at', 'updated_at',
+        'started_at', 'finished_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False

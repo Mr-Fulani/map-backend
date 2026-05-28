@@ -6,6 +6,27 @@ BANNED_WORDS = [
     'недорого', 'дёшево', 'дешево', 'акция', 'распродажа',
 ]
 
+VAGUE_FITMENT_PHRASES = [
+    'для различных моделей',
+    'для разных моделей',
+    'для многих моделей',
+    'для некоторых моделей',
+    'для большинства моделей',
+    'для широкого спектра',
+    'для широкого круга',
+    'подходит для различных',
+    'подходит для разных',
+    'подходит для многих',
+    'подходит для некоторых',
+    'подойдут для различных',
+    'подойдут для разных',
+    'подойдут для некоторых',
+    'некоторых моделей автомобилей',
+    'совместим с различными',
+    'совместима с различными',
+    'совместимы с различными',
+]
+
 # Регулярка для удаления контактных данных из текста объявления
 _CONTACTS_RE = re.compile(
     r'(\+?[\d\s\-\(\)]{7,})'          # телефоны
@@ -22,6 +43,10 @@ class ValidationError(ValueError):
 
 class BannedWordsError(ValidationError):
     """В тексте обнаружены запрещённые слова."""
+
+
+class VagueFitmentError(ValidationError):
+    """AI написал неконкретную применяемость вместо фактов."""
 
 
 def validate_title(title: str) -> str:
@@ -52,12 +77,23 @@ def validate_description(text: str) -> str:
     found = [w for w in BANNED_WORDS if w in lower]
     if found:
         raise BannedWordsError(f'Запрещённые слова в описании: {", ".join(found)}')
+    vague_fitment = [phrase for phrase in VAGUE_FITMENT_PHRASES if phrase in lower]
+    if vague_fitment:
+        raise VagueFitmentError(
+            f'Неконкретная применяемость в описании: {", ".join(vague_fitment)}'
+        )
     return text
 
 
 def strip_contacts(text: str) -> str:
     """Удаляет телефоны, email и ссылки из текста."""
-    return _CONTACTS_RE.sub('', text).strip()
+    def replace(match):
+        phone = match.group(1)
+        if phone and len(re.sub(r'\D', '', phone)) < 7:
+            return match.group(0)
+        return ''
+
+    return _CONTACTS_RE.sub(replace, text).strip()
 
 
 def validate_json_response(raw: str) -> dict:

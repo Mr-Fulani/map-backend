@@ -33,7 +33,10 @@ class PhotoUploadPipeline:
         else:
             self._storage = storage
 
-    def process(self, source_url: str, product) -> ProductImage | None:
+    def process(
+        self, source_url: str, product, source_id: str = '',
+        status: str | None = None,
+    ) -> ProductImage | None:
         if product.images.count() >= MAX_PHOTOS:
             return None
 
@@ -75,4 +78,6 @@ class PhotoUploadPipeline:
             url_source=source_url,
             sha256=sha,
             position=position,
+            source_id=source_id,
+            status=status or ProductImage.Status.IMPORTED,
         )

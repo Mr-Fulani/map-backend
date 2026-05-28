@@ -1,7 +1,10 @@
 from django.core.files.storage import default_storage
 from rest_framework import serializers
 
-from apps.products.models import Product, ProductImage
+from apps.products.models import (
+    Product, ProductAttribute, ProductBulkActionJob, ProductCrossCode,
+    ProductImage, ProductParseJob, VehicleFitment,
+)
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
@@ -14,6 +17,9 @@ class ProductSerializer(serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     images_count = serializers.SerializerMethodField()
     primary_thumb_url = serializers.SerializerMethodField()
+    ai_status = serializers.SerializerMethodField()
+    enrichment_status = serializers.SerializerMethodField()
+    enrichment_summary = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -21,7 +27,8 @@ class ProductSerializer(serializers.ModelSerializer):
             'id', 'uuid_1c', 'article', 'name', 'brand', 'category_1c',
             'condition', 'price', 'stock_qty', 'warehouse',
             'export_enabled', 'sync_at', 'images', 'images_count', 'primary_thumb_url',
-            'title_ai', 'description_ai',
+            'title_ai', 'description_ai', 'ai_status', 'enrichment_status',
+            'enrichment_summary',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['uuid_1c', 'sync_at', 'created_at', 'updated_at']
@@ -42,3 +49,91 @@ class ProductSerializer(serializers.ModelSerializer):
             if request:
                 return request.build_absolute_uri(url)
         return url
+
+    def get_ai_status(self, obj) -> str:
+        return 'ready' if obj.title_ai and obj.description_ai else 'missing'
+
+    def get_enrichment_status(self, obj) -> str:
+        if getattr(obj, 'attributes_count', 0) or getattr(obj, 'cross_codes_count', 0) or getattr(obj, 'fitments_count', 0):
+            return 'ready'
+        latest_jobs = list(getattr(obj, '_prefetched_objects_cache', {}).get('parse_jobs', []))
+        if latest_jobs:
+            return latest_jobs[0].status
+        return 'missing'
+
+    def get_enrichment_summary(self, obj) -> dict:
+        latest_jobs = list(getattr(obj, '_prefetched_objects_cache', {}).get('parse_jobs', []))
+        latest_job = latest_jobs[0] if latest_jobs else None
+        return {
+            'attributes_count': getattr(obj, 'attributes_count', 0),
+            'cross_codes_count': getattr(obj, 'cross_codes_count', 0),
+            'fitments_count': getattr(obj, 'fitments_count', 0),
+            'latest_parse_status': latest_job.status if latest_job else '',
+            'latest_parse_at': latest_job.created_at if latest_job else None,
+        }
+
+
+class ProductAttributeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductAttribute
+        fields = ['id', 'source_id', 'name', 'raw_name', 'value', 'created_at']
+
+
+class ProductCrossCodeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductCrossCode
+        fields = [
+            'id', 'source_id', 'manufacturer', 'code',
+            'normalized_code', 'code_type', 'created_at',
+        ]
+
+
+class VehicleFitmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = VehicleFitment
+        fields = [
+            'id', 'source_id', 'make', 'model', 'generation', 'date_from',
+            'date_to', 'modification', 'engine_code', 'power_hp',
+            'raw_text', 'confidence', 'needs_review', 'created_at',
+        ]
+
+
+class ProductParseJobSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductParseJob
+        fields = [
+            'id', 'product_id', 'brand', 'article', 'normalized_article',
+            'source_id', 'source_url', 'status', 'error_message',
+            'parsed_data', 'duration_ms', 'created_at', 'updated_at',
+            'started_at', 'finished_at',
+        ]
+
+
+class ProductDetailSerializer(ProductSerializer):
+    attributes = ProductAttributeSerializer(many=True, read_only=True)
+    cross_codes = ProductCrossCodeSerializer(many=True, read_only=True)
+    fitments = VehicleFitmentSerializer(many=True, read_only=True)
+    latest_parse_job = serializers.SerializerMethodField()
+
+    class Meta(ProductSerializer.Meta):
+        fields = ProductSerializer.Meta.fields + [
+            'attributes', 'cross_codes', 'fitments', 'latest_parse_job',
+        ]
+
+    def get_latest_parse_job(self, obj):
+        job = obj.parse_jobs.order_by('-created_at').first()
+        if job is None:
+            return None
+        return ProductParseJobSerializer(job).data
+
+
+class ProductBulkActionJobSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductBulkActionJob
+        fields = [
+            'id', 'action', 'source_id', 'status', 'total_count',
+            'queued_count', 'processed_count', 'success_count',
+            'skipped_count', 'failed_count', 'batch_size', 'pause_seconds',
+            'next_batch_at', 'error_message', 'created_at', 'updated_at',
+            'started_at', 'finished_at',
+        ]

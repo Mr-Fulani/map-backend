@@ -273,6 +273,8 @@ CELERY_TASK_QUEUES = {
     'billing':            {'exchange': 'billing',            'routing_key': 'billing'},
     'image_search':       {'exchange': 'image_search',       'routing_key': 'image_search'},
     'image_search_bulk':  {'exchange': 'image_search_bulk',  'routing_key': 'image_search_bulk'},
+    'part_parsing':       {'exchange': 'part_parsing',       'routing_key': 'part_parsing'},
+    'part_parsing_bulk':  {'exchange': 'part_parsing_bulk',  'routing_key': 'part_parsing_bulk'},
 }
 CELERY_TASK_DEFAULT_QUEUE = 'sync_import'
 

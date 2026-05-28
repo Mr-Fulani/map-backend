@@ -53,6 +53,47 @@ interface ProductDetail {
   updated_at: string;
   title_ai: string;
   description_ai: string;
+  attributes: ProductAttribute[];
+  cross_codes: ProductCrossCode[];
+  fitments: VehicleFitment[];
+  latest_parse_job: ProductParseJob | null;
+}
+
+interface ProductAttribute {
+  id: number;
+  source_id: string;
+  name: string;
+  value: string;
+}
+
+interface ProductCrossCode {
+  id: number;
+  manufacturer: string;
+  code: string;
+  code_type: string;
+}
+
+interface VehicleFitment {
+  id: number;
+  make: string;
+  model: string;
+  generation: string;
+  modification: string;
+  power_hp: number | null;
+  needs_review: boolean;
+}
+
+interface ProductParseJob {
+  id: number;
+  status: string;
+  source_id: string;
+  source_url: string;
+  error_message: string;
+  parsed_data: {
+    image_urls?: string[];
+  } | null;
+  created_at: string;
+  finished_at: string | null;
 }
 
 const CONDITION_LABELS: Record<string, string> = {
@@ -77,6 +118,28 @@ const IMAGE_STATUS_LABELS: Record<string, string> = {
   rejected: 'Отклонено',
 };
 
+const ENRICHMENT_STATUS_LABELS: Record<string, string> = {
+  pending: 'Ожидает запуска',
+  running: 'Идёт обогащение',
+  success: 'Данные найдены',
+  need_review: 'Данные найдены частично',
+  not_found: 'Источник не нашёл товар',
+  failed: 'Ошибка обогащения',
+};
+
+function getSourceImageUrls(product: ProductDetail) {
+  const urls = product.latest_parse_job?.parsed_data?.image_urls ?? [];
+  return urls.filter((url) => {
+    const lowered = url.toLowerCase();
+    return (
+      lowered.startsWith('http')
+      && !lowered.includes('placeholder')
+      && !lowered.includes('/brands/')
+      && !lowered.endsWith('.gif')
+    );
+  }).slice(0, 4);
+}
+
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex justify-between gap-4 py-2">
@@ -100,17 +163,23 @@ export default function ProductDetailPage() {
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
   const searching = searchTaskId !== null;
   const [generatingDescription, setGeneratingDescription] = useState(false);
+  const [parseJobId, setParseJobId] = useState<number | null>(null);
+  const [parseThenGenerate, setParseThenGenerate] = useState(false);
+  const enriching = parseJobId !== null;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
 
+  const loadProduct = useCallback(async () => {
+    const res = await productApi.get(Number(id));
+    setProduct(res.data.data);
+  }, [id]);
+
   useEffect(() => {
-    productApi
-      .get(Number(id))
-      .then((res) => setProduct(res.data.data))
+    loadProduct()
       .catch(() => toast.error('Товар не найден'))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [loadProduct]);
 
   const loadImages = useCallback(async () => {
     setImagesLoading(true);
@@ -156,43 +225,97 @@ export default function ProductDetailPage() {
     return () => clearInterval(interval);
   }, [searchTaskId, id, loadImages]);
 
-  async function runAction(action: 'publish' | 'archive' | 'regenerate') {
+  useEffect(() => {
+    if (!parseJobId) return;
+    const prevDescription = product?.description_ai ?? '';
+    const deadline = Date.now() + 90_000;
+    const interval = setInterval(async () => {
+      if (Date.now() > deadline) {
+        setParseJobId(null);
+        setParseThenGenerate(false);
+        clearInterval(interval);
+        toast.warning('Обогащение заняло слишком долго. Проверьте очередь задач или попробуйте запустить снова.');
+        return;
+      }
+
+      try {
+        const res = await productApi.parseJobStatus(parseJobId);
+        const job = res.data.data as ProductParseJob;
+        if (!['pending', 'running'].includes(job.status)) {
+          setParseJobId(null);
+          await loadProduct();
+          if (parseThenGenerate) {
+            setGeneratingDescription(true);
+            toast.info('Обогащение завершено, генерируем описание...');
+            const deadline = Date.now() + 60_000;
+            const poll = setInterval(async () => {
+              if (Date.now() > deadline) {
+                clearInterval(poll);
+                setGeneratingDescription(false);
+                setParseThenGenerate(false);
+                toast.warning('Генерация заняла слишком долго. Обновите страницу вручную.');
+                return;
+              }
+              try {
+                const productRes = await productApi.get(Number(id));
+                const updated = productRes.data.data as ProductDetail;
+                if (updated.description_ai && updated.description_ai !== prevDescription) {
+                  clearInterval(poll);
+                  setGeneratingDescription(false);
+                  setParseThenGenerate(false);
+                  setProduct(updated);
+                  toast.success('Описание сгенерировано на основе доступных данных');
+                }
+              } catch {
+                clearInterval(poll);
+                setGeneratingDescription(false);
+                setParseThenGenerate(false);
+              }
+            }, 2000);
+            return;
+          }
+          if (job.status === 'success') {
+            toast.success('Данные товара обогащены');
+          } else if (job.status === 'need_review') {
+            toast.warning('Данные частично найдены. Проверьте блок «Обогащение данных» в карточке товара.');
+          } else if (job.status === 'not_found') {
+            toast.warning('Источник не нашёл этот товар');
+          } else {
+            toast.error(job.error_message || 'Обогащение завершилось с ошибкой');
+          }
+        }
+      } catch {
+        setParseJobId(null);
+        setParseThenGenerate(false);
+        toast.error('Ошибка при проверке статуса обогащения');
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [parseJobId, parseThenGenerate, product?.description_ai, id, loadProduct]);
+
+  async function startEnrichment(generateAfter = false) {
+    setActionLoading(generateAfter ? 'enrich-generate' : 'enrich');
+    try {
+      const res = await productApi.parse(Number(id), 'tachka', generateAfter);
+      setParseJobId(res.data.data.job_id);
+      setParseThenGenerate(generateAfter);
+      toast.info(generateAfter ? 'Запущено: обогащение, затем генерация описания' : 'Обогащение запущено');
+    } catch {
+      toast.error(generateAfter ? 'Не удалось запустить подготовку описания' : 'Не удалось запустить обогащение');
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function runAction(action: 'publish' | 'archive') {
     setActionLoading(action);
     try {
       if (action === 'publish') {
         await productApi.publish(Number(id));
         toast.success('Листинги созданы. Откройте вкладку «Листинги» чтобы опубликовать.');
         return;
-      } else if (action === 'archive') await productApi.archive(Number(id));
-      else {
-        const prevDescription = product?.description_ai ?? '';
-        await productApi.regenerate(Number(id));
-        toast.info('Генерация описания запущена...');
-        setGeneratingDescription(true);
-        const deadline = Date.now() + 60_000;
-        const poll = setInterval(async () => {
-          if (Date.now() > deadline) {
-            clearInterval(poll);
-            setGeneratingDescription(false);
-            toast.warning('Генерация заняла слишком долго. Обновите страницу вручную.');
-            return;
-          }
-          try {
-            const res = await productApi.get(Number(id));
-            const updated = res.data.data as ProductDetail;
-            if (updated.description_ai && updated.description_ai !== prevDescription) {
-              clearInterval(poll);
-              setGeneratingDescription(false);
-              setProduct(updated);
-              toast.success('Описание сгенерировано');
-            }
-          } catch {
-            clearInterval(poll);
-            setGeneratingDescription(false);
-          }
-        }, 2000);
-        return;
       }
+      await productApi.archive(Number(id));
       toast.success('Объявления сняты с публикации и уходят в архив.');
     } catch (err: unknown) {
       const code = (err as { response?: { data?: { code?: string; message?: string } } })?.response?.data?.code;
@@ -287,6 +410,7 @@ export default function ProductDetailPage() {
   }
 
   const busy = actionLoading !== null;
+  const sourceImageUrls = getSourceImageUrls(product);
 
   return (
     <div className="space-y-6">
@@ -360,7 +484,7 @@ export default function ProductDetailPage() {
                 {generatingDescription ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Генерация описания...
+                {enriching && parseThenGenerate ? 'Сначала обогащаем данные...' : 'Генерация описания...'}
                   </div>
                 ) : (
                   <>
@@ -383,6 +507,146 @@ export default function ProductDetailPage() {
               </CardContent>
             </Card>
           )}
+
+          <Card className="overflow-hidden">
+            <CardHeader className="border-b bg-muted/30">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <CardTitle className="text-sm font-medium">Обогащение данных</CardTitle>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Достоверные факты из внешних каталогов для описания, OEM и применяемости.
+                  </p>
+                </div>
+                <Badge variant={product.latest_parse_job?.status === 'not_found' ? 'outline' : 'secondary'}>
+                  {product.latest_parse_job
+                    ? ENRICHMENT_STATUS_LABELS[product.latest_parse_job.status] ?? product.latest_parse_job.status
+                    : 'Не запускалось'}
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                {product.latest_parse_job && (
+                  <span>
+                    Последний запуск: {new Date(product.latest_parse_job.created_at).toLocaleString('ru-RU')}
+                  </span>
+                )}
+                {product.latest_parse_job?.source_url && (
+                  <a
+                    href={product.latest_parse_job.source_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-primary hover:underline"
+                  >
+                    Открыть источник
+                  </a>
+                )}
+              </div>
+
+              {product.latest_parse_job?.error_message && (
+                <p className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">
+                  {product.latest_parse_job.error_message}
+                </p>
+              )}
+
+              {product.attributes.length === 0 && product.cross_codes.length === 0 && product.fitments.length === 0 ? (
+                <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                  Обогащённые данные пока не сохранены. Запустите обогащение или выберите другой источник.
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  {product.attributes.length > 0 && (
+                    <div>
+                      <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+                        Характеристики
+                      </p>
+                      <div className="overflow-hidden rounded-lg border">
+                        {product.attributes.slice(0, 8).map((attr) => (
+                          <div
+                            key={attr.id}
+                            className="grid gap-1 px-3 py-2 text-sm sm:grid-cols-[180px_minmax(0,1fr)]"
+                          >
+                            <span className="text-muted-foreground">{attr.name}</span>
+                            <span className="min-w-0 break-words font-medium">{attr.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {product.cross_codes.length > 0 && (
+                    <div>
+                      <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+                        OEM / Cross-коды
+                      </p>
+                      <div className="flex flex-wrap gap-2">
+                        {product.cross_codes.slice(0, 12).map((cross) => (
+                          <Badge key={cross.id} variant="outline" className="max-w-full whitespace-normal break-all px-2 py-1">
+                            {cross.manufacturer ? `${cross.manufacturer}: ` : ''}
+                            {cross.code}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {product.fitments.length > 0 && (
+                    <div>
+                      <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+                        Применяемость
+                      </p>
+                      <div className="space-y-2">
+                        {product.fitments.slice(0, 5).map((fitment) => (
+                          <div key={fitment.id} className="rounded-md border p-2 text-sm">
+                            {[
+                              fitment.make,
+                              fitment.model,
+                              fitment.generation,
+                              fitment.modification,
+                              fitment.power_hp ? `${fitment.power_hp} л.с.` : '',
+                            ].filter(Boolean).join(' ')}
+                            {fitment.needs_review && (
+                              <Badge variant="secondary" className="ml-2">Проверить</Badge>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {sourceImageUrls.length > 0 && (
+                    <div>
+                      <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+                        Изображения из источника
+                      </p>
+                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                        {sourceImageUrls.map((url) => (
+                          <a
+                            key={url}
+                            href={url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="group overflow-hidden rounded-lg border bg-muted"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={url}
+                              alt=""
+                              className="aspect-square h-full w-full object-cover transition group-hover:scale-105"
+                              loading="lazy"
+                            />
+                          </a>
+                        ))}
+                      </div>
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        Это внешние URL из каталога. В блок «Фотографии» они попадут после подключения сохранения в хранилище.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Фотографии */}
           <Card>
@@ -507,7 +771,7 @@ export default function ProductDetailPage() {
               <Button
                 className="w-full"
                 onClick={() => runAction('publish')}
-                disabled={busy || searching}
+                disabled={busy || searching || enriching || generatingDescription}
               >
                 {actionLoading === 'publish' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -519,21 +783,25 @@ export default function ProductDetailPage() {
               <Button
                 className="w-full"
                 variant="outline"
-                onClick={() => runAction('regenerate')}
-                disabled={busy || searching || generatingDescription}
+                onClick={() => startEnrichment(true)}
+                disabled={busy || searching || enriching || generatingDescription}
               >
-                {actionLoading === 'regenerate' || generatingDescription ? (
+                {actionLoading === 'enrich-generate' || enriching || generatingDescription ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <RefreshCw className="mr-2 h-4 w-4" />
                 )}
-                {generatingDescription ? 'Генерация...' : 'Сгенерировать описание'}
+                {enriching && parseThenGenerate
+                  ? 'Обогащение перед генерацией...'
+                  : generatingDescription
+                    ? 'Генерация...'
+                    : 'Обогатить и сгенерировать'}
               </Button>
               <Button
                 className="w-full"
                 variant="outline"
                 onClick={startSearch}
-                disabled={busy || searching}
+                disabled={busy || searching || enriching || generatingDescription}
               >
                 {searching || actionLoading === 'search' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -546,7 +814,7 @@ export default function ProductDetailPage() {
                 className="w-full"
                 variant="outline"
                 onClick={() => fileInputRef.current?.click()}
-                disabled={busy || searching}
+                disabled={busy || searching || enriching || generatingDescription}
               >
                 {actionLoading === 'upload' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -566,7 +834,7 @@ export default function ProductDetailPage() {
                 className="w-full"
                 variant="outline"
                 onClick={() => runAction('archive')}
-                disabled={busy || searching}
+                disabled={busy || searching || enriching || generatingDescription}
               >
                 {actionLoading === 'archive' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

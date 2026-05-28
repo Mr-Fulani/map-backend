@@ -21,7 +21,7 @@ services:
 
   celery_worker:
     build: .
-    command: celery -A config worker -l info -Q sync_import,avito_publish,avito_update,avito_price,avito_delete,ai_generate,notifications,billing --concurrency=4
+    command: celery -A config worker -l info -Q sync_import,avito_publish,avito_update,avito_price,avito_delete,ai_generate,notifications,billing,part_parsing,part_parsing_bulk --concurrency=4
     volumes:
       - .:/app
     env_file: .env

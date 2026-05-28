@@ -7,6 +7,7 @@ import pytest
 from apps.ai_agent.services import AICreditsExhausted, DescriptionAgent
 from apps.ai_agent.validators import (
     BannedWordsError,
+    VagueFitmentError,
     ValidationError,
     strip_contacts,
     validate_description,
@@ -15,7 +16,9 @@ from apps.ai_agent.validators import (
 )
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
+from apps.products.models import ProductCrossCode
 from apps.products.services import ProductService
+from apps.products.services import ProductEnrichmentService
 from apps.tenants.services import TenantService
 
 
@@ -72,10 +75,22 @@ class TestValidators:
         with pytest.raises(BannedWordsError):
             validate_description('Лучший товар на рынке!')
 
+    def test_vague_fitment_phrase_raises_error(self):
+        with pytest.raises(VagueFitmentError):
+            validate_description(
+                'Подходят для различных моделей автомобилей, обеспечивая надежную остановку.'
+            )
+        with pytest.raises(VagueFitmentError):
+            validate_description('Подходит для некоторых моделей автомобилей.')
+
     def test_strip_contacts_removes_phone(self):
         text = 'Звоните +7 (999) 123-45-67 для уточнения'
         result = strip_contacts(text)
         assert '+7' not in result
+
+    def test_strip_contacts_keeps_part_number(self):
+        text = 'Артикул: 56500-D4800'
+        assert strip_contacts(text) == text
 
     def test_strip_contacts_removes_email(self):
         text = 'Пишите на test@example.com'
@@ -144,6 +159,25 @@ class TestDescriptionAgent:
         assert result['title'] == json.loads(VALID_RESPONSE)['title']
         mock_openai.assert_called_once()
 
+    def test_vague_fitment_triggers_retry(self):
+        tenant = make_tenant('vague-fitment-co')
+        product = make_product(tenant)
+
+        vague_response = json.dumps({
+            'title': 'Тормозной диск Bosch передний ART-001',
+            'description': 'Подходит для различных моделей автомобилей. Состояние: новый.',
+            'confidence': 0.7,
+        })
+
+        with patch('apps.ai_agent.services.anthropic.Anthropic') as mock_claude, \
+             patch('apps.ai_agent.services.DescriptionAgent._call_openai') as mock_openai:
+            mock_claude.return_value.messages.create.return_value = _mock_claude_response(vague_response)
+            mock_openai.return_value = json.loads(VALID_RESPONSE)
+            result = DescriptionAgent().generate(product, tenant)
+
+        assert result['title'] == json.loads(VALID_RESPONSE)['title']
+        mock_openai.assert_called_once()
+
     def test_fallback_to_openai_when_claude_fails(self):
         tenant = make_tenant('fallback-co')
         product = make_product(tenant)
@@ -166,6 +200,44 @@ class TestDescriptionAgent:
         with patch('apps.ai_agent.services.LimitChecker.can_generate_ai', return_value=(False, 'лимит')):
             with pytest.raises(AICreditsExhausted):
                 DescriptionAgent().generate(product, tenant)
+
+    def test_build_message_includes_enrichment_data(self):
+        tenant = make_tenant('enriched-agent-co')
+        product = make_product(tenant)
+        ProductEnrichmentService.create_attribute(
+            tenant=tenant, product=product, name='Ширина', value='114 мм',
+        )
+        ProductEnrichmentService.create_cross_code(
+            tenant=tenant, product=product, manufacturer='MERCEDES-BENZ',
+            code='A0004206000', normalized_code='A0004206000',
+            code_type=ProductCrossCode.CodeType.OEM,
+        )
+        ProductEnrichmentService.create_fitment(
+            tenant=tenant, product=product, make='MERCEDES-BENZ',
+            model='E-CLASS', generation='W213', modification='E 220 d',
+            power_hp=194,
+        )
+
+        message = DescriptionAgent()._build_message(product)
+
+        assert 'Проверенные данные обогащения' in message
+        assert 'Ширина: 114 мм' in message
+        assert 'Вероятные марки авто по OEM/Cross: MERCEDES-BENZ' in message
+        assert 'MERCEDES-BENZ: A0004206000' in message
+        assert 'MERCEDES-BENZ E-CLASS W213 E 220 d 194 л.с.' in message
+
+    def test_build_message_uses_vehicle_make_from_cross_without_fitment(self):
+        tenant = make_tenant('cross-make-agent-co')
+        product = make_product(tenant)
+        ProductEnrichmentService.create_cross_code(
+            tenant=tenant, product=product, manufacturer='HYUNDAI / KIA',
+            code='56500D4800', normalized_code='56500D4800',
+            code_type=ProductCrossCode.CodeType.OEM,
+        )
+
+        message = DescriptionAgent()._build_message(product)
+
+        assert 'Вероятные марки авто по OEM/Cross: HYUNDAI, KIA' in message
 
     def test_no_regeneration_on_price_change(self):
         """price_only изменение не требует перегенерации (через detect_change_type)."""
