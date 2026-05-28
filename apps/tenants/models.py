@@ -20,9 +20,21 @@ WEBHOOK_EVENTS = [
 class Tenant(TimestampedModel):
     """Организация-тенант. Единица изоляции данных в системе."""
 
+    class CatalogDomain(models.TextChoices):
+        AUTO_PARTS = 'auto_parts', 'Автозапчасти'
+        MIXED = 'mixed', 'Смешанный каталог'
+        GENERIC = 'generic', 'Обычный каталог'
+        JEWELLERY = 'jewellery', 'Украшения'
+        APPAREL = 'apparel', 'Одежда'
+        OTHER = 'other', 'Другое'
+
     name = models.CharField(max_length=200, verbose_name='Название')
     slug = models.SlugField(unique=True, verbose_name='Slug')
     is_active = models.BooleanField(default=True, verbose_name='Активен')
+    catalog_domain = models.CharField(
+        max_length=30, choices=CatalogDomain.choices,
+        default=CatalogDomain.AUTO_PARTS, verbose_name='Домен каталога',
+    )
     trial_ends_at = models.DateTimeField(null=True, blank=True, verbose_name='Окончание триала')
 
     # Кэш счётчиков — обновляется задачей update_tenant_counters
@@ -40,6 +52,17 @@ class Tenant(TimestampedModel):
 
     def __str__(self):
         return self.name
+
+    @property
+    def supports_auto_parts_enrichment(self) -> bool:
+        return self.catalog_domain in [
+            self.CatalogDomain.AUTO_PARTS,
+            self.CatalogDomain.MIXED,
+        ]
+
+    @property
+    def requires_product_auto_parts_check(self) -> bool:
+        return self.catalog_domain == self.CatalogDomain.MIXED
 
 
 class TenantUser(TimestampedModel):

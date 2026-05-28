@@ -31,10 +31,10 @@ class TenantAdmin(ModelAdmin):
     """
 
     list_display = [
-        'name', 'slug', 'is_active', 'get_plan',
+        'name', 'slug', 'catalog_domain', 'is_active', 'get_plan',
         'get_trial_status', 'active_listings_count', 'sku_count', 'created_at',
     ]
-    list_filter = ['is_active']
+    list_filter = ['is_active', 'catalog_domain']
     search_fields = ['name', 'slug']
     readonly_fields = [
         'get_owner_phone', 'get_subscription_info',
@@ -45,7 +45,7 @@ class TenantAdmin(ModelAdmin):
     inlines = [TenantUserInline]
     fieldsets = [
         ('Основное', {
-            'fields': ['name', 'slug', 'is_active'],
+            'fields': ['name', 'slug', 'catalog_domain', 'is_active'],
         }),
         ('Владелец', {
             'fields': ['get_owner_phone'],

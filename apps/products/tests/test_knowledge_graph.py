@@ -3,7 +3,8 @@ from decimal import Decimal
 import pytest
 
 from apps.products.models import (
-    GlobalPart, GlobalPartFitment, GlobalPartRelation, Product, ProductCrossCode,
+    GlobalPart, GlobalPartFitment, GlobalPartRelation, PartCategory, Product,
+    ProductCrossCode,
     VehicleMake, VehicleModel,
 )
 from apps.products.part_parsers import (
@@ -190,6 +191,19 @@ def test_vehicle_knowledge_service_scopes_models_by_make():
     assert mercedes_model == same_mercedes_model
     assert toyota_model != mercedes_model
     assert VehicleModel.objects.count() == 2
+
+
+@pytest.mark.django_db
+def test_part_category_keeps_fitment_requirement_flag():
+    category = PartCategory.objects.create(
+        name='Тормозные колодки',
+        normalized_name='BRAKEPADS',
+        aliases=['Колодки тормозные'],
+        fitment_required=True,
+    )
+
+    assert str(category) == 'Тормозные колодки'
+    assert category.fitment_required is True
 
 
 @pytest.mark.django_db

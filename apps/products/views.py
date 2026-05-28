@@ -14,7 +14,10 @@ from apps.products.serializers import (
     ProductDetailSerializer, ProductParseJobSerializer, ProductSerializer,
     VehicleFitmentSerializer,
 )
-from apps.products.services import ProductBulkActionService, ProductEnrichmentService
+from apps.products.services import (
+    AutoPartsEnrichmentDisabled, ProductBulkActionService, ProductEnrichmentService,
+    ProductIsNotAutoPart, ProductService,
+)
 from apps.products.tasks import import_from_datasource
 from apps.products.source_policy import DEFAULT_PART_SOURCE, get_part_source_config
 
@@ -169,14 +172,25 @@ class ProductParseView(APIView):
                 )
             product = qs.get()
 
-        job = ProductEnrichmentService.create_parse_job(
-            tenant=request.tenant,
-            product=product,
-            brand=brand,
-            article=article,
-            normalized_article=normalize_part_code(article),
-            source_id=source,
-        )
+        try:
+            job = ProductEnrichmentService.create_parse_job(
+                tenant=request.tenant,
+                product=product,
+                brand=brand,
+                article=article,
+                normalized_article=normalize_part_code(article),
+                source_id=source,
+            )
+        except AutoPartsEnrichmentDisabled as exc:
+            return Response(
+                {'status': 'error', 'code': 'auto_parts_enrichment_disabled', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ProductIsNotAutoPart as exc:
+            return Response(
+                {'status': 'error', 'code': 'product_is_not_auto_part', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         from apps.products.tasks import (
             parse_single_part, parse_single_part_then_generate_description,
@@ -231,6 +245,11 @@ class ProductBulkActionView(APIView):
                 source_id=source,
                 batch_size=batch_size,
                 pause_seconds=pause_seconds,
+            )
+        except AutoPartsEnrichmentDisabled as exc:
+            return Response(
+                {'status': 'error', 'code': 'auto_parts_enrichment_disabled', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
             )
         except (TypeError, ValueError) as exc:
             return Response(
@@ -363,14 +382,44 @@ class ProductRegenerateView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        job = ProductEnrichmentService.create_parse_job(
-            tenant=request.tenant,
-            product=product,
-            brand=product.brand,
-            article=product.article,
-            normalized_article=normalize_part_code(product.article),
-            source_id=source,
+        product_needs_plain_ai = (
+            not request.tenant.supports_auto_parts_enrichment
+            or (
+                request.tenant.requires_product_auto_parts_check
+                and not ProductEnrichmentService.is_product_auto_part_candidate(product)
+            )
         )
+        if product_needs_plain_ai:
+            ProductService.schedule_ai_generation(product, request.tenant)
+            return Response({
+                'status': 'ok',
+                'message': 'Запущена генерация описания без автозапчастного обогащения',
+                'data': {
+                    'job_id': None,
+                    'state': 'queued',
+                    'generate_after': True,
+                },
+            }, status=status.HTTP_202_ACCEPTED)
+
+        try:
+            job = ProductEnrichmentService.create_parse_job(
+                tenant=request.tenant,
+                product=product,
+                brand=product.brand,
+                article=product.article,
+                normalized_article=normalize_part_code(product.article),
+                source_id=source,
+            )
+        except AutoPartsEnrichmentDisabled as exc:
+            return Response(
+                {'status': 'error', 'code': 'auto_parts_enrichment_disabled', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ProductIsNotAutoPart as exc:
+            return Response(
+                {'status': 'error', 'code': 'product_is_not_auto_part', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         from apps.products.tasks import parse_single_part_then_generate_description
         transaction.on_commit(lambda: parse_single_part_then_generate_description.delay(job.pk))

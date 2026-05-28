@@ -1,8 +1,8 @@
 # ARCHITECTURE: Platform Parts Knowledge Graph
 
-> **Дата:** 28.05.2026  
-> **Проект:** MAP  
-> **Статус:** первая итерация после enrichment MVP  
+> **Дата:** 29.05.2026
+> **Проект:** MAP
+> **Статус:** первая итерация после enrichment MVP
 > **Цель:** переиспользовать справочные знания о запчастях между tenant-ами без смешивания коммерческих данных tenant-ов.
 
 ## Зачем нужен граф
@@ -60,6 +60,10 @@ Enrichment-парсер обогащает каталог tenant-а характ
 `VehicleMake` и `VehicleModel` — нормализованный справочник авто. Raw строки
 `make/model` в `GlobalPartFitment` остаются источником правды для отладки, а FK
 на справочник добавляются только когда сопоставление уверенное.
+
+`PartCategory` — легкий platform-level справочник категорий автозапчастей. Он
+нужен для будущих правил применяемости, фильтрации и AI-контекста, но не заменяет
+tenant-поле `Product.category_1c`.
 
 Важно: аналог или cross-код не равен доказанной применяемости. Это полезная связь
 для поиска и обогащения, но конкретные марки/модели авто должны приходить из
@@ -155,7 +159,8 @@ parser как обязательная зависимость.
 
 ## Где смотреть в коде
 
-- `apps/products/models.py` — `GlobalPart`, `GlobalPartRelation`.
+- `apps/tenants/models.py` — `Tenant.catalog_domain` и capability для auto-parts enrichment.
+- `apps/products/models.py` — `GlobalPart`, `GlobalPartRelation`, `PartCategory`.
 - `apps/products/services.py` — `ProductKnowledgeGraphService`.
 - `apps/products/admin.py` — read-only admin для глобальных артикулов и связей.
 - `apps/products/tests/test_knowledge_graph.py` — сценарии обучения и применения.
@@ -205,23 +210,54 @@ enrichment job и сохраняет только найденные струк�
 - аналоги не создают `VehicleFitment`, пока нет явных данных применяемости.
 - trusted `GlobalPartFitment` применяется до внешнего fetch, снижая нагрузку на источники.
 
+## Catalog domain guardrail
+
+Автозапчастное обогащение включается только для tenant-ов с:
+
+```text
+Tenant.catalog_domain = auto_parts
+```
+
+Для tenant-ов `generic`, `jewellery`, `apparel` и `other` запрещены:
+
+- parse/enrichment job автозапчастей;
+- массовые действия enrichment/OEM/fitment;
+- попытки запускать parser перед генерацией описания.
+
+При этом обычные сценарии платформы остаются доступными:
+
+- импорт и редактирование `Product`;
+- AI-генерация описания по базовым данным;
+- поиск и загрузка фотографий.
+
+Это важно для SaaS: неавтомобильный tenant не должен попадать в автомобильные
+предметные правила, а auto-parts tenant сохраняет текущий enrichment pipeline.
+
+Для tenant-а со смешанным ассортиментом используется:
+
+```text
+Tenant.catalog_domain = mixed
+```
+
+В этом режиме платформа разрешает auto-parts capability, но перед запуском parser
+проверяет конкретный `Product`. Если товар не похож на автозапчасть по названию,
+категории, описанию или бренду, одиночный parser-запуск отклоняется, regenerate
+переходит в обычную AI-генерацию, а bulk job пропускает такой товар и увеличивает
+`skipped_count`.
+
 ## Что не решено в этой итерации
 
 - Нормализованный справочник `VehicleGeneration/VehicleModification`.
-- Легкая taxonomy категорий запчастей.
-- Явный `catalog_domain`, чтобы отключать auto-parts enrichment для tenant-ов
-  неавтомобильных ниш.
 - Приоритеты нескольких источников.
 - Правила конфликтов между источниками.
 - UI для просмотра глобального графа в tenant dashboard.
 
 ## Следующий логичный шаг
 
-Добавить нормализованный vehicle справочник и source priority:
+Добавить source priority и conflict resolution:
 
 ```text
 raw fitment strings
-  -> VehicleMake / VehicleModel / VehicleGeneration
   -> source priority/conflict rules
   -> safer GlobalPartFitment approval
 ```

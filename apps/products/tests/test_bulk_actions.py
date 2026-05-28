@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from apps.products.models import Product, ProductBulkActionJob
-from apps.products.services import ProductBulkActionService
+from apps.products.services import AutoPartsEnrichmentDisabled, ProductBulkActionService
 from apps.tenants.services import TenantService
 
 
@@ -13,12 +13,13 @@ def make_tenant(slug):
     return tenant
 
 
-def make_product(tenant, article):
+def make_product(tenant, article, brand='BREMBO', name=None, category_1c=''):
     return Product.objects.create(
         tenant=tenant,
         article=article,
-        brand='BREMBO',
-        name=f'BREMBO {article}',
+        brand=brand,
+        name=name or f'{brand} {article}',
+        category_1c=category_1c,
         price=Decimal('0'),
         stock_qty=0,
     )
@@ -90,3 +91,40 @@ def test_bulk_action_enrich_then_generate_uses_chained_task(django_capture_on_co
 
     parse_delay.assert_not_called()
     chained_delay.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_bulk_enrichment_rejects_non_auto_parts_tenant():
+    tenant = make_tenant('bulk-jewellery')
+    tenant.catalog_domain = 'jewellery'
+    tenant.save(update_fields=['catalog_domain'])
+    product = make_product(tenant, 'P1')
+
+    with pytest.raises(AutoPartsEnrichmentDisabled) as exc:
+        ProductBulkActionService.create_job(
+            tenant=tenant,
+            action=ProductBulkActionJob.Action.ENRICH_THEN_GENERATE,
+            product_ids=[product.pk],
+        )
+
+    assert 'Автозапчастное обогащение' in str(exc.value)
+
+
+@pytest.mark.django_db
+def test_bulk_enrichment_skips_non_auto_parts_products_for_mixed_tenant():
+    tenant = make_tenant('bulk-mixed')
+    tenant.catalog_domain = 'mixed'
+    tenant.save(update_fields=['catalog_domain'])
+    auto_part = make_product(tenant, 'P1', name='Колодки тормозные BREMBO P1')
+    jewellery = make_product(
+        tenant, 'RING1', brand='NO_BRAND', name='Золотое кольцо', category_1c='Украшения',
+    )
+
+    job = ProductBulkActionService.create_job(
+        tenant=tenant,
+        action=ProductBulkActionJob.Action.ENRICH_THEN_GENERATE,
+        product_ids=[auto_part.pk, jewellery.pk],
+    )
+
+    assert job.product_ids == [auto_part.pk]
+    assert job.skipped_count == 1

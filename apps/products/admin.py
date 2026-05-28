@@ -3,7 +3,7 @@ from unfold.admin import ModelAdmin, TabularInline
 
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, Product, ProductAttribute,
-    ProductCrossCode, ProductEnrichmentFact, ProductImage, ProductParseJob,
+    PartCategory, ProductCrossCode, ProductEnrichmentFact, ProductImage, ProductParseJob,
     VehicleFitment, VehicleMake, VehicleModel,
 )
 
@@ -63,6 +63,20 @@ class GlobalPartRelationInline(TabularInline):
     ]
     readonly_fields = fields
     can_delete = False
+
+
+@admin.register(PartCategory)
+class PartCategoryAdmin(ModelAdmin):
+    list_display = ['name', 'normalized_name', 'parent', 'fitment_required', 'updated_at']
+    list_filter = ['fitment_required', 'parent']
+    search_fields = ['name', 'normalized_name', 'aliases']
+    readonly_fields = [
+        'name', 'normalized_name', 'parent', 'aliases',
+        'fitment_required', 'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
 
 
 class GlobalPartFitmentInline(TabularInline):
