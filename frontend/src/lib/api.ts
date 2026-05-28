@@ -208,6 +208,17 @@ export const productApi = {
   publish: (id: number) => api.post(`/products/${id}/publish/`),
   archive: (id: number) => api.post(`/products/${id}/archive/`),
   regenerate: (id: number) => api.post(`/products/${id}/regenerate/`),
+  parse: (id: number, source = 'tachka', generateAfter = false) =>
+    api.post('/products/parse/', { product_id: id, source, generate_after: generateAfter }),
+  parseJobStatus: (id: number) => api.get(`/products/parse-jobs/${id}/`),
+  bulkAction: (data: {
+    action: string;
+    product_ids: number[];
+    source?: string;
+    batch_size?: number;
+    pause_seconds?: number;
+  }) => api.post('/products/bulk-actions/', data),
+  bulkActionStatus: (id: number) => api.get(`/products/bulk-actions/${id}/`),
 };
 
 // Marketplace Accounts

@@ -168,3 +168,294 @@ class ProductImage(models.Model):
 
     def __str__(self):
         return f'Image #{self.pk} [{self.status}] — {self.product_id}'
+
+
+class ProductAttribute(TimestampedModel):
+    """Структурированная характеристика товара из внешнего каталога."""
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='product_attributes',
+        verbose_name='Тенант',
+    )
+    product = models.ForeignKey(
+        Product, on_delete=models.CASCADE, related_name='attributes',
+        verbose_name='Товар',
+    )
+    source_id = models.CharField(max_length=50, default='tachka', verbose_name='Источник')
+    name = models.CharField(max_length=150, verbose_name='Название')
+    raw_name = models.CharField(max_length=150, blank=True, verbose_name='Исходное название')
+    value = models.TextField(verbose_name='Значение')
+    value_hash = models.CharField(max_length=64, blank=True, verbose_name='Хэш значения')
+
+    class Meta:
+        verbose_name = 'Характеристика товара'
+        verbose_name_plural = 'Характеристики товаров'
+        indexes = [
+            models.Index(fields=['tenant', 'product']),
+            models.Index(fields=['tenant', 'name']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'product', 'source_id', 'name', 'value_hash'],
+                name='unique_product_attribute_value',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.name}: {self.value}'
+
+
+class ProductCrossCode(TimestampedModel):
+    """OEM/cross-код с производителем и нормализованным кодом."""
+
+    class CodeType(models.TextChoices):
+        OEM = 'OEM', 'OEM'
+        CROSS = 'Cross', 'Cross'
+        TRADE = 'Trade', 'Trade'
+        UNKNOWN = 'Unknown', 'Unknown'
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='product_cross_codes',
+        verbose_name='Тенант',
+    )
+    product = models.ForeignKey(
+        Product, on_delete=models.CASCADE, related_name='cross_codes',
+        verbose_name='Товар',
+    )
+    source_id = models.CharField(max_length=50, default='tachka', verbose_name='Источник')
+    manufacturer = models.CharField(max_length=100, blank=True, verbose_name='Производитель')
+    code = models.CharField(max_length=100, verbose_name='Код')
+    normalized_code = models.CharField(
+        max_length=100, db_index=True, verbose_name='Нормализованный код',
+    )
+    code_type = models.CharField(
+        max_length=20, choices=CodeType.choices, default=CodeType.UNKNOWN,
+        verbose_name='Тип кода',
+    )
+
+    class Meta:
+        verbose_name = 'OEM/Cross-код'
+        verbose_name_plural = 'OEM/Cross-коды'
+        indexes = [
+            models.Index(fields=['tenant', 'normalized_code']),
+            models.Index(fields=['tenant', 'manufacturer', 'normalized_code']),
+            models.Index(fields=['product', 'code_type']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'tenant', 'product', 'source_id', 'manufacturer',
+                    'normalized_code', 'code_type',
+                ],
+                name='unique_product_cross_code',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.manufacturer} {self.code}'.strip()
+
+
+class VehicleFitment(TimestampedModel):
+    """Применяемость товара к автомобилю."""
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='vehicle_fitments',
+        verbose_name='Тенант',
+    )
+    product = models.ForeignKey(
+        Product, on_delete=models.CASCADE, related_name='fitments',
+        verbose_name='Товар',
+    )
+    source_id = models.CharField(max_length=50, default='tachka', verbose_name='Источник')
+    make = models.CharField(max_length=100, blank=True, verbose_name='Марка')
+    model = models.CharField(max_length=150, verbose_name='Модель')
+    generation = models.CharField(max_length=100, blank=True, verbose_name='Поколение')
+    date_from = models.CharField(max_length=20, blank=True, verbose_name='Дата с')
+    date_to = models.CharField(max_length=20, blank=True, verbose_name='Дата по')
+    modification = models.CharField(max_length=255, blank=True, verbose_name='Модификация')
+    engine_code = models.CharField(max_length=100, blank=True, verbose_name='Код двигателя/кузова')
+    power_hp = models.PositiveIntegerField(null=True, blank=True, verbose_name='Мощность, л.с.')
+    raw_text = models.TextField(blank=True, verbose_name='Исходная строка')
+    confidence = models.FloatField(default=1.0, verbose_name='Уверенность')
+    needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
+
+    class Meta:
+        verbose_name = 'Применяемость'
+        verbose_name_plural = 'Применяемость'
+        indexes = [
+            models.Index(fields=['tenant', 'make', 'model']),
+            models.Index(fields=['tenant', 'product']),
+            models.Index(fields=['product', 'needs_review']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'tenant', 'product', 'source_id', 'make', 'model', 'generation',
+                    'modification', 'engine_code', 'power_hp',
+                ],
+                name='unique_vehicle_fitment',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.make} {self.model} {self.generation}'.strip()
+
+
+class ProductEnrichmentFact(TimestampedModel):
+    """Факт для достоверного AI-описания товара."""
+
+    class FactType(models.TextChoices):
+        TECHNICAL = 'technical', 'Технический'
+        FITMENT = 'fitment', 'Применяемость'
+        OEM = 'oem', 'OEM/Cross'
+        DESCRIPTION_HINT = 'description_hint', 'Подсказка для описания'
+        WARNING = 'warning', 'Предупреждение'
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='product_enrichment_facts',
+        verbose_name='Тенант',
+    )
+    product = models.ForeignKey(
+        Product, on_delete=models.CASCADE, related_name='enrichment_facts',
+        verbose_name='Товар',
+    )
+    source_id = models.CharField(max_length=50, default='tachka', verbose_name='Источник')
+    fact_type = models.CharField(
+        max_length=30, choices=FactType.choices, verbose_name='Тип факта',
+    )
+    name = models.CharField(max_length=150, verbose_name='Название')
+    value = models.TextField(verbose_name='Значение')
+    value_hash = models.CharField(max_length=64, blank=True, verbose_name='Хэш значения')
+    raw_text = models.TextField(blank=True, verbose_name='Исходный текст')
+    confidence = models.FloatField(default=1.0, verbose_name='Уверенность')
+    needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
+
+    class Meta:
+        verbose_name = 'Факт обогащения товара'
+        verbose_name_plural = 'Факты обогащения товаров'
+        indexes = [
+            models.Index(fields=['tenant', 'product']),
+            models.Index(fields=['tenant', 'fact_type']),
+            models.Index(fields=['product', 'needs_review']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'product', 'source_id', 'fact_type', 'name', 'value_hash'],
+                name='unique_product_enrichment_fact',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.fact_type}: {self.name}'
+
+
+class ProductParseJob(TimestampedModel):
+    """Попытка tenant-scoped обогащения товара из внешнего каталога."""
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Ожидает'
+        RUNNING = 'running', 'В работе'
+        SUCCESS = 'success', 'Успешно'
+        FAILED = 'failed', 'Ошибка'
+        NOT_FOUND = 'not_found', 'Не найдено'
+        NEED_REVIEW = 'need_review', 'Нужна проверка'
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='product_parse_jobs',
+        verbose_name='Тенант',
+    )
+    product = models.ForeignKey(
+        Product, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='parse_jobs', verbose_name='Товар',
+    )
+    brand = models.CharField(max_length=100, verbose_name='Бренд')
+    article = models.CharField(max_length=100, verbose_name='Артикул')
+    normalized_article = models.CharField(
+        max_length=100, db_index=True, verbose_name='Нормализованный артикул',
+    )
+    source_id = models.CharField(max_length=50, default='tachka', verbose_name='Источник')
+    source_url = models.URLField(blank=True, verbose_name='URL источника')
+    status = models.CharField(
+        max_length=30, choices=Status.choices, default=Status.PENDING,
+        verbose_name='Статус',
+    )
+    error_message = models.TextField(blank=True, verbose_name='Ошибка')
+    raw_html = models.TextField(blank=True, verbose_name='Raw HTML')
+    raw_text = models.TextField(blank=True, verbose_name='Raw text')
+    parsed_data = models.JSONField(null=True, blank=True, verbose_name='Распарсенные данные')
+    duration_ms = models.PositiveIntegerField(null=True, blank=True, verbose_name='Длительность, мс')
+    started_at = models.DateTimeField(null=True, blank=True, verbose_name='Начато')
+    finished_at = models.DateTimeField(null=True, blank=True, verbose_name='Завершено')
+
+    class Meta:
+        verbose_name = 'Задача парсинга товара'
+        verbose_name_plural = 'Задачи парсинга товаров'
+        indexes = [
+            models.Index(fields=['tenant', '-created_at']),
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['source_id', 'normalized_article']),
+            models.Index(fields=['tenant', 'source_id', 'normalized_article']),
+        ]
+
+    def __str__(self):
+        return f'{self.source_id}: {self.brand} {self.article} [{self.status}]'
+
+
+class ProductBulkActionJob(TimestampedModel):
+    """Throttled массовое действие по товарам tenant-а."""
+
+    class Action(models.TextChoices):
+        ENRICH_SELECTED = 'enrich_selected', 'Обогатить выбранные'
+        ENRICH_MISSING_DATA = 'enrich_missing_data', 'Обогатить отсутствующие данные'
+        GENERATE_DESCRIPTIONS = 'generate_descriptions', 'Сгенерировать описания'
+        ENRICH_THEN_GENERATE = (
+            'enrich_then_generate_description',
+            'Обогатить и сгенерировать описания',
+        )
+        FIND_IMAGES = 'find_images', 'Найти изображения'
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Ожидает'
+        RUNNING = 'running', 'В работе'
+        PAUSED = 'paused', 'На паузе'
+        COOLING_DOWN = 'cooling_down', 'Охлаждение'
+        SUCCESS = 'success', 'Успешно'
+        FAILED = 'failed', 'Ошибка'
+        CANCELLED = 'cancelled', 'Отменено'
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='product_bulk_action_jobs',
+        verbose_name='Тенант',
+    )
+    action = models.CharField(max_length=50, choices=Action.choices, verbose_name='Действие')
+    source_id = models.CharField(max_length=50, default='tachka', verbose_name='Источник')
+    product_ids = models.JSONField(default=list, verbose_name='ID товаров')
+    filters = models.JSONField(default=dict, blank=True, verbose_name='Фильтры')
+    status = models.CharField(
+        max_length=30, choices=Status.choices, default=Status.PENDING,
+        verbose_name='Статус',
+    )
+    total_count = models.PositiveIntegerField(default=0, verbose_name='Всего')
+    queued_count = models.PositiveIntegerField(default=0, verbose_name='Поставлено в очередь')
+    processed_count = models.PositiveIntegerField(default=0, verbose_name='Обработано')
+    success_count = models.PositiveIntegerField(default=0, verbose_name='Успешно')
+    skipped_count = models.PositiveIntegerField(default=0, verbose_name='Пропущено')
+    failed_count = models.PositiveIntegerField(default=0, verbose_name='Ошибки')
+    batch_size = models.PositiveIntegerField(default=20, verbose_name='Размер batch')
+    pause_seconds = models.PositiveIntegerField(default=60, verbose_name='Пауза между batch, сек')
+    next_batch_at = models.DateTimeField(null=True, blank=True, verbose_name='Следующий batch')
+    error_message = models.TextField(blank=True, verbose_name='Ошибка')
+    started_at = models.DateTimeField(null=True, blank=True, verbose_name='Начато')
+    finished_at = models.DateTimeField(null=True, blank=True, verbose_name='Завершено')
+
+    class Meta:
+        verbose_name = 'Массовое действие по товарам'
+        verbose_name_plural = 'Массовые действия по товарам'
+        indexes = [
+            models.Index(fields=['tenant', '-created_at']),
+            models.Index(fields=['status', '-created_at']),
+            models.Index(fields=['tenant', 'status']),
+        ]
+
+    def __str__(self):
+        return f'{self.action} [{self.status}] — {self.total_count}'

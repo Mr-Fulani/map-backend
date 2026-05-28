@@ -7,7 +7,24 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
-import { Search, Package, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import {
+  Search,
+  Package,
+  ChevronLeft,
+  ChevronRight,
+  MoreHorizontal,
+  RefreshCw,
+  Sparkles,
+  Database,
+} from 'lucide-react';
 import { getCategoryPlaceholder } from '@/lib/category-placeholder';
 import { useDebounce } from '@/lib/hooks';
 
@@ -23,6 +40,15 @@ interface Product {
   sync_at: string | null;
   images_count: number;
   primary_thumb_url: string;
+  ai_status: string;
+  enrichment_status: string;
+  enrichment_summary: {
+    attributes_count: number;
+    cross_codes_count: number;
+    fitments_count: number;
+    latest_parse_status: string;
+    latest_parse_at: string | null;
+  };
 }
 
 interface Meta {
@@ -33,6 +59,70 @@ interface Meta {
   prev: string | null;
 }
 
+interface BulkActionJob {
+  id: number;
+  action: string;
+  status: string;
+  total_count: number;
+  queued_count: number;
+  processed_count: number;
+  success_count: number;
+  failed_count: number;
+  skipped_count: number;
+  batch_size: number;
+  pause_seconds: number;
+  next_batch_at: string | null;
+}
+
+const unwrapBulkActionJob = (payload: { data?: BulkActionJob } & Partial<BulkActionJob>): BulkActionJob => {
+  return payload.data ?? (payload as BulkActionJob);
+};
+
+const ENRICHMENT_LABELS: Record<string, string> = {
+  ready: 'Обогащён',
+  missing: 'Нет данных',
+  pending: 'В очереди',
+  running: 'В работе',
+  success: 'Обогащён',
+  need_review: 'Частично',
+  not_found: 'Не найден',
+  failed: 'Ошибка',
+};
+
+const ENRICHMENT_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
+  ready: 'default',
+  success: 'default',
+  need_review: 'secondary',
+  pending: 'secondary',
+  running: 'secondary',
+  missing: 'outline',
+  not_found: 'outline',
+  failed: 'destructive',
+};
+
+function enrichmentTitle(product: Product) {
+  const summary = product.enrichment_summary;
+  const parts = [
+    `Характеристики: ${summary.attributes_count}`,
+    `OEM/Cross: ${summary.cross_codes_count}`,
+    `Применяемость: ${summary.fitments_count}`,
+  ];
+  if (summary.latest_parse_status) {
+    parts.push(`Последний парсинг: ${summary.latest_parse_status}`);
+  }
+  return parts.join(', ');
+}
+
+function bulkStatusText(job: BulkActionJob) {
+  if (job.status === 'cooling_down' && job.next_batch_at) {
+    return `Пауза до следующего batch: ${new Date(job.next_batch_at).toLocaleTimeString('ru-RU')}`;
+  }
+  if (job.status === 'success') return 'Все задачи поставлены в очередь';
+  if (job.status === 'failed') return 'Постановка задач завершилась с ошибкой';
+  if (job.status === 'cancelled') return 'Массовое действие отменено';
+  return 'Постановка задач выполняется';
+}
+
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -40,6 +130,12 @@ export default function ProductsPage() {
   const [exportFilter, setExportFilter] = useState<string>('');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkLoading, setBulkLoading] = useState(false);
+  const [bulkRefreshing, setBulkRefreshing] = useState(false);
+  const [bulkJob, setBulkJob] = useState<BulkActionJob | null>(null);
+  const [bulkError, setBulkError] = useState('');
+  const [bulkUpdatedAt, setBulkUpdatedAt] = useState<string | null>(null);
 
   const debouncedSearch = useDebounce(search, 300);
 
@@ -67,6 +163,89 @@ export default function ProductsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [page, debouncedSearch, exportFilter]);
+
+  const selectedOnPage = products.filter((product) => selectedIds.includes(product.id));
+  const allOnPageSelected = products.length > 0 && selectedOnPage.length === products.length;
+  const bulkProgress = bulkJob && bulkJob.total_count > 0
+    ? Math.round((bulkJob.processed_count / bulkJob.total_count) * 100)
+    : 0;
+
+  const toggleProduct = (id: number) => {
+    setSelectedIds((current) => (
+      current.includes(id)
+        ? current.filter((selectedId) => selectedId !== id)
+        : [...current, id]
+    ));
+  };
+
+  const togglePageSelection = () => {
+    setSelectedIds(allOnPageSelected ? [] : products.map((product) => product.id));
+  };
+
+  const refreshBulkJob = useCallback(async (jobId: number) => {
+    const res = await productApi.bulkActionStatus(jobId);
+    setBulkJob(unwrapBulkActionJob(res.data));
+    setBulkUpdatedAt(new Date().toLocaleTimeString('ru-RU', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }));
+  }, []);
+
+  const refreshBulkJobManually = async (jobId: number) => {
+    setBulkRefreshing(true);
+    setBulkError('');
+    try {
+      await refreshBulkJob(jobId);
+    } catch {
+      setBulkError('Не удалось обновить статус массового действия.');
+    } finally {
+      setBulkRefreshing(false);
+    }
+  };
+
+  const runBulkEnrichment = async (action = 'enrich_selected') => {
+    if (selectedIds.length === 0) return;
+
+    setBulkLoading(true);
+    setBulkError('');
+    try {
+      const res = await productApi.bulkAction({
+        action,
+        product_ids: selectedIds,
+        source: 'tachka',
+        batch_size: 20,
+        pause_seconds: 60,
+      });
+      setBulkJob(unwrapBulkActionJob(res.data));
+      setBulkUpdatedAt(new Date().toLocaleTimeString('ru-RU', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }));
+      setSelectedIds([]);
+    } catch {
+      setBulkError('Не удалось запустить массовое действие. Попробуйте ещё раз.');
+    } finally {
+      setBulkLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!bulkJob?.id || ['success', 'failed', 'cancelled'].includes(bulkJob.status)) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      refreshBulkJob(bulkJob.id).catch(() => undefined);
+    }, 5000);
+
+    return () => window.clearTimeout(timer);
+  }, [bulkJob, refreshBulkJob]);
 
   return (
     <div className="space-y-4">
@@ -106,16 +285,105 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      {selectedIds.length > 0 && (
+        <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-sm font-medium">
+              Выбрано товаров: {selectedIds.length}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Массовые действия запускаются фоном: батч 20 товаров, пауза 60 секунд.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => setSelectedIds([])}>
+              Снять выбор
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" disabled={bulkLoading}>
+                  <MoreHorizontal className="h-4 w-4" />
+                  Быстрые действия
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-72">
+                <DropdownMenuLabel>Массовые действия</DropdownMenuLabel>
+                <DropdownMenuItem onClick={() => runBulkEnrichment('enrich_selected')} disabled={bulkLoading}>
+                  Обогатить данные выбранных товаров
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => runBulkEnrichment('enrich_then_generate_description')} disabled={bulkLoading}>
+                  Обогатить и сгенерировать описание
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem disabled>
+                  Найти изображения
+                </DropdownMenuItem>
+                <DropdownMenuItem disabled>
+                  Сгенерировать описания
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+      )}
+
+      {(bulkJob || bulkError) && (
+        <div className="rounded-lg border bg-background p-3">
+          {bulkError ? (
+            <p className="text-sm text-destructive">{bulkError}</p>
+          ) : bulkJob && (
+            <div className="space-y-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <p className="text-sm font-medium">
+                    Массовая постановка задач #{bulkJob.id}: {bulkJob.status}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {bulkStatusText(bulkJob)}. Обработано batch-позиций {bulkJob.processed_count} из {bulkJob.total_count}; поставлено в очередь {bulkJob.queued_count}; пропущено {bulkJob.skipped_count}.
+                    {bulkUpdatedAt ? ` Обновлено: ${bulkUpdatedAt}.` : ''}
+                  </p>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => refreshBulkJobManually(bulkJob.id)}
+                  disabled={bulkRefreshing}
+                >
+                  <RefreshCw className={bulkRefreshing ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />
+                  {bulkRefreshing ? 'Обновляем...' : 'Обновить'}
+                </Button>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-primary transition-all"
+                  style={{ width: `${bulkProgress}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Таблица */}
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50 text-left text-muted-foreground">
+              <th className="w-10 px-4 py-3 font-medium">
+                <input
+                  type="checkbox"
+                  aria-label="Выбрать все товары на странице"
+                  checked={allOnPageSelected}
+                  onChange={togglePageSelection}
+                  className="h-4 w-4 rounded border-muted-foreground"
+                />
+              </th>
               <th className="px-4 py-3 font-medium">Фото</th>
               <th className="px-4 py-3 font-medium">Артикул</th>
               <th className="px-4 py-3 font-medium">Название</th>
               <th className="hidden px-4 py-3 font-medium md:table-cell">Бренд</th>
               <th className="hidden px-4 py-3 font-medium lg:table-cell">Категория</th>
+              <th className="px-4 py-3 font-medium text-center">Готовность</th>
               <th className="px-4 py-3 font-medium text-right">Цена</th>
               <th className="px-4 py-3 font-medium text-right">Остаток</th>
               <th className="px-4 py-3 font-medium text-center">Выгрузка</th>
@@ -125,7 +393,7 @@ export default function ProductsPage() {
             {loading
               ? Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i} className="border-b">
-                    {Array.from({ length: 8 }).map((_, j) => (
+                    {Array.from({ length: 10 }).map((_, j) => (
                       <td key={j} className="px-4 py-3">
                         <Skeleton className="h-4 w-full" />
                       </td>
@@ -135,7 +403,7 @@ export default function ProductsPage() {
               : products.length === 0
                 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-16 text-center text-muted-foreground">
+                    <td colSpan={10} className="px-4 py-16 text-center text-muted-foreground">
                       <Package className="mx-auto mb-3 h-10 w-10 opacity-30" />
                       {search ? 'Ничего не найдено' : 'Товаров пока нет'}
                     </td>
@@ -146,6 +414,15 @@ export default function ProductsPage() {
                     key={p.id}
                     className="border-b transition-colors hover:bg-muted/30"
                   >
+                    <td className="px-4 py-3">
+                      <input
+                        type="checkbox"
+                        aria-label={`Выбрать товар ${p.article}`}
+                        checked={selectedIds.includes(p.id)}
+                        onChange={() => toggleProduct(p.id)}
+                        className="h-4 w-4 rounded border-muted-foreground"
+                      />
+                    </td>
                     <td className="px-4 py-2">
                       <Link href={`/dashboard/products/${p.id}`} className="block">
                         <div className="relative w-10 h-10 rounded-md overflow-hidden border bg-muted flex-shrink-0">
@@ -184,6 +461,26 @@ export default function ProductsPage() {
                     </td>
                     <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">
                       <span className="line-clamp-1">{p.category_1c || '—'}</span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col items-center gap-1">
+                        <Badge
+                          variant={p.ai_status === 'ready' ? 'default' : 'outline'}
+                          className="gap-1 whitespace-nowrap"
+                          title={p.ai_status === 'ready' ? 'AI-описание сгенерировано' : 'AI-описание ещё не сгенерировано'}
+                        >
+                          <Sparkles className="h-3 w-3" />
+                          AI {p.ai_status === 'ready' ? 'готов' : 'нет'}
+                        </Badge>
+                        <Badge
+                          variant={ENRICHMENT_VARIANTS[p.enrichment_status] ?? 'outline'}
+                          className="gap-1 whitespace-nowrap"
+                          title={enrichmentTitle(p)}
+                        >
+                          <Database className="h-3 w-3" />
+                          {ENRICHMENT_LABELS[p.enrichment_status] ?? p.enrichment_status}
+                        </Badge>
+                      </div>
                     </td>
                     <td className="px-4 py-3 text-right font-medium">
                       {Number(p.price).toLocaleString('ru-RU')} ₽

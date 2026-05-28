@@ -1,0 +1,124 @@
+from decimal import Decimal
+
+import pytest
+
+from apps.products.enrichment import make_value_hash, normalize_part_code
+from apps.products.models import (
+    Product, ProductCrossCode, ProductEnrichmentFact,
+)
+from apps.products.services import ProductEnrichmentService
+from apps.tenants.services import TenantService
+
+
+def make_tenant(slug):
+    tenant, _ = TenantService.create_tenant(slug, slug, f'{slug}@test.com', 'pass12345')
+    return tenant
+
+
+def make_product(tenant, article='P50136', brand='BREMBO'):
+    return Product.objects.create(
+        tenant=tenant,
+        article=article,
+        brand=brand,
+        name=f'{brand} {article}',
+        price=Decimal('0'),
+        stock_qty=0,
+    )
+
+
+def test_normalize_part_code_keeps_leading_zeroes():
+    assert normalize_part_code('P 50 136') == 'P50136'
+    assert normalize_part_code('P-50-136') == 'P50136'
+    assert normalize_part_code('p 50 136') == 'P50136'
+    assert normalize_part_code('A 000 420 60 00') == 'A0004206000'
+    assert normalize_part_code('0004206000') == '0004206000'
+
+
+@pytest.mark.django_db
+def test_enrichment_records_are_tenant_scoped_for_same_article():
+    tenant_a = make_tenant('parts-a')
+    tenant_b = make_tenant('parts-b')
+    product_a = make_product(tenant_a)
+    product_b = make_product(tenant_b)
+
+    ProductEnrichmentService.create_cross_code(
+        tenant=tenant_a,
+        product=product_a,
+        manufacturer='MERCEDES-BENZ',
+        code='A 000 420 60 00',
+        normalized_code=normalize_part_code('A 000 420 60 00'),
+        code_type=ProductCrossCode.CodeType.OEM,
+    )
+    ProductEnrichmentService.create_cross_code(
+        tenant=tenant_b,
+        product=product_b,
+        manufacturer='MERCEDES-BENZ',
+        code='A 000 420 60 00',
+        normalized_code=normalize_part_code('A 000 420 60 00'),
+        code_type=ProductCrossCode.CodeType.OEM,
+    )
+
+    assert ProductCrossCode.objects.filter(tenant=tenant_a).count() == 1
+    assert ProductCrossCode.objects.filter(tenant=tenant_b).count() == 1
+
+
+@pytest.mark.django_db
+def test_enrichment_models_reject_cross_tenant_product():
+    tenant_a = make_tenant('owner-a')
+    tenant_b = make_tenant('owner-b')
+    product_b = make_product(tenant_b)
+
+    with pytest.raises(ValueError):
+        ProductEnrichmentService.create_attribute(
+            tenant=tenant_a,
+            product=product_b,
+            name='Ширина',
+            value='114 мм',
+        )
+
+
+@pytest.mark.django_db
+def test_parse_job_rejects_cross_tenant_product():
+    tenant_a = make_tenant('job-a')
+    tenant_b = make_tenant('job-b')
+    product_b = make_product(tenant_b)
+
+    with pytest.raises(ValueError):
+        ProductEnrichmentService.create_parse_job(
+            tenant=tenant_a,
+            product=product_b,
+            brand='BREMBO',
+            article='P50136',
+            normalized_article='P50136',
+        )
+
+
+@pytest.mark.django_db
+def test_value_hash_is_filled_for_text_based_unique_constraints():
+    tenant = make_tenant('hash-co')
+    product = make_product(tenant)
+
+    attr = ProductEnrichmentService.create_attribute(
+        tenant=tenant,
+        product=product,
+        name='Толщина',
+        value='16 мм',
+    )
+    fact = ProductEnrichmentService.create_fact(
+        tenant=tenant,
+        product=product,
+        fact_type=ProductEnrichmentFact.FactType.TECHNICAL,
+        name='Толщина',
+        value='16 мм',
+    )
+    ProductEnrichmentService.create_fitment(
+        tenant=tenant,
+        product=product,
+        make='MERCEDES-BENZ',
+        model='E-CLASS',
+        generation='W213',
+    )
+
+    assert attr.value_hash == make_value_hash('16 мм')
+    assert fact.value_hash == make_value_hash('16 мм')
+    assert product.fitments.filter(model='E-CLASS').exists()

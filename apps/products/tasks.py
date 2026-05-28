@@ -5,7 +5,9 @@ from django.utils.timezone import now
 
 from apps.datasources.models import DataSourceConnection
 from apps.datasources.registry import get_adapter
-from apps.products.services import ProductService
+from apps.products.services import (
+    ProductBulkActionService, ProductEnrichmentService, ProductService,
+)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='sync_import')
@@ -46,3 +48,77 @@ def import_from_datasource(self, connection_id: int):
         connection.last_error = str(exc)
         connection.save(update_fields=['last_sync_status', 'last_error'])
         raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60,
+             retry_backoff=True, queue='part_parsing')
+def parse_single_part(self, job_id: int):
+    try:
+        result = ProductEnrichmentService.run_parse_job(job_id)
+        _queue_enrichment_images(result)
+        return result
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60,
+             retry_backoff=True, queue='part_parsing')
+def parse_single_part_then_generate_description(self, job_id: int):
+    try:
+        result = ProductEnrichmentService.run_parse_job(job_id)
+        _queue_enrichment_images(result)
+        product_id = result.get('product_id')
+        if product_id:
+            from apps.ai_agent.tasks import generate_description_task
+            generate_description_task.delay(product_id)
+        return result
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60,
+             retry_backoff=True, queue='part_parsing_bulk')
+def process_bulk_product_action(self, bulk_job_id: int):
+    try:
+        return ProductBulkActionService.process_next_batch(bulk_job_id)
+    except Exception as exc:
+        raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60,
+             retry_backoff=True, queue='image_search')
+def download_enrichment_images(
+    self, product_id: int, image_urls: list[str], source_id: str = 'tachka',
+):
+    """Скачивает изображения, найденные parser enrichment, через текущий ProductImage pipeline."""
+    from apps.products.models import Product, ProductImage
+    from apps.products.storage import PhotoUploadPipeline
+
+    try:
+        product = Product.objects.get(pk=product_id)
+    except Product.DoesNotExist:
+        return {'error': f'Product {product_id} not found'}
+
+    saved = 0
+    pipeline = PhotoUploadPipeline()
+    for url in image_urls[:10]:
+        image = pipeline.process(
+            url,
+            product,
+            source_id=source_id,
+            status=ProductImage.Status.NEEDS_REVIEW,
+        )
+        if image is not None:
+            saved += 1
+    return {'product_id': product_id, 'saved': saved}
+
+
+def _queue_enrichment_images(result: dict) -> None:
+    product_id = result.get('product_id')
+    image_urls = result.get('image_urls') or []
+    if product_id and image_urls:
+        download_enrichment_images.delay(
+            product_id,
+            image_urls,
+            result.get('source_id') or 'tachka',
+        )

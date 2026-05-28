@@ -120,6 +120,33 @@ class TestPhotoUploadPipeline:
         assert img1.pk == img2.pk
         assert ProductImage.objects.filter(product=product).count() == 1
 
+    def test_photo_pipeline_saves_enrichment_metadata(self):
+        from apps.products.storage import PhotoUploadPipeline
+
+        tenant = make_tenant('photo-enrichment-co')
+        ds = make_datasource(tenant)
+        product, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+
+        jpeg = self._make_jpeg_bytes()
+        mock_storage = MagicMock()
+        mock_storage.save = MagicMock(return_value='products/test/1.jpg')
+
+        with patch('apps.products.storage.requests.get') as mock_get:
+            mock_get.return_value.content = jpeg
+            mock_get.return_value.raise_for_status = MagicMock()
+            pipeline = PhotoUploadPipeline(storage=mock_storage)
+
+            image = pipeline.process(
+                'http://example.com/photo.jpg',
+                product,
+                source_id='tachka',
+                status=ProductImage.Status.NEEDS_REVIEW,
+            )
+
+        assert image is not None
+        assert image.source_id == 'tachka'
+        assert image.status == ProductImage.Status.NEEDS_REVIEW
+
     def test_photo_limit_10_per_product(self):
         from apps.products.storage import PhotoUploadPipeline
 
