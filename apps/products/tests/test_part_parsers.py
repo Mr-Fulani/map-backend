@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.products.models import Product, ProductCrossCode
+from apps.products.models import GlobalPartRelation, Product, ProductCrossCode
 from apps.products.part_parsers import ParsedPart, TachkaPartParser, parse_fitment_line
 from apps.products.services import ProductEnrichmentService
 from apps.tenants.services import TenantService
@@ -22,6 +22,31 @@ SAMPLE_HTML = """
     <div class="description">Колодки для задней оси с тормозной системой TRW.</div>
     <p>E-CLASS (W213) 01.2016-2023 E 220 d 4-matic (213.005) 194 л.с</p>
     <img src="/images/p50136.jpg" />
+  </body>
+</html>
+"""
+
+SEARCH_HTML = """
+<html>
+  <body>
+    <h1>РЕЗУЛЬТАТЫ ПОИСКА: СТОЙКА (АЛЬТЕРНАТИВА 48510-80863) 485108Z460</h1>
+    <h2>Результаты по артикулу 48510-80863)</h2>
+    <div>
+      Aмортизатор Toyota. Артикул 4851080863
+      Toyota
+      Артикул: 4851080863
+    </div>
+    <h2>Аналоги по OEM коду 48510-80863)</h2>
+    <div>
+      Амортизатор Miles. Артикул DG211003
+      Miles
+      Артикул: DG211003
+    </div>
+    <div>
+      Амортизатор TOYOTA CAMRY 17- газ.пер.прав. (Kayaba) KYB. Артикул 3350048
+      KYB
+      Артикул: 3350048
+    </div>
   </body>
 </html>
 """
@@ -74,6 +99,26 @@ def test_parse_fitment_line_keeps_uncertain_data_reviewable():
     assert fitment.date_from == '01.2016'
     assert fitment.date_to == '2023'
     assert fitment.needs_review is False
+
+
+def test_tachka_parser_extracts_related_parts_from_search_html():
+    parsed = TachkaPartParser().parse_search_html(
+        SEARCH_HTML,
+        brand='TOYOTA-LEXUS',
+        article='485108Z460',
+        source_url='https://tachka.ru/poisk?search=485108Z460',
+    )
+
+    assert parsed.normalized_article == '485108Z460'
+    assert [part.article for part in parsed.related_parts] == [
+        '4851080863',
+        'DG211003',
+        '3350048',
+    ]
+    assert parsed.related_parts[0].brand == 'Toyota'
+    assert parsed.related_parts[0].relation_type == GlobalPartRelation.RelationType.OEM
+    assert parsed.related_parts[1].relation_type == GlobalPartRelation.RelationType.ANALOGUE
+    assert parsed.cross_codes[0].code == '4851080863'
 
 
 @pytest.mark.django_db
@@ -158,6 +203,48 @@ def test_run_parse_job_enriches_existing_tenant_product(monkeypatch):
     assert product.price == Decimal('1234.00')
     assert product.fitments.filter(model='E-CLASS').exists()
     assert result['image_urls'] == ['https://tachka.ru/images/p50136.jpg']
+
+
+@pytest.mark.django_db
+def test_run_parse_job_falls_back_to_search_results(monkeypatch):
+    tenant = make_tenant('job-search-fallback')
+    product = Product.objects.create(
+        tenant=tenant,
+        article='485108Z460',
+        brand='TOYOTA-LEXUS',
+        name='СТОЙКА 485108Z460',
+        price=Decimal('9997.00'),
+        stock_qty=1,
+    )
+    job = ProductEnrichmentService.create_parse_job(
+        tenant=tenant,
+        product=product,
+        brand='TOYOTA-LEXUS',
+        article='485108Z460',
+        normalized_article='485108Z460',
+    )
+
+    class FakeParser:
+        def fetch(self, brand, article):
+            from apps.products.part_parsers import PartNotFound
+            raise PartNotFound('direct page not found')
+
+        def fetch_search(self, article):
+            return SEARCH_HTML, 'https://tachka.ru/poisk?search=485108Z460'
+
+        def parse_search_html(self, html, brand, article, source_url=''):
+            return TachkaPartParser().parse_search_html(html, brand, article, source_url)
+
+    monkeypatch.setattr('apps.products.services.get_part_parser', lambda source_id: FakeParser())
+
+    result = ProductEnrichmentService.run_parse_job(job.pk)
+
+    job.refresh_from_db()
+    product.refresh_from_db()
+    assert result['status'] == 'need_review'
+    assert job.status == 'need_review'
+    assert job.source_url == 'https://tachka.ru/poisk?search=485108Z460'
+    assert product.cross_codes.filter(normalized_code='4851080863').exists()
 
 
 def test_parse_task_queues_enrichment_images():

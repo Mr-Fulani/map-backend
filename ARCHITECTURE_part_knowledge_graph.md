@@ -118,9 +118,43 @@ ProductKnowledgeGraphService.apply_known_relations_to_product(product)
 - Оператор может видеть глобальные связи в Django admin.
 - Сомнительные связи не маскируются под достоверные.
 
+## Search fallback и аналоги
+
+После первой итерации графа добавлен fallback для случаев, когда прямой URL
+карточки источника не найден:
+
+```text
+direct product URL
+  -> PartNotFound
+  -> source search by article/OEM
+  -> parse search result groups
+  -> ParsedRelatedPart[]
+  -> GlobalPartRelation
+```
+
+Это закрывает важный сценарий: аналоги могут отсутствовать на странице конкретного
+товара, но быть в поисковой выдаче или блоках "Аналоги по OEM". Parser не обязан
+обходить весь каталог. Он делает точечный поиск по артикулу/OEM в рамках текущего
+enrichment job и сохраняет только найденные структурные связи.
+
+В коде это разделено так:
+
+- `TachkaPartParser.parse_html()` — карточка товара.
+- `TachkaPartParser.parse_search_html()` — поисковая выдача/аналоги.
+- `ParsedRelatedPart` — связанный артикул без обещания применяемости.
+- `ProductKnowledgeGraphService.learn_from_parsed_part()` — сохранение связей в
+  `GlobalPartRelation`.
+
+Производительность и безопасность:
+
+- fallback запускается только после `PartNotFound` прямой карточки;
+- массовые запуски продолжают идти через `ProductBulkActionJob` batch/cooldown;
+- глобальный граф использует нормализованные ключи и индексы;
+- `Unknown`/`needs_review` связи не применяются автоматически к tenant-товару;
+- аналоги не создают `VehicleFitment`, пока нет явных данных применяемости.
+
 ## Что не решено в этой итерации
 
-- Поиск analogs из страниц выдачи `tachka` при `not_found`.
 - Глобальная применяемость `part -> vehicle`.
 - Нормализованный справочник `VehicleMake/VehicleModel/VehicleGeneration`.
 - Приоритеты нескольких источников.
@@ -129,15 +163,15 @@ ProductKnowledgeGraphService.apply_known_relations_to_product(product)
 
 ## Следующий логичный шаг
 
-Добавить parser fallback для страниц поиска/аналогов источника:
+Добавить глобальную применяемость поверх уже найденных связей:
 
 ```text
-direct product URL failed
-  -> source search by article/OEM
-  -> parse result groups: exact, OEM analogs, analogs
-  -> save GlobalPartRelation as Analogue/Cross/OEM
-  -> mark uncertain rows needs_review
+GlobalPart / GlobalPartRelation
+  -> source fitment data
+  -> GlobalPartFitment / Vehicle KB
+  -> tenant VehicleFitment on trusted match
 ```
 
-Это позволит обрабатывать случаи вроде `485108Z460`, когда прямой URL не найден,
-но источник показывает оригинальный номер и аналоги в каталожной выдаче.
+Это позволит не только знать, что `485108Z460` связан с аналогами, но и безопасно
+показывать конкретные марки/модели авто, когда источник действительно дал
+применяемость.
