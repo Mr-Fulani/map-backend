@@ -130,6 +130,52 @@ def test_parse_endpoint_rejects_other_tenant_product():
 
 
 @pytest.mark.django_db
+def test_parse_endpoint_rejects_non_auto_parts_tenant():
+    tenant, api_key = make_tenant('parse-jewellery')
+    tenant.catalog_domain = 'jewellery'
+    tenant.save(update_fields=['catalog_domain'])
+    product = make_product(tenant)
+    client = Client()
+
+    response = client.post(
+        '/api/v1/products/parse/',
+        {'product_id': product.pk},
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 400
+    assert response.json()['code'] == 'auto_parts_enrichment_disabled'
+    assert tenant.product_parse_jobs.count() == 0
+
+
+@pytest.mark.django_db
+def test_regenerate_endpoint_for_non_auto_parts_tenant_queues_ai_without_enrichment(
+    django_capture_on_commit_callbacks,
+):
+    tenant, api_key = make_tenant('regenerate-jewellery')
+    tenant.catalog_domain = 'jewellery'
+    tenant.save(update_fields=['catalog_domain'])
+    product = make_product(tenant)
+    client = Client()
+
+    with patch('apps.ai_agent.tasks.generate_description_task.delay') as delay:
+        with django_capture_on_commit_callbacks(execute=True):
+            response = client.post(
+                f'/api/v1/products/{product.pk}/regenerate/',
+                content_type='application/json',
+                HTTP_AUTHORIZATION=f'Bearer {api_key}',
+            )
+
+    assert response.status_code == 202
+    data = response.json()['data']
+    assert data['job_id'] is None
+    assert data['state'] == 'queued'
+    assert tenant.product_parse_jobs.count() == 0
+    delay.assert_called_once_with(product.pk)
+
+
+@pytest.mark.django_db
 def test_fitments_and_cross_codes_are_tenant_scoped():
     tenant, api_key = make_tenant('enrichment-read')
     product = make_product(tenant)

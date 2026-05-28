@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from apps.products.models import Product, ProductBulkActionJob
-from apps.products.services import ProductBulkActionService
+from apps.products.services import AutoPartsEnrichmentDisabled, ProductBulkActionService
 from apps.tenants.services import TenantService
 
 
@@ -90,3 +90,20 @@ def test_bulk_action_enrich_then_generate_uses_chained_task(django_capture_on_co
 
     parse_delay.assert_not_called()
     chained_delay.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_bulk_enrichment_rejects_non_auto_parts_tenant():
+    tenant = make_tenant('bulk-jewellery')
+    tenant.catalog_domain = 'jewellery'
+    tenant.save(update_fields=['catalog_domain'])
+    product = make_product(tenant, 'P1')
+
+    with pytest.raises(AutoPartsEnrichmentDisabled) as exc:
+        ProductBulkActionService.create_job(
+            tenant=tenant,
+            action=ProductBulkActionJob.Action.ENRICH_THEN_GENERATE,
+            product_ids=[product.pk],
+        )
+
+    assert 'Автозапчастное обогащение' in str(exc.value)

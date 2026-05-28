@@ -2,7 +2,9 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
+import axios from 'axios';
 import { productApi } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -123,6 +125,7 @@ function bulkStatusText(job: BulkActionJob) {
 }
 
 export default function ProductsPage() {
+  const { tenant } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [search, setSearch] = useState('');
@@ -135,6 +138,9 @@ export default function ProductsPage() {
   const [bulkJob, setBulkJob] = useState<BulkActionJob | null>(null);
   const [bulkError, setBulkError] = useState('');
   const [bulkUpdatedAt, setBulkUpdatedAt] = useState<string | null>(null);
+  const supportsAutoPartsEnrichment = tenant?.catalog_domain
+    ? tenant.catalog_domain === 'auto_parts'
+    : true;
 
   const debouncedSearch = useDebounce(search, 300);
 
@@ -227,8 +233,12 @@ export default function ProductsPage() {
         second: '2-digit',
       }));
       setSelectedIds([]);
-    } catch {
-      setBulkError('Не удалось запустить массовое действие. Попробуйте ещё раз.');
+    } catch (error) {
+      const responseData = axios.isAxiosError(error)
+        ? (error.response?.data as { message?: string } | undefined)
+        : undefined;
+      const message = responseData?.message;
+      setBulkError(message || 'Не удалось запустить массовое действие. Попробуйте ещё раз.');
     } finally {
       setBulkLoading(false);
     }
@@ -298,20 +308,29 @@ export default function ProductsPage() {
             <Button size="sm" variant="outline" onClick={() => setSelectedIds([])}>
               Снять выбор
             </Button>
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button size="sm" disabled={bulkLoading}>
-                  <MoreHorizontal className="h-4 w-4" />
-                  Быстрые действия
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-72">
-                <DropdownMenuLabel>Массовые действия</DropdownMenuLabel>
-                <DropdownMenuItem onClick={() => runBulkEnrichment('enrich_then_generate_description')} disabled={bulkLoading}>
-                  Обогатить и сгенерировать описание
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
+            {supportsAutoPartsEnrichment ? (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" disabled={bulkLoading}>
+                    <MoreHorizontal className="h-4 w-4" />
+                    Быстрые действия
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-72">
+                  <DropdownMenuLabel>Массовые действия</DropdownMenuLabel>
+                  <DropdownMenuItem
+                    onClick={() => runBulkEnrichment('enrich_then_generate_description')}
+                    disabled={bulkLoading}
+                  >
+                    Обогатить и сгенерировать описание
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            ) : (
+              <p className="max-w-sm text-xs text-muted-foreground">
+                Автозапчастное массовое обогащение отключено для этого домена каталога.
+              </p>
+            )}
           </div>
         </div>
       )}

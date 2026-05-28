@@ -29,7 +29,7 @@ class RegisterSerializer(serializers.Serializer):
 class TenantSerializer(serializers.ModelSerializer):
     class Meta:
         model = Tenant
-        fields = ['id', 'name', 'slug', 'is_active', 'trial_ends_at',
+        fields = ['id', 'name', 'slug', 'is_active', 'catalog_domain', 'trial_ends_at',
                   'active_listings_count', 'sku_count', 'ai_credits_used',
                   'created_at', 'updated_at']
         read_only_fields = ['id', 'active_listings_count', 'sku_count',

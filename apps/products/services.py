@@ -36,6 +36,10 @@ class QuotaExceeded(Exception):
     """Превышен лимит AI-генераций для тенанта."""
 
 
+class AutoPartsEnrichmentDisabled(Exception):
+    """Автозапчастное обогащение отключено для домена каталога tenant-а."""
+
+
 class ProductService:
     """Сервис управления товарами: создание/обновление из источников данных."""
 
@@ -127,6 +131,13 @@ class ProductEnrichmentService:
     """Сервис tenant-scoped сохранения данных обогащения товара."""
 
     @staticmethod
+    def ensure_auto_parts_enabled(tenant) -> None:
+        if not getattr(tenant, 'supports_auto_parts_enrichment', True):
+            raise AutoPartsEnrichmentDisabled(
+                'Автозапчастное обогащение доступно только для каталога автозапчастей.'
+            )
+
+    @staticmethod
     def _ensure_product_tenant(product: Product, tenant) -> None:
         if product.tenant_id != tenant.id:
             raise ValueError('Product tenant mismatch')
@@ -160,6 +171,7 @@ class ProductEnrichmentService:
         cls, tenant, product: Product | None, brand: str, article: str,
         normalized_article: str, source_id: str = DEFAULT_PART_SOURCE,
     ) -> ProductParseJob:
+        cls.ensure_auto_parts_enabled(tenant)
         if product is not None:
             cls._ensure_product_tenant(product, tenant)
         return ProductParseJob.objects.create(
@@ -407,6 +419,12 @@ class ProductBulkActionService:
     ) -> ProductBulkActionJob:
         if action not in ProductBulkActionService.ALLOWED_ACTIONS:
             raise ValueError('Unknown bulk action')
+        if action in [
+            ProductBulkActionJob.Action.ENRICH_SELECTED,
+            ProductBulkActionJob.Action.ENRICH_MISSING_DATA,
+            ProductBulkActionJob.Action.ENRICH_THEN_GENERATE,
+        ]:
+            ProductEnrichmentService.ensure_auto_parts_enabled(tenant)
         source_config = get_part_source_config(source_id)
         valid_ids = list(
             Product.objects.filter(tenant=tenant, pk__in=product_ids)

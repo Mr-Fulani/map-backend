@@ -187,6 +187,35 @@ global index нашел применяемость -> создать/обнов�
 считать global fitment заменой tenant-scoped VehicleFitment
 ```
 
+### 5.2 Catalog domain guardrail
+
+Автозапчастное обогащение разрешено только для tenant-ов с:
+
+```text
+Tenant.catalog_domain == auto_parts
+```
+
+Для tenant-ов с `generic`, `jewellery`, `apparel` или `other` запрещено:
+
+```text
+создавать ProductParseJob для parser/OEM/fitment enrichment
+запускать массовое автозапчастное enrichment-действие
+автоматически дергать parser перед AI-генерацией описания
+применять PartCategory/VehicleFitment/OEM правила к неавтомобильному каталогу
+```
+
+Разрешено для всех catalog domain:
+
+```text
+обычная AI-генерация описаний по данным Product
+поиск и загрузка изображений через существующий pipeline
+импорт, редактирование и публикация товаров
+```
+
+Если нужен новый неавтомобильный домен, нельзя переиспользовать auto-parts parser.
+Нужно добавить отдельную domain-specific enrichment-логику и явно подключить ее к
+tenant capability.
+
 ---
 
 ## 6. Сетевые вызовы

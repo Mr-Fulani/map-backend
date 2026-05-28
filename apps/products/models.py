@@ -291,6 +291,34 @@ class GlobalPart(TimestampedModel):
         return f'{self.brand} {self.article}'.strip()
 
 
+class PartCategory(TimestampedModel):
+    """Легкая platform taxonomy категорий автозапчастей."""
+
+    name = models.CharField(max_length=150, verbose_name='Категория')
+    normalized_name = models.CharField(
+        max_length=150, unique=True, db_index=True, verbose_name='Нормализованная категория',
+    )
+    parent = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='children', verbose_name='Родительская категория',
+    )
+    aliases = ArrayField(
+        models.CharField(max_length=150), default=list, blank=True,
+        verbose_name='Алиасы',
+    )
+    fitment_required = models.BooleanField(
+        default=True, verbose_name='Применяемость обязательна',
+    )
+
+    class Meta:
+        verbose_name = 'Категория автозапчастей'
+        verbose_name_plural = 'Категории автозапчастей'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class GlobalPartRelation(TimestampedModel):
     """Platform-level связь между артикулами: OEM, аналог, заменитель, trade number."""
 

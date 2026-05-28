@@ -17,6 +17,7 @@ interface Tenant {
   id: number;
   slug: string;
   name: string;
+  catalog_domain?: string;
 }
 
 interface Subscription {
