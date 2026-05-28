@@ -224,6 +224,32 @@ def test_reviewable_global_fitments_are_not_applied_to_tenant_product():
 
 
 @pytest.mark.django_db
+def test_low_confidence_global_fitments_are_not_applied_to_tenant_product():
+    tenant = make_tenant('kg-fitment-low-confidence')
+    product = make_product(tenant)
+    part = ProductKnowledgeGraphService.upsert_part(
+        brand='BREMBO',
+        article='P50136',
+        source_id='tachka',
+    )
+    ProductKnowledgeGraphService.upsert_fitment(
+        part=part,
+        fitment=ParsedFitment(
+            make='MERCEDES-BENZ',
+            model='E-CLASS',
+            generation='W213',
+            confidence=0.7,
+        ),
+        source_id='tachka',
+    )
+
+    created = ProductKnowledgeGraphService.apply_known_fitments_to_product(product)
+
+    assert created == 0
+    assert product.fitments.count() == 0
+
+
+@pytest.mark.django_db
 def test_unknown_global_relation_is_marked_for_review():
     tenant = make_tenant('kg-review')
     product = make_product(tenant)
@@ -271,6 +297,34 @@ def test_reviewable_global_relations_are_not_applied_to_tenant_product():
         GlobalPartRelation.RelationType.UNKNOWN,
         source_id='tachka',
         needs_review=True,
+    )
+
+    created = ProductKnowledgeGraphService.apply_known_relations_to_product(product)
+
+    assert created == 0
+    assert product.cross_codes.count() == 0
+
+
+@pytest.mark.django_db
+def test_low_confidence_global_relations_are_not_applied_to_tenant_product():
+    tenant = make_tenant('kg-relation-low-confidence')
+    product = make_product(tenant)
+    source = ProductKnowledgeGraphService.upsert_part(
+        brand='BREMBO',
+        article='P50136',
+        source_id='tachka',
+    )
+    target = ProductKnowledgeGraphService.upsert_part(
+        brand='MERCEDES-BENZ',
+        article='A0004206000',
+        source_id='tachka',
+    )
+    ProductKnowledgeGraphService.upsert_relation(
+        source,
+        target,
+        GlobalPartRelation.RelationType.OEM,
+        source_id='tachka',
+        confidence=0.7,
     )
 
     created = ProductKnowledgeGraphService.apply_known_relations_to_product(product)

@@ -10,9 +10,10 @@ from apps.products.models import (
     Product, ProductAttribute, ProductCrossCode, ProductEnrichmentFact,
     ProductBulkActionJob, ProductParseJob, VehicleFitment,
 )
-from apps.products.part_parsers import (
-    DEFAULT_PART_SOURCE, ParsedPart, PartNotFound, get_part_parser,
-    get_part_source_config,
+from apps.products.part_parsers import ParsedPart, PartNotFound, get_part_parser
+from apps.products.source_policy import (
+    DEFAULT_PART_SOURCE, get_part_source_config, should_auto_apply_fitment,
+    should_auto_apply_relation,
 )
 
 
@@ -732,7 +733,7 @@ class ProductKnowledgeGraphService:
 
         created = 0
         for relation in source_part.outgoing_relations.select_related('target_part'):
-            if relation.needs_review or relation.relation_type == GlobalPartRelation.RelationType.UNKNOWN:
+            if not should_auto_apply_relation(relation):
                 continue
             code_type = cls._relation_to_cross_code_type(relation.relation_type)
             _, was_created = ProductCrossCode.objects.get_or_create(
@@ -762,10 +763,10 @@ class ProductKnowledgeGraphService:
             return 0
 
         created = 0
-        fitments = source_part.fitments.filter(needs_review=False).order_by(
-            'make', 'model', 'generation',
-        )
+        fitments = source_part.fitments.order_by('make', 'model', 'generation')
         for fitment in fitments:
+            if not should_auto_apply_fitment(fitment):
+                continue
             _, was_created = VehicleFitment.objects.get_or_create(
                 tenant=product.tenant,
                 product=product,

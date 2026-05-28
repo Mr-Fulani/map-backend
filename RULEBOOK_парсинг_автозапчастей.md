@@ -230,6 +230,46 @@ AI пишет применяемость, которой нет в enrichment/ra
 - использовать понятный User-Agent;
 - не делать агрессивный scraping.
 
+### 6.1 Source policy
+
+Все настройки источника должны жить в едином policy-слое, а не размазываться по
+parser/service/view.
+
+Правильно:
+
+```text
+apps.products.source_policy.get_part_source_policy(source_id)
+```
+
+Policy должен описывать:
+
+```text
+priority
+trust_score
+batch_size
+pause limits
+capabilities
+transport
+auto_apply_min_confidence
+```
+
+Автоматически применять к tenant-товару можно только данные, которые прошли policy:
+
+```text
+needs_review = false
+confidence >= auto_apply_min_confidence
+relation_type != Unknown
+```
+
+Запрещено:
+
+```text
+добавлять новый источник без policy
+вшивать source priority прямо в parser
+подключать browser/anti-bot runtime как обязательную зависимость core parser
+считать аналог доказательством применяемости
+```
+
 Для массовых действий:
 
 ```text

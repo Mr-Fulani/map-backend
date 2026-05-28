@@ -11,17 +11,6 @@ from apps.products.enrichment import normalize_part_code
 from apps.products.models import GlobalPartRelation, ProductCrossCode
 
 
-DEFAULT_PART_SOURCE = 'tachka'
-PART_SOURCE_CONFIGS = {
-    'tachka': {
-        'label': 'Tachka.ru',
-        'default_pause_seconds': 60,
-        'min_pause_seconds': 10,
-        'batch_size': 20,
-        'priority': 100,
-    },
-}
-
 POWER_RE = re.compile(r'(?P<power>\d{2,4})\s*(?:л\.?\s*с|hp)', re.IGNORECASE)
 DATE_RE = re.compile(
     r'(?P<date_from>\d{2}\.\d{4}|\d{4})\s*[-–]\s*(?P<date_to>\d{2}\.\d{4}|\d{4}|н\.в\.|н/в)?',
@@ -581,9 +570,3 @@ def get_part_parser(source_id: str):
     if source_id == TachkaPartParser.source_id:
         return TachkaPartParser()
     raise ValueError(f'Unknown part parser source: {source_id}')
-
-
-def get_part_source_config(source_id: str) -> dict:
-    if source_id not in PART_SOURCE_CONFIGS:
-        raise ValueError(f'Unknown part parser source: {source_id}')
-    return PART_SOURCE_CONFIGS[source_id]

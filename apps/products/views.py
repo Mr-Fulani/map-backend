@@ -16,7 +16,7 @@ from apps.products.serializers import (
 )
 from apps.products.services import ProductBulkActionService, ProductEnrichmentService
 from apps.products.tasks import import_from_datasource
-from apps.products.part_parsers import DEFAULT_PART_SOURCE, get_part_source_config
+from apps.products.source_policy import DEFAULT_PART_SOURCE, get_part_source_config
 
 
 @extend_schema(tags=['Products'])
