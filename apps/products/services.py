@@ -6,7 +6,7 @@ from django.utils.timezone import now
 
 from apps.products.enrichment import make_value_hash, normalize_part_code
 from apps.products.models import (
-    GlobalPart, GlobalPartRelation,
+    GlobalPart, GlobalPartFitment, GlobalPartRelation,
     Product, ProductAttribute, ProductCrossCode, ProductEnrichmentFact,
     ProductBulkActionJob, ProductParseJob, VehicleFitment,
 )
@@ -295,6 +295,29 @@ class ProductEnrichmentService:
 
         try:
             product = job.product or cls._find_single_product_for_job(job)
+            applied_knowledge = ProductKnowledgeGraphService.apply_known_knowledge_to_product(product)
+            if applied_knowledge['relations_count'] or applied_knowledge['fitments_count']:
+                job.product = product
+                job.source_url = ''
+                job.parsed_data = {
+                    'applied_from': 'knowledge_graph',
+                    **applied_knowledge,
+                }
+                status = (
+                    ProductParseJob.Status.SUCCESS
+                    if applied_knowledge['fitments_count']
+                    else ProductParseJob.Status.NEED_REVIEW
+                )
+                cls._finish_job(job, status)
+                return {
+                    'job_id': job_id,
+                    'product_id': product.pk,
+                    'status': status,
+                    'source_id': job.source_id,
+                    'image_urls': [],
+                    **applied_knowledge,
+                }
+
             parser = get_part_parser(job.source_id)
             try:
                 html, source_url = parser.fetch(job.brand, job.article)
@@ -590,6 +613,48 @@ class ProductKnowledgeGraphService:
         return relation
 
     @classmethod
+    def upsert_fitment(
+        cls, part: GlobalPart, fitment, source_id: str = '',
+        source_url: str = '',
+    ) -> GlobalPartFitment:
+        global_fitment, created = GlobalPartFitment.objects.get_or_create(
+            part=part,
+            source_id=source_id[:50],
+            make=fitment.make[:100],
+            model=fitment.model[:150],
+            generation=fitment.generation[:100],
+            modification=fitment.modification[:255],
+            engine_code=fitment.engine_code[:100],
+            power_hp=fitment.power_hp,
+            defaults={
+                'date_from': fitment.date_from[:20],
+                'date_to': fitment.date_to[:20],
+                'source_url': source_url,
+                'raw_text': fitment.raw_text,
+                'confidence': fitment.confidence,
+                'needs_review': fitment.needs_review,
+                'last_seen_at': now(),
+            },
+        )
+        if not created:
+            global_fitment.last_seen_at = now()
+            global_fitment.confidence = max(global_fitment.confidence, fitment.confidence)
+            global_fitment.needs_review = global_fitment.needs_review or fitment.needs_review
+            if fitment.date_from and not global_fitment.date_from:
+                global_fitment.date_from = fitment.date_from[:20]
+            if fitment.date_to and not global_fitment.date_to:
+                global_fitment.date_to = fitment.date_to[:20]
+            if source_url and not global_fitment.source_url:
+                global_fitment.source_url = source_url
+            if fitment.raw_text and not global_fitment.raw_text:
+                global_fitment.raw_text = fitment.raw_text
+            global_fitment.save(update_fields=[
+                'last_seen_at', 'confidence', 'needs_review', 'date_from',
+                'date_to', 'source_url', 'raw_text', 'updated_at',
+            ])
+        return global_fitment
+
+    @classmethod
     def learn_from_parsed_part(
         cls, product: Product, parsed: ParsedPart, source_id: str = DEFAULT_PART_SOURCE,
     ) -> None:
@@ -646,6 +711,15 @@ class ProductKnowledgeGraphService:
                 confidence=related.confidence,
                 needs_review=related.needs_review,
             )
+        for fitment in parsed.fitments:
+            if not fitment.model:
+                continue
+            cls.upsert_fitment(
+                part=source_part,
+                fitment=fitment,
+                source_id=source_id,
+                source_url=parsed.source_url,
+            )
 
     @classmethod
     def apply_known_relations_to_product(cls, product: Product) -> int:
@@ -677,6 +751,55 @@ class ProductKnowledgeGraphService:
             ProductEnrichmentService.refresh_product_denormalized_enrichment(product)
             product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability'])
         return created
+
+    @classmethod
+    def apply_known_fitments_to_product(cls, product: Product) -> int:
+        source_part = GlobalPart.objects.filter(
+            normalized_brand=cls.normalize_brand(product.brand),
+            normalized_article=normalize_part_code(product.article),
+        ).first()
+        if source_part is None:
+            return 0
+
+        created = 0
+        fitments = source_part.fitments.filter(needs_review=False).order_by(
+            'make', 'model', 'generation',
+        )
+        for fitment in fitments:
+            _, was_created = VehicleFitment.objects.get_or_create(
+                tenant=product.tenant,
+                product=product,
+                source_id=fitment.source_id or 'knowledge_graph',
+                make=fitment.make[:100],
+                model=fitment.model[:150],
+                generation=fitment.generation[:100],
+                modification=fitment.modification[:255],
+                engine_code=fitment.engine_code[:100],
+                power_hp=fitment.power_hp,
+                defaults={
+                    'date_from': fitment.date_from[:20],
+                    'date_to': fitment.date_to[:20],
+                    'raw_text': fitment.raw_text,
+                    'confidence': fitment.confidence,
+                    'needs_review': False,
+                },
+            )
+            if was_created:
+                created += 1
+
+        if created:
+            ProductEnrichmentService.refresh_product_denormalized_enrichment(product)
+            product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability'])
+        return created
+
+    @classmethod
+    def apply_known_knowledge_to_product(cls, product: Product) -> dict:
+        relations_count = cls.apply_known_relations_to_product(product)
+        fitments_count = cls.apply_known_fitments_to_product(product)
+        return {
+            'relations_count': relations_count,
+            'fitments_count': fitments_count,
+        }
 
     @classmethod
     def _relation_to_cross_code_type(cls, relation_type: str) -> str:

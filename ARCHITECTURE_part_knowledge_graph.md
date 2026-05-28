@@ -54,9 +54,12 @@ Enrichment-парсер обогащает каталог tenant-а характ
 - `Trade` — торговый номер;
 - `Unknown` — связь найдена, но тип неясен и нужна проверка.
 
+`GlobalPartFitment` — доказанная применяемость глобального артикула к автомобилю,
+полученная из источника, который явно отдал fitment-данные.
+
 Важно: аналог или cross-код не равен доказанной применяемости. Это полезная связь
 для поиска и обогащения, но конкретные марки/модели авто должны приходить из
-`VehicleFitment` или будущего vehicle knowledge base.
+`VehicleFitment` или `GlobalPartFitment`.
 
 ## Как работает поток данных
 
@@ -68,7 +71,7 @@ Tenant Product
   -> ProductEnrichmentService.save_parsed_part()
   -> tenant-scoped enrichment tables
   -> ProductKnowledgeGraphService.learn_from_parsed_part()
-  -> GlobalPart / GlobalPartRelation
+  -> GlobalPart / GlobalPartRelation / GlobalPartFitment
 ```
 
 Tenant-scoped таблицы остаются источником данных для карточки конкретного товара:
@@ -88,11 +91,17 @@ ProductKnowledgeGraphService.apply_known_relations_to_product(product)
   -> берет outgoing GlobalPartRelation
   -> создает ProductCrossCode для конкретного tenant/product
   -> обновляет Product.oem_numbers / Product.cross_numbers
+
+ProductKnowledgeGraphService.apply_known_fitments_to_product(product)
+  -> находит GlobalPart по brand/article
+  -> берет trusted GlobalPartFitment
+  -> создает VehicleFitment для конкретного tenant/product
+  -> обновляет Product.applicability
 ```
 
-Так tenant B может получить уже известные OEM/Cross-связи, которые tenant A
-получил через успешный парсинг, но данные всё равно копируются в tenant-scoped
-таблицы конкретного товара.
+Так tenant B может получить уже известные OEM/Cross-связи и применяемость,
+которые tenant A получил через успешный парсинг, но данные всё равно копируются
+в tenant-scoped таблицы конкретного товара.
 
 ## Правила безопасности данных
 
@@ -115,6 +124,8 @@ ProductKnowledgeGraphService.apply_known_relations_to_product(product)
 
 - Платформа начинает накапливать знания по артикулам между tenant-ами.
 - Повторный tenant с тем же `brand + article` может получить уже известные OEM/Cross.
+- Повторный tenant с тем же `brand + article` может получить уже известную
+  применяемость без внешнего fetch.
 - Оператор может видеть глобальные связи в Django admin.
 - Сомнительные связи не маскируются под достоверные.
 
@@ -152,10 +163,10 @@ enrichment job и сохраняет только найденные струк�
 - глобальный граф использует нормализованные ключи и индексы;
 - `Unknown`/`needs_review` связи не применяются автоматически к tenant-товару;
 - аналоги не создают `VehicleFitment`, пока нет явных данных применяемости.
+- trusted `GlobalPartFitment` применяется до внешнего fetch, снижая нагрузку на источники.
 
 ## Что не решено в этой итерации
 
-- Глобальная применяемость `part -> vehicle`.
 - Нормализованный справочник `VehicleMake/VehicleModel/VehicleGeneration`.
 - Приоритеты нескольких источников.
 - Правила конфликтов между источниками.
@@ -163,15 +174,14 @@ enrichment job и сохраняет только найденные струк�
 
 ## Следующий логичный шаг
 
-Добавить глобальную применяемость поверх уже найденных связей:
+Добавить нормализованный vehicle справочник и source priority:
 
 ```text
-GlobalPart / GlobalPartRelation
-  -> source fitment data
-  -> GlobalPartFitment / Vehicle KB
-  -> tenant VehicleFitment on trusted match
+raw fitment strings
+  -> VehicleMake / VehicleModel / VehicleGeneration
+  -> source priority/conflict rules
+  -> safer GlobalPartFitment approval
 ```
 
-Это позволит не только знать, что `485108Z460` связан с аналогами, но и безопасно
-показывать конкретные марки/модели авто, когда источник действительно дал
-применяемость.
+Это позволит не только хранить строки применяемости, но и устойчиво фильтровать,
+нормализовать и разрешать конфликты между несколькими источниками.

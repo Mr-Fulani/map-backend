@@ -42,6 +42,8 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - `[x]` сервис применения уже известных глобальных связей к tenant-scoped `ProductCrossCode`.
 - `[x]` fallback на поисковую выдачу источника при `not_found` прямой карточки.
 - `[x]` `ParsedRelatedPart` для аналогов/OEM-связей, которые могут отсутствовать на странице товара.
+- `[x]` `GlobalPartFitment` для platform-level применяемости артикула.
+- `[x]` применение известных OEM/Cross и fitment данных до внешнего fetch.
 
 Частично реализовано:
 
@@ -50,12 +52,11 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - `[~]` качество данных: есть `need_review`, `confidence`, guardrails агента, но нет полноценного операционного workflow проверки.
 - `[~]` массовые действия: batch/cooldown есть, но pause/resume/cancel еще нужно довести в API/UI.
 - `[~]` глобальный граф артикулов: модель, обучение и search fallback есть; дальше нужны source priority и правила конфликтов между источниками.
+- `[~]` глобальная применяемость: `GlobalPartFitment` есть, но еще нет нормализованного `VehicleMake/Model/Generation`.
 
 Не реализовано:
 
 - `[ ]` platform-level справочник `VehicleMake/VehicleModel/VehicleGeneration/VehicleModification`.
-- `[ ]` глобальный индекс `brand/article/OEM -> применяемость`, переиспользуемый между tenant-ами.
-- `[ ]` мгновенное применение уже известной применяемости без повторного парсинга.
 - `[ ]` source priority и merge strategy между несколькими источниками.
 - `[ ]` мониторинг/алерты качества источников.
 

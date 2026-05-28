@@ -2,7 +2,7 @@ from django.contrib import admin
 from unfold.admin import ModelAdmin, TabularInline
 
 from apps.products.models import (
-    GlobalPart, GlobalPartRelation, Product, ProductAttribute,
+    GlobalPart, GlobalPartFitment, GlobalPartRelation, Product, ProductAttribute,
     ProductCrossCode, ProductEnrichmentFact, ProductImage, ProductParseJob,
     VehicleFitment,
 )
@@ -60,6 +60,17 @@ class GlobalPartRelationInline(TabularInline):
     fields = [
         'target_part', 'relation_type', 'source_id',
         'confidence', 'needs_review', 'last_seen_at',
+    ]
+    readonly_fields = fields
+    can_delete = False
+
+
+class GlobalPartFitmentInline(TabularInline):
+    model = GlobalPartFitment
+    extra = 0
+    fields = [
+        'source_id', 'make', 'model', 'generation', 'modification',
+        'engine_code', 'power_hp', 'confidence', 'needs_review',
     ]
     readonly_fields = fields
     can_delete = False
@@ -182,7 +193,7 @@ class GlobalPartAdmin(ModelAdmin):
         'title', 'source_id', 'source_url', 'confidence', 'needs_review',
         'last_seen_at', 'created_at', 'updated_at',
     ]
-    inlines = [GlobalPartRelationInline]
+    inlines = [GlobalPartRelationInline, GlobalPartFitmentInline]
 
     def has_add_permission(self, request):
         return False
@@ -202,6 +213,28 @@ class GlobalPartRelationAdmin(ModelAdmin):
     ]
     readonly_fields = [
         'source_part', 'target_part', 'relation_type', 'source_id',
+        'source_url', 'raw_text', 'confidence', 'needs_review',
+        'last_seen_at', 'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(GlobalPartFitment)
+class GlobalPartFitmentAdmin(ModelAdmin):
+    list_display = [
+        'part', 'make', 'model', 'generation',
+        'source_id', 'confidence', 'needs_review', 'last_seen_at',
+    ]
+    list_filter = ['source_id', 'needs_review', 'make', 'created_at']
+    search_fields = [
+        'part__brand', 'part__article', 'make', 'model',
+        'generation', 'modification', 'engine_code', 'raw_text',
+    ]
+    readonly_fields = [
+        'part', 'make', 'model', 'generation', 'date_from', 'date_to',
+        'modification', 'engine_code', 'power_hp', 'source_id',
         'source_url', 'raw_text', 'confidence', 'needs_review',
         'last_seen_at', 'created_at', 'updated_at',
     ]
