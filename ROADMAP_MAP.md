@@ -923,3 +923,49 @@ AI-агент помечает объявление статусом `requires_r
 | 19 | Мультиплатформенный листинг (один товар → несколько маркетплейсов) | 8 |
 | 20 | Расширенная аналитика, A/B тест заголовков | 7 |
 | **∑** | | **35 дней** |
+
+---
+
+## ADDENDUM — Enrichment, домены и категории каталога
+
+Этот блок уточняет roadmap после внедрения обогащения автозапчастей.
+
+### Реализовано
+
+- Enrichment MVP для автозапчастей без изменения цены/остатков/склада.
+- Celery pipeline: parse, parse-then-generate, throttled bulk action.
+- Platform knowledge graph для OEM/Cross/аналогов/применяемости.
+- Source quality policy.
+- `catalog_domain` на tenant-е: `auto_parts`, `mixed`, `generic`, `jewellery`, `apparel`, `other`.
+- `ProductCatalogClassification` для domain-классификации товара.
+- Bulk action `classify_catalog_domain`.
+- Базовый `PartCategory` как platform taxonomy автозапчастей.
+
+### Текущий P0
+
+Стабилизировать категорийную модель перед добавлением новых enrichment sources.
+
+Нужно:
+
+- [ ] Добавить `TenantCatalogCategory`.
+- [ ] Дать tenant-у CRUD категорий в dashboard.
+- [ ] Добавить mapping `Product.category_1c -> TenantCatalogCategory`.
+- [ ] Связать tenant category с platform domain как сигнал классификации.
+- [ ] Добавить merge-policy: `source=manual` не перетирается rules-based bulk action без force.
+- [ ] Добавить фильтры/массовые действия по tenant category.
+
+### Архитектурное правило
+
+- Platform domains управляются платформой/суперюзером.
+- Tenant categories управляются tenant-ом.
+- `ProductCatalogClassification` решает guardrail для parser-а.
+- `PartCategory` не заменяет tenant categories.
+- `Product.category_1c` не перетирается enrichment-ом.
+
+### Следующий P1
+
+После tenant categories:
+
+- [ ] Добавить второй enrichment source.
+- [ ] Настроить source priority/trust/conflict policy.
+- [ ] Добавить operator review workflow для конфликтов применяемости и классификации.

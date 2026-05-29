@@ -65,6 +65,16 @@ Enrichment-парсер обогащает каталог tenant-а характ
 нужен для будущих правил применяемости, фильтрации и AI-контекста, но не заменяет
 tenant-поле `Product.category_1c`.
 
+Важно разделять уровни:
+
+- `CatalogDomain` / `ProductCatalogClassification.domain` — platform guardrail.
+- `PartCategory` — platform taxonomy автозапчастей.
+- `TenantCatalogCategory` — будущие редактируемые категории конкретного tenant-а.
+- `Product.category_1c` — сырое поле из источника tenant-а, например 1С.
+
+Эти сущности нельзя сливать в одну таблицу: у них разные владельцы, жизненный цикл
+и последствия ошибок.
+
 Важно: аналог или cross-код не равен доказанной применяемости. Это полезная связь
 для поиска и обогащения, но конкретные марки/модели авто должны приходить из
 `VehicleFitment` или `GlobalPartFitment`.
@@ -259,19 +269,65 @@ Tenant.catalog_domain = mixed
 `ProductParseJob`, поэтому подходит для безопасной обработки уже импортированного
 каталога перед запуском enrichment.
 
+## Категории tenant-а и platform domains
+
+Практичная модель для следующего этапа:
+
+```text
+TenantCatalogCategory
+  -> tenant
+  -> parent
+  -> name
+  -> domain
+  -> aliases
+  -> external_source/external_id
+```
+
+Tenant может редактировать свои категории, но не platform domains. Domain остается
+контролируемым слоем платформы, потому что от него зависит запуск parser-ов и
+domain-specific enrichment.
+
+Правильный поток:
+
+```text
+Product.category_1c
+  -> mapping to TenantCatalogCategory
+  -> category domain as classification signal
+  -> ProductCatalogClassification
+  -> enrichment guardrail
+```
+
+Неправильный поток:
+
+```text
+Product.category_1c напрямую запускает auto-parts parser
+tenant создает произвольный domain
+TenantCatalogCategory заменяет PartCategory
+PartCategory перетирает категорию tenant-а
+```
+
+Конфликты нужно решать через confidence/reason/needs_review. Если tenant category
+говорит `auto_parts`, а название товара похоже на украшение, классификация должна
+уйти в `needs_review`, а parser не должен запускаться автоматически.
+
 ## Что не решено в этой итерации
 
 - Нормализованный справочник `VehicleGeneration/VehicleModification`.
+- Tenant-scoped категории каталога и маппинг `category_1c`.
+- Merge-policy для ручной классификации vs rules-based классификации.
 - Приоритеты нескольких источников.
 - Правила конфликтов между источниками.
 - UI для просмотра глобального графа в tenant dashboard.
 
 ## Следующий логичный шаг
 
-Добавить source priority и conflict resolution:
+Сначала добавить tenant-scoped категории и merge-policy классификации, затем
+source priority и conflict resolution:
 
 ```text
-raw fitment strings
+Product.category_1c -> TenantCatalogCategory -> ProductCatalogClassification
+manual classification policy
+source fitment strings
   -> source priority/conflict rules
   -> safer GlobalPartFitment approval
 ```

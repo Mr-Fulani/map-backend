@@ -240,6 +240,73 @@ classify_catalog_domain
 создавать parse jobs. Оно только обновляет `ProductCatalogClassification` для
 выбранных товаров batch-ами.
 
+### 5.3 Домены и категории
+
+Домены и категории нельзя смешивать.
+
+Platform domain:
+
+```text
+CatalogDomain
+ProductCatalogClassification.domain
+```
+
+Отвечает за разрешение domain-specific возможностей:
+
+```text
+auto_parts parser
+OEM/fitment enrichment
+domain-specific AI rules
+```
+
+Категории tenant-а:
+
+```text
+TenantCatalogCategory
+Product.category_1c
+CategoryMapping
+```
+
+Отвечают за структуру каталога, фильтры, маппинг из 1С и будущую публикацию.
+
+Правила:
+
+- Tenant может редактировать свои категории.
+- Tenant не может создавать или менять platform domains.
+- Суперюзер может управлять platform domains/rules/capabilities.
+- Категория может быть сигналом для классификации, но не финальным разрешением parser-а.
+- `Product.category_1c` нельзя перетирать enrichment-ом.
+- `PartCategory` нельзя использовать как tenant category.
+- `TenantCatalogCategory` нельзя использовать как замену `PartCategory`.
+
+Если появляется конфликт:
+
+```text
+category domain = auto_parts
+name/brand/description выглядят как jewellery
+```
+
+Правильно:
+
+```text
+ProductCatalogClassification.domain = unknown или jewellery
+needs_review = true при сомнении
+parser не запускать автоматически
+```
+
+Неправильно:
+
+```text
+запустить parser только потому, что tenant выбрал категорию с domain=auto_parts
+```
+
+Ручная классификация:
+
+```text
+source=manual нельзя перетирать rules-based bulk action без force-флага
+source=rules можно пересчитывать при изменении товара или категории
+```
+
 ---
 
 ## 6. Сетевые вызовы
