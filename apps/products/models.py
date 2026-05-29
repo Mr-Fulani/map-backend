@@ -683,6 +683,7 @@ class ProductBulkActionJob(TimestampedModel):
             'enrich_then_generate_description',
             'Обогатить и сгенерировать описания',
         )
+        CLASSIFY_CATALOG_DOMAIN = 'classify_catalog_domain', 'Определить домен товаров'
         FIND_IMAGES = 'find_images', 'Найти изображения'
 
     class Status(models.TextChoices):

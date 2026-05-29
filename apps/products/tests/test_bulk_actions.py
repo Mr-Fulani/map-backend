@@ -131,3 +131,30 @@ def test_bulk_enrichment_skips_non_auto_parts_products_for_mixed_tenant():
     classification = auto_part.catalog_classification
     assert classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
     assert classification.reason
+
+
+@pytest.mark.django_db
+def test_bulk_classification_action_classifies_products(django_capture_on_commit_callbacks):
+    tenant = make_tenant('bulk-classify')
+    auto_part = make_product(tenant, 'P1', name='Колодки тормозные BREMBO P1')
+    jewellery = make_product(
+        tenant, 'RING1', brand='NO_BRAND', name='Золотое кольцо', category_1c='Украшения',
+    )
+    job = ProductBulkActionService.create_job(
+        tenant=tenant,
+        action=ProductBulkActionJob.Action.CLASSIFY_CATALOG_DOMAIN,
+        product_ids=[auto_part.pk, jewellery.pk],
+        batch_size=20,
+    )
+
+    with django_capture_on_commit_callbacks(execute=True):
+        result = ProductBulkActionService.process_next_batch(job.pk)
+
+    job.refresh_from_db()
+    auto_part.refresh_from_db()
+    jewellery.refresh_from_db()
+    assert result['status'] == ProductBulkActionJob.Status.SUCCESS
+    assert job.success_count == 2
+    assert job.queued_count == 2
+    assert auto_part.catalog_classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
+    assert jewellery.catalog_classification.domain == ProductCatalogClassification.Domain.JEWELLERY

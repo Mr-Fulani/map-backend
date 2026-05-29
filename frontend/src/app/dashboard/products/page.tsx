@@ -140,6 +140,9 @@ function bulkStatusText(job: BulkActionJob) {
   if (job.status === 'cooling_down' && job.next_batch_at) {
     return `Пауза до следующего batch: ${new Date(job.next_batch_at).toLocaleTimeString('ru-RU')}`;
   }
+  if (job.action === 'classify_catalog_domain' && job.status === 'success') {
+    return 'Классификация товаров завершена';
+  }
   if (job.status === 'success') return 'Все задачи поставлены в очередь';
   if (job.status === 'failed') return 'Постановка задач завершилась с ошибкой';
   if (job.status === 'cancelled') return 'Массовое действие отменено';
@@ -152,6 +155,7 @@ export default function ProductsPage() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [search, setSearch] = useState('');
   const [exportFilter, setExportFilter] = useState<string>('');
+  const [catalogDomainFilter, setCatalogDomainFilter] = useState<string>('');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -172,6 +176,7 @@ export default function ProductsPage() {
       const params: Record<string, unknown> = { page };
       if (debouncedSearch) params.search = debouncedSearch;
       if (exportFilter) params.export_enabled = exportFilter;
+      if (catalogDomainFilter) params.catalog_domain = catalogDomainFilter;
 
       const res = await productApi.list(params);
       setProducts(res.data.data);
@@ -181,11 +186,11 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedSearch, exportFilter]);
+  }, [page, debouncedSearch, exportFilter, catalogDomainFilter]);
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, exportFilter]);
+  }, [debouncedSearch, exportFilter, catalogDomainFilter]);
 
   useEffect(() => {
     load();
@@ -193,7 +198,7 @@ export default function ProductsPage() {
 
   useEffect(() => {
     setSelectedIds([]);
-  }, [page, debouncedSearch, exportFilter]);
+  }, [page, debouncedSearch, exportFilter, catalogDomainFilter]);
 
   const selectedOnPage = products.filter((product) => selectedIds.includes(product.id));
   const allOnPageSelected = products.length > 0 && selectedOnPage.length === products.length;
@@ -316,6 +321,26 @@ export default function ProductsPage() {
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-2">
+        {[
+          { value: '', label: 'Все домены' },
+          { value: 'auto_parts', label: 'Авто' },
+          { value: 'jewellery', label: 'Украшения' },
+          { value: 'apparel', label: 'Одежда' },
+          { value: 'generic', label: 'Общий' },
+          { value: 'unknown', label: 'Не ясно' },
+        ].map((f) => (
+          <Button
+            key={f.value}
+            size="sm"
+            variant={catalogDomainFilter === f.value ? 'default' : 'outline'}
+            onClick={() => setCatalogDomainFilter(f.value)}
+          >
+            {f.label}
+          </Button>
+        ))}
+      </div>
+
       {selectedIds.length > 0 && (
         <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -330,29 +355,35 @@ export default function ProductsPage() {
             <Button size="sm" variant="outline" onClick={() => setSelectedIds([])}>
               Снять выбор
             </Button>
-            {supportsAutoPartsEnrichment ? (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button size="sm" disabled={bulkLoading}>
-                    <MoreHorizontal className="h-4 w-4" />
-                    Быстрые действия
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-72">
-                  <DropdownMenuLabel>Массовые действия</DropdownMenuLabel>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button size="sm" disabled={bulkLoading}>
+                  <MoreHorizontal className="h-4 w-4" />
+                  Быстрые действия
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-72">
+                <DropdownMenuLabel>Массовые действия</DropdownMenuLabel>
+                <DropdownMenuItem
+                  onClick={() => runBulkEnrichment('classify_catalog_domain')}
+                  disabled={bulkLoading}
+                >
+                  Определить домен товаров
+                </DropdownMenuItem>
+                {supportsAutoPartsEnrichment ? (
                   <DropdownMenuItem
                     onClick={() => runBulkEnrichment('enrich_then_generate_description')}
                     disabled={bulkLoading}
                   >
                     Обогатить и сгенерировать описание
                   </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            ) : (
-              <p className="max-w-sm text-xs text-muted-foreground">
-                Автозапчастное массовое обогащение отключено для этого домена каталога.
-              </p>
-            )}
+                ) : (
+                  <DropdownMenuItem disabled>
+                    Автозапчастное обогащение отключено
+                  </DropdownMenuItem>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
       )}

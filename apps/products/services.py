@@ -510,6 +510,7 @@ class ProductBulkActionService:
         ProductBulkActionJob.Action.ENRICH_MISSING_DATA,
         ProductBulkActionJob.Action.GENERATE_DESCRIPTIONS,
         ProductBulkActionJob.Action.ENRICH_THEN_GENERATE,
+        ProductBulkActionJob.Action.CLASSIFY_CATALOG_DOMAIN,
         ProductBulkActionJob.Action.FIND_IMAGES,
     }
 
@@ -618,11 +619,16 @@ class ProductBulkActionService:
                     )
                     transaction.on_commit(lambda pk=parse_job.pk, celery_task=task: celery_task.delay(pk))
                     queued += 1
+                elif job.action == ProductBulkActionJob.Action.CLASSIFY_CATALOG_DOMAIN:
+                    ProductEnrichmentService.classify_product_catalog_domain(product)
+                    queued += 1
                 else:
                     job.skipped_count += 1
 
             job.processed_count += len(batch_ids)
             job.queued_count += queued
+            if job.action == ProductBulkActionJob.Action.CLASSIFY_CATALOG_DOMAIN:
+                job.success_count += queued
             if job.processed_count >= job.total_count:
                 job.status = ProductBulkActionJob.Status.SUCCESS
                 job.finished_at = now()
@@ -639,7 +645,7 @@ class ProductBulkActionService:
                 )
             job.save(update_fields=[
                 'status', 'started_at', 'processed_count', 'queued_count',
-                'skipped_count', 'finished_at', 'next_batch_at', 'updated_at',
+                'success_count', 'skipped_count', 'finished_at', 'next_batch_at', 'updated_at',
             ])
             return {
                 'job_id': job_id,
