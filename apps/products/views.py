@@ -65,6 +65,10 @@ class ProductListView(APIView):
         if category:
             qs = qs.filter(category_1c=category)
 
+        catalog_domain = request.query_params.get('catalog_domain', '').strip()
+        if catalog_domain:
+            qs = qs.filter(catalog_classification__domain=catalog_domain)
+
         qs = qs.order_by('-sync_at', '-created_at')
 
         paginator = MapPagination()

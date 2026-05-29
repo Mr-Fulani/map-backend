@@ -273,6 +273,31 @@ def test_fitments_and_cross_codes_are_tenant_scoped():
 
 
 @pytest.mark.django_db
+def test_products_list_can_filter_by_catalog_classification():
+    tenant, api_key = make_tenant('catalog-filter')
+    auto_part = make_product(tenant, name='Колодки тормозные BREMBO P50136')
+    jewellery = make_product(
+        tenant,
+        article='RING1',
+        brand='NO_BRAND',
+        name='Золотое кольцо',
+        category_1c='Украшения',
+    )
+    ProductEnrichmentService.classify_product_catalog_domain(auto_part)
+    ProductEnrichmentService.classify_product_catalog_domain(jewellery)
+    client = Client()
+
+    response = client.get(
+        '/api/v1/products/?catalog_domain=auto_parts',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    ids = [item['id'] for item in response.json()['data']]
+    assert ids == [auto_part.pk]
+
+
+@pytest.mark.django_db
 def test_bulk_action_endpoint_creates_throttled_tenant_job(django_capture_on_commit_callbacks):
     tenant, api_key = make_tenant('bulk-api')
     other_tenant, _ = make_tenant('bulk-other')
