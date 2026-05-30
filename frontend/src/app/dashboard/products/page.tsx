@@ -14,6 +14,7 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -35,6 +36,12 @@ interface Product {
   name: string;
   brand: string | null;
   category_1c: string | null;
+  catalog_category: {
+    id: number;
+    name: string;
+    domain: string;
+    is_active: boolean;
+  } | null;
   price: string;
   stock_qty: number;
   export_enabled: boolean;
@@ -58,12 +65,20 @@ interface Product {
   } | null;
 }
 
+interface TenantCatalogCategory {
+  id: number;
+  name: string;
+  domain: string;
+  is_active: boolean;
+}
+
 interface Meta {
   total: number;
   page: number;
   page_size: number;
   next: string | null;
   prev: string | null;
+  domain_counts?: Record<string, number>;
 }
 
 interface BulkActionJob {
@@ -156,6 +171,11 @@ export default function ProductsPage() {
   const [search, setSearch] = useState('');
   const [exportFilter, setExportFilter] = useState<string>('');
   const [catalogDomainFilter, setCatalogDomainFilter] = useState<string>('');
+  const [catalogCategoryFilter, setCatalogCategoryFilter] = useState<string>('');
+  const [catalogCategories, setCatalogCategories] = useState<TenantCatalogCategory[]>([]);
+  const [categoryAssignValue, setCategoryAssignValue] = useState<string>('');
+  const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
+  const [categoryAssignError, setCategoryAssignError] = useState('');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
@@ -177,6 +197,7 @@ export default function ProductsPage() {
       if (debouncedSearch) params.search = debouncedSearch;
       if (exportFilter) params.export_enabled = exportFilter;
       if (catalogDomainFilter) params.catalog_domain = catalogDomainFilter;
+      if (catalogCategoryFilter) params.catalog_category = catalogCategoryFilter;
 
       const res = await productApi.list(params);
       setProducts(res.data.data);
@@ -186,19 +207,33 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedSearch, exportFilter, catalogDomainFilter]);
+  }, [page, debouncedSearch, exportFilter, catalogDomainFilter, catalogCategoryFilter]);
+
+  const loadCatalogCategories = useCallback(async () => {
+    try {
+      const res = await productApi.catalogCategories();
+      const categories = (res.data.data ?? []) as TenantCatalogCategory[];
+      setCatalogCategories(categories.filter((category) => category.is_active));
+    } catch {
+      setCatalogCategories([]);
+    }
+  }, []);
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, exportFilter, catalogDomainFilter]);
+  }, [debouncedSearch, exportFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   useEffect(() => {
     load();
   }, [load]);
 
   useEffect(() => {
+    loadCatalogCategories();
+  }, [loadCatalogCategories]);
+
+  useEffect(() => {
     setSelectedIds([]);
-  }, [page, debouncedSearch, exportFilter, catalogDomainFilter]);
+  }, [page, debouncedSearch, exportFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   const selectedOnPage = products.filter((product) => selectedIds.includes(product.id));
   const allOnPageSelected = products.length > 0 && selectedOnPage.length === products.length;
@@ -271,6 +306,29 @@ export default function ProductsPage() {
     }
   };
 
+  const assignCatalogCategory = async (categoryId: number | null) => {
+    if (selectedIds.length === 0) return;
+
+    setCategoryAssignLoading(true);
+    setCategoryAssignError('');
+    try {
+      await productApi.assignCatalogCategory({
+        product_ids: selectedIds,
+        catalog_category: categoryId,
+      });
+      setSelectedIds([]);
+      setCategoryAssignValue('');
+      await load();
+    } catch (error) {
+      const responseData = axios.isAxiosError(error)
+        ? (error.response?.data as { message?: string } | undefined)
+        : undefined;
+      setCategoryAssignError(responseData?.message || 'Не удалось назначить категорию выбранным товарам.');
+    } finally {
+      setCategoryAssignLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!bulkJob?.id || ['success', 'failed', 'cancelled'].includes(bulkJob.status)) {
       return;
@@ -337,8 +395,29 @@ export default function ProductsPage() {
             onClick={() => setCatalogDomainFilter(f.value)}
           >
             {f.label}
+            {meta?.domain_counts && (
+              <span className="ml-1 text-xs opacity-70">
+                {meta.domain_counts[f.value || 'all'] ?? 0}
+              </span>
+            )}
           </Button>
         ))}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground">Категория tenant-а</span>
+        <select
+          value={catalogCategoryFilter}
+          onChange={(event) => setCatalogCategoryFilter(event.target.value)}
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Все категории</option>
+          {catalogCategories.map((category) => (
+            <option key={category.id} value={category.id}>
+              {category.name}
+            </option>
+          ))}
+        </select>
       </div>
 
       {selectedIds.length > 0 && (
@@ -350,6 +429,9 @@ export default function ProductsPage() {
             <p className="text-xs text-muted-foreground">
               Массовые действия запускаются фоном: батч 20 товаров, пауза 60 секунд.
             </p>
+            {categoryAssignError && (
+              <p className="mt-1 text-xs text-destructive">{categoryAssignError}</p>
+            )}
           </div>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => setSelectedIds([])}>
@@ -364,6 +446,42 @@ export default function ProductsPage() {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-72">
                 <DropdownMenuLabel>Массовые действия</DropdownMenuLabel>
+                <div className="space-y-2 px-2 py-2">
+                  <p className="text-xs font-medium text-muted-foreground">
+                    Назначить категорию
+                  </p>
+                  <select
+                    value={categoryAssignValue}
+                    onChange={(event) => setCategoryAssignValue(event.target.value)}
+                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    disabled={categoryAssignLoading}
+                  >
+                    <option value="">Выбрать</option>
+                    {catalogCategories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Button
+                    size="sm"
+                    className="w-full"
+                    onClick={() => assignCatalogCategory(Number(categoryAssignValue))}
+                    disabled={categoryAssignLoading || !categoryAssignValue}
+                  >
+                    {categoryAssignLoading ? 'Назначаем...' : 'Применить к выбранным'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => assignCatalogCategory(null)}
+                    disabled={categoryAssignLoading}
+                  >
+                    Снять категорию
+                  </Button>
+                </div>
+                <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => runBulkEnrichment('classify_catalog_domain')}
                   disabled={bulkLoading}
@@ -521,7 +639,16 @@ export default function ProductsPage() {
                       {p.brand || '—'}
                     </td>
                     <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">
-                      <span className="line-clamp-1">{p.category_1c || '—'}</span>
+                      <div className="max-w-56 space-y-1">
+                        <span className="line-clamp-1 text-foreground">
+                          {p.catalog_category?.name || 'Без категории'}
+                        </span>
+                        {p.category_1c && (
+                          <span className="line-clamp-1 text-xs text-muted-foreground">
+                            Источник: {p.category_1c}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col items-center gap-1">

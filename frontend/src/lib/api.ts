@@ -225,6 +225,8 @@ export const productApi = {
   updateCatalogCategory: (id: number, data: Record<string, unknown>) =>
     api.put(`/products/catalog-categories/${id}/`, data),
   deleteCatalogCategory: (id: number) => api.delete(`/products/catalog-categories/${id}/`),
+  assignCatalogCategory: (data: { product_ids: number[]; catalog_category: number | null }) =>
+    api.post('/products/catalog-categories/assign/', data),
   catalogCategoryMappings: () => api.get('/products/catalog-category-mappings/'),
   createCatalogCategoryMapping: (data: Record<string, unknown>) =>
     api.post('/products/catalog-category-mappings/', data),
