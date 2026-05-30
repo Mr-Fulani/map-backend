@@ -1,4 +1,5 @@
 import logging
+import calendar
 from datetime import date, timedelta
 
 from django.db import transaction
@@ -11,6 +12,17 @@ logger = logging.getLogger(__name__)
 
 TRIAL_DAYS = 14
 GRACE_PERIOD_DAYS = 7
+
+
+def add_billing_month(start: date) -> date:
+    """Возвращает дату через месяц, сохраняя день или последний день месяца."""
+    month = start.month + 1
+    year = start.year
+    if month > 12:
+        month = 1
+        year += 1
+    last_day = calendar.monthrange(year, month)[1]
+    return start.replace(year=year, month=month, day=min(start.day, last_day))
 
 
 class LimitChecker:
@@ -236,8 +248,7 @@ class BillingService:
         if period == Subscription.PERIOD_YEARLY:
             end = today.replace(year=today.year + 1)
         else:
-            next_month = today.replace(day=1) + timedelta(days=32)
-            end = next_month.replace(day=today.day)
+            end = add_billing_month(today)
 
         sub = tenant.subscription
         sub.plan = plan
