@@ -5,7 +5,8 @@ from apps.products.views import (
     ProductCrossCodesView, ProductDetailView, ProductFitmentsView,
     ProductListView, ProductParseJobDetailView, ProductParseView,
     ProductPublishView, ProductRegenerateView, ProductSearchView,
-    ProductSyncView,
+    ProductSyncView, TenantCatalogCategoryDetailView, TenantCatalogCategoryListView,
+    TenantCategoryMappingListView, TenantSourceCategoryListView,
 )
 
 urlpatterns = [
@@ -15,6 +16,22 @@ urlpatterns = [
     path('parse-jobs/<int:pk>/', ProductParseJobDetailView.as_view(), name='product-parse-job-detail'),
     path('bulk-actions/', ProductBulkActionView.as_view(), name='product-bulk-action'),
     path('bulk-actions/<int:pk>/', ProductBulkActionDetailView.as_view(), name='product-bulk-action-detail'),
+    path('catalog-categories/', TenantCatalogCategoryListView.as_view(), name='tenant-catalog-category-list'),
+    path(
+        'catalog-categories/<int:pk>/',
+        TenantCatalogCategoryDetailView.as_view(),
+        name='tenant-catalog-category-detail',
+    ),
+    path(
+        'catalog-category-mappings/',
+        TenantCategoryMappingListView.as_view(),
+        name='tenant-category-mapping-list',
+    ),
+    path(
+        'catalog-source-categories/',
+        TenantSourceCategoryListView.as_view(),
+        name='tenant-source-category-list',
+    ),
     path('sync/<int:connection_id>/', ProductSyncView.as_view(), name='product-sync'),
     path('<int:pk>/', ProductDetailView.as_view(), name='product-detail'),
     path('<int:pk>/fitments/', ProductFitmentsView.as_view(), name='product-fitments'),

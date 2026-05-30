@@ -940,6 +940,8 @@ AI-агент помечает объявление статусом `requires_r
 - `ProductCatalogClassification` для domain-классификации товара.
 - Bulk action `classify_catalog_domain`.
 - Базовый `PartCategory` как platform taxonomy автозапчастей.
+- `TenantCatalogCategory` и `TenantCategoryMapping` MVP.
+- Вкладка `Настройки -> Категории` для создания категорий tenant-а и привязки `category_1c`.
 
 ### Текущий P0
 
@@ -947,12 +949,13 @@ AI-агент помечает объявление статусом `requires_r
 
 Нужно:
 
-- [ ] Добавить `TenantCatalogCategory`.
-- [ ] Дать tenant-у CRUD категорий в dashboard.
-- [ ] Добавить mapping `Product.category_1c -> TenantCatalogCategory`.
-- [ ] Связать tenant category с platform domain как сигнал классификации.
+- [x] Добавить `TenantCatalogCategory`.
+- [x] Дать tenant-у создание категорий в dashboard.
+- [x] Добавить mapping `Product.category_1c -> TenantCatalogCategory`.
+- [x] Связать tenant category с platform domain как сигнал классификации.
 - [ ] Добавить merge-policy: `source=manual` не перетирается rules-based bulk action без force.
 - [ ] Добавить фильтры/массовые действия по tenant category.
+- [ ] Доработать редактирование/deactivate категорий и mappings в dashboard.
 
 ### Архитектурное правило
 

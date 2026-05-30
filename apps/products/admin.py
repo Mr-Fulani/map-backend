@@ -4,7 +4,8 @@ from unfold.admin import ModelAdmin, TabularInline
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, Product, ProductAttribute,
     PartCategory, ProductCatalogClassification, ProductCrossCode, ProductEnrichmentFact,
-    ProductImage, ProductParseJob, VehicleFitment, VehicleMake, VehicleModel,
+    ProductImage, ProductParseJob, TenantCatalogCategory, TenantCategoryMapping,
+    VehicleFitment, VehicleMake, VehicleModel,
 )
 
 
@@ -85,6 +86,20 @@ class PartCategoryAdmin(ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(TenantCatalogCategory)
+class TenantCatalogCategoryAdmin(ModelAdmin):
+    list_display = ['name', 'tenant', 'domain', 'parent', 'is_active', 'updated_at']
+    list_filter = ['tenant', 'domain', 'is_active']
+    search_fields = ['name', 'aliases', 'external_id']
+
+
+@admin.register(TenantCategoryMapping)
+class TenantCategoryMappingAdmin(ModelAdmin):
+    list_display = ['source_category', 'category', 'tenant', 'updated_at']
+    list_filter = ['tenant', 'category__domain']
+    search_fields = ['source_category', 'category__name']
 
 
 class GlobalPartFitmentInline(TabularInline):

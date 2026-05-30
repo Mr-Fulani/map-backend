@@ -6,6 +6,91 @@ from apps.datasources.models import DataSourceConnection
 from apps.tenants.models import Tenant
 
 
+class TenantCatalogCategory(TimestampedModel):
+    """Редактируемая категория каталога конкретного tenant-а."""
+
+    class Domain(models.TextChoices):
+        AUTO_PARTS = 'auto_parts', 'Автозапчасти'
+        GENERIC = 'generic', 'Обычный товар'
+        JEWELLERY = 'jewellery', 'Украшения'
+        APPAREL = 'apparel', 'Одежда'
+        UNKNOWN = 'unknown', 'Не определено'
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='catalog_categories',
+        verbose_name='Тенант',
+    )
+    name = models.CharField(max_length=200, verbose_name='Название')
+    normalized_name = models.CharField(max_length=200, db_index=True, verbose_name='Нормализованное название')
+    parent = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='children', verbose_name='Родительская категория',
+    )
+    domain = models.CharField(
+        max_length=30, choices=Domain.choices, default=Domain.UNKNOWN,
+        verbose_name='Домен',
+    )
+    aliases = ArrayField(
+        models.CharField(max_length=150), default=list, blank=True,
+        verbose_name='Алиасы',
+    )
+    external_source = models.CharField(max_length=50, blank=True, verbose_name='Источник')
+    external_id = models.CharField(max_length=150, blank=True, verbose_name='Внешний ID')
+    is_active = models.BooleanField(default=True, verbose_name='Активна')
+
+    class Meta:
+        verbose_name = 'Категория каталога tenant-а'
+        verbose_name_plural = 'Категории каталога tenant-а'
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'normalized_name'],
+                condition=models.Q(parent__isnull=True),
+                name='unique_root_tenant_catalog_category_name',
+            ),
+            models.UniqueConstraint(
+                fields=['tenant', 'parent', 'normalized_name'],
+                condition=models.Q(parent__isnull=False),
+                name='unique_child_tenant_catalog_category_name',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        self.normalized_name = ''.join(char for char in self.name.lower() if char.isalnum())
+        super().save(*args, **kwargs)
+
+
+class TenantCategoryMapping(TimestampedModel):
+    """Маппинг сырой категории источника на категорию каталога tenant-а."""
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='catalog_category_mappings',
+        verbose_name='Тенант',
+    )
+    source_category = models.CharField(max_length=300, verbose_name='Категория источника')
+    category = models.ForeignKey(
+        TenantCatalogCategory, on_delete=models.CASCADE, related_name='source_mappings',
+        verbose_name='Категория tenant-а',
+    )
+
+    class Meta:
+        verbose_name = 'Маппинг категории каталога'
+        verbose_name_plural = 'Маппинги категорий каталога'
+        ordering = ['source_category']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'source_category'],
+                name='unique_tenant_catalog_category_mapping',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.source_category} -> {self.category}'
+
+
 class Product(TimestampedModel):
     """Товар из источника данных (1С, CSV и т.д.)."""
 
@@ -31,6 +116,10 @@ class Product(TimestampedModel):
     name = models.CharField(max_length=500, verbose_name='Наименование')
     brand = models.CharField(max_length=200, blank=True, verbose_name='Бренд')
     category_1c = models.CharField(max_length=300, blank=True, verbose_name='Категория из 1С')
+    catalog_category = models.ForeignKey(
+        TenantCatalogCategory, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='products', verbose_name='Категория каталога',
+    )
     condition = models.CharField(
         max_length=10, choices=CONDITION_CHOICES, default=CONDITION_NEW, verbose_name='Состояние',
     )

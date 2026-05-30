@@ -5,6 +5,7 @@ import pytest
 from apps.products.enrichment import make_value_hash, normalize_part_code
 from apps.products.models import (
     Product, ProductCatalogClassification, ProductCrossCode, ProductEnrichmentFact,
+    TenantCatalogCategory, TenantCategoryMapping,
 )
 from apps.products.services import ProductEnrichmentService
 from apps.tenants.services import TenantService
@@ -119,6 +120,32 @@ def test_catalog_classification_detects_jewellery():
 
     assert classification.domain == ProductCatalogClassification.Domain.JEWELLERY
     assert classification.needs_review is False
+
+
+@pytest.mark.django_db
+def test_catalog_classification_uses_tenant_category_mapping():
+    tenant = make_tenant('classify-category-map')
+    product = make_product(tenant, article='X1', brand='NO_BRAND')
+    product.name = 'Неочевидное название'
+    product.category_1c = 'Тормоза'
+    product.save(update_fields=['name', 'category_1c'])
+    category = TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Тормозные колодки',
+        domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+    )
+    TenantCategoryMapping.objects.create(
+        tenant=tenant,
+        source_category='Тормоза',
+        category=category,
+    )
+
+    classification = ProductEnrichmentService.classify_product_catalog_domain(product)
+
+    product.refresh_from_db()
+    assert product.catalog_category == category
+    assert classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
+    assert 'категории tenant-а' in classification.reason
 
 
 @pytest.mark.django_db

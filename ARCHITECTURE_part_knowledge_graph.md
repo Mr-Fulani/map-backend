@@ -287,6 +287,14 @@ Tenant может редактировать свои категории, но �
 контролируемым слоем платформы, потому что от него зависит запуск parser-ов и
 domain-specific enrichment.
 
+MVP tenant-категорий реализует:
+
+- `TenantCatalogCategory`;
+- `TenantCategoryMapping`;
+- nullable `Product.catalog_category`;
+- API и dashboard-вкладку `Настройки -> Категории`;
+- использование mapping как сигнала для `ProductCatalogClassification`.
+
 Правильный поток:
 
 ```text
@@ -313,8 +321,9 @@ PartCategory перетирает категорию tenant-а
 ## Что не решено в этой итерации
 
 - Нормализованный справочник `VehicleGeneration/VehicleModification`.
-- Tenant-scoped категории каталога и маппинг `category_1c`.
+- Массовое назначение tenant-категорий товарам.
 - Merge-policy для ручной классификации vs rules-based классификации.
+- Редактирование mappings в dashboard beyond MVP.
 - Приоритеты нескольких источников.
 - Правила конфликтов между источниками.
 - UI для просмотра глобального графа в tenant dashboard.

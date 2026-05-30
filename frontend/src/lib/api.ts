@@ -219,6 +219,16 @@ export const productApi = {
     pause_seconds?: number;
   }) => api.post('/products/bulk-actions/', data),
   bulkActionStatus: (id: number) => api.get(`/products/bulk-actions/${id}/`),
+  catalogCategories: () => api.get('/products/catalog-categories/'),
+  createCatalogCategory: (data: Record<string, unknown>) =>
+    api.post('/products/catalog-categories/', data),
+  updateCatalogCategory: (id: number, data: Record<string, unknown>) =>
+    api.put(`/products/catalog-categories/${id}/`, data),
+  deleteCatalogCategory: (id: number) => api.delete(`/products/catalog-categories/${id}/`),
+  catalogCategoryMappings: () => api.get('/products/catalog-category-mappings/'),
+  createCatalogCategoryMapping: (data: Record<string, unknown>) =>
+    api.post('/products/catalog-category-mappings/', data),
+  catalogSourceCategories: () => api.get('/products/catalog-source-categories/'),
 };
 
 // Marketplace Accounts
