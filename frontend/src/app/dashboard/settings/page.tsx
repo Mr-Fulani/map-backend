@@ -54,6 +54,15 @@ interface CatalogCategory {
   name: string;
   domain: string;
   aliases: string[];
+  default_image_url: string;
+  default_image_source_name: string;
+  is_active: boolean;
+}
+
+interface CatalogDomain {
+  slug: string;
+  name: string;
+  short_name: string;
   is_active: boolean;
 }
 
@@ -74,7 +83,7 @@ const SETTINGS_TABS = [
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
 
-const DOMAIN_LABELS: Record<string, string> = {
+const FALLBACK_DOMAIN_LABELS: Record<string, string> = {
   auto_parts: 'Автозапчасти',
   generic: 'Обычный товар',
   jewellery: 'Украшения',
@@ -89,6 +98,7 @@ export default function SettingsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [datasources, setDatasources] = useState<DataSource[]>([]);
   const [catalogCategories, setCatalogCategories] = useState<CatalogCategory[]>([]);
+  const [catalogDomains, setCatalogDomains] = useState<CatalogDomain[]>([]);
   const [sourceCategories, setSourceCategories] = useState<SourceCategory[]>([]);
   const [catalogMappings, setCatalogMappings] = useState<CatalogCategoryMapping[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
@@ -106,6 +116,7 @@ export default function SettingsPage() {
   const [editAccountName, setEditAccountName] = useState('');
   const [deletingDatasourceId, setDeletingDatasourceId] = useState<number | null>(null);
   const [creatingCatalogCategory, setCreatingCatalogCategory] = useState(false);
+  const [uploadingCategoryImageId, setUploadingCategoryImageId] = useState<number | null>(null);
   const [newCatalogCategoryName, setNewCatalogCategoryName] = useState('');
   const [newCatalogCategoryDomain, setNewCatalogCategoryDomain] = useState('unknown');
   const [savingMappingSource, setSavingMappingSource] = useState<string | null>(null);
@@ -162,6 +173,19 @@ export default function SettingsPage() {
   const [notifOnError, setNotifOnError] = useState(true);
   const [notifOnCritical, setNotifOnCritical] = useState(true);
 
+  const domainLabel = (slug: string) => {
+    const domain = catalogDomains.find((item) => item.slug === slug);
+    return domain?.short_name || domain?.name || FALLBACK_DOMAIN_LABELS[slug] || slug;
+  };
+  const domainOptions = catalogDomains.length > 0
+    ? catalogDomains
+    : Object.entries(FALLBACK_DOMAIN_LABELS).map(([slug, name]) => ({
+        slug,
+        name,
+        short_name: '',
+        is_active: true,
+      }));
+
   // Подставляем телефон из данных пользователя при загрузке
   useEffect(() => {
     if (user && 'phone' in user) {
@@ -184,6 +208,10 @@ export default function SettingsPage() {
       .then((r) => setDatasources(r.data.data ?? r.data))
       .catch(() => {})
       .finally(() => setLoadingDatasources(false));
+
+    tenantApi.catalogDomains()
+      .then((r) => setCatalogDomains(r.data.data ?? r.data))
+      .catch(() => setCatalogDomains([]));
 
     loadCatalogCategories();
 
@@ -407,6 +435,33 @@ export default function SettingsPage() {
       toast.error('Не удалось сохранить привязку');
     } finally {
       setSavingMappingSource(null);
+    }
+  }
+
+  async function uploadCatalogCategoryImage(categoryId: number, file: File | null) {
+    if (!file) return;
+    setUploadingCategoryImageId(categoryId);
+    try {
+      await productApi.uploadCatalogCategoryImage(categoryId, file);
+      await loadCatalogCategories();
+      toast.success('Картинка категории сохранена');
+    } catch {
+      toast.error('Не удалось загрузить картинку категории');
+    } finally {
+      setUploadingCategoryImageId(null);
+    }
+  }
+
+  async function deleteCatalogCategoryImage(categoryId: number) {
+    setUploadingCategoryImageId(categoryId);
+    try {
+      await productApi.deleteCatalogCategoryImage(categoryId);
+      await loadCatalogCategories();
+      toast.success('Картинка категории удалена');
+    } catch {
+      toast.error('Не удалось удалить картинку категории');
+    } finally {
+      setUploadingCategoryImageId(null);
     }
   }
 
@@ -1038,7 +1093,7 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle>Категории каталога</CardTitle>
               <CardDescription>
-                Tenant управляет категориями каталога, а домен используется как сигнал для безопасной классификации.
+                Вы управляете категориями своего каталога. Тип категории помогает платформе безопасно включать подходящие инструменты обработки.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1053,8 +1108,8 @@ export default function SettingsPage() {
                   value={newCatalogCategoryDomain}
                   onChange={(e) => setNewCatalogCategoryDomain(e.target.value)}
                 >
-                  {Object.entries(DOMAIN_LABELS).map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
+                  {domainOptions.map((domain) => (
+                    <option key={domain.slug} value={domain.slug}>{domainLabel(domain.slug)}</option>
                   ))}
                 </select>
                 <Button disabled={creatingCatalogCategory || !newCatalogCategoryName.trim()}>
@@ -1075,22 +1130,65 @@ export default function SettingsPage() {
                 <div className="rounded-lg border border-dashed p-6 text-center">
                   <p className="text-sm font-medium">Категорий пока нет</p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Создайте категории tenant-а и привяжите к ним категории из источника.
+                    Создайте свои категории и привяжите к ним категории из 1С/CSV.
                   </p>
                 </div>
               ) : (
                 <div className="space-y-2">
                   {catalogCategories.map((category) => (
-                    <div key={category.id} className="flex items-center justify-between rounded-lg border p-3">
-                      <div>
+                    <div key={category.id} className="flex flex-col gap-3 rounded-lg border p-3 md:flex-row md:items-center md:justify-between">
+                      <div className="flex items-center gap-3">
+                        <div className="h-14 w-14 overflow-hidden rounded-md border bg-muted">
+                          {category.default_image_url ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img
+                              src={category.default_image_url}
+                              alt=""
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                              Нет фото
+                            </div>
+                          )}
+                        </div>
+                        <div>
                         <p className="font-medium">{category.name}</p>
                         <p className="text-xs text-muted-foreground">
-                          Домен: {DOMAIN_LABELS[category.domain] ?? category.domain}
+                          Тип: {domainLabel(category.domain)}
                         </p>
+                        {category.default_image_source_name && (
+                          <p className="text-xs text-muted-foreground">
+                            Картинка: {category.default_image_source_name}
+                          </p>
+                        )}
+                        </div>
                       </div>
-                      <Badge variant={category.is_active ? 'default' : 'secondary'}>
-                        {category.is_active ? 'Активна' : 'Отключена'}
-                      </Badge>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Label className="cursor-pointer rounded-md border px-3 py-2 text-xs">
+                          {uploadingCategoryImageId === category.id ? 'Загружаем...' : 'Загрузить картинку'}
+                          <input
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            disabled={uploadingCategoryImageId === category.id}
+                            onChange={(e) => uploadCatalogCategoryImage(category.id, e.target.files?.[0] ?? null)}
+                          />
+                        </Label>
+                        {category.default_image_url && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => deleteCatalogCategoryImage(category.id)}
+                            disabled={uploadingCategoryImageId === category.id}
+                          >
+                            Удалить картинку
+                          </Button>
+                        )}
+                        <Badge variant={category.is_active ? 'default' : 'secondary'}>
+                          {category.is_active ? 'Активна' : 'Отключена'}
+                        </Badge>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1102,7 +1200,7 @@ export default function SettingsPage() {
             <CardHeader>
               <CardTitle>Привязка категорий из источника</CardTitle>
               <CardDescription>
-                Свяжите `category_1c` с категорией tenant-а. Это не меняет сырые данные товара.
+                Свяжите категории из 1С/CSV со своими категориями каталога. Сырые данные товара не меняются.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -1135,7 +1233,7 @@ export default function SettingsPage() {
                           <option value="">Не привязана</option>
                           {catalogCategories.map((category) => (
                             <option key={category.id} value={category.id}>
-                              {category.name} · {DOMAIN_LABELS[category.domain] ?? category.domain}
+                              {category.name} · {domainLabel(category.domain)}
                             </option>
                           ))}
                         </select>

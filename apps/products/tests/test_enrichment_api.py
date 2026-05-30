@@ -2,6 +2,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 
 from apps.products.enrichment import normalize_part_code
@@ -10,6 +11,7 @@ from apps.products.models import (
     TenantCatalogCategory, TenantCategoryMapping,
 )
 from apps.products.services import ProductEnrichmentService
+from apps.tenants.models import CatalogDomain
 from apps.tenants.services import TenantService
 
 
@@ -337,6 +339,68 @@ def test_tenant_catalog_category_api_crud_and_mapping():
     assert source_response.json()['data'] == [
         {'source_category': product.category_1c, 'catalog_category': category_id},
     ]
+
+
+@pytest.mark.django_db
+def test_catalog_domains_endpoint_returns_active_platform_domains():
+    tenant, api_key = make_tenant('catalog-domains-api')
+    CatalogDomain.objects.create(
+        slug='pets',
+        name='Зоотовары',
+        short_name='Зоо',
+        seo_title='Зоотовары купить',
+        seo_description='Каталог товаров для животных.',
+        is_active=True,
+        sort_order=5,
+    )
+    CatalogDomain.objects.create(slug='hidden', name='Скрытый домен', is_active=False)
+    client = Client()
+
+    response = client.get(
+        '/api/v1/catalog-domains/',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    slugs = [item['slug'] for item in data]
+    assert 'pets' in slugs
+    assert 'hidden' not in slugs
+    pets = next(item for item in data if item['slug'] == 'pets')
+    assert pets['seo_title'] == 'Зоотовары купить'
+
+
+@pytest.mark.django_db
+def test_tenant_catalog_category_default_image_is_product_fallback():
+    tenant, api_key = make_tenant('catalog-category-image')
+    category = TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Ходовая часть',
+        domain='auto_parts',
+    )
+    product = make_product(tenant, category_1c='Ходовая')
+    product.catalog_category = category
+    product.save(update_fields=['catalog_category'])
+    client = Client()
+
+    image = SimpleUploadedFile('fallback.jpg', b'image-bytes', content_type='image/jpeg')
+    upload_response = client.post(
+        f'/api/v1/products/catalog-categories/{category.pk}/default-image/',
+        {'image': image},
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert upload_response.status_code == 200
+    category.refresh_from_db()
+    assert category.default_image_s3_key
+    assert category.default_image_source_name == 'fallback.jpg'
+
+    list_response = client.get('/api/v1/products/', HTTP_AUTHORIZATION=f'Bearer {api_key}')
+
+    assert list_response.status_code == 200
+    data = list_response.json()['data'][0]
+    assert data['images_count'] == 0
+    assert data['primary_thumb_url']
 
 
 @pytest.mark.django_db

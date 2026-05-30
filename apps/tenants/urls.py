@@ -4,6 +4,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from apps.tenants.views import (
     APIKeyListView,
     APIKeyRevokeView,
+    CatalogDomainListView,
     MeView,
     RegisterView,
     TenantDetailView,
@@ -22,6 +23,7 @@ urlpatterns = [
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token-refresh'),
     path('auth/me/', MeView.as_view(), name='auth-me'),
     # Tenant
+    path('catalog-domains/', CatalogDomainListView.as_view(), name='catalog-domain-list'),
     path('tenant/', TenantDetailView.as_view(), name='tenant-detail'),
     path('tenant/users/', TenantUserListView.as_view(), name='tenant-users'),
     path('tenant/api-keys/', APIKeyListView.as_view(), name='api-keys-list'),

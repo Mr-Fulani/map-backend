@@ -9,10 +9,11 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.tenants.models import APIKey, WEBHOOK_EVENTS, WebhookEndpoint
+from apps.tenants.models import APIKey, CatalogDomain, WEBHOOK_EVENTS, WebhookEndpoint
 from apps.tenants.serializers import (
     APIKeyCreateSerializer,
     APIKeySerializer,
+    CatalogDomainSerializer,
     RegisterSerializer,
     TenantSerializer,
     TenantUserSerializer,
@@ -61,6 +62,17 @@ class TenantDetailView(APIView):
             'status': 'ok',
             'data': TenantSerializer(request.tenant).data,
         })
+
+
+@extend_schema(tags=['Tenant'])
+class CatalogDomainListView(APIView):
+    """GET /api/v1/catalog-domains/ — активные platform-домены для dashboard."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        domains = CatalogDomain.objects.filter(is_active=True).order_by('sort_order', 'name')
+        return Response({'status': 'ok', 'data': CatalogDomainSerializer(domains, many=True).data})
 
 
 @extend_schema(tags=['Tenant'])

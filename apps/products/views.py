@@ -1,8 +1,12 @@
+import uuid
+
+from django.core.files.storage import default_storage
 from django.db.models import Count, Prefetch, Q
 from django.db import transaction
 from drf_spectacular.utils import extend_schema
 from django.shortcuts import get_object_or_404
 from rest_framework import status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -44,7 +48,7 @@ class ProductListView(APIView):
         qs = (
             Product.objects
             .filter(tenant=request.tenant)
-            .select_related('catalog_classification')
+            .select_related('catalog_category', 'catalog_classification')
             .prefetch_related('images', Prefetch('parse_jobs', queryset=latest_jobs))
             .annotate(
                 attributes_count=Count('attributes', distinct=True),
@@ -92,7 +96,7 @@ class ProductDetailView(APIView):
 
     def get(self, request, pk):
         try:
-            product = Product.objects.select_related('catalog_classification').prefetch_related(
+            product = Product.objects.select_related('catalog_category', 'catalog_classification').prefetch_related(
                 'images', 'attributes', 'cross_codes', 'fitments', 'parse_jobs',
             ).get(
                 pk=pk, tenant=request.tenant
@@ -122,7 +126,10 @@ class TenantCatalogCategoryListView(APIView):
 
     def get(self, request):
         qs = TenantCatalogCategory.objects.filter(tenant=request.tenant).order_by('name')
-        return Response({'status': 'ok', 'data': TenantCatalogCategorySerializer(qs, many=True).data})
+        return Response({
+            'status': 'ok',
+            'data': TenantCatalogCategorySerializer(qs, many=True, context={'request': request}).data,
+        })
 
     def post(self, request):
         serializer = TenantCatalogCategorySerializer(data=request.data)
@@ -135,7 +142,7 @@ class TenantCatalogCategoryListView(APIView):
             )
         category = serializer.save(tenant=request.tenant)
         return Response(
-            {'status': 'ok', 'data': TenantCatalogCategorySerializer(category).data},
+            {'status': 'ok', 'data': TenantCatalogCategorySerializer(category, context={'request': request}).data},
             status=status.HTTP_201_CREATED,
         )
 
@@ -146,7 +153,8 @@ class TenantCatalogCategoryDetailView(APIView):
 
     def get(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
-        return Response({'status': 'ok', 'data': TenantCatalogCategorySerializer(category).data})
+        serializer = TenantCatalogCategorySerializer(category, context={'request': request})
+        return Response({'status': 'ok', 'data': serializer.data})
 
     def put(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
@@ -159,13 +167,68 @@ class TenantCatalogCategoryDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         category = serializer.save(tenant=request.tenant)
-        return Response({'status': 'ok', 'data': TenantCatalogCategorySerializer(category).data})
+        serializer = TenantCatalogCategorySerializer(category, context={'request': request})
+        return Response({'status': 'ok', 'data': serializer.data})
 
     def delete(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         category.is_active = False
         category.save(update_fields=['is_active', 'updated_at'])
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@extend_schema(tags=['Catalog Categories'])
+class TenantCatalogCategoryDefaultImageView(APIView):
+    """POST /api/v1/products/catalog-categories/{id}/default-image/ — загрузить fallback-картинку."""
+
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request, pk):
+        category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
+        image = request.FILES.get('image')
+        if image is None:
+            return Response(
+                {'status': 'error', 'code': 'validation_error', 'message': 'Передайте файл image'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if image.size > 5 * 1024 * 1024:
+            return Response(
+                {'status': 'error', 'code': 'validation_error', 'message': 'Размер файла не должен превышать 5 МБ'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        content_type = getattr(image, 'content_type', '')
+        if content_type and not content_type.startswith('image/'):
+            return Response(
+                {'status': 'error', 'code': 'validation_error', 'message': 'Можно загрузить только изображение'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        extension = (image.name.rsplit('.', 1)[-1] if '.' in image.name else 'jpg').lower()
+        if extension not in ['jpg', 'jpeg', 'png', 'webp']:
+            extension = 'jpg'
+        s3_key = f'catalog-categories/{request.tenant.slug}/{category.pk}/{uuid.uuid4().hex}.{extension}'
+        if category.default_image_s3_key:
+            default_storage.delete(category.default_image_s3_key)
+        saved_key = default_storage.save(s3_key, image)
+        category.default_image_s3_key = saved_key
+        category.default_image_source_name = image.name[:255]
+        category.save(update_fields=[
+            'default_image_s3_key', 'default_image_source_name', 'updated_at',
+        ])
+        serializer = TenantCatalogCategorySerializer(category, context={'request': request})
+        return Response({'status': 'ok', 'data': serializer.data})
+
+    def delete(self, request, pk):
+        category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
+        if category.default_image_s3_key:
+            default_storage.delete(category.default_image_s3_key)
+        category.default_image_s3_key = ''
+        category.default_image_source_name = ''
+        category.save(update_fields=[
+            'default_image_s3_key', 'default_image_source_name', 'updated_at',
+        ])
+        serializer = TenantCatalogCategorySerializer(category, context={'request': request})
+        return Response({'status': 'ok', 'data': serializer.data})
 
 
 @extend_schema(tags=['Catalog Categories'])

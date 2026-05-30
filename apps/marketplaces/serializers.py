@@ -103,7 +103,7 @@ class ListingDetailSerializer(ListingSerializer):
     def get_images(self, obj) -> list:
         """Возвращает список изображений товара с CDN-ссылками."""
         request = self.context.get('request')
-        return [
+        images = [
             {
                 'id': img.pk,
                 'url': _image_url(img.s3_key, img.url_source, request),
@@ -113,6 +113,20 @@ class ListingDetailSerializer(ListingSerializer):
             }
             for img in obj.product.images.order_by('position')
         ]
+        if images:
+            return images
+        category = getattr(obj.product, 'catalog_category', None)
+        if category and category.default_image_s3_key:
+            url = _image_url(category.default_image_s3_key, '', request)
+            return [{
+                'id': None,
+                'url': url,
+                'thumb_url': url,
+                'position': 0,
+                'is_primary': True,
+                'source': 'category_default',
+            }]
+        return []
 
 
 class MarketplaceAccountWriteSerializer(serializers.Serializer):
