@@ -263,6 +263,7 @@ domain-specific AI rules
 
 ```text
 TenantCatalogCategory
+TenantCategoryMapping
 Product.category_1c
 CategoryMapping
 ```
@@ -278,6 +279,7 @@ CategoryMapping
 - `Product.category_1c` нельзя перетирать enrichment-ом.
 - `PartCategory` нельзя использовать как tenant category.
 - `TenantCatalogCategory` нельзя использовать как замену `PartCategory`.
+- `TenantCategoryMapping` может проставить `Product.catalog_category`, но не меняет `Product.category_1c`.
 
 Если появляется конфликт:
 

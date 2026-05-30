@@ -5,7 +5,10 @@ import pytest
 from django.test import Client
 
 from apps.products.enrichment import normalize_part_code
-from apps.products.models import Product, ProductCatalogClassification, ProductCrossCode
+from apps.products.models import (
+    Product, ProductCatalogClassification, ProductCrossCode,
+    TenantCatalogCategory, TenantCategoryMapping,
+)
 from apps.products.services import ProductEnrichmentService
 from apps.tenants.services import TenantService
 
@@ -295,6 +298,45 @@ def test_products_list_can_filter_by_catalog_classification():
     assert response.status_code == 200
     ids = [item['id'] for item in response.json()['data']]
     assert ids == [auto_part.pk]
+
+
+@pytest.mark.django_db
+def test_tenant_catalog_category_api_crud_and_mapping():
+    tenant, api_key = make_tenant('catalog-category-api')
+    product = make_product(tenant, category_1c='Тормоза')
+    client = Client()
+
+    create_response = client.post(
+        '/api/v1/products/catalog-categories/',
+        {'name': 'Тормозные колодки', 'domain': 'auto_parts', 'aliases': []},
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+    assert create_response.status_code == 201
+    category_id = create_response.json()['data']['id']
+    category = TenantCatalogCategory.objects.get(pk=category_id)
+    assert category.tenant == tenant
+    assert category.normalized_name
+
+    mapping_response = client.post(
+        '/api/v1/products/catalog-category-mappings/',
+        {'source_category': 'Тормоза', 'category': category_id},
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+    assert mapping_response.status_code == 201
+    assert TenantCategoryMapping.objects.filter(
+        tenant=tenant, source_category='Тормоза', category=category,
+    ).exists()
+
+    source_response = client.get(
+        '/api/v1/products/catalog-source-categories/',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+    assert source_response.status_code == 200
+    assert source_response.json()['data'] == [
+        {'source_category': product.category_1c, 'catalog_category': category_id},
+    ]
 
 
 @pytest.mark.django_db

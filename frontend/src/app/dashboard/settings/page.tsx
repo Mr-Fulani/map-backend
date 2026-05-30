@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
-import { tenantApi, accountApi, notificationApi } from '@/lib/api';
+import { tenantApi, accountApi, notificationApi, productApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -49,8 +49,38 @@ interface NotificationSettings {
   notify_on_critical: boolean;
 }
 
-const SETTINGS_TABS = ['profile', 'organization', 'api-keys', 'accounts', 'datasources', 'notifications'] as const;
+interface CatalogCategory {
+  id: number;
+  name: string;
+  domain: string;
+  aliases: string[];
+  is_active: boolean;
+}
+
+interface SourceCategory {
+  source_category: string;
+  catalog_category: number | null;
+}
+
+interface CatalogCategoryMapping {
+  id: number;
+  source_category: string;
+  category: number;
+}
+
+const SETTINGS_TABS = [
+  'profile', 'organization', 'api-keys', 'accounts', 'datasources',
+  'catalog-categories', 'notifications',
+] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
+
+const DOMAIN_LABELS: Record<string, string> = {
+  auto_parts: 'Автозапчасти',
+  generic: 'Обычный товар',
+  jewellery: 'Украшения',
+  apparel: 'Одежда',
+  unknown: 'Не определено',
+};
 
 export default function SettingsPage() {
   const { user, tenant } = useAuth();
@@ -58,9 +88,13 @@ export default function SettingsPage() {
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [datasources, setDatasources] = useState<DataSource[]>([]);
+  const [catalogCategories, setCatalogCategories] = useState<CatalogCategory[]>([]);
+  const [sourceCategories, setSourceCategories] = useState<SourceCategory[]>([]);
+  const [catalogMappings, setCatalogMappings] = useState<CatalogCategoryMapping[]>([]);
   const [loadingKeys, setLoadingKeys] = useState(true);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
   const [loadingDatasources, setLoadingDatasources] = useState(true);
+  const [loadingCatalogCategories, setLoadingCatalogCategories] = useState(true);
   const [newKeyName, setNewKeyName] = useState('');
   const [creatingKey, setCreatingKey] = useState(false);
   const [newKeyValue, setNewKeyValue] = useState<string | null>(null);
@@ -71,6 +105,10 @@ export default function SettingsPage() {
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
   const [editAccountName, setEditAccountName] = useState('');
   const [deletingDatasourceId, setDeletingDatasourceId] = useState<number | null>(null);
+  const [creatingCatalogCategory, setCreatingCatalogCategory] = useState(false);
+  const [newCatalogCategoryName, setNewCatalogCategoryName] = useState('');
+  const [newCatalogCategoryDomain, setNewCatalogCategoryDomain] = useState('unknown');
+  const [savingMappingSource, setSavingMappingSource] = useState<string | null>(null);
   
   // File upload state
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -147,6 +185,8 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setLoadingDatasources(false));
 
+    loadCatalogCategories();
+
     notificationApi.getSettings()
       .then((r) => {
         const d = r.data.data as NotificationSettings;
@@ -158,6 +198,24 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setLoadingNotif(false));
   }, []);
+
+  async function loadCatalogCategories() {
+    setLoadingCatalogCategories(true);
+    try {
+      const [categoriesRes, sourceRes, mappingsRes] = await Promise.all([
+        productApi.catalogCategories(),
+        productApi.catalogSourceCategories(),
+        productApi.catalogCategoryMappings(),
+      ]);
+      setCatalogCategories(categoriesRes.data.data ?? categoriesRes.data);
+      setSourceCategories(sourceRes.data.data ?? sourceRes.data);
+      setCatalogMappings(mappingsRes.data.data ?? mappingsRes.data);
+    } catch {
+      toast.error('Не удалось загрузить категории каталога');
+    } finally {
+      setLoadingCatalogCategories(false);
+    }
+  }
 
   async function savePhone() {
     setSavingPhone(true);
@@ -313,6 +371,45 @@ export default function SettingsPage() {
     }
   }
 
+  async function createCatalogCategory(e: React.FormEvent) {
+    e.preventDefault();
+    if (!newCatalogCategoryName.trim()) return;
+    setCreatingCatalogCategory(true);
+    try {
+      await productApi.createCatalogCategory({
+        name: newCatalogCategoryName.trim(),
+        domain: newCatalogCategoryDomain,
+        aliases: [],
+        is_active: true,
+      });
+      setNewCatalogCategoryName('');
+      setNewCatalogCategoryDomain('unknown');
+      await loadCatalogCategories();
+      toast.success('Категория создана');
+    } catch {
+      toast.error('Не удалось создать категорию');
+    } finally {
+      setCreatingCatalogCategory(false);
+    }
+  }
+
+  async function saveCatalogCategoryMapping(sourceCategory: string, categoryId: string) {
+    if (!categoryId) return;
+    setSavingMappingSource(sourceCategory);
+    try {
+      await productApi.createCatalogCategoryMapping({
+        source_category: sourceCategory,
+        category: Number(categoryId),
+      });
+      await loadCatalogCategories();
+      toast.success('Привязка сохранена');
+    } catch {
+      toast.error('Не удалось сохранить привязку');
+    } finally {
+      setSavingMappingSource(null);
+    }
+  }
+
   async function handleUploadCsv(e: React.FormEvent) {
     e.preventDefault();
     if (!csvFile) return;
@@ -421,6 +518,7 @@ export default function SettingsPage() {
             <TabsTrigger value="api-keys">API-ключи</TabsTrigger>
             <TabsTrigger value="accounts">Avito-аккаунты</TabsTrigger>
             <TabsTrigger value="datasources">Источники данных</TabsTrigger>
+            <TabsTrigger value="catalog-categories">Категории</TabsTrigger>
             <TabsTrigger value="notifications">Уведомления</TabsTrigger>
           </TabsList>
         </div>
@@ -928,6 +1026,122 @@ export default function SettingsPage() {
                       </Button>
                     </div>
                   ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Категории каталога */}
+        <TabsContent value="catalog-categories" className="mt-4 space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Категории каталога</CardTitle>
+              <CardDescription>
+                Tenant управляет категориями каталога, а домен используется как сигнал для безопасной классификации.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <form className="grid gap-3 md:grid-cols-[1fr_220px_auto]" onSubmit={createCatalogCategory}>
+                <Input
+                  placeholder="Например: Тормозные колодки"
+                  value={newCatalogCategoryName}
+                  onChange={(e) => setNewCatalogCategoryName(e.target.value)}
+                />
+                <select
+                  className="rounded-md border bg-background px-3 py-2 text-sm"
+                  value={newCatalogCategoryDomain}
+                  onChange={(e) => setNewCatalogCategoryDomain(e.target.value)}
+                >
+                  {Object.entries(DOMAIN_LABELS).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+                <Button disabled={creatingCatalogCategory || !newCatalogCategoryName.trim()}>
+                  {creatingCatalogCategory
+                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    : <Plus className="mr-2 h-4 w-4" />
+                  }
+                  Добавить
+                </Button>
+              </form>
+
+              {loadingCatalogCategories ? (
+                <div className="space-y-2">
+                  <Skeleton className="h-12 w-full" />
+                  <Skeleton className="h-12 w-full" />
+                </div>
+              ) : catalogCategories.length === 0 ? (
+                <div className="rounded-lg border border-dashed p-6 text-center">
+                  <p className="text-sm font-medium">Категорий пока нет</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Создайте категории tenant-а и привяжите к ним категории из источника.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {catalogCategories.map((category) => (
+                    <div key={category.id} className="flex items-center justify-between rounded-lg border p-3">
+                      <div>
+                        <p className="font-medium">{category.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Домен: {DOMAIN_LABELS[category.domain] ?? category.domain}
+                        </p>
+                      </div>
+                      <Badge variant={category.is_active ? 'default' : 'secondary'}>
+                        {category.is_active ? 'Активна' : 'Отключена'}
+                      </Badge>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Привязка категорий из источника</CardTitle>
+              <CardDescription>
+                Свяжите `category_1c` с категорией tenant-а. Это не меняет сырые данные товара.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {loadingCatalogCategories ? (
+                <Skeleton className="h-24 w-full" />
+              ) : sourceCategories.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  В товарах пока нет категорий из источника.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {sourceCategories.map((source) => {
+                    const mapping = catalogMappings.find((item) => item.source_category === source.source_category);
+                    const selectedValue = String(mapping?.category ?? source.catalog_category ?? '');
+                    return (
+                      <div
+                        key={source.source_category}
+                        className="grid gap-2 rounded-lg border p-3 md:grid-cols-[1fr_280px]"
+                      >
+                        <div>
+                          <p className="text-sm font-medium">{source.source_category}</p>
+                          <p className="text-xs text-muted-foreground">Категория из 1С/CSV</p>
+                        </div>
+                        <select
+                          className="rounded-md border bg-background px-3 py-2 text-sm"
+                          value={selectedValue}
+                          disabled={savingMappingSource === source.source_category}
+                          onChange={(e) => saveCatalogCategoryMapping(source.source_category, e.target.value)}
+                        >
+                          <option value="">Не привязана</option>
+                          {catalogCategories.map((category) => (
+                            <option key={category.id} value={category.id}>
+                              {category.name} · {DOMAIN_LABELS[category.domain] ?? category.domain}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>

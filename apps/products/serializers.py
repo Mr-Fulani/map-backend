@@ -3,7 +3,8 @@ from rest_framework import serializers
 
 from apps.products.models import (
     Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
-    ProductCrossCode, ProductImage, ProductParseJob, VehicleFitment,
+    ProductCrossCode, ProductImage, ProductParseJob, TenantCatalogCategory,
+    TenantCategoryMapping, VehicleFitment,
 )
 
 
@@ -19,6 +20,29 @@ class ProductCatalogClassificationSerializer(serializers.ModelSerializer):
         fields = ['domain', 'confidence', 'source', 'reason', 'needs_review', 'updated_at']
 
 
+class TenantCatalogCategorySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TenantCatalogCategory
+        fields = [
+            'id', 'name', 'normalized_name', 'parent', 'domain', 'aliases', 'external_source',
+            'external_id', 'is_active', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'normalized_name', 'created_at', 'updated_at']
+
+
+class TenantCategoryMappingSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    category_domain = serializers.CharField(source='category.domain', read_only=True)
+
+    class Meta:
+        model = TenantCategoryMapping
+        fields = [
+            'id', 'source_category', 'category', 'category_name',
+            'category_domain', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'category_name', 'category_domain', 'created_at', 'updated_at']
+
+
 class ProductSerializer(serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     images_count = serializers.SerializerMethodField()
@@ -27,11 +51,12 @@ class ProductSerializer(serializers.ModelSerializer):
     enrichment_status = serializers.SerializerMethodField()
     enrichment_summary = serializers.SerializerMethodField()
     catalog_classification = ProductCatalogClassificationSerializer(read_only=True)
+    catalog_category = TenantCatalogCategorySerializer(read_only=True)
 
     class Meta:
         model = Product
         fields = [
-            'id', 'uuid_1c', 'article', 'name', 'brand', 'category_1c',
+            'id', 'uuid_1c', 'article', 'name', 'brand', 'category_1c', 'catalog_category',
             'condition', 'price', 'stock_qty', 'warehouse',
             'export_enabled', 'sync_at', 'images', 'images_count', 'primary_thumb_url',
             'title_ai', 'description_ai', 'ai_status', 'enrichment_status',

@@ -8,10 +8,14 @@ from rest_framework.views import APIView
 
 from apps.core.pagination import MapPagination
 from apps.products.enrichment import normalize_part_code
-from apps.products.models import Product, ProductBulkActionJob, ProductParseJob
+from apps.products.models import (
+    Product, ProductBulkActionJob, ProductParseJob,
+    TenantCatalogCategory, TenantCategoryMapping,
+)
 from apps.products.serializers import (
     ProductBulkActionJobSerializer, ProductCrossCodeSerializer,
     ProductDetailSerializer, ProductParseJobSerializer, ProductSerializer,
+    TenantCatalogCategorySerializer, TenantCategoryMappingSerializer,
     VehicleFitmentSerializer,
 )
 from apps.products.services import (
@@ -69,6 +73,10 @@ class ProductListView(APIView):
         if catalog_domain:
             qs = qs.filter(catalog_classification__domain=catalog_domain)
 
+        catalog_category = request.query_params.get('catalog_category', '').strip()
+        if catalog_category:
+            qs = qs.filter(catalog_category_id=catalog_category)
+
         qs = qs.order_by('-sync_at', '-created_at')
 
         paginator = MapPagination()
@@ -106,6 +114,116 @@ class ProductSyncView(APIView):
         conn = get_object_or_404(DataSourceConnection, pk=connection_id, tenant=request.tenant)
         task = import_from_datasource.delay(conn.pk)
         return Response({'status': 'ok', 'data': {'task_id': task.id}})
+
+
+@extend_schema(tags=['Catalog Categories'])
+class TenantCatalogCategoryListView(APIView):
+    """GET/POST /api/v1/products/catalog-categories/."""
+
+    def get(self, request):
+        qs = TenantCatalogCategory.objects.filter(tenant=request.tenant).order_by('name')
+        return Response({'status': 'ok', 'data': TenantCatalogCategorySerializer(qs, many=True).data})
+
+    def post(self, request):
+        serializer = TenantCatalogCategorySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        parent = serializer.validated_data.get('parent')
+        if parent is not None and parent.tenant_id != request.tenant.id:
+            return Response(
+                {'status': 'error', 'code': 'validation_error', 'message': 'Родительская категория другого tenant-а'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        category = serializer.save(tenant=request.tenant)
+        return Response(
+            {'status': 'ok', 'data': TenantCatalogCategorySerializer(category).data},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+@extend_schema(tags=['Catalog Categories'])
+class TenantCatalogCategoryDetailView(APIView):
+    """GET/PUT/DELETE /api/v1/products/catalog-categories/{id}/."""
+
+    def get(self, request, pk):
+        category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
+        return Response({'status': 'ok', 'data': TenantCatalogCategorySerializer(category).data})
+
+    def put(self, request, pk):
+        category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
+        serializer = TenantCatalogCategorySerializer(category, data=request.data)
+        serializer.is_valid(raise_exception=True)
+        parent = serializer.validated_data.get('parent')
+        if parent is not None and parent.tenant_id != request.tenant.id:
+            return Response(
+                {'status': 'error', 'code': 'validation_error', 'message': 'Родительская категория другого tenant-а'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        category = serializer.save(tenant=request.tenant)
+        return Response({'status': 'ok', 'data': TenantCatalogCategorySerializer(category).data})
+
+    def delete(self, request, pk):
+        category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
+        category.is_active = False
+        category.save(update_fields=['is_active', 'updated_at'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@extend_schema(tags=['Catalog Categories'])
+class TenantCategoryMappingListView(APIView):
+    """GET/POST /api/v1/products/catalog-category-mappings/."""
+
+    def get(self, request):
+        qs = (
+            TenantCategoryMapping.objects
+            .filter(tenant=request.tenant)
+            .select_related('category')
+            .order_by('source_category')
+        )
+        return Response({'status': 'ok', 'data': TenantCategoryMappingSerializer(qs, many=True).data})
+
+    def post(self, request):
+        serializer = TenantCategoryMappingSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        category = get_object_or_404(
+            TenantCatalogCategory,
+            pk=serializer.validated_data['category'].pk,
+            tenant=request.tenant,
+        )
+        mapping, _ = TenantCategoryMapping.objects.update_or_create(
+            tenant=request.tenant,
+            source_category=serializer.validated_data['source_category'],
+            defaults={'category': category},
+        )
+        return Response(
+            {'status': 'ok', 'data': TenantCategoryMappingSerializer(mapping).data},
+            status=status.HTTP_201_CREATED,
+        )
+
+
+@extend_schema(tags=['Catalog Categories'])
+class TenantSourceCategoryListView(APIView):
+    """GET /api/v1/products/catalog-source-categories/."""
+
+    def get(self, request):
+        mappings = {
+            mapping.source_category: mapping.category_id
+            for mapping in TenantCategoryMapping.objects.filter(tenant=request.tenant)
+        }
+        categories = [
+            {
+                'source_category': source_category,
+                'catalog_category': mappings.get(source_category),
+            }
+            for source_category in (
+                Product.objects
+                .filter(tenant=request.tenant)
+                .exclude(category_1c='')
+                .order_by('category_1c')
+                .values_list('category_1c', flat=True)
+                .distinct()
+            )
+        ]
+        return Response({'status': 'ok', 'data': categories})
 
 
 @extend_schema(tags=['Products'])

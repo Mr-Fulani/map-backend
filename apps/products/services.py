@@ -10,7 +10,7 @@ from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation,
     Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
     ProductCrossCode, ProductEnrichmentFact, ProductParseJob, VehicleFitment,
-    VehicleMake, VehicleModel,
+    TenantCatalogCategory, TenantCategoryMapping, VehicleMake, VehicleModel,
 )
 from apps.products.part_parsers import ParsedPart, PartNotFound, get_part_parser
 from apps.products.source_policy import (
@@ -162,6 +162,7 @@ class ProductEnrichmentService:
     def classify_product_catalog_domain(
         cls, product: Product, save: bool = True,
     ) -> ProductCatalogClassification:
+        tenant_category = cls.get_product_tenant_category(product)
         text = ' '.join([
             product.name or '',
             product.category_1c or '',
@@ -171,7 +172,14 @@ class ProductEnrichmentService:
         auto_matches = [marker for marker in cls.AUTO_PARTS_MARKERS if marker in text]
         non_auto_matches = [marker for marker in cls.NON_AUTO_PARTS_MARKERS if marker in text]
 
-        if auto_matches:
+        if tenant_category and tenant_category.domain != TenantCatalogCategory.Domain.UNKNOWN:
+            domain = tenant_category.domain
+            confidence = 0.85
+            reason = f'Домен взят из категории tenant-а: {tenant_category.name}.'
+            needs_review = bool(
+                domain == ProductCatalogClassification.Domain.AUTO_PARTS and non_auto_matches
+            )
+        elif auto_matches:
             domain = ProductCatalogClassification.Domain.AUTO_PARTS
             confidence = 0.9 if len(auto_matches) > 1 else 0.75
             reason = f'Найдены признаки автозапчасти: {", ".join(auto_matches[:5])}.'
@@ -220,7 +228,26 @@ class ProductEnrichmentService:
         return (
             classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
             and classification.confidence >= 0.7
+            and not classification.needs_review
         )
+
+    @staticmethod
+    def get_product_tenant_category(product: Product) -> TenantCatalogCategory | None:
+        if product.catalog_category_id:
+            return product.catalog_category
+        if not product.category_1c:
+            return None
+        mapping = (
+            TenantCategoryMapping.objects
+            .select_related('category')
+            .filter(tenant=product.tenant, source_category=product.category_1c)
+            .first()
+        )
+        if mapping is None:
+            return None
+        product.catalog_category = mapping.category
+        product.save(update_fields=['catalog_category', 'updated_at'])
+        return mapping.category
 
     @classmethod
     def ensure_product_auto_parts_eligible(cls, tenant, product: Product | None) -> None:
