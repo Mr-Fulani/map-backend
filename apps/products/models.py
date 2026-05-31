@@ -6,6 +6,12 @@ from apps.datasources.models import DataSourceConnection
 from apps.tenants.models import Tenant
 
 
+class ReviewStatus(models.TextChoices):
+    PENDING = 'pending', 'Ожидает проверки'
+    APPROVED = 'approved', 'Одобрено'
+    REJECTED = 'rejected', 'Отклонено'
+
+
 class TenantCatalogCategory(TimestampedModel):
     """Редактируемая категория каталога конкретного tenant-а."""
 
@@ -206,6 +212,15 @@ class ProductCatalogClassification(TimestampedModel):
     )
     reason = models.TextField(blank=True, verbose_name='Причина')
     needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
+    review_status = models.CharField(
+        max_length=20, choices=ReviewStatus.choices, default=ReviewStatus.PENDING,
+        verbose_name='Статус проверки',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата проверки')
+    reviewed_by = models.ForeignKey(
+        'users.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='reviewed_catalog_classifications', verbose_name='Проверил',
+    )
 
     class Meta:
         verbose_name = 'Классификация товара'
@@ -593,6 +608,15 @@ class VehicleFitment(TimestampedModel):
     confidence = models.FloatField(default=1.0, verbose_name='Уверенность')
     needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
     last_seen_at = models.DateTimeField(null=True, blank=True, verbose_name='Последний раз найдено')
+    review_status = models.CharField(
+        max_length=20, choices=ReviewStatus.choices, default=ReviewStatus.PENDING,
+        verbose_name='Статус проверки',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата проверки')
+    reviewed_by = models.ForeignKey(
+        'users.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='reviewed_vehicle_fitments', verbose_name='Проверил',
+    )
 
     class Meta:
         verbose_name = 'Применяемость'
@@ -699,6 +723,15 @@ class ProductEnrichmentFact(TimestampedModel):
     confidence = models.FloatField(default=1.0, verbose_name='Уверенность')
     needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
     last_seen_at = models.DateTimeField(null=True, blank=True, verbose_name='Последний раз найдено')
+    review_status = models.CharField(
+        max_length=20, choices=ReviewStatus.choices, default=ReviewStatus.PENDING,
+        verbose_name='Статус проверки',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата проверки')
+    reviewed_by = models.ForeignKey(
+        'users.User', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='reviewed_enrichment_facts', verbose_name='Проверил',
+    )
 
     class Meta:
         verbose_name = 'Факт обогащения товара'

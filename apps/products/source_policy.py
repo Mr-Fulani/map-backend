@@ -4,6 +4,8 @@ from dataclasses import dataclass, field
 DEFAULT_PART_SOURCE = 'tachka'
 AUTO_APPLY_MIN_CONFIDENCE = 0.85
 AUTO_APPLY_MIN_TRUST_SCORE = 0.75
+REVIEW_STATUS_APPROVED = 'approved'
+REVIEW_STATUS_REJECTED = 'rejected'
 
 
 @dataclass(frozen=True)
@@ -86,6 +88,11 @@ def get_part_source_policies() -> dict[str, PartSourcePolicy]:
 
 
 def should_auto_apply_record(record) -> bool:
+    review_status = getattr(record, 'review_status', '')
+    if review_status == REVIEW_STATUS_REJECTED:
+        return False
+    if review_status == REVIEW_STATUS_APPROVED:
+        return True
     if getattr(record, 'needs_review', False):
         return False
     source_id = getattr(record, 'source_id', '') or DEFAULT_PART_SOURCE

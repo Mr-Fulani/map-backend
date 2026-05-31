@@ -9,7 +9,7 @@ from apps.products.enrichment import make_value_hash, normalize_part_code
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation,
     Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
-    ProductCrossCode, ProductEnrichmentFact, ProductParseJob, VehicleFitment,
+    ProductCrossCode, ProductEnrichmentFact, ProductParseJob, ReviewStatus, VehicleFitment,
     TenantCatalogCategory, TenantCategoryMapping, VehicleMake, VehicleModel,
 )
 from apps.products.part_parsers import ParsedPart, PartNotFound, get_part_parser
@@ -202,6 +202,7 @@ class ProductEnrichmentService:
             'source': ProductCatalogClassification.Source.RULES,
             'reason': reason,
             'needs_review': needs_review,
+            'review_status': ReviewStatus.PENDING,
         }
         if save:
             classification, created = ProductCatalogClassification.objects.get_or_create(
@@ -216,7 +217,7 @@ class ProductEnrichmentService:
                     setattr(classification, field, value)
                 classification.save(update_fields=[
                     'domain', 'confidence', 'source', 'reason',
-                    'needs_review', 'updated_at',
+                    'needs_review', 'review_status', 'updated_at',
                 ])
             return classification
         return ProductCatalogClassification(
@@ -235,10 +236,15 @@ class ProductEnrichmentService:
     @classmethod
     def is_product_auto_part_candidate(cls, product: Product) -> bool:
         classification = cls.get_or_classify_product_catalog_domain(product)
+        if classification.review_status == ReviewStatus.REJECTED:
+            return False
         return (
             classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
             and classification.confidence >= 0.7
-            and not classification.needs_review
+            and (
+                classification.review_status == ReviewStatus.APPROVED
+                or not classification.needs_review
+            )
         )
 
     @staticmethod

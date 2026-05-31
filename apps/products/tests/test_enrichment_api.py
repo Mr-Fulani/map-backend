@@ -7,7 +7,7 @@ from django.test import Client
 
 from apps.products.enrichment import normalize_part_code
 from apps.products.models import (
-    Product, ProductCatalogClassification, ProductCrossCode,
+    Product, ProductCatalogClassification, ProductCrossCode, ReviewStatus, VehicleFitment,
     TenantCatalogCategory, TenantCategoryMapping,
 )
 from apps.products.services import ProductEnrichmentService
@@ -133,6 +133,142 @@ def test_parse_endpoint_rejects_other_tenant_product():
 
     assert response.status_code == 404
     assert tenant_a.product_parse_jobs.count() == 0
+
+
+@pytest.mark.django_db
+def test_fitment_review_rejects_and_refreshes_product_applicability():
+    tenant, api_key = make_tenant('fitment-review-api')
+    product = make_product(tenant)
+    fitment = VehicleFitment.objects.create(
+        tenant=tenant,
+        product=product,
+        source_id='tachka',
+        make='BMW',
+        model='5',
+        generation='G30',
+        confidence=1.0,
+        needs_review=False,
+    )
+    ProductEnrichmentService.refresh_product_denormalized_enrichment(product)
+    product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability'])
+    assert product.applicability
+
+    response = Client().post(
+        f'/api/v1/products/{product.pk}/fitments/{fitment.pk}/reject/',
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    fitment.refresh_from_db()
+    product.refresh_from_db()
+    assert fitment.review_status == ReviewStatus.REJECTED
+    assert fitment.needs_review is False
+    assert product.applicability == []
+
+
+@pytest.mark.django_db
+def test_fitment_review_rejects_other_tenant_record():
+    tenant_a, api_key = make_tenant('fitment-review-owner')
+    tenant_b, _ = make_tenant('fitment-review-other')
+    product_a = make_product(tenant_a)
+    product_b = make_product(tenant_b)
+    fitment_b = VehicleFitment.objects.create(
+        tenant=tenant_b,
+        product=product_b,
+        source_id='tachka',
+        make='BMW',
+        model='5',
+        confidence=1.0,
+        needs_review=True,
+    )
+
+    response = Client().post(
+        f'/api/v1/products/{product_a.pk}/fitments/{fitment_b.pk}/approve/',
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 404
+    fitment_b.refresh_from_db()
+    assert fitment_b.review_status == ReviewStatus.PENDING
+
+
+@pytest.mark.django_db
+def test_catalog_classification_review_approve_marks_manual():
+    tenant, api_key = make_tenant('classification-review-api')
+    product = make_product(tenant, name='Колодки тормозные BREMBO')
+    classification = ProductEnrichmentService.classify_product_catalog_domain(product)
+    classification.needs_review = True
+    classification.save(update_fields=['needs_review', 'updated_at'])
+
+    response = Client().post(
+        f'/api/v1/products/{product.pk}/catalog-classification/approve/',
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    classification.refresh_from_db()
+    assert classification.review_status == ReviewStatus.APPROVED
+    assert classification.needs_review is False
+    assert classification.source == ProductCatalogClassification.Source.MANUAL
+
+
+@pytest.mark.django_db
+def test_catalog_classification_review_cannot_approve_unknown_domain():
+    tenant, api_key = make_tenant('classification-review-unknown')
+    product = make_product(
+        tenant,
+        article='ITEM1',
+        brand='NO_BRAND',
+        name='Товар без понятной категории',
+    )
+    classification = ProductEnrichmentService.classify_product_catalog_domain(product)
+
+    response = Client().post(
+        f'/api/v1/products/{product.pk}/catalog-classification/approve/',
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 400
+    assert response.json()['code'] == 'unknown_classification'
+    classification.refresh_from_db()
+    assert classification.review_status == ReviewStatus.PENDING
+
+
+@pytest.mark.django_db
+def test_assign_catalog_category_reclassifies_previous_manual_unknown_classification():
+    tenant, api_key = make_tenant('classification-force-after-category')
+    product = make_product(
+        tenant,
+        article='ITEM2',
+        brand='NO_BRAND',
+        name='Товар без понятной категории',
+    )
+    classification = ProductEnrichmentService.classify_product_catalog_domain(product)
+    classification.source = ProductCatalogClassification.Source.MANUAL
+    classification.review_status = ReviewStatus.APPROVED
+    classification.save(update_fields=['source', 'review_status', 'updated_at'])
+    category = TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Ходовая часть',
+        domain=ProductCatalogClassification.Domain.AUTO_PARTS,
+    )
+
+    response = Client().post(
+        '/api/v1/products/catalog-categories/assign/',
+        {'product_ids': [product.pk], 'catalog_category': category.pk},
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    classification.refresh_from_db()
+    assert classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
+    assert classification.source == ProductCatalogClassification.Source.RULES
+    assert classification.review_status == ReviewStatus.PENDING
 
 
 @pytest.mark.django_db
