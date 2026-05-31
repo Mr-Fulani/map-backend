@@ -14,8 +14,9 @@ from apps.products.models import (
 )
 from apps.products.part_parsers import ParsedPart, PartNotFound, get_part_parser
 from apps.products.source_policy import (
-    DEFAULT_PART_SOURCE, get_part_source_config, should_auto_apply_fitment,
-    should_auto_apply_relation,
+    DEFAULT_PART_SOURCE, can_raise_confidence, get_part_source_config, has_conflicting_fact,
+    has_conflicting_fitment, should_auto_apply_fitment, should_auto_apply_relation,
+    should_mark_needs_review,
 )
 
 
@@ -359,35 +360,16 @@ class ProductEnrichmentService:
             ProductCrossCode.objects.bulk_create(cross_objects, ignore_conflicts=True)
 
             VehicleFitment.objects.bulk_create([
-                VehicleFitment(
-                    tenant=tenant,
-                    product=product,
-                    source_id=source_id,
-                    make=fitment.make[:100],
-                    model=fitment.model[:150],
-                    generation=fitment.generation[:100],
-                    date_from=fitment.date_from[:20],
-                    date_to=fitment.date_to[:20],
-                    modification=fitment.modification[:255],
-                    engine_code=fitment.engine_code[:100],
-                    power_hp=fitment.power_hp,
-                    raw_text=fitment.raw_text,
-                    confidence=fitment.confidence,
-                    needs_review=fitment.needs_review,
-                )
+                cls._build_vehicle_fitment(tenant, product, fitment, source_id, parsed.source_url)
                 for fitment in parsed.fitments
                 if fitment.model
             ], ignore_conflicts=True)
 
             description_facts = [
-                ProductEnrichmentFact(
-                    tenant=tenant,
-                    product=product,
-                    source_id=source_id,
-                    fact_type=ProductEnrichmentFact.FactType.DESCRIPTION_HINT,
-                    name=name[:150],
-                    value=value,
-                    value_hash=make_value_hash(value),
+                cls._build_enrichment_fact(
+                    tenant, product, source_id, parsed.source_url,
+                    ProductEnrichmentFact.FactType.DESCRIPTION_HINT,
+                    name, value,
                 )
                 for name, value in parsed.description_facts.items()
                 if name and value
@@ -402,6 +384,62 @@ class ProductEnrichmentService:
                 source_id=source_id,
             )
 
+    @classmethod
+    def _build_vehicle_fitment(
+        cls, tenant, product: Product, parsed_fitment, source_id: str, source_url: str,
+    ) -> VehicleFitment:
+        fitment = VehicleFitment(
+            tenant=tenant,
+            product=product,
+            source_id=source_id,
+            source_url=source_url,
+            make=parsed_fitment.make[:100],
+            model=parsed_fitment.model[:150],
+            generation=parsed_fitment.generation[:100],
+            date_from=parsed_fitment.date_from[:20],
+            date_to=parsed_fitment.date_to[:20],
+            modification=parsed_fitment.modification[:255],
+            engine_code=parsed_fitment.engine_code[:100],
+            power_hp=parsed_fitment.power_hp,
+            raw_text=parsed_fitment.raw_text,
+            confidence=parsed_fitment.confidence,
+            needs_review=parsed_fitment.needs_review,
+            last_seen_at=now(),
+        )
+        existing = product.fitments.all()
+        if should_mark_needs_review(
+            fitment,
+            has_conflict=has_conflicting_fitment(existing, fitment),
+        ):
+            fitment.needs_review = True
+        return fitment
+
+    @classmethod
+    def _build_enrichment_fact(
+        cls, tenant, product: Product, source_id: str, source_url: str,
+        fact_type: str, name: str, value: str,
+    ) -> ProductEnrichmentFact:
+        fact = ProductEnrichmentFact(
+            tenant=tenant,
+            product=product,
+            source_id=source_id,
+            source_url=source_url,
+            fact_type=fact_type,
+            name=name[:150],
+            value=value,
+            value_hash=make_value_hash(value),
+            confidence=1.0,
+            needs_review=False,
+            last_seen_at=now(),
+        )
+        existing = product.enrichment_facts.filter(fact_type=fact_type, name=name[:150])
+        if should_mark_needs_review(
+            fact,
+            has_conflict=has_conflicting_fact(existing, fact),
+        ):
+            fact.needs_review = True
+        return fact
+
     @staticmethod
     def refresh_product_denormalized_enrichment(product: Product) -> None:
         oem_numbers = []
@@ -414,6 +452,8 @@ class ProductEnrichmentService:
         applicability = []
         seen_fitments = set()
         for fitment in product.fitments.order_by('source_id', 'make', 'model', 'generation'):
+            if not should_auto_apply_fitment(fitment):
+                continue
             key = (
                 fitment.make, fitment.model, fitment.generation,
                 fitment.modification, fitment.engine_code, fitment.power_hp,
@@ -826,8 +866,9 @@ class ProductKnowledgeGraphService:
             part.needs_review = part.needs_review or needs_review
             if needs_review:
                 update_fields.append('needs_review')
-            part.confidence = max(part.confidence, confidence)
-            update_fields.append('confidence')
+            if confidence > part.confidence and can_raise_confidence(part.source_id, source_id):
+                part.confidence = confidence
+                update_fields.append('confidence')
             part.save(update_fields=sorted(set(update_fields)))
         return part
 
@@ -862,6 +903,9 @@ class ProductKnowledgeGraphService:
                 'last_seen_at', 'confidence', 'needs_review',
                 'source_url', 'raw_text', 'updated_at',
             ])
+        elif not should_auto_apply_relation(relation):
+            relation.needs_review = True
+            relation.save(update_fields=['needs_review', 'updated_at'])
         return relation
 
     @classmethod
@@ -870,6 +914,7 @@ class ProductKnowledgeGraphService:
         source_url: str = '',
     ) -> GlobalPartFitment:
         vehicle_make, vehicle_model = VehicleKnowledgeService.resolve_fitment(fitment)
+        incoming_needs_review = fitment.needs_review
         global_fitment, created = GlobalPartFitment.objects.get_or_create(
             part=part,
             source_id=source_id[:50],
@@ -887,14 +932,14 @@ class ProductKnowledgeGraphService:
                 'source_url': source_url,
                 'raw_text': fitment.raw_text,
                 'confidence': fitment.confidence,
-                'needs_review': fitment.needs_review,
+                'needs_review': incoming_needs_review,
                 'last_seen_at': now(),
             },
         )
         if not created:
             global_fitment.last_seen_at = now()
             global_fitment.confidence = max(global_fitment.confidence, fitment.confidence)
-            global_fitment.needs_review = global_fitment.needs_review or fitment.needs_review
+            global_fitment.needs_review = global_fitment.needs_review or incoming_needs_review
             if fitment.date_from and not global_fitment.date_from:
                 global_fitment.date_from = fitment.date_from[:20]
             if fitment.date_to and not global_fitment.date_to:
@@ -912,6 +957,12 @@ class ProductKnowledgeGraphService:
                 'date_to', 'source_url', 'raw_text', 'vehicle_make',
                 'vehicle_model', 'updated_at',
             ])
+        elif (
+            has_conflicting_fitment(part.fitments.exclude(pk=global_fitment.pk), global_fitment)
+            or not should_auto_apply_fitment(global_fitment)
+        ):
+            global_fitment.needs_review = True
+            global_fitment.save(update_fields=['needs_review', 'updated_at'])
         return global_fitment
 
     @classmethod
@@ -1039,9 +1090,11 @@ class ProductKnowledgeGraphService:
                 defaults={
                     'date_from': fitment.date_from[:20],
                     'date_to': fitment.date_to[:20],
+                    'source_url': fitment.source_url,
                     'raw_text': fitment.raw_text,
                     'confidence': fitment.confidence,
                     'needs_review': False,
+                    'last_seen_at': now(),
                 },
             )
             if was_created:

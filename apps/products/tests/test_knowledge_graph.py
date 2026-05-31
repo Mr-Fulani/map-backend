@@ -377,3 +377,24 @@ def test_low_confidence_global_relations_are_not_applied_to_tenant_product():
 
     assert created == 0
     assert product.cross_codes.count() == 0
+
+
+@pytest.mark.django_db
+def test_global_part_confidence_is_not_raised_by_untrusted_source():
+    part = ProductKnowledgeGraphService.upsert_part(
+        brand='BREMBO',
+        article='P50136',
+        source_id='tachka',
+        confidence=0.8,
+    )
+
+    ProductKnowledgeGraphService.upsert_part(
+        brand='BREMBO',
+        article='P50136',
+        source_id='unregistered-source',
+        confidence=1.0,
+    )
+
+    part.refresh_from_db()
+    assert part.source_id == 'tachka'
+    assert part.confidence == 0.8
