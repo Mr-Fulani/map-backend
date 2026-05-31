@@ -25,17 +25,21 @@ class ProductCatalogClassificationSerializer(serializers.ModelSerializer):
 
 class TenantCatalogCategorySerializer(serializers.ModelSerializer):
     default_image_url = serializers.SerializerMethodField()
+    root_domain_slug = serializers.CharField(source='root_domain.slug', read_only=True)
+    root_domain_name = serializers.CharField(source='root_domain.name', read_only=True)
 
     class Meta:
         model = TenantCatalogCategory
         fields = [
-            'id', 'name', 'normalized_name', 'parent', 'domain', 'aliases', 'external_source',
+            'id', 'name', 'normalized_name', 'parent', 'root_domain',
+            'root_domain_slug', 'root_domain_name', 'domain', 'aliases', 'external_source',
             'external_id', 'default_image_s3_key', 'default_image_source_name',
             'default_image_url', 'is_active', 'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'normalized_name', 'default_image_s3_key',
-            'default_image_source_name', 'default_image_url', 'created_at', 'updated_at',
+            'default_image_source_name', 'default_image_url',
+            'root_domain_slug', 'root_domain_name', 'created_at', 'updated_at',
         ]
 
     def get_default_image_url(self, obj) -> str:

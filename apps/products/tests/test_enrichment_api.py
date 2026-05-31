@@ -254,6 +254,7 @@ def test_assign_catalog_category_reclassifies_previous_manual_unknown_classifica
     category = TenantCatalogCategory.objects.create(
         tenant=tenant,
         name='Ходовая часть',
+        root_domain=CatalogDomain.objects.get(slug='auto_parts'),
         domain=ProductCatalogClassification.Domain.AUTO_PARTS,
     )
 
@@ -459,7 +460,12 @@ def test_tenant_catalog_category_api_crud_and_mapping():
 
     create_response = client.post(
         '/api/v1/products/catalog-categories/',
-        {'name': 'Тормозные колодки', 'domain': 'auto_parts', 'aliases': []},
+        {
+            'name': 'Тормозные колодки',
+            'root_domain': CatalogDomain.objects.get(slug='auto_parts').pk,
+            'domain': 'auto_parts',
+            'aliases': [],
+        },
         content_type='application/json',
         HTTP_AUTHORIZATION=f'Bearer {api_key}',
     )
@@ -467,6 +473,7 @@ def test_tenant_catalog_category_api_crud_and_mapping():
     category_id = create_response.json()['data']['id']
     category = TenantCatalogCategory.objects.get(pk=category_id)
     assert category.tenant == tenant
+    assert category.root_domain.slug == 'auto_parts'
     assert category.normalized_name
 
     mapping_response = client.post(
@@ -534,6 +541,7 @@ def test_tenant_catalog_category_default_image_is_product_fallback():
     category = TenantCatalogCategory.objects.create(
         tenant=tenant,
         name='Ходовая часть',
+        root_domain=CatalogDomain.objects.get(slug='auto_parts'),
         domain='auto_parts',
     )
     product = make_product(tenant, category_1c='Ходовая')
@@ -571,6 +579,7 @@ def test_assign_catalog_category_to_selected_products():
     category = TenantCatalogCategory.objects.create(
         tenant=tenant,
         name='Амортизаторы',
+        root_domain=CatalogDomain.objects.get(slug='auto_parts'),
         domain=TenantCatalogCategory.Domain.AUTO_PARTS,
     )
     client = Client()

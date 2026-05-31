@@ -52,6 +52,9 @@ interface NotificationSettings {
 interface CatalogCategory {
   id: number;
   name: string;
+  root_domain: number | null;
+  root_domain_slug: string;
+  root_domain_name: string;
   domain: string;
   aliases: string[];
   default_image_url: string;
@@ -60,10 +63,12 @@ interface CatalogCategory {
 }
 
 interface CatalogDomain {
+  id: number;
   slug: string;
   name: string;
   short_name: string;
   is_active: boolean;
+  is_enabled_for_tenant: boolean;
 }
 
 interface SourceCategory {
@@ -120,6 +125,7 @@ export default function SettingsPage() {
   const [creatingCatalogCategory, setCreatingCatalogCategory] = useState(false);
   const [uploadingCategoryImageId, setUploadingCategoryImageId] = useState<number | null>(null);
   const [savingCatalogCategoryId, setSavingCatalogCategoryId] = useState<number | null>(null);
+  const [savingCatalogDomainSlug, setSavingCatalogDomainSlug] = useState<string | null>(null);
   const [editingCatalogCategoryId, setEditingCatalogCategoryId] = useState<number | null>(null);
   const [newCatalogCategoryName, setNewCatalogCategoryName] = useState('');
   const [newCatalogCategoryDomain, setNewCatalogCategoryDomain] = useState('unknown');
@@ -185,12 +191,15 @@ export default function SettingsPage() {
   };
   const domainOptions = catalogDomains.length > 0
     ? catalogDomains
-    : Object.entries(FALLBACK_DOMAIN_LABELS).map(([slug, name]) => ({
+    : Object.entries(FALLBACK_DOMAIN_LABELS).map(([slug, name], index) => ({
+        id: -index - 1,
         slug,
         name,
         short_name: '',
         is_active: true,
+        is_enabled_for_tenant: true,
       }));
+  const enabledDomainOptions = domainOptions.filter((domain) => domain.is_enabled_for_tenant);
 
   // Подставляем телефон из данных пользователя при загрузке
   useEffect(() => {
@@ -198,6 +207,13 @@ export default function SettingsPage() {
       setPhone((user as { phone?: string }).phone ?? '');
     }
   }, [user]);
+
+  useEffect(() => {
+    if (enabledDomainOptions.length === 0) return;
+    if (!enabledDomainOptions.some((domain) => domain.slug === newCatalogCategoryDomain)) {
+      setNewCatalogCategoryDomain(enabledDomainOptions[0].slug);
+    }
+  }, [enabledDomainOptions, newCatalogCategoryDomain]);
 
   useEffect(() => {
     tenantApi.getApiKeys()
@@ -408,16 +424,22 @@ export default function SettingsPage() {
   async function createCatalogCategory(e: React.FormEvent) {
     e.preventDefault();
     if (!newCatalogCategoryName.trim()) return;
+    const rootDomain = enabledDomainOptions.find((domain) => domain.slug === newCatalogCategoryDomain);
+    if (!rootDomain) {
+      toast.error('Сначала включите корневую категорию');
+      return;
+    }
     setCreatingCatalogCategory(true);
     try {
       await productApi.createCatalogCategory({
         name: newCatalogCategoryName.trim(),
-        domain: newCatalogCategoryDomain,
+        root_domain: rootDomain.id,
+        domain: rootDomain.slug,
         aliases: [],
         is_active: true,
       });
       setNewCatalogCategoryName('');
-      setNewCatalogCategoryDomain('unknown');
+      setNewCatalogCategoryDomain(enabledDomainOptions[0]?.slug ?? '');
       await loadCatalogCategories();
       toast.success('Категория создана');
     } catch {
@@ -430,15 +452,18 @@ export default function SettingsPage() {
   function startCatalogCategoryEdit(category: CatalogCategory) {
     setEditingCatalogCategoryId(category.id);
     setEditCatalogCategoryName(category.name);
-    setEditCatalogCategoryDomain(category.domain);
+    setEditCatalogCategoryDomain(category.root_domain_slug || category.domain);
   }
 
   async function updateCatalogCategory(category: CatalogCategory, data: Partial<CatalogCategory>) {
+    const rootSlug = data.root_domain_slug ?? category.root_domain_slug ?? data.domain ?? category.domain;
+    const rootDomain = domainOptions.find((domain) => domain.slug === rootSlug);
     setSavingCatalogCategoryId(category.id);
     try {
       await productApi.updateCatalogCategory(category.id, {
         name: data.name ?? category.name,
-        domain: data.domain ?? category.domain,
+        root_domain: rootDomain?.id ?? category.root_domain,
+        domain: rootDomain?.slug ?? data.domain ?? category.domain,
         aliases: category.aliases ?? [],
         is_active: data.is_active ?? category.is_active,
       });
@@ -456,7 +481,7 @@ export default function SettingsPage() {
     if (!editCatalogCategoryName.trim()) return;
     await updateCatalogCategory(category, {
       name: editCatalogCategoryName.trim(),
-      domain: editCatalogCategoryDomain,
+      root_domain_slug: editCatalogCategoryDomain,
     });
   }
 
@@ -469,6 +494,7 @@ export default function SettingsPage() {
       } else {
         await productApi.updateCatalogCategory(category.id, {
           name: category.name,
+          root_domain: category.root_domain,
           domain: category.domain,
           aliases: category.aliases ?? [],
           is_active: true,
@@ -480,6 +506,21 @@ export default function SettingsPage() {
       toast.error('Не удалось изменить статус категории');
     } finally {
       setSavingCatalogCategoryId(null);
+    }
+  }
+
+  async function setCatalogDomainEnabled(domainSlug: string, isEnabled: boolean) {
+    setSavingCatalogDomainSlug(domainSlug);
+    try {
+      await tenantApi.setCatalogDomainEnabled(domainSlug, isEnabled);
+      const res = await tenantApi.catalogDomains();
+      setCatalogDomains(res.data.data ?? res.data);
+      await loadCatalogCategories();
+      toast.success(isEnabled ? 'Корневая категория включена' : 'Корневая категория отключена');
+    } catch {
+      toast.error('Не удалось изменить корневую категорию');
+    } finally {
+      setSavingCatalogDomainSlug(null);
     }
   }
 
@@ -1167,6 +1208,27 @@ export default function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="space-y-2 rounded-lg border p-3">
+                <p className="text-xs font-medium text-muted-foreground">Корневые категории tenant-а</p>
+                <div className="flex flex-wrap gap-2">
+                  {domainOptions.filter((domain) => domain.slug !== 'unknown').map((domain) => {
+                    const isSaving = savingCatalogDomainSlug === domain.slug;
+                    return (
+                      <Button
+                        key={domain.slug}
+                        type="button"
+                        size="sm"
+                        variant={domain.is_enabled_for_tenant ? 'default' : 'outline'}
+                        onClick={() => setCatalogDomainEnabled(domain.slug, !domain.is_enabled_for_tenant)}
+                        disabled={isSaving}
+                      >
+                        {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        {domainLabel(domain.slug)}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
               <form className="grid gap-3 md:grid-cols-[1fr_220px_auto]" onSubmit={createCatalogCategory}>
                 <Input
                   placeholder="Например: Тормозные колодки"
@@ -1178,11 +1240,11 @@ export default function SettingsPage() {
                   value={newCatalogCategoryDomain}
                   onChange={(e) => setNewCatalogCategoryDomain(e.target.value)}
                 >
-                  {domainOptions.map((domain) => (
+                  {enabledDomainOptions.map((domain) => (
                     <option key={domain.slug} value={domain.slug}>{domainLabel(domain.slug)}</option>
                   ))}
                 </select>
-                <Button disabled={creatingCatalogCategory || !newCatalogCategoryName.trim()}>
+                <Button disabled={creatingCatalogCategory || !newCatalogCategoryName.trim() || enabledDomainOptions.length === 0}>
                   {creatingCatalogCategory
                     ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     : <Plus className="mr-2 h-4 w-4" />
@@ -1241,7 +1303,7 @@ export default function SettingsPage() {
                                 onChange={(e) => setEditCatalogCategoryDomain(e.target.value)}
                                 disabled={isSaving}
                               >
-                                {domainOptions.map((domain) => (
+                                {enabledDomainOptions.map((domain) => (
                                   <option key={domain.slug} value={domain.slug}>
                                     {domainLabel(domain.slug)}
                                   </option>
@@ -1252,7 +1314,7 @@ export default function SettingsPage() {
                             <div>
                               <p className="font-medium">{category.name}</p>
                               <p className="text-xs text-muted-foreground">
-                                Тип: {domainLabel(category.domain)}
+                                Корень: {category.root_domain_name || domainLabel(category.domain)}
                               </p>
                               {category.default_image_source_name && (
                                 <p className="text-xs text-muted-foreground">
@@ -1376,7 +1438,7 @@ export default function SettingsPage() {
                           <option value="">Не привязана</option>
                           {catalogCategories.filter((category) => category.is_active).map((category) => (
                             <option key={category.id} value={category.id}>
-                              {category.name} · {domainLabel(category.domain)}
+                              {category.name} · {category.root_domain_name || domainLabel(category.domain)}
                             </option>
                           ))}
                         </select>

@@ -90,8 +90,8 @@ class PartCategoryAdmin(ModelAdmin):
 
 @admin.register(TenantCatalogCategory)
 class TenantCatalogCategoryAdmin(ModelAdmin):
-    list_display = ['name', 'tenant', 'domain', 'parent', 'is_active', 'updated_at']
-    list_filter = ['tenant', 'domain', 'is_active']
+    list_display = ['name', 'tenant', 'root_domain', 'domain', 'parent', 'is_active', 'updated_at']
+    list_filter = ['tenant', 'root_domain', 'domain', 'is_active']
     search_fields = ['name', 'aliases', 'external_id']
 
 

@@ -6,7 +6,9 @@ from django.utils import timezone
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin
 
-from apps.tenants.models import APIKey, CatalogDomain, Tenant, TenantUser, WebhookEndpoint
+from apps.tenants.models import (
+    APIKey, CatalogDomain, Tenant, TenantCatalogDomain, TenantUser, WebhookEndpoint,
+)
 
 
 @admin.register(CatalogDomain)
@@ -60,6 +62,14 @@ class TenantUserInline(admin.TabularInline):
         return obj.user.phone or '—'
 
 
+class TenantCatalogDomainInline(admin.TabularInline):
+    model = TenantCatalogDomain
+    extra = 0
+    autocomplete_fields = ['domain']
+    fields = ['domain', 'is_enabled', 'created_at']
+    readonly_fields = ['created_at']
+
+
 @admin.register(Tenant)
 class TenantAdmin(ModelAdmin):
     """
@@ -80,7 +90,7 @@ class TenantAdmin(ModelAdmin):
         'created_at', 'updated_at',
     ]
     actions = ['extend_trial_14_days']
-    inlines = [TenantUserInline]
+    inlines = [TenantCatalogDomainInline, TenantUserInline]
     fieldsets = [
         ('Основное', {
             'fields': ['name', 'slug', 'catalog_domain', 'is_active'],

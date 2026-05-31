@@ -7,10 +7,13 @@ from django.utils.timezone import now
 
 from apps.products.enrichment import make_value_hash, normalize_part_code
 from apps.products.models import (
-    GlobalPart, GlobalPartFitment, GlobalPartRelation,
+    GlobalPart, GlobalPartFitment, GlobalPartRelation, PartCategory,
     Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
     ProductCrossCode, ProductEnrichmentFact, ProductParseJob, ReviewStatus, VehicleFitment,
     TenantCatalogCategory, TenantCategoryMapping, VehicleMake, VehicleModel,
+)
+from apps.products.part_category_seed import (
+    BASE_PART_CATEGORY_TREE, normalize_category_name,
 )
 from apps.products.part_parsers import ParsedPart, PartNotFound, get_part_parser
 from apps.products.source_policy import (
@@ -18,6 +21,7 @@ from apps.products.source_policy import (
     has_conflicting_fitment, should_auto_apply_fitment, should_auto_apply_relation,
     should_mark_needs_review,
 )
+from apps.tenants.models import CatalogDomain, TenantCatalogDomain
 
 
 def _compute_hash(data: dict) -> str:
@@ -31,6 +35,95 @@ def _compute_hash(data: dict) -> str:
         'condition': data.get('condition', 'new'),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+class ProductCategorySeedService:
+    """Seeds base auto-part categories for the platform and tenant catalogs."""
+
+    SEED_SOURCE = 'platform_auto_parts_seed'
+
+    @classmethod
+    def seed_platform_categories(cls) -> int:
+        created_count = 0
+        for root in BASE_PART_CATEGORY_TREE:
+            category, created = PartCategory.objects.update_or_create(
+                normalized_name=normalize_category_name(root['name']),
+                defaults={
+                    'name': root['name'],
+                    'parent': None,
+                    'aliases': root.get('aliases', []),
+                    'fitment_required': root.get('fitment_required', True),
+                },
+            )
+            created_count += int(created)
+            for child_name, aliases, fitment_required in root.get('children', []):
+                _, child_created = PartCategory.objects.update_or_create(
+                    normalized_name=normalize_category_name(child_name),
+                    defaults={
+                        'name': child_name,
+                        'parent': category,
+                        'aliases': aliases,
+                        'fitment_required': fitment_required,
+                    },
+                )
+                created_count += int(child_created)
+        return created_count
+
+    @classmethod
+    def enable_tenant_catalog_domain(cls, tenant, domain_slug: str, seed_templates: bool = True) -> int:
+        domain = CatalogDomain.objects.filter(slug=domain_slug, is_active=True).first()
+        if domain is None:
+            return 0
+        TenantCatalogDomain.objects.update_or_create(
+            tenant=tenant,
+            domain=domain,
+            defaults={'is_enabled': True},
+        )
+        if seed_templates and domain.slug == TenantCatalogCategory.Domain.AUTO_PARTS:
+            return cls.seed_tenant_default_categories(tenant, domain)
+        return 0
+
+    @classmethod
+    def seed_tenant_default_categories(cls, tenant, root_domain: CatalogDomain | None = None) -> int:
+        root_domain = root_domain or CatalogDomain.objects.filter(
+            slug=TenantCatalogCategory.Domain.AUTO_PARTS,
+        ).first()
+        if root_domain is None:
+            return 0
+        created_count = 0
+        for root in BASE_PART_CATEGORY_TREE:
+            root_category, created = TenantCatalogCategory.objects.get_or_create(
+                tenant=tenant,
+                parent__isnull=True,
+                normalized_name=normalize_category_name(root['name']),
+                defaults={
+                    'name': root['name'],
+                    'root_domain': root_domain,
+                    'domain': TenantCatalogCategory.Domain.AUTO_PARTS,
+                    'aliases': root.get('aliases', []),
+                    'external_source': cls.SEED_SOURCE,
+                    'external_id': f"root:{normalize_category_name(root['name'])}",
+                    'is_active': True,
+                },
+            )
+            created_count += int(created)
+            for child_name, aliases, _fitment_required in root.get('children', []):
+                _, child_created = TenantCatalogCategory.objects.get_or_create(
+                    tenant=tenant,
+                    parent=root_category,
+                    normalized_name=normalize_category_name(child_name),
+                    defaults={
+                        'name': child_name,
+                        'root_domain': root_domain,
+                        'domain': TenantCatalogCategory.Domain.AUTO_PARTS,
+                        'aliases': aliases,
+                        'external_source': cls.SEED_SOURCE,
+                        'external_id': f"{normalize_category_name(root['name'])}:{normalize_category_name(child_name)}",
+                        'is_active': True,
+                    },
+                )
+                created_count += int(child_created)
+        return created_count
 
 
 class QuotaExceeded(Exception):

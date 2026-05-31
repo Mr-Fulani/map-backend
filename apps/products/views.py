@@ -31,7 +31,54 @@ from apps.products.services import (
 )
 from apps.products.tasks import import_from_datasource
 from apps.products.source_policy import DEFAULT_PART_SOURCE, get_part_source_config
-from apps.tenants.models import CatalogDomain
+from apps.tenants.models import CatalogDomain, TenantCatalogDomain
+
+
+def _validate_tenant_catalog_category(request, serializer):
+    root_domain = serializer.validated_data.get('root_domain')
+    parent = serializer.validated_data.get('parent')
+    if root_domain is None and parent is not None:
+        root_domain = parent.root_domain
+        serializer.validated_data['root_domain'] = root_domain
+    if root_domain is None:
+        return Response(
+            {
+                'status': 'error',
+                'code': 'validation_error',
+                'message': 'Выберите корневую категорию.',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if not TenantCatalogDomain.objects.filter(
+        tenant=request.tenant,
+        domain=root_domain,
+        is_enabled=True,
+    ).exists():
+        return Response(
+            {
+                'status': 'error',
+                'code': 'validation_error',
+                'message': 'Эта корневая категория не включена для tenant-а.',
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    if parent is not None:
+        if parent.tenant_id != request.tenant.id:
+            return Response(
+                {'status': 'error', 'code': 'validation_error', 'message': 'Родительская категория другого tenant-а'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if parent.root_domain_id != root_domain.id:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'validation_error',
+                    'message': 'Подкатегория должна быть внутри той же корневой категории.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    serializer.validated_data['domain'] = root_domain.slug
+    return None
 
 
 @extend_schema(tags=['Products'])
@@ -153,7 +200,16 @@ class TenantCatalogCategoryListView(APIView):
     """GET/POST /api/v1/products/catalog-categories/."""
 
     def get(self, request):
-        qs = TenantCatalogCategory.objects.filter(tenant=request.tenant).order_by('name')
+        enabled_domain_ids = TenantCatalogDomain.objects.filter(
+            tenant=request.tenant,
+            is_enabled=True,
+        ).values_list('domain_id', flat=True)
+        qs = (
+            TenantCatalogCategory.objects
+            .filter(tenant=request.tenant, root_domain_id__in=enabled_domain_ids)
+            .select_related('root_domain', 'parent')
+            .order_by('root_domain__sort_order', 'parent__name', 'name')
+        )
         return Response({
             'status': 'ok',
             'data': TenantCatalogCategorySerializer(qs, many=True, context={'request': request}).data,
@@ -162,12 +218,9 @@ class TenantCatalogCategoryListView(APIView):
     def post(self, request):
         serializer = TenantCatalogCategorySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        parent = serializer.validated_data.get('parent')
-        if parent is not None and parent.tenant_id != request.tenant.id:
-            return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Родительская категория другого tenant-а'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        validation_error = _validate_tenant_catalog_category(request, serializer)
+        if validation_error is not None:
+            return validation_error
         category = serializer.save(tenant=request.tenant)
         return Response(
             {'status': 'ok', 'data': TenantCatalogCategorySerializer(category, context={'request': request}).data},
@@ -188,12 +241,9 @@ class TenantCatalogCategoryDetailView(APIView):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         serializer = TenantCatalogCategorySerializer(category, data=request.data)
         serializer.is_valid(raise_exception=True)
-        parent = serializer.validated_data.get('parent')
-        if parent is not None and parent.tenant_id != request.tenant.id:
-            return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Родительская категория другого tenant-а'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        validation_error = _validate_tenant_catalog_category(request, serializer)
+        if validation_error is not None:
+            return validation_error
         category = serializer.save(tenant=request.tenant)
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
@@ -279,6 +329,8 @@ class TenantCategoryMappingListView(APIView):
             TenantCatalogCategory,
             pk=serializer.validated_data['category'].pk,
             tenant=request.tenant,
+            root_domain__tenant_enablings__tenant=request.tenant,
+            root_domain__tenant_enablings__is_enabled=True,
         )
         mapping, _ = TenantCategoryMapping.objects.update_or_create(
             tenant=request.tenant,
@@ -342,11 +394,16 @@ class ProductCatalogCategoryAssignView(APIView):
 
         category = None
         if category_id:
+            enabled_domain_ids = TenantCatalogDomain.objects.filter(
+                tenant=request.tenant,
+                is_enabled=True,
+            ).values_list('domain_id', flat=True)
             category = get_object_or_404(
                 TenantCatalogCategory,
                 pk=category_id,
                 tenant=request.tenant,
                 is_active=True,
+                root_domain_id__in=enabled_domain_ids,
             )
 
         valid_ids = list(
