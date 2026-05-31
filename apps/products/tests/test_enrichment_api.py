@@ -353,6 +353,15 @@ def test_tenant_catalog_category_api_crud_and_mapping():
         {'source_category': product.category_1c, 'catalog_category': category_id},
     ]
 
+    mapping = TenantCategoryMapping.objects.get(tenant=tenant, source_category='Тормоза')
+    delete_response = client.delete(
+        f'/api/v1/products/catalog-category-mappings/{mapping.pk}/',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert delete_response.status_code == 204
+    assert not TenantCategoryMapping.objects.filter(pk=mapping.pk).exists()
+
 
 @pytest.mark.django_db
 def test_catalog_domains_endpoint_returns_active_platform_domains():

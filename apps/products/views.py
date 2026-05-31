@@ -28,6 +28,7 @@ from apps.products.services import (
 )
 from apps.products.tasks import import_from_datasource
 from apps.products.source_policy import DEFAULT_PART_SOURCE, get_part_source_config
+from apps.tenants.models import CatalogDomain
 
 
 @extend_schema(tags=['Products'])
@@ -78,16 +79,17 @@ class ProductListView(APIView):
             qs = qs.filter(catalog_category_id=catalog_category)
 
         domain_counts_qs = qs
-        domain_counts = {
-            'all': domain_counts_qs.count(),
-            'auto_parts': domain_counts_qs.filter(catalog_classification__domain='auto_parts').count(),
-            'jewellery': domain_counts_qs.filter(catalog_classification__domain='jewellery').count(),
-            'apparel': domain_counts_qs.filter(catalog_classification__domain='apparel').count(),
-            'generic': domain_counts_qs.filter(catalog_classification__domain='generic').count(),
-            'unknown': domain_counts_qs.filter(
-                Q(catalog_classification__domain='unknown') | Q(catalog_classification__isnull=True)
-            ).count(),
-        }
+        domain_counts = {'all': domain_counts_qs.count()}
+        active_domain_slugs = CatalogDomain.objects.filter(is_active=True).values_list('slug', flat=True)
+        for domain_slug in active_domain_slugs:
+            if domain_slug == 'unknown':
+                domain_counts[domain_slug] = domain_counts_qs.filter(
+                    Q(catalog_classification__domain='unknown') | Q(catalog_classification__isnull=True)
+                ).count()
+            else:
+                domain_counts[domain_slug] = domain_counts_qs.filter(
+                    catalog_classification__domain=domain_slug,
+                ).count()
 
         catalog_domain = request.query_params.get('catalog_domain', '').strip()
         if catalog_domain == 'unknown':
@@ -277,6 +279,16 @@ class TenantCategoryMappingListView(APIView):
             {'status': 'ok', 'data': TenantCategoryMappingSerializer(mapping).data},
             status=status.HTTP_201_CREATED,
         )
+
+
+@extend_schema(tags=['Catalog Categories'])
+class TenantCategoryMappingDetailView(APIView):
+    """DELETE /api/v1/products/catalog-category-mappings/{id}/."""
+
+    def delete(self, request, pk):
+        mapping = get_object_or_404(TenantCategoryMapping, pk=pk, tenant=request.tenant)
+        mapping.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 @extend_schema(tags=['Catalog Categories'])

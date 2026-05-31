@@ -7,6 +7,7 @@ from apps.products.views import (
     ProductParseView, ProductPublishView, ProductRegenerateView, ProductSearchView,
     ProductSyncView, TenantCatalogCategoryDefaultImageView,
     TenantCatalogCategoryDetailView, TenantCatalogCategoryListView,
+    TenantCategoryMappingDetailView,
     TenantCategoryMappingListView, TenantSourceCategoryListView,
 )
 
@@ -37,6 +38,11 @@ urlpatterns = [
         'catalog-category-mappings/',
         TenantCategoryMappingListView.as_view(),
         name='tenant-category-mapping-list',
+    ),
+    path(
+        'catalog-category-mappings/<int:pk>/',
+        TenantCategoryMappingDetailView.as_view(),
+        name='tenant-category-mapping-detail',
     ),
     path(
         'catalog-source-categories/',

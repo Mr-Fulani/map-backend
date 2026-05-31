@@ -91,6 +91,11 @@ UNFOLD = {
                 "collapsible": True,
                 "items": [
                     {"title": "Тенанты", "icon": "domain", "link": "/admin/tenants/tenant/"},
+                    {
+                        "title": "Домены каталога",
+                        "icon": "category",
+                        "link": "/admin/tenants/catalogdomain/",
+                    },
                     {"title": "Пользователи", "icon": "person", "link": "/admin/users/user/"},
                     {"title": "API-ключи", "icon": "key", "link": "/admin/tenants/apikey/"},
                     {
