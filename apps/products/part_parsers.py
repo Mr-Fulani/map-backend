@@ -3,11 +3,11 @@ import re
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
-import httpx
 from django.utils.text import slugify
 from selectolax.parser import HTMLParser
 
 from apps.products.enrichment import normalize_part_code
+from apps.products.part_fetchers import get_part_fetcher
 from apps.products.models import GlobalPartRelation, ProductCrossCode
 
 
@@ -106,6 +106,9 @@ class TachkaPartParser:
     source_id = 'tachka'
     base_url = 'https://tachka.ru'
 
+    def __init__(self, fetcher=None):
+        self.fetcher = fetcher or get_part_fetcher(self.source_id)
+
     def build_url(self, brand: str, article: str) -> str:
         brand_slug = slugify(brand).lower() or brand.strip().lower()
         return f'{self.base_url}/{brand_slug}/{normalize_part_code(article)}'
@@ -122,30 +125,20 @@ class TachkaPartParser:
 
     def fetch(self, brand: str, article: str) -> tuple[str, str]:
         url = self.build_url(brand, article)
-        response = httpx.get(
-            url,
-            timeout=20,
-            follow_redirects=True,
-            headers={'User-Agent': 'MAP enrichment bot (+https://map.local)'},
-        )
-        if response.status_code == 404:
+        page = self.fetcher.fetch(url)
+        if page.status_code == 404:
             raise PartNotFound(f'Part not found: {url}')
-        response.raise_for_status()
-        return response.text, str(response.url)
+        page.raise_for_status()
+        return page.html, page.url
 
     def fetch_search(self, article: str) -> tuple[str, str]:
         for url in self.build_search_urls(article):
-            response = httpx.get(
-                url,
-                timeout=20,
-                follow_redirects=True,
-                headers={'User-Agent': 'MAP enrichment bot (+https://map.local)'},
-            )
-            if response.status_code == 404:
+            page = self.fetcher.fetch(url)
+            if page.status_code == 404:
                 continue
-            response.raise_for_status()
-            if self.search_html_has_results(response.text):
-                return response.text, str(response.url)
+            page.raise_for_status()
+            if self.search_html_has_results(page.html):
+                return page.html, page.url
         raise PartNotFound(f'Part not found in tachka search: {article}')
 
     def parse_html(self, html: str, brand: str, article: str, source_url: str = '') -> ParsedPart:
