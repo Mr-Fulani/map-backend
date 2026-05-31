@@ -12,7 +12,10 @@ NEW_DOMAIN_SLUGS = [
     'kids',
     'pets',
     'construction_repair',
+    'hobby_entertainment',
     'business_equipment',
+    'food',
+    'office_stationery',
     'real_estate',
     'services',
 ]
