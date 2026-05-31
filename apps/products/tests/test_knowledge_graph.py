@@ -11,7 +11,7 @@ from apps.products.part_parsers import (
     ParsedCrossCode, ParsedFitment, ParsedPart, ParsedRelatedPart,
 )
 from apps.products.services import (
-    ProductEnrichmentService, ProductKnowledgeGraphService,
+    ProductCategorySeedService, ProductEnrichmentService, ProductKnowledgeGraphService,
     VehicleKnowledgeService,
 )
 from apps.tenants.services import TenantService
@@ -204,6 +204,23 @@ def test_part_category_keeps_fitment_requirement_flag():
 
     assert str(category) == 'Тормозные колодки'
     assert category.fitment_required is True
+
+
+@pytest.mark.django_db
+def test_base_part_categories_seed_platform_and_tenant_catalogs():
+    tenant = make_tenant('part-category-seed')
+    initial_tenant_count = tenant.catalog_categories.count()
+
+    created_count = ProductCategorySeedService.seed_platform_categories()
+    ProductCategorySeedService.seed_tenant_default_categories(tenant)
+
+    assert created_count == 0
+    assert PartCategory.objects.filter(name='Тормозная система', parent__isnull=True).exists()
+    assert PartCategory.objects.filter(name='Тормозные колодки', parent__name='Тормозная система').exists()
+    assert PartCategory.objects.get(name='Моторные масла').fitment_required is False
+    assert tenant.catalog_categories.filter(name='Тормозная система', parent__isnull=True).exists()
+    assert tenant.catalog_categories.filter(name='Тормозные колодки', parent__name='Тормозная система').exists()
+    assert tenant.catalog_categories.count() == initial_tenant_count
 
 
 @pytest.mark.django_db

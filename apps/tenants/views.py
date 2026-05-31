@@ -9,7 +9,9 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.tenants.models import APIKey, CatalogDomain, WEBHOOK_EVENTS, WebhookEndpoint
+from apps.tenants.models import (
+    APIKey, CatalogDomain, TenantCatalogDomain, WEBHOOK_EVENTS, WebhookEndpoint,
+)
 from apps.tenants.serializers import (
     APIKeyCreateSerializer,
     APIKeySerializer,
@@ -66,13 +68,57 @@ class TenantDetailView(APIView):
 
 @extend_schema(tags=['Tenant'])
 class CatalogDomainListView(APIView):
-    """GET /api/v1/catalog-domains/ — активные platform-домены для dashboard."""
+    """GET/POST /api/v1/catalog-domains/ — platform-домены для dashboard."""
 
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
         domains = CatalogDomain.objects.filter(is_active=True).order_by('sort_order', 'name')
-        return Response({'status': 'ok', 'data': CatalogDomainSerializer(domains, many=True).data})
+        enabled_ids = set(
+            TenantCatalogDomain.objects.filter(
+                tenant=request.tenant,
+                is_enabled=True,
+            ).values_list('domain_id', flat=True)
+        )
+        return Response({
+            'status': 'ok',
+            'data': CatalogDomainSerializer(
+                domains,
+                many=True,
+                context={'tenant': request.tenant, 'enabled_domain_ids': enabled_ids},
+            ).data,
+        })
+
+    def post(self, request):
+        domain_slug = str(request.data.get('domain_slug') or '').strip()
+        is_enabled = request.data.get('is_enabled')
+        if isinstance(is_enabled, str):
+            is_enabled = is_enabled.lower() == 'true'
+        else:
+            is_enabled = bool(is_enabled)
+        domain = CatalogDomain.objects.filter(slug=domain_slug, is_active=True).first()
+        if domain is None:
+            return Response(
+                {'status': 'error', 'code': 'not_found', 'message': 'Корневая категория не найдена'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        enabling, _ = TenantCatalogDomain.objects.update_or_create(
+            tenant=request.tenant,
+            domain=domain,
+            defaults={'is_enabled': is_enabled},
+        )
+        if is_enabled:
+            from apps.products.services import ProductCategorySeedService
+            ProductCategorySeedService.seed_tenant_default_categories(request.tenant, domain)
+
+        return Response({
+            'status': 'ok',
+            'data': {
+                'domain_slug': domain.slug,
+                'is_enabled': enabling.is_enabled,
+            },
+        })
 
 
 @extend_schema(tags=['Tenant'])

@@ -168,6 +168,8 @@ export const profileApi = {
 export const tenantApi = {
   get: () => api.get('/tenant/'),
   catalogDomains: () => api.get('/catalog-domains/'),
+  setCatalogDomainEnabled: (domainSlug: string, isEnabled: boolean) =>
+    api.post('/catalog-domains/', { domain_slug: domainSlug, is_enabled: isEnabled }),
   getUsers: () => api.get('/tenant/users/'),
   getApiKeys: () => api.get('/tenant/api-keys/'),
   createApiKey: (name: string) => api.post('/tenant/api-keys/', { name }),

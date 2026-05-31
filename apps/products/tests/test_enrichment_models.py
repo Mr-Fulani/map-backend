@@ -9,6 +9,7 @@ from apps.products.models import (
 )
 from apps.products.part_parsers import ParsedFitment, ParsedPart
 from apps.products.services import ProductEnrichmentService
+from apps.tenants.models import CatalogDomain
 from apps.tenants.services import TenantService
 
 
@@ -133,6 +134,7 @@ def test_catalog_classification_uses_tenant_category_mapping():
     category = TenantCatalogCategory.objects.create(
         tenant=tenant,
         name='Тормозные колодки',
+        root_domain=CatalogDomain.objects.get(slug='auto_parts'),
         domain=TenantCatalogCategory.Domain.AUTO_PARTS,
     )
     TenantCategoryMapping.objects.create(

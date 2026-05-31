@@ -39,6 +39,8 @@ class TenantSerializer(serializers.ModelSerializer):
 
 
 class CatalogDomainSerializer(serializers.ModelSerializer):
+    is_enabled_for_tenant = serializers.SerializerMethodField()
+
     class Meta:
         model = CatalogDomain
         fields = [
@@ -47,7 +49,17 @@ class CatalogDomainSerializer(serializers.ModelSerializer):
             'canonical_path', 'og_title', 'og_description', 'og_image_url',
             'meta_robots', 'is_active', 'is_system', 'sort_order',
             'supports_auto_parts_enrichment', 'requires_product_classification',
+            'is_enabled_for_tenant',
         ]
+
+    def get_is_enabled_for_tenant(self, obj) -> bool:
+        tenant = self.context.get('tenant')
+        if tenant is None:
+            return False
+        enabled_ids = self.context.get('enabled_domain_ids')
+        if enabled_ids is not None:
+            return obj.id in enabled_ids
+        return obj.tenant_enablings.filter(tenant=tenant, is_enabled=True).exists()
 
 
 class TenantUserSerializer(serializers.ModelSerializer):

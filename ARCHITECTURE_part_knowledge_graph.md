@@ -65,6 +65,18 @@ Enrichment-парсер обогащает каталог tenant-а характ
 нужен для будущих правил применяемости, фильтрации и AI-контекста, но не заменяет
 tenant-поле `Product.category_1c`.
 
+Базовая таксономия автозапчастей хранится в `apps/products/part_category_seed.py`
+и применяется миграцией `products.0017_seed_base_part_categories`. Это собственная
+компактная структура MAP по общим рыночным группам автозапчастей, а не копия
+TecDoc, Autodoc, Exist или другого поставщика.
+
+Базовые корневые категории и стартовые tenant-шаблоны подкатегорий хранятся в
+`apps/products/catalog_category_seed.py`. Миграция `tenants.0008` добавляет
+популярные корни платформы, а `products.0019` сажает подкатегории для уже
+включенных корней tenant-а. При включении корня в dashboard сервис создает
+tenant-scoped копию шаблона в `TenantCatalogCategory`, чтобы tenant мог дальше
+редактировать свои подкатегории без влияния на других.
+
 Важно разделять уровни:
 
 - `CatalogDomain` / `ProductCatalogClassification.domain` — platform guardrail.

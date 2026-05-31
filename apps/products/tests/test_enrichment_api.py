@@ -254,6 +254,7 @@ def test_assign_catalog_category_reclassifies_previous_manual_unknown_classifica
     category = TenantCatalogCategory.objects.create(
         tenant=tenant,
         name='Ходовая часть',
+        root_domain=CatalogDomain.objects.get(slug='auto_parts'),
         domain=ProductCatalogClassification.Domain.AUTO_PARTS,
     )
 
@@ -459,7 +460,12 @@ def test_tenant_catalog_category_api_crud_and_mapping():
 
     create_response = client.post(
         '/api/v1/products/catalog-categories/',
-        {'name': 'Тормозные колодки', 'domain': 'auto_parts', 'aliases': []},
+        {
+            'name': 'Тормозные колодки',
+            'root_domain': CatalogDomain.objects.get(slug='auto_parts').pk,
+            'domain': 'auto_parts',
+            'aliases': [],
+        },
         content_type='application/json',
         HTTP_AUTHORIZATION=f'Bearer {api_key}',
     )
@@ -467,6 +473,7 @@ def test_tenant_catalog_category_api_crud_and_mapping():
     category_id = create_response.json()['data']['id']
     category = TenantCatalogCategory.objects.get(pk=category_id)
     assert category.tenant == tenant
+    assert category.root_domain.slug == 'auto_parts'
     assert category.normalized_name
 
     mapping_response = client.post(
@@ -503,11 +510,11 @@ def test_tenant_catalog_category_api_crud_and_mapping():
 def test_catalog_domains_endpoint_returns_active_platform_domains():
     tenant, api_key = make_tenant('catalog-domains-api')
     CatalogDomain.objects.create(
-        slug='pets',
-        name='Зоотовары',
-        short_name='Зоо',
-        seo_title='Зоотовары купить',
-        seo_description='Каталог товаров для животных.',
+        slug='custom_goods',
+        name='Спецтовары',
+        short_name='Спец',
+        seo_title='Спецтовары купить',
+        seo_description='Каталог специальных товаров.',
         is_active=True,
         sort_order=5,
     )
@@ -522,10 +529,39 @@ def test_catalog_domains_endpoint_returns_active_platform_domains():
     assert response.status_code == 200
     data = response.json()['data']
     slugs = [item['slug'] for item in data]
-    assert 'pets' in slugs
+    assert 'custom_goods' in slugs
+    assert 'electronics' in slugs
     assert 'hidden' not in slugs
-    pets = next(item for item in data if item['slug'] == 'pets')
-    assert pets['seo_title'] == 'Зоотовары купить'
+    custom_goods = next(item for item in data if item['slug'] == 'custom_goods')
+    assert custom_goods['seo_title'] == 'Спецтовары купить'
+
+
+@pytest.mark.django_db
+def test_enabling_catalog_domain_seeds_tenant_categories():
+    tenant, api_key = make_tenant('catalog-domain-enable')
+    client = Client()
+
+    response = client.post(
+        '/api/v1/catalog-domains/',
+        {'domain_slug': 'electronics', 'is_enabled': True},
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    assert tenant.enabled_catalog_domains.filter(
+        domain__slug='electronics',
+        is_enabled=True,
+    ).exists()
+    assert tenant.catalog_categories.filter(
+        root_domain__slug='electronics',
+        name='Смартфоны и телефоны',
+    ).exists()
+    assert tenant.catalog_categories.filter(
+        root_domain__slug='electronics',
+        parent__name='Смартфоны и телефоны',
+        name='Смартфоны',
+    ).exists()
 
 
 @pytest.mark.django_db
@@ -534,6 +570,7 @@ def test_tenant_catalog_category_default_image_is_product_fallback():
     category = TenantCatalogCategory.objects.create(
         tenant=tenant,
         name='Ходовая часть',
+        root_domain=CatalogDomain.objects.get(slug='auto_parts'),
         domain='auto_parts',
     )
     product = make_product(tenant, category_1c='Ходовая')
@@ -571,6 +608,7 @@ def test_assign_catalog_category_to_selected_products():
     category = TenantCatalogCategory.objects.create(
         tenant=tenant,
         name='Амортизаторы',
+        root_domain=CatalogDomain.objects.get(slug='auto_parts'),
         domain=TenantCatalogCategory.Domain.AUTO_PARTS,
     )
     client = Client()

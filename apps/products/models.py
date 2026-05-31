@@ -3,7 +3,7 @@ from django.db import models
 
 from apps.core.models import TimestampedModel
 from apps.datasources.models import DataSourceConnection
-from apps.tenants.models import Tenant
+from apps.tenants.models import CatalogDomain, Tenant
 
 
 class ReviewStatus(models.TextChoices):
@@ -32,6 +32,10 @@ class TenantCatalogCategory(TimestampedModel):
         'self', null=True, blank=True, on_delete=models.SET_NULL,
         related_name='children', verbose_name='Родительская категория',
     )
+    root_domain = models.ForeignKey(
+        CatalogDomain, null=True, blank=True, on_delete=models.PROTECT,
+        related_name='tenant_catalog_categories', verbose_name='Корневая категория',
+    )
     domain = models.CharField(
         max_length=50, default=Domain.UNKNOWN,
         verbose_name='Домен',
@@ -54,9 +58,13 @@ class TenantCatalogCategory(TimestampedModel):
         verbose_name = 'Категория каталога tenant-а'
         verbose_name_plural = 'Категории каталога tenant-а'
         ordering = ['name']
+        indexes = [
+            models.Index(fields=['tenant', 'root_domain']),
+            models.Index(fields=['tenant', 'root_domain', 'is_active']),
+        ]
         constraints = [
             models.UniqueConstraint(
-                fields=['tenant', 'normalized_name'],
+                fields=['tenant', 'root_domain', 'normalized_name'],
                 condition=models.Q(parent__isnull=True),
                 name='unique_root_tenant_catalog_category_name',
             ),
@@ -72,6 +80,8 @@ class TenantCatalogCategory(TimestampedModel):
 
     def save(self, *args, **kwargs):
         self.normalized_name = ''.join(char for char in self.name.lower() if char.isalnum())
+        if self.root_domain_id:
+            self.domain = self.root_domain.slug
         super().save(*args, **kwargs)
 
 

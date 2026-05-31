@@ -110,6 +110,38 @@ class Tenant(TimestampedModel):
         return self.catalog_domain == self.CatalogDomain.MIXED
 
 
+class TenantCatalogDomain(TimestampedModel):
+    """Корневое направление каталога, включенное конкретному tenant-у."""
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='enabled_catalog_domains',
+        verbose_name='Тенант',
+    )
+    domain = models.ForeignKey(
+        CatalogDomain, on_delete=models.CASCADE, related_name='tenant_enablings',
+        verbose_name='Корневая категория',
+    )
+    is_enabled = models.BooleanField(default=True, verbose_name='Включена')
+
+    class Meta:
+        verbose_name = 'Корневая категория tenant-а'
+        verbose_name_plural = 'Корневые категории tenant-а'
+        ordering = ['domain__sort_order', 'domain__name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'domain'],
+                name='unique_tenant_catalog_domain',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['tenant', 'is_enabled']),
+            models.Index(fields=['domain', 'is_enabled']),
+        ]
+
+    def __str__(self):
+        return f'{self.tenant}: {self.domain}'
+
+
 class TenantUser(TimestampedModel):
     """Пользователь в контексте тенанта с ролью."""
 
