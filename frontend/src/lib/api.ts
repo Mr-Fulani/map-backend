@@ -228,6 +228,12 @@ export const productApi = {
   deleteCatalogCategory: (id: number) => api.delete(`/products/catalog-categories/${id}/`),
   assignCatalogCategory: (data: { product_ids: number[]; catalog_category: number | null }) =>
     api.post('/products/catalog-categories/assign/', data),
+  reviewCatalogClassification: (productId: number, action: 'approve' | 'reject') =>
+    api.post(`/products/${productId}/catalog-classification/${action}/`),
+  reviewFitment: (productId: number, fitmentId: number, action: 'approve' | 'reject') =>
+    api.post(`/products/${productId}/fitments/${fitmentId}/${action}/`),
+  reviewEnrichmentFact: (productId: number, factId: number, action: 'approve' | 'reject') =>
+    api.post(`/products/${productId}/enrichment-facts/${factId}/${action}/`),
   uploadCatalogCategoryImage: (id: number, file: File) => {
     const formData = new FormData();
     formData.append('image', file);

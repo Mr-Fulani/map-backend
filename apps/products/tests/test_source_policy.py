@@ -46,3 +46,20 @@ def test_unknown_source_records_are_not_auto_applied():
         needs_review = False
 
     assert should_auto_apply_record(Record()) is False
+
+
+def test_review_status_overrides_auto_apply_policy():
+    class ApprovedRecord:
+        source_id = 'unregistered-source'
+        confidence = 0.1
+        needs_review = True
+        review_status = 'approved'
+
+    class RejectedRecord:
+        source_id = DEFAULT_PART_SOURCE
+        confidence = 1.0
+        needs_review = False
+        review_status = 'rejected'
+
+    assert should_auto_apply_record(ApprovedRecord()) is True
+    assert should_auto_apply_record(RejectedRecord()) is False

@@ -75,6 +75,8 @@ interface CatalogCategoryMapping {
   id: number;
   source_category: string;
   category: number;
+  category_name: string;
+  category_domain: string;
 }
 
 const SETTINGS_TABS = [

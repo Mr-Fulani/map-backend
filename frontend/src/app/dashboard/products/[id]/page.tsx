@@ -56,6 +56,7 @@ interface ProductDetail {
   attributes: ProductAttribute[];
   cross_codes: ProductCrossCode[];
   fitments: VehicleFitment[];
+  enrichment_facts: ProductEnrichmentFact[];
   latest_parse_job: ProductParseJob | null;
   catalog_category: TenantCatalogCategory | null;
   catalog_classification: ProductCatalogClassification | null;
@@ -73,6 +74,7 @@ interface ProductCatalogClassification {
   confidence: number;
   reason: string;
   needs_review: boolean;
+  review_status: ReviewStatus;
 }
 
 interface ProductAttribute {
@@ -97,7 +99,21 @@ interface VehicleFitment {
   modification: string;
   power_hp: number | null;
   needs_review: boolean;
+  review_status: ReviewStatus;
 }
+
+interface ProductEnrichmentFact {
+  id: number;
+  source_id: string;
+  fact_type: string;
+  name: string;
+  value: string;
+  confidence: number;
+  needs_review: boolean;
+  review_status: ReviewStatus;
+}
+
+type ReviewStatus = 'pending' | 'approved' | 'rejected';
 
 interface ProductParseJob {
   id: number;
@@ -151,6 +167,19 @@ const CATALOG_DOMAIN_LABELS: Record<string, string> = {
   unknown: 'Не определено',
 };
 
+const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
+  pending: 'Ожидает проверки',
+  approved: 'Одобрено',
+  rejected: 'Отклонено',
+};
+
+function reviewStatusLabel(status: ReviewStatus, needsReview: boolean) {
+  if (status === 'pending' && !needsReview) {
+    return 'Определено автоматически';
+  }
+  return REVIEW_STATUS_LABELS[status];
+}
+
 function getSourceImageUrls(product: ProductDetail) {
   const urls = product.latest_parse_job?.parsed_data?.image_urls ?? [];
   return urls.filter((url) => {
@@ -182,6 +211,7 @@ export default function ProductDetailPage() {
   const [catalogCategories, setCatalogCategories] = useState<TenantCatalogCategory[]>([]);
   const [categoryAssignValue, setCategoryAssignValue] = useState('');
   const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
+  const [reviewAction, setReviewAction] = useState<string | null>(null);
 
   const [images, setImages] = useState<ProductImage[]>([]);
   const [imagesLoading, setImagesLoading] = useState(false);
@@ -382,6 +412,30 @@ export default function ProductDetailPage() {
       toast.error('Не удалось изменить категорию товара');
     } finally {
       setCategoryAssignLoading(false);
+    }
+  }
+
+  async function handleReview(
+    target: 'classification' | 'fitment' | 'fact',
+    action: 'approve' | 'reject',
+    itemId?: number,
+  ) {
+    const key = `${target}-${itemId ?? 'main'}-${action}`;
+    setReviewAction(key);
+    try {
+      if (target === 'classification') {
+        await productApi.reviewCatalogClassification(Number(id), action);
+      } else if (target === 'fitment' && itemId) {
+        await productApi.reviewFitment(Number(id), itemId, action);
+      } else if (target === 'fact' && itemId) {
+        await productApi.reviewEnrichmentFact(Number(id), itemId, action);
+      }
+      await loadProduct();
+      toast.success(action === 'approve' ? 'Данные одобрены' : 'Данные отклонены');
+    } catch {
+      toast.error('Не удалось сохранить проверку');
+    } finally {
+      setReviewAction(null);
     }
   }
 
@@ -600,7 +654,10 @@ export default function ProductDetailPage() {
                 </p>
               )}
 
-              {product.attributes.length === 0 && product.cross_codes.length === 0 && product.fitments.length === 0 ? (
+              {product.attributes.length === 0
+                && product.cross_codes.length === 0
+                && product.fitments.length === 0
+                && product.enrichment_facts.length === 0 ? (
                 <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                   Обогащённые данные пока не сохранены. Запустите обогащение или выберите другой источник.
                 </p>
@@ -648,16 +705,99 @@ export default function ProductDetailPage() {
                       </p>
                       <div className="space-y-2">
                         {product.fitments.slice(0, 5).map((fitment) => (
-                          <div key={fitment.id} className="rounded-md border p-2 text-sm">
-                            {[
-                              fitment.make,
-                              fitment.model,
-                              fitment.generation,
-                              fitment.modification,
-                              fitment.power_hp ? `${fitment.power_hp} л.с.` : '',
-                            ].filter(Boolean).join(' ')}
+                          <div key={fitment.id} className="flex flex-col gap-2 rounded-md border p-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+                            <div className="min-w-0">
+                              <span className="break-words">
+                                {[
+                                  fitment.make,
+                                  fitment.model,
+                                  fitment.generation,
+                                  fitment.modification,
+                                  fitment.power_hp ? `${fitment.power_hp} л.с.` : '',
+                                ].filter(Boolean).join(' ')}
+                              </span>
+                              <Badge
+                                variant={fitment.review_status === 'rejected' ? 'destructive' : 'secondary'}
+                                className="ml-2"
+                              >
+                                {reviewStatusLabel(fitment.review_status, fitment.needs_review)}
+                              </Badge>
+                            </div>
                             {fitment.needs_review && (
-                              <Badge variant="secondary" className="ml-2">Проверить</Badge>
+                              <div className="flex gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleReview('fitment', 'approve', fitment.id)}
+                                  disabled={reviewAction !== null}
+                                >
+                                  {reviewAction === `fitment-${fitment.id}-approve` ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Check className="h-4 w-4" />
+                                  )}
+                                  Одобрить
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleReview('fitment', 'reject', fitment.id)}
+                                  disabled={reviewAction !== null}
+                                >
+                                  {reviewAction === `fitment-${fitment.id}-reject` ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <X className="h-4 w-4" />
+                                  )}
+                                  Отклонить
+                                </Button>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {product.enrichment_facts.length > 0 && (
+                    <div>
+                      <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
+                        Факты для описания
+                      </p>
+                      <div className="space-y-2">
+                        {product.enrichment_facts.slice(0, 5).map((fact) => (
+                          <div key={fact.id} className="flex flex-col gap-2 rounded-md border p-2 text-sm sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0">
+                              <p className="font-medium">{fact.name}</p>
+                              <p className="break-words text-muted-foreground">{fact.value}</p>
+                              <Badge
+                                variant={fact.review_status === 'rejected' ? 'destructive' : 'secondary'}
+                                className="mt-2"
+                              >
+                                {reviewStatusLabel(fact.review_status, fact.needs_review)}
+                              </Badge>
+                            </div>
+                            {fact.needs_review && (
+                              <div className="flex shrink-0 gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleReview('fact', 'approve', fact.id)}
+                                  disabled={reviewAction !== null}
+                                >
+                                  <Check className="h-4 w-4" />
+                                  Одобрить
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleReview('fact', 'reject', fact.id)}
+                                  disabled={reviewAction !== null}
+                                >
+                                  <X className="h-4 w-4" />
+                                  Отклонить
+                                </Button>
+                              </div>
                             )}
                           </div>
                         ))}
@@ -861,9 +1001,19 @@ export default function ProductDetailPage() {
               {product.catalog_classification ? (
                 <>
                   <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant={product.catalog_classification.needs_review ? 'outline' : 'secondary'}>
+                    <Badge
+                      variant={product.catalog_classification.review_status === 'rejected'
+                        ? 'destructive'
+                        : product.catalog_classification.needs_review ? 'outline' : 'secondary'}
+                    >
                       {CATALOG_DOMAIN_LABELS[product.catalog_classification.domain]
                         ?? product.catalog_classification.domain}
+                    </Badge>
+                    <Badge variant="outline">
+                      {reviewStatusLabel(
+                        product.catalog_classification.review_status,
+                        product.catalog_classification.needs_review,
+                      )}
                     </Badge>
                     <span className="text-xs text-muted-foreground">
                       Уверенность: {Math.round(product.catalog_classification.confidence * 100)}%
@@ -872,6 +1022,43 @@ export default function ProductDetailPage() {
                   <p className="text-xs text-muted-foreground">
                     {product.catalog_classification.reason}
                   </p>
+                  {product.catalog_classification.needs_review
+                    && product.catalog_classification.domain === 'unknown' && (
+                    <p className="rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+                      Выберите категорию каталога, чтобы система поняла тип товара.
+                    </p>
+                  )}
+                  {product.catalog_classification.needs_review
+                    && product.catalog_classification.domain !== 'unknown' && (
+                    <div className="grid grid-cols-2 gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleReview('classification', 'approve')}
+                        disabled={reviewAction !== null}
+                      >
+                        {reviewAction === 'classification-main-approve' ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <Check className="mr-2 h-4 w-4" />
+                        )}
+                        Одобрить
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleReview('classification', 'reject')}
+                        disabled={reviewAction !== null}
+                      >
+                        {reviewAction === 'classification-main-reject' ? (
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        ) : (
+                          <X className="mr-2 h-4 w-4" />
+                        )}
+                        Отклонить
+                      </Button>
+                    </div>
+                  )}
                 </>
               ) : (
                 <p className="text-xs text-muted-foreground">

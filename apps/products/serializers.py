@@ -3,7 +3,7 @@ from rest_framework import serializers
 
 from apps.products.models import (
     Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
-    ProductCrossCode, ProductImage, ProductParseJob, TenantCatalogCategory,
+    ProductCrossCode, ProductEnrichmentFact, ProductImage, ProductParseJob, TenantCatalogCategory,
     TenantCategoryMapping, VehicleFitment,
 )
 
@@ -17,7 +17,10 @@ class ProductImageSerializer(serializers.ModelSerializer):
 class ProductCatalogClassificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductCatalogClassification
-        fields = ['domain', 'confidence', 'source', 'reason', 'needs_review', 'updated_at']
+        fields = [
+            'domain', 'confidence', 'source', 'reason', 'needs_review',
+            'review_status', 'reviewed_at', 'updated_at',
+        ]
 
 
 class TenantCatalogCategorySerializer(serializers.ModelSerializer):
@@ -155,7 +158,16 @@ class VehicleFitmentSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'source_id', 'source_url', 'make', 'model', 'generation', 'date_from',
             'date_to', 'modification', 'engine_code', 'power_hp',
-            'raw_text', 'confidence', 'needs_review', 'created_at',
+            'raw_text', 'confidence', 'needs_review', 'review_status', 'reviewed_at', 'created_at',
+        ]
+
+
+class ProductEnrichmentFactSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductEnrichmentFact
+        fields = [
+            'id', 'source_id', 'source_url', 'fact_type', 'name', 'value',
+            'raw_text', 'confidence', 'needs_review', 'review_status', 'reviewed_at', 'created_at',
         ]
 
 
@@ -174,11 +186,12 @@ class ProductDetailSerializer(ProductSerializer):
     attributes = ProductAttributeSerializer(many=True, read_only=True)
     cross_codes = ProductCrossCodeSerializer(many=True, read_only=True)
     fitments = VehicleFitmentSerializer(many=True, read_only=True)
+    enrichment_facts = ProductEnrichmentFactSerializer(many=True, read_only=True)
     latest_parse_job = serializers.SerializerMethodField()
 
     class Meta(ProductSerializer.Meta):
         fields = ProductSerializer.Meta.fields + [
-            'attributes', 'cross_codes', 'fitments', 'latest_parse_job',
+            'attributes', 'cross_codes', 'fitments', 'enrichment_facts', 'latest_parse_job',
         ]
 
     def get_latest_parse_job(self, obj):

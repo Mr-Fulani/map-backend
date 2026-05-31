@@ -179,6 +179,7 @@ export default function ProductsPage() {
   const [meta, setMeta] = useState<Meta | null>(null);
   const [search, setSearch] = useState('');
   const [exportFilter, setExportFilter] = useState<string>('');
+  const [needsReviewFilter, setNeedsReviewFilter] = useState(false);
   const [catalogDomainFilter, setCatalogDomainFilter] = useState<string>('');
   const [catalogCategoryFilter, setCatalogCategoryFilter] = useState<string>('');
   const [catalogCategories, setCatalogCategories] = useState<TenantCatalogCategory[]>([]);
@@ -206,6 +207,7 @@ export default function ProductsPage() {
       const params: Record<string, unknown> = { page };
       if (debouncedSearch) params.search = debouncedSearch;
       if (exportFilter) params.export_enabled = exportFilter;
+      if (needsReviewFilter) params.needs_review = 'true';
       if (catalogDomainFilter) params.catalog_domain = catalogDomainFilter;
       if (catalogCategoryFilter) params.catalog_category = catalogCategoryFilter;
 
@@ -217,7 +219,7 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedSearch, exportFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [page, debouncedSearch, exportFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   const loadCatalogCategories = useCallback(async () => {
     try {
@@ -241,7 +243,7 @@ export default function ProductsPage() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, exportFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [debouncedSearch, exportFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   useEffect(() => {
     load();
@@ -254,7 +256,7 @@ export default function ProductsPage() {
 
   useEffect(() => {
     setSelectedIds([]);
-  }, [page, debouncedSearch, exportFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [page, debouncedSearch, exportFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   const selectedOnPage = products.filter((product) => selectedIds.includes(product.id));
   const allOnPageSelected = products.length > 0 && selectedOnPage.length === products.length;
@@ -411,6 +413,13 @@ export default function ProductsPage() {
               {f.label}
             </Button>
           ))}
+          <Button
+            size="sm"
+            variant={needsReviewFilter ? 'default' : 'outline'}
+            onClick={() => setNeedsReviewFilter((value) => !value)}
+          >
+            На проверке
+          </Button>
         </div>
       </div>
 

@@ -5,7 +5,7 @@
 > **Оценка:** 6-8 недель на production-ready MVP с запасом на разбор верстки источника
 > **Подход:** сначала надежное enrichment-ядро без коммерческих данных, потом масштабирование и AI
 > **Multi-tenant:** фича общая для платформы, но результаты записываются в каталог конкретного tenant
-> **Статус на 31.05.2026:** enrichment MVP, первая версия platform knowledge graph и tenant-категории MVP реализованы; следующий P0 — source quality policy, затем нормализованный справочник авто
+> **Статус на 31.05.2026:** enrichment MVP, первая версия platform knowledge graph, tenant-категории MVP и source quality policy реализованы; в работе P1 operator review workflow, затем нормализованный справочник авто
 
 ---
 
@@ -50,7 +50,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 - `[~]` изображения: URL из источника извлекаются и показываются, но автоматическое сохранение в `ProductImage`/S3 pipeline еще не закрыто.
 - `[~]` поддержка нескольких источников: source policy и fetcher abstraction есть, но реально подключен только `tachka`.
-- `[~]` качество данных: source quality policy добавлен, но нет полноценного operator review workflow.
+- `[~]` качество данных: source quality policy добавлен; operator review workflow реализуется для классификации, применяемости и enrichment facts.
 - `[~]` массовые действия: batch/cooldown есть, но pause/resume/cancel еще нужно довести в API/UI.
 - `[~]` глобальный граф артикулов: модель, обучение, search fallback, source priority и конфликт-правила есть; дальше нужен review workflow.
 - `[~]` глобальная применяемость: `GlobalPartFitment` есть, но еще нет нормализованного `VehicleMake/Model/Generation`.
@@ -108,6 +108,22 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 **Verify:** parser можно тестировать на HTML fixtures без сети и без browser runtime.
 
 ---
+
+## Следующий P1 — Operator Review Workflow
+
+**Цель:** дать оператору безопасно подтверждать или отклонять спорные данные,
+не перетирая полезные сведения из других источников.
+
+- [x] Добавить `review_status`: `pending`, `approved`, `rejected` для `ProductCatalogClassification`, `VehicleFitment`, `ProductEnrichmentFact`.
+- [x] Сохранять audit-поля проверки: `reviewed_at`, `reviewed_by`.
+- [x] Добавить tenant-scoped API actions: approve/reject для классификации, применяемости и facts.
+- [x] Не применять rejected fitments в `Product.applicability`.
+- [x] Дать dashboard-фильтр товаров, где есть данные на проверке.
+- [x] Показать approve/reject controls в карточке товара.
+- [ ] Расширить очередь проверки отдельным списком/страницей, если объём спорных данных станет большим.
+
+**Verify:** оператор может отклонить спорную применяемость, после чего она остаётся
+в истории источника, но не используется в денормализованной применяемости товара.
 
 ## Следующий P0 — Vehicle Knowledge Base v1
 

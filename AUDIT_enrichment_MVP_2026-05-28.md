@@ -168,15 +168,18 @@ Required:
 - Add cleanup policy or management command.
 - Keep `raw_text` and `parsed_data` for longer than full HTML if needed.
 
-### P1. Operator review workflow is incomplete
+### P1. Operator review workflow is partially implemented
 
-We store `needs_review`, `need_review`, and confidence, but there is no dedicated workflow to review/approve/reject suspicious fitments/facts.
+We store `needs_review`, `need_review`, confidence, provenance and review status.
+The product detail dashboard can approve/reject suspicious classifications,
+fitments and enrichment facts.
 
 Required:
 
-- Add dashboard/admin filters for products with `needs_review`.
-- Add actions: approve fitment, hide/reject fitment, mark product enrichment reviewed.
-- Prevent AI from using rejected fitments.
+- [x] Add dashboard filter for products with `needs_review`.
+- [x] Add actions: approve/reject fitment, classification and enrichment fact.
+- [x] Prevent rejected fitments from being used in denormalized applicability.
+- [ ] Add a dedicated review queue page if the inline product workflow becomes too slow for operators.
 
 ---
 

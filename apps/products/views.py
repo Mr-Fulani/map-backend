@@ -5,6 +5,7 @@ from django.db.models import Count, Prefetch, Q
 from django.db import transaction
 from drf_spectacular.utils import extend_schema
 from django.shortcuts import get_object_or_404
+from django.utils.timezone import now
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
@@ -13,11 +14,13 @@ from rest_framework.views import APIView
 from apps.core.pagination import MapPagination
 from apps.products.enrichment import normalize_part_code
 from apps.products.models import (
-    Product, ProductBulkActionJob, ProductParseJob,
+    Product, ProductBulkActionJob, ProductCatalogClassification, ProductEnrichmentFact,
+    ProductParseJob, ReviewStatus,
     TenantCatalogCategory, TenantCategoryMapping,
+    VehicleFitment,
 )
 from apps.products.serializers import (
-    ProductBulkActionJobSerializer, ProductCrossCodeSerializer,
+    ProductBulkActionJobSerializer, ProductCrossCodeSerializer, ProductEnrichmentFactSerializer,
     ProductDetailSerializer, ProductParseJobSerializer, ProductSerializer,
     TenantCatalogCategorySerializer, TenantCategoryMappingSerializer,
     VehicleFitmentSerializer,
@@ -78,6 +81,13 @@ class ProductListView(APIView):
         if catalog_category:
             qs = qs.filter(catalog_category_id=catalog_category)
 
+        if request.query_params.get('needs_review') == 'true':
+            qs = qs.filter(
+                Q(catalog_classification__needs_review=True)
+                | Q(fitments__needs_review=True)
+                | Q(enrichment_facts__needs_review=True)
+            ).distinct()
+
         domain_counts_qs = qs
         domain_counts = {'all': domain_counts_qs.count()}
         active_domain_slugs = CatalogDomain.objects.filter(is_active=True).values_list('slug', flat=True)
@@ -115,7 +125,7 @@ class ProductDetailView(APIView):
     def get(self, request, pk):
         try:
             product = Product.objects.select_related('catalog_category', 'catalog_classification').prefetch_related(
-                'images', 'attributes', 'cross_codes', 'fitments', 'parse_jobs',
+                'images', 'attributes', 'cross_codes', 'fitments', 'enrichment_facts', 'parse_jobs',
             ).get(
                 pk=pk, tenant=request.tenant
             )
@@ -353,7 +363,7 @@ class ProductCatalogCategoryAssignView(APIView):
                 .select_related('tenant', 'catalog_category')
             )
             for product in products:
-                ProductEnrichmentService.classify_product_catalog_domain(product)
+                ProductEnrichmentService.classify_product_catalog_domain(product, force=True)
 
         return Response({
             'status': 'ok',
@@ -537,6 +547,18 @@ class ProductBulkActionDetailView(APIView):
         return Response({'status': 'ok', 'data': ProductBulkActionJobSerializer(job).data})
 
 
+def _review_actor(request):
+    return request.user if getattr(request.user, 'is_authenticated', False) else None
+
+
+def _set_review_state(obj, request, review_status: str) -> None:
+    obj.review_status = review_status
+    obj.needs_review = False
+    obj.reviewed_at = now()
+    obj.reviewed_by = _review_actor(request)
+    obj.save(update_fields=['review_status', 'needs_review', 'reviewed_at', 'reviewed_by', 'updated_at'])
+
+
 @extend_schema(tags=['Products'])
 class ProductFitmentsView(APIView):
     """GET /api/v1/products/{id}/fitments/ — применяемость товара."""
@@ -545,6 +567,94 @@ class ProductFitmentsView(APIView):
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
         fitments = product.fitments.filter(tenant=request.tenant).order_by('make', 'model')
         return Response({'status': 'ok', 'data': VehicleFitmentSerializer(fitments, many=True).data})
+
+
+@extend_schema(tags=['Products'])
+class ProductFitmentReviewView(APIView):
+    """POST /api/v1/products/{id}/fitments/{fitment_id}/{approve|reject}/."""
+
+    def post(self, request, pk: int, fitment_id: int, action: str):
+        product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
+        fitment = get_object_or_404(VehicleFitment, pk=fitment_id, tenant=request.tenant, product=product)
+        if action == 'approve':
+            _set_review_state(fitment, request, ReviewStatus.APPROVED)
+        elif action == 'reject':
+            _set_review_state(fitment, request, ReviewStatus.REJECTED)
+        else:
+            return Response({'status': 'error', 'code': 'bad_action'}, status=status.HTTP_404_NOT_FOUND)
+
+        ProductEnrichmentService.refresh_product_denormalized_enrichment(product)
+        product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability', 'updated_at'])
+        return Response({'status': 'ok', 'data': VehicleFitmentSerializer(fitment).data})
+
+
+@extend_schema(tags=['Products'])
+class ProductEnrichmentFactsView(APIView):
+    """GET /api/v1/products/{id}/enrichment-facts/ — факты обогащения товара."""
+
+    def get(self, request, pk: int):
+        product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
+        facts = product.enrichment_facts.filter(tenant=request.tenant).order_by('fact_type', 'name')
+        return Response({'status': 'ok', 'data': ProductEnrichmentFactSerializer(facts, many=True).data})
+
+
+@extend_schema(tags=['Products'])
+class ProductEnrichmentFactReviewView(APIView):
+    """POST /api/v1/products/{id}/enrichment-facts/{fact_id}/{approve|reject}/."""
+
+    def post(self, request, pk: int, fact_id: int, action: str):
+        product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
+        fact = get_object_or_404(ProductEnrichmentFact, pk=fact_id, tenant=request.tenant, product=product)
+        if action == 'approve':
+            _set_review_state(fact, request, ReviewStatus.APPROVED)
+        elif action == 'reject':
+            _set_review_state(fact, request, ReviewStatus.REJECTED)
+        else:
+            return Response({'status': 'error', 'code': 'bad_action'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'status': 'ok', 'data': ProductEnrichmentFactSerializer(fact).data})
+
+
+@extend_schema(tags=['Products'])
+class ProductCatalogClassificationReviewView(APIView):
+    """POST /api/v1/products/{id}/catalog-classification/{approve|reject}/."""
+
+    def post(self, request, pk: int, action: str):
+        product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
+        classification = ProductEnrichmentService.get_or_classify_product_catalog_domain(product)
+        if action == 'approve':
+            if classification.domain == ProductCatalogClassification.Domain.UNKNOWN:
+                return Response(
+                    {
+                        'status': 'error',
+                        'code': 'unknown_classification',
+                        'message': 'Нельзя одобрить неопределённый домен. Выберите категорию каталога.',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            classification.review_status = ReviewStatus.APPROVED
+            classification.needs_review = False
+            classification.reviewed_at = now()
+            classification.reviewed_by = _review_actor(request)
+            classification.source = ProductCatalogClassification.Source.MANUAL
+            classification.save(update_fields=[
+                'review_status', 'needs_review', 'reviewed_at', 'reviewed_by', 'source', 'updated_at',
+            ])
+        elif action == 'reject':
+            classification.review_status = ReviewStatus.REJECTED
+            classification.needs_review = False
+            classification.reviewed_at = now()
+            classification.reviewed_by = _review_actor(request)
+            classification.source = ProductCatalogClassification.Source.MANUAL
+            classification.domain = ProductCatalogClassification.Domain.UNKNOWN
+            classification.confidence = 0
+            classification.reason = 'Оператор отклонил автоматическую классификацию.'
+            classification.save(update_fields=[
+                'review_status', 'needs_review', 'reviewed_at', 'reviewed_by', 'source',
+                'domain', 'confidence', 'reason', 'updated_at',
+            ])
+        else:
+            return Response({'status': 'error', 'code': 'bad_action'}, status=status.HTTP_404_NOT_FOUND)
+        return Response({'status': 'ok', 'data': ProductDetailSerializer(product, context={'request': request}).data})
 
 
 @extend_schema(tags=['Products'])

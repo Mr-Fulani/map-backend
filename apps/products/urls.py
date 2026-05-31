@@ -2,7 +2,8 @@ from django.urls import path
 
 from apps.products.views import (
     ProductArchiveView, ProductBulkActionDetailView, ProductBulkActionView,
-    ProductCrossCodesView, ProductDetailView, ProductFitmentsView,
+    ProductCatalogClassificationReviewView, ProductCrossCodesView, ProductDetailView,
+    ProductEnrichmentFactReviewView, ProductEnrichmentFactsView, ProductFitmentReviewView, ProductFitmentsView,
     ProductCatalogCategoryAssignView, ProductListView, ProductParseJobDetailView,
     ProductParseView, ProductPublishView, ProductRegenerateView, ProductSearchView,
     ProductSyncView, TenantCatalogCategoryDefaultImageView,
@@ -52,6 +53,22 @@ urlpatterns = [
     path('sync/<int:connection_id>/', ProductSyncView.as_view(), name='product-sync'),
     path('<int:pk>/', ProductDetailView.as_view(), name='product-detail'),
     path('<int:pk>/fitments/', ProductFitmentsView.as_view(), name='product-fitments'),
+    path(
+        '<int:pk>/fitments/<int:fitment_id>/<str:action>/',
+        ProductFitmentReviewView.as_view(),
+        name='product-fitment-review',
+    ),
+    path('<int:pk>/enrichment-facts/', ProductEnrichmentFactsView.as_view(), name='product-enrichment-facts'),
+    path(
+        '<int:pk>/enrichment-facts/<int:fact_id>/<str:action>/',
+        ProductEnrichmentFactReviewView.as_view(),
+        name='product-enrichment-fact-review',
+    ),
+    path(
+        '<int:pk>/catalog-classification/<str:action>/',
+        ProductCatalogClassificationReviewView.as_view(),
+        name='product-catalog-classification-review',
+    ),
     path('<int:pk>/cross-codes/', ProductCrossCodesView.as_view(), name='product-cross-codes'),
     path('<int:pk>/publish/', ProductPublishView.as_view(), name='product-publish'),
     path('<int:pk>/archive/', ProductArchiveView.as_view(), name='product-archive'),

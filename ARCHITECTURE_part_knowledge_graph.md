@@ -155,6 +155,9 @@ parts. Это не означает, что данные источника вс
 Правила auto-apply:
 
 ```text
+review_status == rejected -> never apply
+review_status == approved -> apply as operator-confirmed data
+
 relation.needs_review == false
 relation.relation_type != Unknown
 source.trust_score >= source.auto_apply_min_trust_score
@@ -165,6 +168,11 @@ fitment.model is not empty
 source.trust_score >= source.auto_apply_min_trust_score
 fitment.confidence >= source.auto_apply_min_confidence
 ```
+
+Operator review хранится рядом с фактом: `review_status`, `reviewed_at`,
+`reviewed_by`. Для tenant-scoped данных это есть у `ProductCatalogClassification`,
+`VehicleFitment` и `ProductEnrichmentFact`. Отклонённая применяемость остаётся с
+provenance, но не попадает в `Product.applicability`.
 
 Fetcher/transport отделен от HTML parser logic:
 
