@@ -57,7 +57,15 @@ interface ProductDetail {
   cross_codes: ProductCrossCode[];
   fitments: VehicleFitment[];
   latest_parse_job: ProductParseJob | null;
+  catalog_category: TenantCatalogCategory | null;
   catalog_classification: ProductCatalogClassification | null;
+}
+
+interface TenantCatalogCategory {
+  id: number;
+  name: string;
+  domain: string;
+  is_active: boolean;
 }
 
 interface ProductCatalogClassification {
@@ -171,6 +179,9 @@ export default function ProductDetailPage() {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [catalogCategories, setCatalogCategories] = useState<TenantCatalogCategory[]>([]);
+  const [categoryAssignValue, setCategoryAssignValue] = useState('');
+  const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
 
   const [images, setImages] = useState<ProductImage[]>([]);
   const [imagesLoading, setImagesLoading] = useState(false);
@@ -188,7 +199,9 @@ export default function ProductDetailPage() {
 
   const loadProduct = useCallback(async () => {
     const res = await productApi.get(Number(id));
-    setProduct(res.data.data);
+    const nextProduct = res.data.data as ProductDetail;
+    setProduct(nextProduct);
+    setCategoryAssignValue(nextProduct.catalog_category?.id ? String(nextProduct.catalog_category.id) : '');
   }, [id]);
 
   useEffect(() => {
@@ -196,6 +209,12 @@ export default function ProductDetailPage() {
       .catch(() => toast.error('Товар не найден'))
       .finally(() => setLoading(false));
   }, [loadProduct]);
+
+  useEffect(() => {
+    productApi.catalogCategories()
+      .then((res) => setCatalogCategories(res.data.data ?? []))
+      .catch(() => toast.error('Не удалось загрузить категории каталога'));
+  }, []);
 
   const loadImages = useCallback(async () => {
     setImagesLoading(true);
@@ -347,6 +366,22 @@ export default function ProductDetailPage() {
       }
     } finally {
       setActionLoading(null);
+    }
+  }
+
+  async function assignCatalogCategory(categoryId: number | null) {
+    setCategoryAssignLoading(true);
+    try {
+      await productApi.assignCatalogCategory({
+        product_ids: [Number(id)],
+        catalog_category: categoryId,
+      });
+      await loadProduct();
+      toast.success(categoryId ? 'Категория товара обновлена' : 'Категория товара снята');
+    } catch {
+      toast.error('Не удалось изменить категорию товара');
+    } finally {
+      setCategoryAssignLoading(false);
     }
   }
 
@@ -783,7 +818,46 @@ export default function ProductDetailPage() {
             <CardHeader>
               <CardTitle className="text-sm font-medium">Классификация товара</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2 text-sm">
+            <CardContent className="space-y-4 text-sm">
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Категория каталога</p>
+                <select
+                  value={categoryAssignValue}
+                  onChange={(event) => setCategoryAssignValue(event.target.value)}
+                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  disabled={categoryAssignLoading}
+                >
+                  <option value="">Без категории</option>
+                  {catalogCategories.map((category) => (
+                    <option key={category.id} value={category.id}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => assignCatalogCategory(Number(categoryAssignValue))}
+                    disabled={categoryAssignLoading || !categoryAssignValue}
+                  >
+                    {categoryAssignLoading ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Check className="mr-2 h-4 w-4" />
+                    )}
+                    Применить
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => assignCatalogCategory(null)}
+                    disabled={categoryAssignLoading || !product.catalog_category}
+                  >
+                    Снять
+                  </Button>
+                </div>
+              </div>
+              <Separator />
               {product.catalog_classification ? (
                 <>
                   <div className="flex flex-wrap items-center gap-2">
