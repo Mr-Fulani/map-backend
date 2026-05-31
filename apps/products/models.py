@@ -27,7 +27,7 @@ class TenantCatalogCategory(TimestampedModel):
         related_name='children', verbose_name='Родительская категория',
     )
     domain = models.CharField(
-        max_length=30, choices=Domain.choices, default=Domain.UNKNOWN,
+        max_length=50, default=Domain.UNKNOWN,
         verbose_name='Домен',
     )
     aliases = ArrayField(
@@ -36,6 +36,12 @@ class TenantCatalogCategory(TimestampedModel):
     )
     external_source = models.CharField(max_length=50, blank=True, verbose_name='Источник')
     external_id = models.CharField(max_length=150, blank=True, verbose_name='Внешний ID')
+    default_image_s3_key = models.CharField(
+        max_length=500, blank=True, verbose_name='Картинка категории по умолчанию',
+    )
+    default_image_source_name = models.CharField(
+        max_length=255, blank=True, verbose_name='Имя файла картинки по умолчанию',
+    )
     is_active = models.BooleanField(default=True, verbose_name='Активна')
 
     class Meta:
@@ -190,7 +196,7 @@ class ProductCatalogClassification(TimestampedModel):
         verbose_name='Товар',
     )
     domain = models.CharField(
-        max_length=30, choices=Domain.choices, default=Domain.UNKNOWN,
+        max_length=50, default=Domain.UNKNOWN,
         verbose_name='Домен товара',
     )
     confidence = models.FloatField(default=0, verbose_name='Уверенность')

@@ -21,13 +21,29 @@ class ProductCatalogClassificationSerializer(serializers.ModelSerializer):
 
 
 class TenantCatalogCategorySerializer(serializers.ModelSerializer):
+    default_image_url = serializers.SerializerMethodField()
+
     class Meta:
         model = TenantCatalogCategory
         fields = [
             'id', 'name', 'normalized_name', 'parent', 'domain', 'aliases', 'external_source',
-            'external_id', 'is_active', 'created_at', 'updated_at',
+            'external_id', 'default_image_s3_key', 'default_image_source_name',
+            'default_image_url', 'is_active', 'created_at', 'updated_at',
         ]
-        read_only_fields = ['id', 'normalized_name', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'normalized_name', 'default_image_s3_key',
+            'default_image_source_name', 'default_image_url', 'created_at', 'updated_at',
+        ]
+
+    def get_default_image_url(self, obj) -> str:
+        if not obj.default_image_s3_key:
+            return ''
+        url = default_storage.url(obj.default_image_s3_key)
+        if url.startswith('/'):
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(url)
+        return url
 
 
 class TenantCategoryMappingSerializer(serializers.ModelSerializer):
@@ -74,6 +90,14 @@ class ProductSerializer(serializers.ModelSerializer):
         images = list(obj.images.all())
         img = next((i for i in images if i.is_primary), None) or (images[0] if images else None)
         if not img or not img.s3_key_thumb:
+            category = getattr(obj, 'catalog_category', None)
+            if category and category.default_image_s3_key:
+                url = default_storage.url(category.default_image_s3_key)
+                if url.startswith('/'):
+                    request = self.context.get('request')
+                    if request:
+                        return request.build_absolute_uri(url)
+                return url
             return ''
         url = default_storage.url(img.s3_key_thumb)
         if url.startswith('/'):

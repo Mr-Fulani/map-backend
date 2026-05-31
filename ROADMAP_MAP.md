@@ -936,12 +936,14 @@ AI-агент помечает объявление статусом `requires_r
 - Celery pipeline: parse, parse-then-generate, throttled bulk action.
 - Platform knowledge graph для OEM/Cross/аналогов/применяемости.
 - Source quality policy.
-- `catalog_domain` на tenant-е: `auto_parts`, `mixed`, `generic`, `jewellery`, `apparel`, `other`.
+- `CatalogDomain` как platform-справочник доменов с SEO-полями и admin CRUD.
+- `catalog_domain` на tenant-е хранит slug platform-домена.
 - `ProductCatalogClassification` для domain-классификации товара.
 - Bulk action `classify_catalog_domain`.
 - Базовый `PartCategory` как platform taxonomy автозапчастей.
 - `TenantCatalogCategory` и `TenantCategoryMapping` MVP.
 - Вкладка `Настройки -> Категории` для создания категорий tenant-а и привязки `category_1c`.
+- Default image для tenant category как fallback, если у товара нет медиа.
 
 ### Текущий P0
 
@@ -953,6 +955,8 @@ AI-агент помечает объявление статусом `requires_r
 - [x] Дать tenant-у создание категорий в dashboard.
 - [x] Добавить mapping `Product.category_1c -> TenantCatalogCategory`.
 - [x] Связать tenant category с platform domain как сигнал классификации.
+- [x] Дать суперюзеру CRUD platform domains с SEO-полями.
+- [x] Добавить default image категории для товаров без медиа.
 - [x] Добавить merge-policy: `source=manual` не перетирается rules-based bulk action без force.
 - [x] Добавить фильтр товаров по tenant category в dashboard.
 - [x] Добавить массовое назначение tenant category выбранным товарам.

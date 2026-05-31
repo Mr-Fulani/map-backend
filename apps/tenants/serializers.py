@@ -1,7 +1,9 @@
 from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
-from apps.tenants.models import APIKey, Tenant, TenantUser, WEBHOOK_EVENTS, WebhookEndpoint
+from apps.tenants.models import (
+    APIKey, CatalogDomain, Tenant, TenantUser, WEBHOOK_EVENTS, WebhookEndpoint,
+)
 
 User = get_user_model()
 
@@ -34,6 +36,18 @@ class TenantSerializer(serializers.ModelSerializer):
                   'created_at', 'updated_at']
         read_only_fields = ['id', 'active_listings_count', 'sku_count',
                             'ai_credits_used', 'created_at', 'updated_at']
+
+
+class CatalogDomainSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CatalogDomain
+        fields = [
+            'id', 'slug', 'name', 'short_name', 'description',
+            'seo_title', 'seo_description', 'seo_keywords', 'seo_h1',
+            'canonical_path', 'og_title', 'og_description', 'og_image_url',
+            'meta_robots', 'is_active', 'is_system', 'sort_order',
+            'supports_auto_parts_enrichment', 'requires_product_classification',
+        ]
 
 
 class TenantUserSerializer(serializers.ModelSerializer):

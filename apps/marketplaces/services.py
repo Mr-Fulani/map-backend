@@ -79,7 +79,7 @@ class ListingService:
         try:
             return (
                 Listing.objects
-                .select_related('product', 'account')
+                .select_related('product', 'product__catalog_category', 'account')
                 .prefetch_related('product__images')
                 .get(pk=listing_id, tenant=tenant)
             )

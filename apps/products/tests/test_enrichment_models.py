@@ -145,7 +145,7 @@ def test_catalog_classification_uses_tenant_category_mapping():
     product.refresh_from_db()
     assert product.catalog_category == category
     assert classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
-    assert 'категории tenant-а' in classification.reason
+    assert 'категории каталога' in classification.reason
 
 
 @pytest.mark.django_db

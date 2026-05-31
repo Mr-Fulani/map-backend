@@ -5,9 +5,9 @@ from apps.products.views import (
     ProductCrossCodesView, ProductDetailView, ProductFitmentsView,
     ProductCatalogCategoryAssignView, ProductListView, ProductParseJobDetailView,
     ProductParseView, ProductPublishView, ProductRegenerateView, ProductSearchView,
-    ProductSyncView, TenantCatalogCategoryDetailView,
-    TenantCatalogCategoryListView, TenantCategoryMappingListView,
-    TenantSourceCategoryListView,
+    ProductSyncView, TenantCatalogCategoryDefaultImageView,
+    TenantCatalogCategoryDetailView, TenantCatalogCategoryListView,
+    TenantCategoryMappingListView, TenantSourceCategoryListView,
 )
 
 urlpatterns = [
@@ -27,6 +27,11 @@ urlpatterns = [
         'catalog-categories/<int:pk>/',
         TenantCatalogCategoryDetailView.as_view(),
         name='tenant-catalog-category-detail',
+    ),
+    path(
+        'catalog-categories/<int:pk>/default-image/',
+        TenantCatalogCategoryDefaultImageView.as_view(),
+        name='tenant-catalog-category-default-image',
     ),
     path(
         'catalog-category-mappings/',

@@ -274,12 +274,14 @@ CategoryMapping
 
 - Tenant может редактировать свои категории.
 - Tenant не может создавать или менять platform domains.
-- Суперюзер может управлять platform domains/rules/capabilities.
+- Суперюзер управляет platform domains/rules/capabilities через Django admin.
+- Platform domain должен хранить SEO-поля и capability-флаги, а не быть только frontend label.
 - Категория может быть сигналом для классификации, но не финальным разрешением parser-а.
 - `Product.category_1c` нельзя перетирать enrichment-ом.
 - `PartCategory` нельзя использовать как tenant category.
 - `TenantCatalogCategory` нельзя использовать как замену `PartCategory`.
 - `TenantCategoryMapping` может проставить `Product.catalog_category`, но не меняет `Product.category_1c`.
+- `TenantCatalogCategory.default_image_s3_key` можно использовать только как fallback, если у товара нет собственных медиа.
 - Массовое назначение tenant category меняет только `Product.catalog_category`.
 - В списке товаров показываем tenant category как основную категорию, а `category_1c` только как исходную категорию источника.
 

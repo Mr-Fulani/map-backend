@@ -1,11 +1,49 @@
 from datetime import timedelta
 
+from django import forms
 from django.contrib import admin
 from django.utils import timezone
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin
 
-from apps.tenants.models import APIKey, Tenant, TenantUser, WebhookEndpoint
+from apps.tenants.models import APIKey, CatalogDomain, Tenant, TenantUser, WebhookEndpoint
+
+
+@admin.register(CatalogDomain)
+class CatalogDomainAdmin(ModelAdmin):
+    """Управление platform-level доменами каталога."""
+
+    list_display = [
+        'name', 'slug', 'short_name', 'is_active', 'is_system',
+        'supports_auto_parts_enrichment', 'requires_product_classification', 'sort_order',
+    ]
+    list_filter = [
+        'is_active', 'is_system', 'supports_auto_parts_enrichment',
+        'requires_product_classification',
+    ]
+    search_fields = ['name', 'short_name', 'slug', 'seo_title', 'seo_keywords']
+    prepopulated_fields = {'slug': ('name',)}
+    fieldsets = [
+        ('Основное', {
+            'fields': [
+                'name', 'short_name', 'slug', 'description', 'is_active',
+                'is_system', 'sort_order',
+            ],
+        }),
+        ('Возможности платформы', {
+            'fields': ['supports_auto_parts_enrichment', 'requires_product_classification'],
+        }),
+        ('SEO', {
+            'fields': [
+                'seo_title', 'seo_description', 'seo_keywords', 'seo_h1',
+                'canonical_path', 'meta_robots',
+            ],
+        }),
+        ('Open Graph', {
+            'fields': ['og_title', 'og_description', 'og_image_url'],
+            'classes': ['collapse'],
+        }),
+    ]
 
 
 class TenantUserInline(admin.TabularInline):
@@ -65,6 +103,20 @@ class TenantAdmin(ModelAdmin):
             'classes': ['collapse'],
         }),
     ]
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        choices = [
+            (domain.slug, domain.name)
+            for domain in CatalogDomain.objects.filter(is_active=True).order_by('sort_order', 'name')
+        ]
+        if choices:
+            form.base_fields['catalog_domain'] = forms.ChoiceField(
+                choices=choices,
+                label='Домен каталога',
+                help_text='Список доменов управляется суперюзером в разделе “Домены каталога”.',
+            )
+        return form
 
     @admin.display(description='Тариф')
     def get_plan(self, obj):

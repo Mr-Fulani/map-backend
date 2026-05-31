@@ -175,7 +175,7 @@ class ProductEnrichmentService:
         if tenant_category and tenant_category.domain != TenantCatalogCategory.Domain.UNKNOWN:
             domain = tenant_category.domain
             confidence = 0.85
-            reason = f'Домен взят из категории tenant-а: {tenant_category.name}.'
+            reason = f'Тип товара определён по категории каталога: {tenant_category.name}.'
             needs_review = bool(
                 domain == ProductCatalogClassification.Domain.AUTO_PARTS and non_auto_matches
             )

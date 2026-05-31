@@ -167,6 +167,7 @@ export const profileApi = {
 // Tenant
 export const tenantApi = {
   get: () => api.get('/tenant/'),
+  catalogDomains: () => api.get('/catalog-domains/'),
   getUsers: () => api.get('/tenant/users/'),
   getApiKeys: () => api.get('/tenant/api-keys/'),
   createApiKey: (name: string) => api.post('/tenant/api-keys/', { name }),
@@ -227,6 +228,15 @@ export const productApi = {
   deleteCatalogCategory: (id: number) => api.delete(`/products/catalog-categories/${id}/`),
   assignCatalogCategory: (data: { product_ids: number[]; catalog_category: number | null }) =>
     api.post('/products/catalog-categories/assign/', data),
+  uploadCatalogCategoryImage: (id: number, file: File) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    return api.post(`/products/catalog-categories/${id}/default-image/`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+  deleteCatalogCategoryImage: (id: number) =>
+    api.delete(`/products/catalog-categories/${id}/default-image/`),
   catalogCategoryMappings: () => api.get('/products/catalog-category-mappings/'),
   createCatalogCategoryMapping: (data: Record<string, unknown>) =>
     api.post('/products/catalog-category-mappings/', data),

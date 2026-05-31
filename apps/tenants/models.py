@@ -17,6 +17,45 @@ WEBHOOK_EVENTS = [
 ]
 
 
+class CatalogDomain(TimestampedModel):
+    """Platform-level домен каталога, которым управляет суперюзер."""
+
+    slug = models.SlugField(max_length=50, unique=True, verbose_name='Slug')
+    name = models.CharField(max_length=120, verbose_name='Название')
+    short_name = models.CharField(max_length=60, blank=True, verbose_name='Короткое название')
+    description = models.TextField(blank=True, verbose_name='Описание')
+    seo_title = models.CharField(max_length=255, blank=True, verbose_name='SEO title')
+    seo_description = models.TextField(blank=True, verbose_name='SEO description')
+    seo_keywords = models.CharField(max_length=500, blank=True, verbose_name='SEO keywords')
+    seo_h1 = models.CharField(max_length=255, blank=True, verbose_name='SEO H1')
+    canonical_path = models.CharField(max_length=255, blank=True, verbose_name='Canonical path')
+    og_title = models.CharField(max_length=255, blank=True, verbose_name='OG title')
+    og_description = models.TextField(blank=True, verbose_name='OG description')
+    og_image_url = models.URLField(blank=True, verbose_name='OG image URL')
+    meta_robots = models.CharField(max_length=100, default='index,follow', verbose_name='Meta robots')
+    is_active = models.BooleanField(default=True, verbose_name='Активен')
+    is_system = models.BooleanField(default=False, verbose_name='Системный')
+    sort_order = models.PositiveSmallIntegerField(default=100, verbose_name='Порядок')
+    supports_auto_parts_enrichment = models.BooleanField(
+        default=False, verbose_name='Разрешает обогащение автозапчастей',
+    )
+    requires_product_classification = models.BooleanField(
+        default=False, verbose_name='Требует проверки домена товара',
+    )
+
+    class Meta:
+        verbose_name = 'Домен каталога'
+        verbose_name_plural = 'Домены каталога'
+        ordering = ['sort_order', 'name']
+        indexes = [
+            models.Index(fields=['slug']),
+            models.Index(fields=['is_active', 'sort_order']),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class Tenant(TimestampedModel):
     """Организация-тенант. Единица изоляции данных в системе."""
 
@@ -32,7 +71,7 @@ class Tenant(TimestampedModel):
     slug = models.SlugField(unique=True, verbose_name='Slug')
     is_active = models.BooleanField(default=True, verbose_name='Активен')
     catalog_domain = models.CharField(
-        max_length=30, choices=CatalogDomain.choices,
+        max_length=50,
         default=CatalogDomain.AUTO_PARTS, verbose_name='Домен каталога',
     )
     trial_ends_at = models.DateTimeField(null=True, blank=True, verbose_name='Окончание триала')
@@ -55,6 +94,9 @@ class Tenant(TimestampedModel):
 
     @property
     def supports_auto_parts_enrichment(self) -> bool:
+        domain = CatalogDomain.objects.filter(slug=self.catalog_domain).first()
+        if domain is not None:
+            return domain.supports_auto_parts_enrichment
         return self.catalog_domain in [
             self.CatalogDomain.AUTO_PARTS,
             self.CatalogDomain.MIXED,
@@ -62,6 +104,9 @@ class Tenant(TimestampedModel):
 
     @property
     def requires_product_auto_parts_check(self) -> bool:
+        domain = CatalogDomain.objects.filter(slug=self.catalog_domain).first()
+        if domain is not None:
+            return domain.requires_product_classification
         return self.catalog_domain == self.CatalogDomain.MIXED
 
 
