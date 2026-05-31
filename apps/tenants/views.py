@@ -108,7 +108,7 @@ class CatalogDomainListView(APIView):
             domain=domain,
             defaults={'is_enabled': is_enabled},
         )
-        if is_enabled and domain.slug == 'auto_parts':
+        if is_enabled:
             from apps.products.services import ProductCategorySeedService
             ProductCategorySeedService.seed_tenant_default_categories(request.tenant, domain)
 

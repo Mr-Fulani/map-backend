@@ -6,6 +6,7 @@ from decimal import Decimal
 from django.utils.timezone import now
 
 from apps.products.enrichment import make_value_hash, normalize_part_code
+from apps.products.catalog_category_seed import BASE_CATEGORY_TEMPLATE_TREE
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, PartCategory,
     Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
@@ -38,7 +39,7 @@ def _compute_hash(data: dict) -> str:
 
 
 class ProductCategorySeedService:
-    """Seeds base auto-part categories for the platform and tenant catalogs."""
+    """Seeds base category templates for the platform and tenant catalogs."""
 
     SEED_SOURCE = 'platform_auto_parts_seed'
 
@@ -79,7 +80,7 @@ class ProductCategorySeedService:
             domain=domain,
             defaults={'is_enabled': True},
         )
-        if seed_templates and domain.slug == TenantCatalogCategory.Domain.AUTO_PARTS:
+        if seed_templates:
             return cls.seed_tenant_default_categories(tenant, domain)
         return 0
 
@@ -90,8 +91,12 @@ class ProductCategorySeedService:
         ).first()
         if root_domain is None:
             return 0
+        category_tree = BASE_CATEGORY_TEMPLATE_TREE.get(root_domain.slug, [])
+        if not category_tree:
+            return 0
+        seed_source = f'platform_{root_domain.slug}_seed'
         created_count = 0
-        for root in BASE_PART_CATEGORY_TREE:
+        for root in category_tree:
             root_category, created = TenantCatalogCategory.objects.get_or_create(
                 tenant=tenant,
                 parent__isnull=True,
@@ -99,15 +104,19 @@ class ProductCategorySeedService:
                 defaults={
                     'name': root['name'],
                     'root_domain': root_domain,
-                    'domain': TenantCatalogCategory.Domain.AUTO_PARTS,
+                    'domain': root_domain.slug,
                     'aliases': root.get('aliases', []),
-                    'external_source': cls.SEED_SOURCE,
+                    'external_source': seed_source,
                     'external_id': f"root:{normalize_category_name(root['name'])}",
                     'is_active': True,
                 },
             )
             created_count += int(created)
-            for child_name, aliases, _fitment_required in root.get('children', []):
+            for child in root.get('children', []):
+                if isinstance(child, tuple):
+                    child_name, aliases = child[0], child[1]
+                else:
+                    child_name, aliases = child, []
                 _, child_created = TenantCatalogCategory.objects.get_or_create(
                     tenant=tenant,
                     parent=root_category,
@@ -115,9 +124,9 @@ class ProductCategorySeedService:
                     defaults={
                         'name': child_name,
                         'root_domain': root_domain,
-                        'domain': TenantCatalogCategory.Domain.AUTO_PARTS,
+                        'domain': root_domain.slug,
                         'aliases': aliases,
-                        'external_source': cls.SEED_SOURCE,
+                        'external_source': seed_source,
                         'external_id': f"{normalize_category_name(root['name'])}:{normalize_category_name(child_name)}",
                         'is_active': True,
                     },

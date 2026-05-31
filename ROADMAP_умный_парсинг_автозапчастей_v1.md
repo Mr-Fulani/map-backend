@@ -45,6 +45,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - `[x]` `GlobalPartFitment` для platform-level применяемости артикула.
 - `[x]` применение известных OEM/Cross и fitment данных до внешнего fetch.
 - `[x]` базовая platform taxonomy `PartCategory` и seed tenant-категорий автозапчастей при создании tenant-а.
+- `[x]` расширенный seed корневых категорий платформы и стартовых tenant-подкатегорий для основных ниш.
 - `[x]` локальная БД после merge обновлена миграциями `products.0006` и `products.0007`.
 
 Частично реализовано:
