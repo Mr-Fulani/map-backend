@@ -309,6 +309,7 @@ parser не запускать автоматически
 ```text
 source=manual нельзя перетирать rules-based bulk action без force-флага
 source=rules можно пересчитывать при изменении товара или категории
+force=True разрешён только для явного override, а не для фоновых bulk rules
 ```
 
 ---

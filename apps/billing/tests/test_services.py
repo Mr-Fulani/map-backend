@@ -3,7 +3,7 @@ from datetime import date, timedelta
 import pytest
 
 from apps.billing.models import Plan, Subscription
-from apps.billing.services import BillingService, LimitChecker
+from apps.billing.services import BillingService, LimitChecker, add_billing_month
 from apps.tenants.services import TenantService
 
 
@@ -13,6 +13,12 @@ def make_tenant(slug, email):
         name=slug, slug=slug, owner_email=email, owner_password='pass12345',
     )
     return tenant
+
+
+def test_add_billing_month_uses_last_day_when_next_month_is_shorter():
+    assert add_billing_month(date(2026, 5, 31)) == date(2026, 6, 30)
+    assert add_billing_month(date(2026, 1, 31)) == date(2026, 2, 28)
+    assert add_billing_month(date(2026, 12, 31)) == date(2027, 1, 31)
 
 
 @pytest.mark.django_db

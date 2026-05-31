@@ -160,7 +160,7 @@ class ProductEnrichmentService:
 
     @classmethod
     def classify_product_catalog_domain(
-        cls, product: Product, save: bool = True,
+        cls, product: Product, save: bool = True, force: bool = False,
     ) -> ProductCatalogClassification:
         tenant_category = cls.get_product_tenant_category(product)
         text = ' '.join([
@@ -203,11 +203,20 @@ class ProductEnrichmentService:
             'needs_review': needs_review,
         }
         if save:
-            classification, _ = ProductCatalogClassification.objects.update_or_create(
+            classification, created = ProductCatalogClassification.objects.get_or_create(
                 tenant=product.tenant,
                 product=product,
                 defaults=defaults,
             )
+            if not created:
+                if classification.source == ProductCatalogClassification.Source.MANUAL and not force:
+                    return classification
+                for field, value in defaults.items():
+                    setattr(classification, field, value)
+                classification.save(update_fields=[
+                    'domain', 'confidence', 'source', 'reason',
+                    'needs_review', 'updated_at',
+                ])
             return classification
         return ProductCatalogClassification(
             tenant=product.tenant,
