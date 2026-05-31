@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from apps.products.models import GlobalPartRelation, Product, ProductCrossCode
+from apps.products.part_fetchers import FetchedPage
 from apps.products.part_parsers import ParsedPart, TachkaPartParser, parse_fitment_line
 from apps.products.services import ProductEnrichmentService
 from apps.tenants.services import TenantService
@@ -119,6 +120,21 @@ def test_tachka_parser_extracts_related_parts_from_search_html():
     assert parsed.related_parts[0].relation_type == GlobalPartRelation.RelationType.OEM
     assert parsed.related_parts[1].relation_type == GlobalPartRelation.RelationType.ANALOGUE
     assert parsed.cross_codes[0].code == '4851080863'
+
+
+def test_tachka_parser_uses_injected_fetcher_without_network():
+    class FakeFetcher:
+        def fetch(self, url):
+            return FetchedPage(
+                html=SAMPLE_HTML,
+                url='https://tachka.ru/final/P50136',
+                status_code=200,
+            )
+
+    html, source_url = TachkaPartParser(fetcher=FakeFetcher()).fetch('BREMBO', 'P50136')
+
+    assert html == SAMPLE_HTML
+    assert source_url == 'https://tachka.ru/final/P50136'
 
 
 @pytest.mark.django_db

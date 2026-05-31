@@ -153,7 +153,7 @@ class VehicleFitmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = VehicleFitment
         fields = [
-            'id', 'source_id', 'make', 'model', 'generation', 'date_from',
+            'id', 'source_id', 'source_url', 'make', 'model', 'generation', 'date_from',
             'date_to', 'modification', 'engine_code', 'power_hp',
             'raw_text', 'confidence', 'needs_review', 'created_at',
         ]

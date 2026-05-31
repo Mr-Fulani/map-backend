@@ -239,6 +239,23 @@ class TestDescriptionAgent:
 
         assert 'Вероятные марки авто по OEM/Cross: HYUNDAI, KIA' in message
 
+    def test_build_message_excludes_reviewable_fitments(self):
+        tenant = make_tenant('reviewable-fitment-agent-co')
+        product = make_product(tenant)
+        ProductEnrichmentService.create_fitment(
+            tenant=tenant, product=product, make='MERCEDES-BENZ',
+            model='E-CLASS', generation='W213', confidence=0.95,
+        )
+        ProductEnrichmentService.create_fitment(
+            tenant=tenant, product=product, make='BMW',
+            model='5', generation='G30', confidence=0.4, needs_review=True,
+        )
+
+        message = DescriptionAgent()._build_message(product)
+
+        assert 'MERCEDES-BENZ E-CLASS W213' in message
+        assert 'BMW 5 G30' not in message
+
     def test_no_regeneration_on_price_change(self):
         """price_only изменение не требует перегенерации (через detect_change_type)."""
         from apps.products.services import ProductService

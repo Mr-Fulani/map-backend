@@ -580,6 +580,7 @@ class VehicleFitment(TimestampedModel):
         verbose_name='Товар',
     )
     source_id = models.CharField(max_length=50, default='tachka', verbose_name='Источник')
+    source_url = models.URLField(blank=True, verbose_name='URL источника')
     make = models.CharField(max_length=100, blank=True, verbose_name='Марка')
     model = models.CharField(max_length=150, verbose_name='Модель')
     generation = models.CharField(max_length=100, blank=True, verbose_name='Поколение')
@@ -591,6 +592,7 @@ class VehicleFitment(TimestampedModel):
     raw_text = models.TextField(blank=True, verbose_name='Исходная строка')
     confidence = models.FloatField(default=1.0, verbose_name='Уверенность')
     needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
+    last_seen_at = models.DateTimeField(null=True, blank=True, verbose_name='Последний раз найдено')
 
     class Meta:
         verbose_name = 'Применяемость'
@@ -686,6 +688,7 @@ class ProductEnrichmentFact(TimestampedModel):
         verbose_name='Товар',
     )
     source_id = models.CharField(max_length=50, default='tachka', verbose_name='Источник')
+    source_url = models.URLField(blank=True, verbose_name='URL источника')
     fact_type = models.CharField(
         max_length=30, choices=FactType.choices, verbose_name='Тип факта',
     )
@@ -695,6 +698,7 @@ class ProductEnrichmentFact(TimestampedModel):
     raw_text = models.TextField(blank=True, verbose_name='Исходный текст')
     confidence = models.FloatField(default=1.0, verbose_name='Уверенность')
     needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
+    last_seen_at = models.DateTimeField(null=True, blank=True, verbose_name='Последний раз найдено')
 
     class Meta:
         verbose_name = 'Факт обогащения товара'

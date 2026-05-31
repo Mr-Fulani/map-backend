@@ -7,6 +7,7 @@ from apps.ai_agent.validators import (
     BannedWordsError, VagueFitmentError, ValidationError, validate_json_response,
 )
 from apps.billing.services import LimitChecker
+from apps.products.source_policy import should_auto_apply_fitment
 
 MAX_RETRIES = 2  # Максимум попыток через Claude перед fallback на OpenAI
 
@@ -97,7 +98,11 @@ class DescriptionAgent:
         """Добавляет enrichment-факты в prompt без выдумывания применяемости."""
         attributes = list(product.attributes.all().order_by('name')[:12])
         cross_codes = list(product.cross_codes.all().order_by('manufacturer', 'code')[:20])
-        fitments = list(product.fitments.all().order_by('make', 'model', 'generation')[:30])
+        fitments = [
+            fitment
+            for fitment in product.fitments.all().order_by('make', 'model', 'generation')[:30]
+            if should_auto_apply_fitment(fitment)
+        ]
 
         lines = []
         if attributes:

@@ -145,7 +145,8 @@ ProductKnowledgeGraphService.apply_known_fitments_to_product(product)
 - batch/rate-limit параметры;
 - transport (`httpx` по умолчанию);
 - capabilities источника;
-- `auto_apply_min_confidence`.
+- `auto_apply_min_confidence`;
+- `auto_apply_min_trust_score`.
 
 Для `tachka` включены product page, search fallback, fitments, images и related
 parts. Это не означает, что данные источника всегда истинны: конкретная запись
@@ -156,12 +157,21 @@ parts. Это не означает, что данные источника вс
 ```text
 relation.needs_review == false
 relation.relation_type != Unknown
+source.trust_score >= source.auto_apply_min_trust_score
 relation.confidence >= source.auto_apply_min_confidence
 
 fitment.needs_review == false
 fitment.model is not empty
+source.trust_score >= source.auto_apply_min_trust_score
 fitment.confidence >= source.auto_apply_min_confidence
 ```
+
+Fetcher/transport отделен от HTML parser logic:
+
+- `apps/products/part_fetchers.py` содержит `HttpxPartFetcher`;
+- `TachkaPartParser` получает fetcher через `__init__`;
+- `get_part_fetcher(source_id)` выбирает transport по `source_policy`;
+- parser можно тестировать на HTML fixtures или fake fetcher без сети.
 
 `CloakBrowser` и похожие browser/stealth runtimes должны подключаться только как
 optional transport для конкретного source policy. Они не должны попадать в core
@@ -171,6 +181,7 @@ parser как обязательная зависимость.
 
 - `apps/tenants/models.py` — `Tenant.catalog_domain` и capability для auto-parts enrichment.
 - `apps/products/models.py` — `GlobalPart`, `GlobalPartRelation`, `PartCategory`.
+- `apps/products/part_fetchers.py` — transport/fetcher слой для parser sources.
 - `apps/products/services.py` — `ProductKnowledgeGraphService`.
 - `apps/products/admin.py` — read-only admin для глобальных артикулов и связей.
 - `apps/products/tests/test_knowledge_graph.py` — сценарии обучения и применения.

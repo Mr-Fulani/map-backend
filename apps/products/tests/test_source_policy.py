@@ -2,6 +2,7 @@ import pytest
 
 from apps.products.source_policy import (
     DEFAULT_PART_SOURCE, get_part_source_config, get_part_source_policy,
+    get_part_source_policies, should_auto_apply_record,
 )
 
 
@@ -29,3 +30,19 @@ def test_legacy_source_config_keeps_existing_bulk_action_contract():
 def test_unknown_source_policy_is_rejected():
     with pytest.raises(ValueError):
         get_part_source_policy('missing-source')
+
+
+def test_registry_snapshot_is_available_for_parser_sources():
+    policies = get_part_source_policies()
+
+    assert DEFAULT_PART_SOURCE in policies
+    assert policies[DEFAULT_PART_SOURCE].label == 'Tachka.ru'
+
+
+def test_unknown_source_records_are_not_auto_applied():
+    class Record:
+        source_id = 'unregistered-source'
+        confidence = 1.0
+        needs_review = False
+
+    assert should_auto_apply_record(Record()) is False

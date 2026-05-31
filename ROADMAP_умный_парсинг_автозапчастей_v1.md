@@ -49,15 +49,14 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 Частично реализовано:
 
 - `[~]` изображения: URL из источника извлекаются и показываются, но автоматическое сохранение в `ProductImage`/S3 pipeline еще не закрыто.
-- `[~]` поддержка нескольких источников: архитектура источников есть, но реально подключен только `tachka`.
-- `[~]` качество данных: есть `need_review`, `confidence`, guardrails агента, но нет полноценного операционного workflow проверки.
+- `[~]` поддержка нескольких источников: source policy и fetcher abstraction есть, но реально подключен только `tachka`.
+- `[~]` качество данных: source quality policy добавлен, но нет полноценного operator review workflow.
 - `[~]` массовые действия: batch/cooldown есть, но pause/resume/cancel еще нужно довести в API/UI.
-- `[~]` глобальный граф артикулов: модель, обучение и search fallback есть; дальше нужны source priority и правила конфликтов между источниками.
+- `[~]` глобальный граф артикулов: модель, обучение, search fallback, source priority и конфликт-правила есть; дальше нужен review workflow.
 - `[~]` глобальная применяемость: `GlobalPartFitment` есть, но еще нет нормализованного `VehicleMake/Model/Generation`.
 
 Не реализовано:
 
-- `[ ]` source quality policy: приоритет источников, confidence rules и конфликт-стратегия.
 - `[ ]` platform-level справочник `VehicleMake/VehicleModel/VehicleGeneration/VehicleModification`.
 - `[ ]` легкая taxonomy категорий запчастей `PartCategory` с флагом `fitment_required`.
 - `[ ]` tenant/catalog capability для отключения автозапчастного enrichment в неавтомобильных нишах.
@@ -71,40 +70,40 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 ### P0.1 Реестр качества источников
 
-- [ ] Ввести единое описание источника: `source_id`, `label`, `priority`, `trust_score`.
-- [ ] Хранить правила rate limit: `batch_size`, `min_pause_seconds`, `default_pause_seconds`.
-- [ ] Хранить capability flags: `supports_product_page`, `supports_search`, `supports_fitments`, `supports_images`.
-- [ ] Хранить transport: `httpx` по умолчанию, будущий `browser`/`cloak` только для сложных источников.
-- [ ] Не смешивать platform parser source с tenant-owned `DataSourceConnection`.
+- [x] Ввести единое описание источника: `source_id`, `label`, `priority`, `trust_score`.
+- [x] Хранить правила rate limit: `batch_size`, `min_pause_seconds`, `default_pause_seconds`.
+- [x] Хранить capability flags: `supports_product_page`, `supports_search`, `supports_fitments`, `supports_images`.
+- [x] Хранить transport: `httpx` по умолчанию, будущий `browser`/`cloak` только для сложных источников.
+- [x] Не смешивать platform parser source с tenant-owned `DataSourceConnection`.
 
 **Verify:** новый источник можно описать конфигом без изменения `ProductEnrichmentService`.
 
 ### P0.2 Confidence policy
 
-- [ ] Задать минимальный confidence для автоматического применения relation/fitment к tenant-товару.
-- [ ] Автоматически ставить `needs_review=True`, если источник низкого trust или parser не уверен.
-- [ ] Не применять `Unknown` и `needs_review` записи автоматически.
-- [ ] Повышать confidence только если новый источник равен или надежнее текущего.
-- [ ] Не понижать уже подтвержденные полезные данные без ручного review.
+- [x] Задать минимальный confidence для автоматического применения relation/fitment к tenant-товару.
+- [x] Автоматически ставить `needs_review=True`, если источник низкого trust или parser не уверен.
+- [x] Не применять `Unknown` и `needs_review` записи автоматически.
+- [x] Повышать confidence только если новый источник равен или надежнее текущего.
+- [x] Не понижать уже подтвержденные полезные данные без ручного review.
 
 **Verify:** сомнительная связь сохраняется в global graph, но не попадает в tenant `ProductCrossCode`/`VehicleFitment`.
 
 ### P0.3 Conflict policy
 
-- [ ] При конфликте источников не удалять старую связь.
-- [ ] Помечать конфликтующие факты `needs_review`.
-- [ ] Сохранять provenance: `source_id`, `source_url`, `raw_text`, `last_seen_at`.
-- [ ] Для fitments не считать аналог доказательством применяемости.
-- [ ] Для AI отдавать только trusted факты или явно маркировать reviewable данные.
+- [x] При конфликте источников не удалять старую связь.
+- [x] Помечать конфликтующие факты `needs_review`.
+- [x] Сохранять provenance: `source_id`, `source_url`, `raw_text`, `last_seen_at`.
+- [x] Для fitments не считать аналог доказательством применяемости.
+- [x] Для AI отдавать только trusted факты или явно маркировать reviewable данные.
 
 **Verify:** два источника с разными fitments не перетирают друг друга и не ломают описание.
 
 ### P0.4 Fetcher abstraction
 
-- [ ] Ввести интерфейс fetcher/transport отдельно от parser logic.
-- [ ] Оставить `HttpxFetcher` как default.
-- [ ] Добавить возможность source-level выбора browser transport позже.
-- [ ] Рассматривать `CloakBrowser` как optional future transport для JS/anti-bot источников, не как core dependency.
+- [x] Ввести интерфейс fetcher/transport отдельно от parser logic.
+- [x] Оставить `HttpxFetcher` как default.
+- [x] Добавить возможность source-level выбора browser transport позже.
+- [x] Рассматривать `CloakBrowser` как optional future transport для JS/anti-bot источников, не как core dependency.
 
 **Verify:** parser можно тестировать на HTML fixtures без сети и без browser runtime.
 
