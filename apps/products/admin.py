@@ -3,8 +3,9 @@ from unfold.admin import ModelAdmin, TabularInline
 
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, Product, ProductAttribute,
-    PartCategory, ProductCatalogClassification, ProductCrossCode, ProductEnrichmentFact,
-    ProductImage, ProductParseJob, TenantCatalogCategory, TenantCategoryMapping,
+    PartCategory, ProductBrand, ProductBrandAlias, ProductCatalogClassification,
+    ProductCrossCode, ProductEnrichmentFact, ProductImage, ProductParseJob,
+    TenantCatalogCategory, TenantCategoryMapping,
     VehicleFitment, VehicleMake, VehicleModel,
 )
 
@@ -114,6 +115,22 @@ class GlobalPartFitmentInline(TabularInline):
     can_delete = False
 
 
+class ProductBrandAliasInline(TabularInline):
+    model = ProductBrandAlias
+    extra = 0
+    fields = ['alias', 'normalized_alias', 'source_id', 'confidence', 'needs_review']
+    readonly_fields = ['normalized_alias', 'created_at', 'updated_at']
+
+
+@admin.register(ProductBrand)
+class ProductBrandAdmin(ModelAdmin):
+    list_display = ['name', 'normalized_name', 'confidence', 'needs_review', 'is_active', 'updated_at']
+    list_filter = ['is_active', 'needs_review', 'domains']
+    search_fields = ['name', 'normalized_name', 'brand_aliases__alias', 'brand_aliases__normalized_alias']
+    filter_horizontal = ['domains']
+    inlines = [ProductBrandAliasInline]
+
+
 @admin.register(Product)
 class ProductAdmin(ModelAdmin):
     """
@@ -124,7 +141,7 @@ class ProductAdmin(ModelAdmin):
     """
 
     list_display = [
-        'article', 'name', 'tenant', 'get_catalog_domain',
+        'article', 'name', 'brand', 'brand_ref', 'tenant', 'get_catalog_domain',
         'price', 'stock_qty', 'export_enabled', 'sync_at',
     ]
     list_filter = ['tenant', 'export_enabled', 'condition', 'catalog_classification__domain']
@@ -242,13 +259,13 @@ class ProductParseJobAdmin(ModelAdmin):
 @admin.register(GlobalPart)
 class GlobalPartAdmin(ModelAdmin):
     list_display = [
-        'brand', 'article', 'source_id', 'confidence',
+        'brand', 'brand_ref', 'article', 'source_id', 'confidence',
         'needs_review', 'last_seen_at',
     ]
     list_filter = ['source_id', 'needs_review', 'created_at']
     search_fields = ['brand', 'article', 'normalized_brand', 'normalized_article', 'title']
     readonly_fields = [
-        'brand', 'normalized_brand', 'article', 'normalized_article',
+        'brand', 'brand_ref', 'normalized_brand', 'article', 'normalized_article',
         'title', 'source_id', 'source_url', 'confidence', 'needs_review',
         'last_seen_at', 'created_at', 'updated_at',
     ]

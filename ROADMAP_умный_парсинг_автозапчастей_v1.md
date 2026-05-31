@@ -46,6 +46,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - `[x]` применение известных OEM/Cross и fitment данных до внешнего fetch.
 - `[x]` базовая platform taxonomy `PartCategory` и seed tenant-категорий автозапчастей при создании tenant-а.
 - `[x]` расширенный seed корневых категорий платформы и стартовых tenant-подкатегорий для основных ниш.
+- `[x]` platform-справочник брендов с алиасами и безопасной привязкой к товарам/глобальным запчастям без замены сырого `brand`.
 - `[x]` локальная БД после merge обновлена миграциями `products.0006` и `products.0007`.
 
 Частично реализовано:

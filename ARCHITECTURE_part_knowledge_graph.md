@@ -81,11 +81,19 @@ tenant-scoped копию шаблона в `TenantCatalogCategory`, чтобы t
 
 - `CatalogDomain` / `ProductCatalogClassification.domain` — platform guardrail.
 - `PartCategory` — platform taxonomy автозапчастей.
+- `ProductBrand` / `ProductBrandAlias` — platform-нормализация брендов без замены сырого бренда товара.
 - `TenantCatalogCategory` — будущие редактируемые категории конкретного tenant-а.
 - `Product.category_1c` — сырое поле из источника tenant-а, например 1С.
 
 Эти сущности нельзя сливать в одну таблицу: у них разные владельцы, жизненный цикл
 и последствия ошибок.
+
+`Product.brand` и `GlobalPart.brand` остаются исходными строками из источника.
+`Product.brand_ref` и `GlobalPart.brand_ref` — дополнительная ссылка на
+нормализованный бренд, если его удалось уверенно определить. Для автозапчастей
+ключ применяемости не меняется: граф по-прежнему ищет деталь по
+`GlobalPart.normalized_brand + GlobalPart.normalized_article`, чтобы не сломать
+связи OEM/cross/fitment между tenant-ами.
 
 Важно: аналог или cross-код не равен доказанной применяемости. Это полезная связь
 для поиска и обогащения, но конкретные марки/модели авто должны приходить из

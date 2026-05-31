@@ -79,6 +79,10 @@ class TenantCatalogCategory(TimestampedModel):
         return self.name
 
     def save(self, *args, **kwargs):
+        self.normalized_name = ''.join(char for char in self.name.upper() if char.isalnum())
+        super().save(*args, **kwargs)
+
+    def save(self, *args, **kwargs):
         self.normalized_name = ''.join(char for char in self.name.lower() if char.isalnum())
         if self.root_domain_id:
             self.domain = self.root_domain.slug
@@ -113,6 +117,67 @@ class TenantCategoryMapping(TimestampedModel):
         return f'{self.source_category} -> {self.category}'
 
 
+class ProductBrand(TimestampedModel):
+    """Platform-level справочник брендов без tenant-коммерческих данных."""
+
+    name = models.CharField(max_length=150, verbose_name='Название')
+    normalized_name = models.CharField(
+        max_length=150, unique=True, db_index=True, verbose_name='Нормализованное название',
+    )
+    domains = models.ManyToManyField(
+        CatalogDomain, blank=True, related_name='product_brands',
+        verbose_name='Корневые категории',
+    )
+    source_id = models.CharField(max_length=50, blank=True, verbose_name='Источник')
+    confidence = models.FloatField(default=1.0, verbose_name='Уверенность')
+    needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
+    is_active = models.BooleanField(default=True, verbose_name='Активен')
+
+    class Meta:
+        verbose_name = 'Бренд'
+        verbose_name_plural = 'Бренды'
+        ordering = ['name']
+        indexes = [
+            models.Index(fields=['normalized_name']),
+            models.Index(fields=['is_active', 'name']),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
+class ProductBrandAlias(TimestampedModel):
+    """Вариант написания бренда, который можно уверенно связать с ProductBrand."""
+
+    brand = models.ForeignKey(
+        ProductBrand, on_delete=models.CASCADE, related_name='brand_aliases',
+        verbose_name='Бренд',
+    )
+    alias = models.CharField(max_length=150, verbose_name='Алиас')
+    normalized_alias = models.CharField(
+        max_length=150, unique=True, db_index=True, verbose_name='Нормализованный алиас',
+    )
+    source_id = models.CharField(max_length=50, blank=True, verbose_name='Источник')
+    confidence = models.FloatField(default=1.0, verbose_name='Уверенность')
+    needs_review = models.BooleanField(default=False, verbose_name='Нужна проверка')
+
+    class Meta:
+        verbose_name = 'Алиас бренда'
+        verbose_name_plural = 'Алиасы брендов'
+        ordering = ['alias']
+        indexes = [
+            models.Index(fields=['normalized_alias']),
+            models.Index(fields=['brand', 'needs_review']),
+        ]
+
+    def __str__(self):
+        return f'{self.alias} -> {self.brand}'
+
+    def save(self, *args, **kwargs):
+        self.normalized_alias = ''.join(char for char in self.alias.upper() if char.isalnum())
+        super().save(*args, **kwargs)
+
+
 class Product(TimestampedModel):
     """Товар из источника данных (1С, CSV и т.д.)."""
 
@@ -137,6 +202,10 @@ class Product(TimestampedModel):
     )
     name = models.CharField(max_length=500, verbose_name='Наименование')
     brand = models.CharField(max_length=200, blank=True, verbose_name='Бренд')
+    brand_ref = models.ForeignKey(
+        ProductBrand, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='products', verbose_name='Нормализованный бренд',
+    )
     category_1c = models.CharField(max_length=300, blank=True, verbose_name='Категория из 1С')
     catalog_category = models.ForeignKey(
         TenantCatalogCategory, null=True, blank=True, on_delete=models.SET_NULL,
@@ -170,6 +239,7 @@ class Product(TimestampedModel):
         verbose_name_plural = 'Товары'
         indexes = [
             models.Index(fields=['tenant', 'article']),
+            models.Index(fields=['tenant', 'brand_ref']),
             models.Index(fields=['tenant', 'export_enabled', 'sync_at']),
         ]
         constraints = [
@@ -432,6 +502,10 @@ class GlobalPart(TimestampedModel):
     """Platform-level справочная запчасть без tenant-коммерческих данных."""
 
     brand = models.CharField(max_length=100, blank=True, verbose_name='Бренд/производитель')
+    brand_ref = models.ForeignKey(
+        ProductBrand, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='global_parts', verbose_name='Нормализованный бренд',
+    )
     normalized_brand = models.CharField(
         max_length=100, blank=True, db_index=True, verbose_name='Нормализованный бренд',
     )
