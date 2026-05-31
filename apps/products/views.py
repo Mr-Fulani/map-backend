@@ -73,21 +73,37 @@ class ProductListView(APIView):
         if category:
             qs = qs.filter(category_1c=category)
 
-        catalog_domain = request.query_params.get('catalog_domain', '').strip()
-        if catalog_domain:
-            qs = qs.filter(catalog_classification__domain=catalog_domain)
-
         catalog_category = request.query_params.get('catalog_category', '').strip()
         if catalog_category:
             qs = qs.filter(catalog_category_id=catalog_category)
+
+        domain_counts_qs = qs
+        domain_counts = {
+            'all': domain_counts_qs.count(),
+            'auto_parts': domain_counts_qs.filter(catalog_classification__domain='auto_parts').count(),
+            'jewellery': domain_counts_qs.filter(catalog_classification__domain='jewellery').count(),
+            'apparel': domain_counts_qs.filter(catalog_classification__domain='apparel').count(),
+            'generic': domain_counts_qs.filter(catalog_classification__domain='generic').count(),
+            'unknown': domain_counts_qs.filter(
+                Q(catalog_classification__domain='unknown') | Q(catalog_classification__isnull=True)
+            ).count(),
+        }
+
+        catalog_domain = request.query_params.get('catalog_domain', '').strip()
+        if catalog_domain == 'unknown':
+            qs = qs.filter(Q(catalog_classification__domain='unknown') | Q(catalog_classification__isnull=True))
+        elif catalog_domain:
+            qs = qs.filter(catalog_classification__domain=catalog_domain)
 
         qs = qs.order_by('-sync_at', '-created_at')
 
         paginator = MapPagination()
         page = paginator.paginate_queryset(qs, request)
-        return paginator.get_paginated_response(
+        response = paginator.get_paginated_response(
             ProductSerializer(page, many=True, context={'request': request}).data
         )
+        response.data['meta']['domain_counts'] = domain_counts
+        return response
 
 
 @extend_schema(tags=['Products'])
@@ -287,6 +303,54 @@ class TenantSourceCategoryListView(APIView):
             )
         ]
         return Response({'status': 'ok', 'data': categories})
+
+
+@extend_schema(tags=['Catalog Categories'])
+class ProductCatalogCategoryAssignView(APIView):
+    """POST /api/v1/products/catalog-categories/assign/ — назначить категорию товарам."""
+
+    def post(self, request):
+        product_ids = request.data.get('product_ids') or []
+        category_id = request.data.get('catalog_category')
+        if not isinstance(product_ids, list) or not product_ids:
+            return Response(
+                {'status': 'error', 'code': 'validation_error', 'message': 'Выберите товары для назначения категории'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        category = None
+        if category_id:
+            category = get_object_or_404(
+                TenantCatalogCategory,
+                pk=category_id,
+                tenant=request.tenant,
+                is_active=True,
+            )
+
+        valid_ids = list(
+            Product.objects
+            .filter(tenant=request.tenant, pk__in=product_ids)
+            .values_list('pk', flat=True)
+        )
+        skipped_count = max(len(set(product_ids)) - len(valid_ids), 0)
+        with transaction.atomic():
+            Product.objects.filter(tenant=request.tenant, pk__in=valid_ids).update(catalog_category=category)
+            products = (
+                Product.objects
+                .filter(tenant=request.tenant, pk__in=valid_ids)
+                .select_related('tenant', 'catalog_category')
+            )
+            for product in products:
+                ProductEnrichmentService.classify_product_catalog_domain(product)
+
+        return Response({
+            'status': 'ok',
+            'data': {
+                'updated_count': len(valid_ids),
+                'skipped_count': skipped_count,
+                'catalog_category': TenantCatalogCategorySerializer(category).data if category else None,
+            },
+        })
 
 
 @extend_schema(tags=['Products'])

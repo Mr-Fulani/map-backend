@@ -149,6 +149,54 @@ def test_catalog_classification_uses_tenant_category_mapping():
 
 
 @pytest.mark.django_db
+def test_catalog_classification_does_not_overwrite_manual_source_without_force():
+    tenant = make_tenant('classify-manual-keep')
+    product = make_product(tenant, article='P50136', brand='BREMBO')
+    product.name = 'Колодки тормозные BREMBO P50136'
+    product.save(update_fields=['name'])
+    manual = ProductCatalogClassification.objects.create(
+        tenant=tenant,
+        product=product,
+        domain=ProductCatalogClassification.Domain.GENERIC,
+        confidence=1,
+        source=ProductCatalogClassification.Source.MANUAL,
+        reason='Оператор проверил товар вручную.',
+        needs_review=False,
+    )
+
+    classification = ProductEnrichmentService.classify_product_catalog_domain(product)
+
+    manual.refresh_from_db()
+    assert classification.pk == manual.pk
+    assert manual.domain == ProductCatalogClassification.Domain.GENERIC
+    assert manual.source == ProductCatalogClassification.Source.MANUAL
+    assert manual.reason == 'Оператор проверил товар вручную.'
+
+
+@pytest.mark.django_db
+def test_catalog_classification_force_can_overwrite_manual_source():
+    tenant = make_tenant('classify-manual-force')
+    product = make_product(tenant, article='P50136', brand='BREMBO')
+    product.name = 'Колодки тормозные BREMBO P50136'
+    product.save(update_fields=['name'])
+    ProductCatalogClassification.objects.create(
+        tenant=tenant,
+        product=product,
+        domain=ProductCatalogClassification.Domain.GENERIC,
+        confidence=1,
+        source=ProductCatalogClassification.Source.MANUAL,
+        reason='Оператор проверил товар вручную.',
+        needs_review=False,
+    )
+
+    classification = ProductEnrichmentService.classify_product_catalog_domain(product, force=True)
+
+    assert classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
+    assert classification.source == ProductCatalogClassification.Source.RULES
+    assert classification.reason.startswith('Найдены признаки автозапчасти')
+
+
+@pytest.mark.django_db
 def test_value_hash_is_filled_for_text_based_unique_constraints():
     tenant = make_tenant('hash-co')
     product = make_product(tenant)

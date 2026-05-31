@@ -3,8 +3,8 @@ from django.urls import path
 from apps.products.views import (
     ProductArchiveView, ProductBulkActionDetailView, ProductBulkActionView,
     ProductCrossCodesView, ProductDetailView, ProductFitmentsView,
-    ProductListView, ProductParseJobDetailView, ProductParseView,
-    ProductPublishView, ProductRegenerateView, ProductSearchView,
+    ProductCatalogCategoryAssignView, ProductListView, ProductParseJobDetailView,
+    ProductParseView, ProductPublishView, ProductRegenerateView, ProductSearchView,
     ProductSyncView, TenantCatalogCategoryDefaultImageView,
     TenantCatalogCategoryDetailView, TenantCatalogCategoryListView,
     TenantCategoryMappingListView, TenantSourceCategoryListView,
@@ -18,6 +18,11 @@ urlpatterns = [
     path('bulk-actions/', ProductBulkActionView.as_view(), name='product-bulk-action'),
     path('bulk-actions/<int:pk>/', ProductBulkActionDetailView.as_view(), name='product-bulk-action-detail'),
     path('catalog-categories/', TenantCatalogCategoryListView.as_view(), name='tenant-catalog-category-list'),
+    path(
+        'catalog-categories/assign/',
+        ProductCatalogCategoryAssignView.as_view(),
+        name='product-catalog-category-assign',
+    ),
     path(
         'catalog-categories/<int:pk>/',
         TenantCatalogCategoryDetailView.as_view(),

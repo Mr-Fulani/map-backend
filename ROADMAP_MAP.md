@@ -957,8 +957,9 @@ AI-агент помечает объявление статусом `requires_r
 - [x] Связать tenant category с platform domain как сигнал классификации.
 - [x] Дать суперюзеру CRUD platform domains с SEO-полями.
 - [x] Добавить default image категории для товаров без медиа.
-- [ ] Добавить merge-policy: `source=manual` не перетирается rules-based bulk action без force.
-- [ ] Добавить фильтры/массовые действия по tenant category.
+- [x] Добавить merge-policy: `source=manual` не перетирается rules-based bulk action без force.
+- [x] Добавить фильтр товаров по tenant category в dashboard.
+- [x] Добавить массовое назначение tenant category выбранным товарам.
 - [ ] Доработать редактирование/deactivate категорий и mappings в dashboard.
 
 ### Архитектурное правило

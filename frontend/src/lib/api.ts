@@ -226,6 +226,8 @@ export const productApi = {
   updateCatalogCategory: (id: number, data: Record<string, unknown>) =>
     api.put(`/products/catalog-categories/${id}/`, data),
   deleteCatalogCategory: (id: number) => api.delete(`/products/catalog-categories/${id}/`),
+  assignCatalogCategory: (data: { product_ids: number[]; catalog_category: number | null }) =>
+    api.post('/products/catalog-categories/assign/', data),
   uploadCatalogCategoryImage: (id: number, file: File) => {
     const formData = new FormData();
     formData.append('image', file);

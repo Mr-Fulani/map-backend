@@ -282,6 +282,8 @@ CategoryMapping
 - `TenantCatalogCategory` нельзя использовать как замену `PartCategory`.
 - `TenantCategoryMapping` может проставить `Product.catalog_category`, но не меняет `Product.category_1c`.
 - `TenantCatalogCategory.default_image_s3_key` можно использовать только как fallback, если у товара нет собственных медиа.
+- Массовое назначение tenant category меняет только `Product.catalog_category`.
+- В списке товаров показываем tenant category как основную категорию, а `category_1c` только как исходную категорию источника.
 
 Если появляется конфликт:
 
@@ -309,6 +311,7 @@ parser не запускать автоматически
 ```text
 source=manual нельзя перетирать rules-based bulk action без force-флага
 source=rules можно пересчитывать при изменении товара или категории
+force=True разрешён только для явного override, а не для фоновых bulk rules
 ```
 
 ---
