@@ -280,6 +280,8 @@ CategoryMapping
 - `PartCategory` нельзя использовать как tenant category.
 - `TenantCatalogCategory` нельзя использовать как замену `PartCategory`.
 - `TenantCategoryMapping` может проставить `Product.catalog_category`, но не меняет `Product.category_1c`.
+- Массовое назначение tenant category меняет только `Product.catalog_category`.
+- В списке товаров показываем tenant category как основную категорию, а `category_1c` только как исходную категорию источника.
 
 Если появляется конфликт:
 

@@ -279,6 +279,7 @@ def test_fitments_and_cross_codes_are_tenant_scoped():
 def test_products_list_can_filter_by_catalog_classification():
     tenant, api_key = make_tenant('catalog-filter')
     auto_part = make_product(tenant, name='Колодки тормозные BREMBO P50136')
+    unknown = make_product(tenant, article='UNKNOWN1', name='Товар без классификации')
     jewellery = make_product(
         tenant,
         article='RING1',
@@ -298,6 +299,18 @@ def test_products_list_can_filter_by_catalog_classification():
     assert response.status_code == 200
     ids = [item['id'] for item in response.json()['data']]
     assert ids == [auto_part.pk]
+    assert response.json()['meta']['domain_counts']['all'] == 3
+    assert response.json()['meta']['domain_counts']['auto_parts'] == 1
+    assert response.json()['meta']['domain_counts']['unknown'] == 1
+
+    unknown_response = client.get(
+        '/api/v1/products/?catalog_domain=unknown',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert unknown_response.status_code == 200
+    unknown_ids = [item['id'] for item in unknown_response.json()['data']]
+    assert unknown_ids == [unknown.pk]
 
 
 @pytest.mark.django_db
@@ -337,6 +350,44 @@ def test_tenant_catalog_category_api_crud_and_mapping():
     assert source_response.json()['data'] == [
         {'source_category': product.category_1c, 'catalog_category': category_id},
     ]
+
+
+@pytest.mark.django_db
+def test_assign_catalog_category_to_selected_products():
+    tenant, api_key = make_tenant('catalog-category-assign')
+    other_tenant, _ = make_tenant('catalog-category-assign-other')
+    product = make_product(tenant, name='Амортизатор Toyota', category_1c='Старые категории')
+    second_product = make_product(tenant, article='P50137', name='Колодки Brembo')
+    other_product = make_product(other_tenant)
+    category = TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Амортизаторы',
+        domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+    )
+    client = Client()
+
+    response = client.post(
+        '/api/v1/products/catalog-categories/assign/',
+        {
+            'product_ids': [product.pk, second_product.pk, other_product.pk],
+            'catalog_category': category.pk,
+        },
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    assert data['updated_count'] == 2
+    assert data['skipped_count'] == 1
+    product.refresh_from_db()
+    second_product.refresh_from_db()
+    other_product.refresh_from_db()
+    assert product.catalog_category == category
+    assert second_product.catalog_category == category
+    assert other_product.catalog_category is None
+    assert product.category_1c == 'Старые категории'
+    assert product.catalog_classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
 
 
 @pytest.mark.django_db
