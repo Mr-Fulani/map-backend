@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import axios from 'axios';
-import { productApi } from '@/lib/api';
+import { productApi, tenantApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -72,6 +72,13 @@ interface TenantCatalogCategory {
   is_active: boolean;
 }
 
+interface CatalogDomain {
+  slug: string;
+  name: string;
+  short_name: string;
+  is_active: boolean;
+}
+
 interface Meta {
   total: number;
   page: number;
@@ -124,6 +131,7 @@ const ENRICHMENT_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive
 
 const CATALOG_DOMAIN_LABELS: Record<string, string> = {
   auto_parts: 'Авто',
+  mixed: 'Смешанный',
   jewellery: 'Украш.',
   apparel: 'Одежда',
   generic: 'Общий',
@@ -132,6 +140,7 @@ const CATALOG_DOMAIN_LABELS: Record<string, string> = {
 
 const CATALOG_DOMAIN_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   auto_parts: 'default',
+  mixed: 'secondary',
   jewellery: 'secondary',
   apparel: 'secondary',
   generic: 'outline',
@@ -173,6 +182,7 @@ export default function ProductsPage() {
   const [catalogDomainFilter, setCatalogDomainFilter] = useState<string>('');
   const [catalogCategoryFilter, setCatalogCategoryFilter] = useState<string>('');
   const [catalogCategories, setCatalogCategories] = useState<TenantCatalogCategory[]>([]);
+  const [catalogDomains, setCatalogDomains] = useState<CatalogDomain[]>([]);
   const [categoryAssignValue, setCategoryAssignValue] = useState<string>('');
   const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
   const [categoryAssignError, setCategoryAssignError] = useState('');
@@ -219,6 +229,16 @@ export default function ProductsPage() {
     }
   }, []);
 
+  const loadCatalogDomains = useCallback(async () => {
+    try {
+      const res = await tenantApi.catalogDomains();
+      const domains = (res.data.data ?? []) as CatalogDomain[];
+      setCatalogDomains(domains.filter((domain) => domain.is_active));
+    } catch {
+      setCatalogDomains([]);
+    }
+  }, []);
+
   useEffect(() => {
     setPage(1);
   }, [debouncedSearch, exportFilter, catalogDomainFilter, catalogCategoryFilter]);
@@ -229,7 +249,8 @@ export default function ProductsPage() {
 
   useEffect(() => {
     loadCatalogCategories();
-  }, [loadCatalogCategories]);
+    loadCatalogDomains();
+  }, [loadCatalogCategories, loadCatalogDomains]);
 
   useEffect(() => {
     setSelectedIds([]);
@@ -240,6 +261,20 @@ export default function ProductsPage() {
   const bulkProgress = bulkJob && bulkJob.total_count > 0
     ? Math.round((bulkJob.processed_count / bulkJob.total_count) * 100)
     : 0;
+  const domainFilters = [
+    { value: '', label: 'Все домены' },
+    ...(catalogDomains.length > 0
+      ? catalogDomains.map((domain) => ({
+          value: domain.slug,
+          label: domain.short_name || domain.name,
+        }))
+      : Object.entries(CATALOG_DOMAIN_LABELS).map(([value, label]) => ({ value, label }))),
+  ];
+
+  const catalogDomainLabel = (slug: string) => {
+    const domain = catalogDomains.find((item) => item.slug === slug);
+    return domain?.short_name || domain?.name || CATALOG_DOMAIN_LABELS[slug] || slug;
+  };
 
   const toggleProduct = (id: number) => {
     setSelectedIds((current) => (
@@ -380,14 +415,7 @@ export default function ProductsPage() {
       </div>
 
       <div className="flex flex-wrap gap-2">
-        {[
-          { value: '', label: 'Все домены' },
-          { value: 'auto_parts', label: 'Авто' },
-          { value: 'jewellery', label: 'Украшения' },
-          { value: 'apparel', label: 'Одежда' },
-          { value: 'generic', label: 'Общий' },
-          { value: 'unknown', label: 'Не ясно' },
-        ].map((f) => (
+        {domainFilters.map((f) => (
           <Button
             key={f.value}
             size="sm"
@@ -405,7 +433,9 @@ export default function ProductsPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs font-medium text-muted-foreground">Категория tenant-а</span>
+        <span className="text-xs font-medium text-muted-foreground">
+          {tenant?.name ? `Категория ${tenant.name}` : 'Категория каталога'}
+        </span>
         <select
           value={catalogCategoryFilter}
           onChange={(event) => setCatalogCategoryFilter(event.target.value)}
@@ -673,7 +703,7 @@ export default function ProductsPage() {
                           className="whitespace-nowrap"
                           title={p.catalog_classification?.reason || 'Домен товара ещё не классифицирован'}
                         >
-                          {CATALOG_DOMAIN_LABELS[p.catalog_classification?.domain ?? 'unknown'] ?? 'Не ясно'}
+                          {catalogDomainLabel(p.catalog_classification?.domain ?? 'unknown')}
                         </Badge>
                       </div>
                     </td>

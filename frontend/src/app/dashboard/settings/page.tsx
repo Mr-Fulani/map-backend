@@ -117,8 +117,12 @@ export default function SettingsPage() {
   const [deletingDatasourceId, setDeletingDatasourceId] = useState<number | null>(null);
   const [creatingCatalogCategory, setCreatingCatalogCategory] = useState(false);
   const [uploadingCategoryImageId, setUploadingCategoryImageId] = useState<number | null>(null);
+  const [savingCatalogCategoryId, setSavingCatalogCategoryId] = useState<number | null>(null);
+  const [editingCatalogCategoryId, setEditingCatalogCategoryId] = useState<number | null>(null);
   const [newCatalogCategoryName, setNewCatalogCategoryName] = useState('');
   const [newCatalogCategoryDomain, setNewCatalogCategoryDomain] = useState('unknown');
+  const [editCatalogCategoryName, setEditCatalogCategoryName] = useState('');
+  const [editCatalogCategoryDomain, setEditCatalogCategoryDomain] = useState('unknown');
   const [savingMappingSource, setSavingMappingSource] = useState<string | null>(null);
   
   // File upload state
@@ -421,10 +425,74 @@ export default function SettingsPage() {
     }
   }
 
+  function startCatalogCategoryEdit(category: CatalogCategory) {
+    setEditingCatalogCategoryId(category.id);
+    setEditCatalogCategoryName(category.name);
+    setEditCatalogCategoryDomain(category.domain);
+  }
+
+  async function updateCatalogCategory(category: CatalogCategory, data: Partial<CatalogCategory>) {
+    setSavingCatalogCategoryId(category.id);
+    try {
+      await productApi.updateCatalogCategory(category.id, {
+        name: data.name ?? category.name,
+        domain: data.domain ?? category.domain,
+        aliases: category.aliases ?? [],
+        is_active: data.is_active ?? category.is_active,
+      });
+      await loadCatalogCategories();
+      setEditingCatalogCategoryId(null);
+      toast.success('Категория сохранена');
+    } catch {
+      toast.error('Не удалось сохранить категорию');
+    } finally {
+      setSavingCatalogCategoryId(null);
+    }
+  }
+
+  async function saveCatalogCategoryEdit(category: CatalogCategory) {
+    if (!editCatalogCategoryName.trim()) return;
+    await updateCatalogCategory(category, {
+      name: editCatalogCategoryName.trim(),
+      domain: editCatalogCategoryDomain,
+    });
+  }
+
+  async function toggleCatalogCategory(category: CatalogCategory) {
+    setSavingCatalogCategoryId(category.id);
+    try {
+      if (category.is_active) {
+        await productApi.deleteCatalogCategory(category.id);
+        toast.success('Категория отключена');
+      } else {
+        await productApi.updateCatalogCategory(category.id, {
+          name: category.name,
+          domain: category.domain,
+          aliases: category.aliases ?? [],
+          is_active: true,
+        });
+        toast.success('Категория включена');
+      }
+      await loadCatalogCategories();
+    } catch {
+      toast.error('Не удалось изменить статус категории');
+    } finally {
+      setSavingCatalogCategoryId(null);
+    }
+  }
+
   async function saveCatalogCategoryMapping(sourceCategory: string, categoryId: string) {
-    if (!categoryId) return;
+    const currentMapping = catalogMappings.find((item) => item.source_category === sourceCategory);
     setSavingMappingSource(sourceCategory);
     try {
+      if (!categoryId) {
+        if (currentMapping) {
+          await productApi.deleteCatalogCategoryMapping(currentMapping.id);
+          await loadCatalogCategories();
+          toast.success('Привязка удалена');
+        }
+        return;
+      }
       await productApi.createCatalogCategoryMapping({
         source_category: sourceCategory,
         category: Number(categoryId),
@@ -1135,62 +1203,132 @@ export default function SettingsPage() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {catalogCategories.map((category) => (
-                    <div key={category.id} className="flex flex-col gap-3 rounded-lg border p-3 md:flex-row md:items-center md:justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="h-14 w-14 overflow-hidden rounded-md border bg-muted">
-                          {category.default_image_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
-                              src={category.default_image_url}
-                              alt=""
-                              className="h-full w-full object-cover"
-                            />
+                  {catalogCategories.map((category) => {
+                    const isEditing = editingCatalogCategoryId === category.id;
+                    const isSaving = savingCatalogCategoryId === category.id;
+                    return (
+                      <div
+                        key={category.id}
+                        className="flex flex-col gap-3 rounded-lg border p-3 md:flex-row md:items-center md:justify-between"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="h-14 w-14 overflow-hidden rounded-md border bg-muted">
+                            {category.default_image_url ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={category.default_image_url}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                                Нет фото
+                              </div>
+                            )}
+                          </div>
+                          {isEditing ? (
+                            <div className="grid gap-2 sm:grid-cols-[220px_180px]">
+                              <Input
+                                value={editCatalogCategoryName}
+                                onChange={(e) => setEditCatalogCategoryName(e.target.value)}
+                                disabled={isSaving}
+                              />
+                              <select
+                                className="rounded-md border bg-background px-3 py-2 text-sm"
+                                value={editCatalogCategoryDomain}
+                                onChange={(e) => setEditCatalogCategoryDomain(e.target.value)}
+                                disabled={isSaving}
+                              >
+                                {domainOptions.map((domain) => (
+                                  <option key={domain.slug} value={domain.slug}>
+                                    {domainLabel(domain.slug)}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
                           ) : (
-                            <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
-                              Нет фото
+                            <div>
+                              <p className="font-medium">{category.name}</p>
+                              <p className="text-xs text-muted-foreground">
+                                Тип: {domainLabel(category.domain)}
+                              </p>
+                              {category.default_image_source_name && (
+                                <p className="text-xs text-muted-foreground">
+                                  Картинка: {category.default_image_source_name}
+                                </p>
+                              )}
                             </div>
                           )}
                         </div>
-                        <div>
-                        <p className="font-medium">{category.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Тип: {domainLabel(category.domain)}
-                        </p>
-                        {category.default_image_source_name && (
-                          <p className="text-xs text-muted-foreground">
-                            Картинка: {category.default_image_source_name}
-                          </p>
-                        )}
+                        <div className="flex flex-wrap items-center gap-2">
+                          {isEditing ? (
+                            <>
+                              <Button
+                                size="sm"
+                                onClick={() => saveCatalogCategoryEdit(category)}
+                                disabled={isSaving || !editCatalogCategoryName.trim()}
+                              >
+                                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                Сохранить
+                              </Button>
+                              <Button
+                                size="sm"
+                                type="button"
+                                variant="outline"
+                                onClick={() => setEditingCatalogCategoryId(null)}
+                                disabled={isSaving}
+                              >
+                                Отмена
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Label className="cursor-pointer rounded-md border px-3 py-2 text-xs">
+                                {uploadingCategoryImageId === category.id ? 'Загружаем...' : 'Загрузить картинку'}
+                                <input
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  disabled={uploadingCategoryImageId === category.id}
+                                  onChange={(e) => uploadCatalogCategoryImage(category.id, e.target.files?.[0] ?? null)}
+                                />
+                              </Label>
+                              {category.default_image_url && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => deleteCatalogCategoryImage(category.id)}
+                                  disabled={uploadingCategoryImageId === category.id}
+                                >
+                                  Удалить картинку
+                                </Button>
+                              )}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => startCatalogCategoryEdit(category)}
+                                disabled={isSaving}
+                              >
+                                Редактировать
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => toggleCatalogCategory(category)}
+                                disabled={isSaving}
+                              >
+                                {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                                {category.is_active ? 'Отключить' : 'Включить'}
+                              </Button>
+                              <Badge variant={category.is_active ? 'default' : 'secondary'}>
+                                {category.is_active ? 'Активна' : 'Отключена'}
+                              </Badge>
+                            </>
+                          )}
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Label className="cursor-pointer rounded-md border px-3 py-2 text-xs">
-                          {uploadingCategoryImageId === category.id ? 'Загружаем...' : 'Загрузить картинку'}
-                          <input
-                            type="file"
-                            accept="image/*"
-                            className="hidden"
-                            disabled={uploadingCategoryImageId === category.id}
-                            onChange={(e) => uploadCatalogCategoryImage(category.id, e.target.files?.[0] ?? null)}
-                          />
-                        </Label>
-                        {category.default_image_url && (
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => deleteCatalogCategoryImage(category.id)}
-                            disabled={uploadingCategoryImageId === category.id}
-                          >
-                            Удалить картинку
-                          </Button>
-                        )}
-                        <Badge variant={category.is_active ? 'default' : 'secondary'}>
-                          {category.is_active ? 'Активна' : 'Отключена'}
-                        </Badge>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
@@ -1215,28 +1353,41 @@ export default function SettingsPage() {
                   {sourceCategories.map((source) => {
                     const mapping = catalogMappings.find((item) => item.source_category === source.source_category);
                     const selectedValue = String(mapping?.category ?? source.catalog_category ?? '');
+                    const isSaving = savingMappingSource === source.source_category;
                     return (
                       <div
                         key={source.source_category}
-                        className="grid gap-2 rounded-lg border p-3 md:grid-cols-[1fr_280px]"
+                        className="grid gap-2 rounded-lg border p-3 md:grid-cols-[1fr_280px_auto]"
                       >
                         <div>
                           <p className="text-sm font-medium">{source.source_category}</p>
-                          <p className="text-xs text-muted-foreground">Категория из 1С/CSV</p>
+                          <p className="text-xs text-muted-foreground">
+                            {mapping ? `Привязана к: ${mapping.category_name}` : 'Категория из 1С/CSV'}
+                          </p>
                         </div>
                         <select
                           className="rounded-md border bg-background px-3 py-2 text-sm"
                           value={selectedValue}
-                          disabled={savingMappingSource === source.source_category}
+                          disabled={isSaving}
                           onChange={(e) => saveCatalogCategoryMapping(source.source_category, e.target.value)}
                         >
                           <option value="">Не привязана</option>
-                          {catalogCategories.map((category) => (
+                          {catalogCategories.filter((category) => category.is_active).map((category) => (
                             <option key={category.id} value={category.id}>
                               {category.name} · {domainLabel(category.domain)}
                             </option>
                           ))}
                         </select>
+                        <Button
+                          size="sm"
+                          type="button"
+                          variant="outline"
+                          onClick={() => saveCatalogCategoryMapping(source.source_category, '')}
+                          disabled={isSaving || !mapping}
+                        >
+                          {isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Trash2 className="mr-2 h-4 w-4" />}
+                          Убрать
+                        </Button>
                       </div>
                     );
                   })}

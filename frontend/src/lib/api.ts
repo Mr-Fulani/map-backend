@@ -240,6 +240,8 @@ export const productApi = {
   catalogCategoryMappings: () => api.get('/products/catalog-category-mappings/'),
   createCatalogCategoryMapping: (data: Record<string, unknown>) =>
     api.post('/products/catalog-category-mappings/', data),
+  deleteCatalogCategoryMapping: (id: number) =>
+    api.delete(`/products/catalog-category-mappings/${id}/`),
   catalogSourceCategories: () => api.get('/products/catalog-source-categories/'),
 };
 
