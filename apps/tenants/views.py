@@ -73,7 +73,9 @@ class CatalogDomainListView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        domains = CatalogDomain.objects.filter(is_active=True).order_by('sort_order', 'name')
+        domains = CatalogDomain.objects.filter(is_active=True).exclude(
+            slug__in=['mixed', 'unknown'],
+        ).order_by('sort_order', 'name')
         enabled_ids = set(
             TenantCatalogDomain.objects.filter(
                 tenant=request.tenant,
@@ -96,7 +98,10 @@ class CatalogDomainListView(APIView):
             is_enabled = is_enabled.lower() == 'true'
         else:
             is_enabled = bool(is_enabled)
-        domain = CatalogDomain.objects.filter(slug=domain_slug, is_active=True).first()
+        domain = CatalogDomain.objects.filter(
+            slug=domain_slug,
+            is_active=True,
+        ).exclude(slug__in=['mixed', 'unknown']).first()
         if domain is None:
             return Response(
                 {'status': 'error', 'code': 'not_found', 'message': 'Корневая категория не найдена'},

@@ -92,7 +92,7 @@ type SettingsTab = typeof SETTINGS_TABS[number];
 
 const FALLBACK_DOMAIN_LABELS: Record<string, string> = {
   auto_parts: 'Автозапчасти',
-  generic: 'Обычный товар',
+  generic: 'Разное',
   jewellery: 'Украшения',
   apparel: 'Одежда',
   unknown: 'Не определено',
@@ -1209,9 +1209,9 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2 rounded-lg border p-3">
-                <p className="text-xs font-medium text-muted-foreground">Корневые категории tenant-а</p>
+                <p className="text-xs font-medium text-muted-foreground">Направления каталога</p>
                 <div className="flex flex-wrap gap-2">
-                  {domainOptions.filter((domain) => domain.slug !== 'unknown').map((domain) => {
+                  {domainOptions.filter((domain) => !['mixed', 'unknown'].includes(domain.slug)).map((domain) => {
                     const isSaving = savingCatalogDomainSlug === domain.slug;
                     return (
                       <Button

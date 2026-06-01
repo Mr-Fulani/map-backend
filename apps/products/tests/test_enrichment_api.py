@@ -532,6 +532,8 @@ def test_catalog_domains_endpoint_returns_active_platform_domains():
     assert 'custom_goods' in slugs
     assert 'electronics' in slugs
     assert 'hidden' not in slugs
+    assert 'mixed' not in slugs
+    assert 'unknown' not in slugs
     custom_goods = next(item for item in data if item['slug'] == 'custom_goods')
     assert custom_goods['seo_title'] == 'Спецтовары купить'
 
