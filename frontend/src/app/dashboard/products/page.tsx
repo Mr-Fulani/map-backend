@@ -131,16 +131,14 @@ const ENRICHMENT_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive
 
 const CATALOG_DOMAIN_LABELS: Record<string, string> = {
   auto_parts: 'Авто',
-  mixed: 'Смешанный',
   jewellery: 'Украш.',
   apparel: 'Одежда',
-  generic: 'Общий',
+  generic: 'Разное',
   unknown: 'Не ясно',
 };
 
 const CATALOG_DOMAIN_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   auto_parts: 'default',
-  mixed: 'secondary',
   jewellery: 'secondary',
   apparel: 'secondary',
   generic: 'outline',

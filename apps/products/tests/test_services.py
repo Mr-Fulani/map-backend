@@ -6,8 +6,8 @@ import pytest
 
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
-from apps.products.models import Product, ProductImage
-from apps.products.services import ProductService
+from apps.products.models import Product, ProductBrandAlias, ProductImage
+from apps.products.services import ProductBrandService, ProductService
 from apps.tenants.services import TenantService
 
 
@@ -45,8 +45,18 @@ class TestProductService:
         product, status = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
         assert status == 'created'
         assert product.article == 'A100'
+        assert product.brand == 'BrandX'
+        assert product.brand_ref.name == 'BrandX'
         assert product.price == Decimal('1500.00')
         assert product.stock_qty == 10
+
+    def test_brand_alias_resolves_to_existing_brand(self):
+        alias = ProductBrandAlias.objects.get(normalized_alias='MB')
+
+        resolved = ProductBrandService.resolve_or_create_brand('MB', source_id='1c_http')
+
+        assert resolved == alias.brand
+        assert resolved.name == 'Mercedes-Benz'
 
     def test_upsert_unchanged_product_not_updated(self):
         tenant = make_tenant('unchanged-co')

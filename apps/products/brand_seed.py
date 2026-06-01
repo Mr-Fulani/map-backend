@@ -1,0 +1,22 @@
+BASE_PRODUCT_BRANDS = [
+    {'name': 'Bosch', 'aliases': ['BOSCH'], 'domains': ['auto_parts', 'electronics', 'construction_repair']},
+    {'name': 'Brembo', 'aliases': ['BREMBO'], 'domains': ['auto_parts']},
+    {'name': 'KYB', 'aliases': ['Kayaba'], 'domains': ['auto_parts']},
+    {
+        'name': 'Mercedes-Benz',
+        'aliases': ['Mercedes', 'Mersedes', 'Mersedes-Benz', 'MB'],
+        'domains': ['auto_parts', 'transport'],
+    },
+    {'name': 'Toyota', 'aliases': ['TOYOTA-LEXUS'], 'domains': ['auto_parts', 'transport']},
+    {'name': 'Lexus', 'aliases': [], 'domains': ['auto_parts', 'transport']},
+    {'name': 'Hyundai-Kia', 'aliases': ['HYUNDAI-KIA', 'Hyundai Kia'], 'domains': ['auto_parts', 'transport']},
+    {'name': 'Samsung', 'aliases': [], 'domains': ['electronics', 'home_garden']},
+    {'name': 'Apple', 'aliases': [], 'domains': ['electronics']},
+    {'name': 'Xiaomi', 'aliases': [], 'domains': ['electronics', 'home_garden']},
+    {'name': 'Sony', 'aliases': [], 'domains': ['electronics']},
+    {'name': 'LG', 'aliases': [], 'domains': ['electronics', 'home_garden']},
+    {'name': 'Canon', 'aliases': [], 'domains': ['electronics', 'office_stationery']},
+    {'name': 'Nike', 'aliases': [], 'domains': ['apparel', 'sports_recreation']},
+    {'name': 'Adidas', 'aliases': [], 'domains': ['apparel', 'sports_recreation']},
+    {'name': 'Makita', 'aliases': [], 'domains': ['construction_repair', 'business_equipment']},
+]

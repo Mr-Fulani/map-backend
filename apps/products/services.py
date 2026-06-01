@@ -11,7 +11,8 @@ from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, PartCategory,
     Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
     ProductCrossCode, ProductEnrichmentFact, ProductParseJob, ReviewStatus, VehicleFitment,
-    TenantCatalogCategory, TenantCategoryMapping, VehicleMake, VehicleModel,
+    TenantCatalogCategory, TenantCategoryMapping, ProductBrand, ProductBrandAlias,
+    VehicleMake, VehicleModel,
 )
 from apps.products.part_category_seed import (
     BASE_PART_CATEGORY_TREE, normalize_category_name,
@@ -135,6 +136,67 @@ class ProductCategorySeedService:
         return created_count
 
 
+class ProductBrandService:
+    """Platform-level normalization of product brands without replacing raw source text."""
+
+    @staticmethod
+    def normalize_brand(brand: str) -> str:
+        return normalize_part_code(brand)
+
+    @classmethod
+    def resolve_or_create_brand(
+        cls, brand_name: str, source_id: str = '', confidence: float = 0.8,
+        needs_review: bool = False,
+    ) -> ProductBrand | None:
+        brand_name = (brand_name or '').strip()
+        normalized = cls.normalize_brand(brand_name)
+        if not normalized:
+            return None
+
+        alias = ProductBrandAlias.objects.select_related('brand').filter(
+            normalized_alias=normalized,
+            brand__is_active=True,
+        ).first()
+        if alias is not None:
+            return alias.brand
+
+        brand, created = ProductBrand.objects.get_or_create(
+            normalized_name=normalized,
+            defaults={
+                'name': brand_name[:150],
+                'source_id': source_id[:50],
+                'confidence': confidence,
+                'needs_review': needs_review,
+                'is_active': True,
+            },
+        )
+        if not created:
+            update_fields = ['updated_at']
+            if source_id and not brand.source_id:
+                brand.source_id = source_id[:50]
+                update_fields.append('source_id')
+            if confidence > brand.confidence:
+                brand.confidence = confidence
+                update_fields.append('confidence')
+            if needs_review and not brand.needs_review:
+                brand.needs_review = True
+                update_fields.append('needs_review')
+            if update_fields != ['updated_at']:
+                brand.save(update_fields=update_fields)
+
+        ProductBrandAlias.objects.get_or_create(
+            normalized_alias=normalized,
+            defaults={
+                'brand': brand,
+                'alias': brand_name[:150],
+                'source_id': source_id[:50],
+                'confidence': confidence,
+                'needs_review': needs_review,
+            },
+        )
+        return brand
+
+
 class QuotaExceeded(Exception):
     """Превышен лимит AI-генераций для тенанта."""
 
@@ -165,6 +227,10 @@ class ProductService:
         defaults = {
             'name': data.get('name', ''),
             'brand': data.get('brand', ''),
+            'brand_ref': ProductBrandService.resolve_or_create_brand(
+                data.get('brand', ''),
+                source_id=getattr(datasource, 'type', '') or 'datasource',
+            ),
             'category_1c': data.get('category', ''),
             'condition': data.get('condition', Product.CONDITION_NEW),
             'price': Decimal(str(data.get('price', '0'))),
@@ -950,6 +1016,12 @@ class ProductKnowledgeGraphService:
             normalized_article=normalized_article,
             defaults={
                 'brand': brand[:100],
+                'brand_ref': ProductBrandService.resolve_or_create_brand(
+                    brand,
+                    source_id=source_id or DEFAULT_PART_SOURCE,
+                    confidence=confidence,
+                    needs_review=needs_review,
+                ),
                 'article': article[:100],
                 'title': title[:500],
                 'source_id': source_id[:50],
@@ -962,6 +1034,15 @@ class ProductKnowledgeGraphService:
         if not created:
             update_fields = ['last_seen_at', 'updated_at']
             part.last_seen_at = now()
+            if part.brand_ref_id is None:
+                part.brand_ref = ProductBrandService.resolve_or_create_brand(
+                    brand,
+                    source_id=source_id or DEFAULT_PART_SOURCE,
+                    confidence=confidence,
+                    needs_review=needs_review,
+                )
+                if part.brand_ref_id is not None:
+                    update_fields.append('brand_ref')
             if title and not part.title:
                 part.title = title[:500]
                 update_fields.append('title')

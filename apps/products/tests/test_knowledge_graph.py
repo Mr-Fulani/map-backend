@@ -4,7 +4,7 @@ import pytest
 
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, PartCategory, Product,
-    ProductCrossCode,
+    ProductBrand, ProductCrossCode,
     VehicleMake, VehicleModel,
 )
 from apps.products.part_parsers import (
@@ -163,6 +163,20 @@ def test_save_parsed_part_learns_global_fitments():
     assert fitment.needs_review is False
     assert fitment.vehicle_make.normalized_name == 'MERCEDESBENZ'
     assert fitment.vehicle_model.normalized_name == 'ECLASS'
+
+
+@pytest.mark.django_db
+def test_global_part_keeps_brand_article_identity_with_brand_reference():
+    tenant = make_tenant('kg-brand-ref')
+    product = make_product(tenant, brand='BREMBO', article='P50136')
+    parsed = ParsedPart(brand='Brembo', article='P50136')
+
+    ProductEnrichmentService.save_parsed_part(tenant, product, parsed)
+
+    part = GlobalPart.objects.get(normalized_brand='BREMBO', normalized_article='P50136')
+    assert part.brand == 'BREMBO'
+    assert part.brand_ref.name == 'Brembo'
+    assert ProductBrand.objects.filter(normalized_name='BREMBO').count() == 1
 
 
 @pytest.mark.django_db
