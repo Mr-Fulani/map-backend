@@ -5,7 +5,7 @@ import pytest
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, PartCategory, Product,
     ProductBrand, ProductCrossCode,
-    VehicleMake, VehicleModel,
+    VehicleGeneration, VehicleMake, VehicleModel,
 )
 from apps.products.part_parsers import (
     ParsedCrossCode, ParsedFitment, ParsedPart, ParsedRelatedPart,
@@ -163,6 +163,10 @@ def test_save_parsed_part_learns_global_fitments():
     assert fitment.needs_review is False
     assert fitment.vehicle_make.normalized_name == 'MERCEDESBENZ'
     assert fitment.vehicle_model.normalized_name == 'ECLASS'
+    assert fitment.vehicle_generation.normalized_name == 'W213'
+    assert fitment.vehicle_generation.body_code == 'W213'
+    assert fitment.vehicle_generation.date_from == '01.2016'
+    assert fitment.vehicle_generation.date_to == '2023'
 
 
 @pytest.mark.django_db
@@ -205,6 +209,26 @@ def test_vehicle_knowledge_service_scopes_models_by_make():
     assert mercedes_model == same_mercedes_model
     assert toyota_model != mercedes_model
     assert VehicleModel.objects.count() == 2
+
+
+@pytest.mark.django_db
+def test_vehicle_knowledge_service_scopes_generations_by_model():
+    mercedes = VehicleKnowledgeService.upsert_make('Mercedes-Benz')
+    e_class = VehicleKnowledgeService.upsert_model(mercedes, 'E-CLASS')
+    c_class = VehicleKnowledgeService.upsert_model(mercedes, 'C-CLASS')
+
+    e_generation = VehicleKnowledgeService.upsert_generation(
+        e_class,
+        'W213',
+        date_from='01.2016',
+        date_to='2023',
+    )
+    same_e_generation = VehicleKnowledgeService.upsert_generation(e_class, 'W 213')
+    c_generation = VehicleKnowledgeService.upsert_generation(c_class, 'W213')
+
+    assert e_generation == same_e_generation
+    assert c_generation != e_generation
+    assert VehicleGeneration.objects.count() == 2
 
 
 @pytest.mark.django_db

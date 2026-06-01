@@ -6,7 +6,7 @@ from apps.products.models import (
     PartCategory, ProductBrand, ProductBrandAlias, ProductCatalogClassification,
     ProductCrossCode, ProductEnrichmentFact, ProductImage, ProductParseJob,
     TenantCatalogCategory, TenantCategoryMapping,
-    VehicleFitment, VehicleMake, VehicleModel,
+    VehicleFitment, VehicleGeneration, VehicleMake, VehicleModel,
 )
 
 
@@ -300,7 +300,7 @@ class GlobalPartRelationAdmin(ModelAdmin):
 @admin.register(GlobalPartFitment)
 class GlobalPartFitmentAdmin(ModelAdmin):
     list_display = [
-        'part', 'make', 'model', 'generation',
+        'part', 'make', 'model', 'generation', 'vehicle_generation',
         'source_id', 'confidence', 'needs_review', 'last_seen_at',
     ]
     list_filter = ['source_id', 'needs_review', 'make', 'created_at']
@@ -310,8 +310,8 @@ class GlobalPartFitmentAdmin(ModelAdmin):
         'modification', 'engine_code', 'raw_text',
     ]
     readonly_fields = [
-        'part', 'vehicle_make', 'vehicle_model', 'make', 'model',
-        'generation', 'date_from', 'date_to', 'modification',
+        'part', 'vehicle_make', 'vehicle_model', 'vehicle_generation',
+        'make', 'model', 'generation', 'date_from', 'date_to', 'modification',
         'engine_code', 'power_hp', 'source_id', 'source_url',
         'raw_text', 'confidence', 'needs_review', 'last_seen_at',
         'created_at', 'updated_at',
@@ -339,6 +339,23 @@ class VehicleModelAdmin(ModelAdmin):
     readonly_fields = [
         'make', 'name', 'normalized_name', 'aliases',
         'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+
+@admin.register(VehicleGeneration)
+class VehicleGenerationAdmin(ModelAdmin):
+    list_display = ['model', 'name', 'body_code', 'date_from', 'date_to', 'updated_at']
+    list_filter = ['model__make']
+    search_fields = [
+        'model__make__name', 'model__name', 'name',
+        'normalized_name', 'body_code', 'aliases',
+    ]
+    readonly_fields = [
+        'model', 'name', 'normalized_name', 'body_code',
+        'date_from', 'date_to', 'aliases', 'created_at', 'updated_at',
     ]
 
     def has_add_permission(self, request):

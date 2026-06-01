@@ -57,11 +57,11 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - `[~]` качество данных: source quality policy и operator review workflow добавлены; отдельная очередь проверки нужна при росте объёма спорных данных.
 - `[~]` массовые действия: batch/cooldown есть, но pause/resume/cancel еще нужно довести в API/UI.
 - `[~]` глобальный граф артикулов: модель, обучение, search fallback, source priority и конфликт-правила есть; дальше нужен review workflow.
-- `[~]` глобальная применяемость: `GlobalPartFitment` связан с `VehicleMake/VehicleModel`, но еще нет `VehicleGeneration/VehicleModification`.
+- `[~]` глобальная применяемость: `GlobalPartFitment` связан с `VehicleMake/VehicleModel/VehicleGeneration`, но еще нет `VehicleModification`.
 
 Не реализовано:
 
-- `[ ]` platform-level справочник `VehicleGeneration/VehicleModification`.
+- `[ ]` platform-level справочник `VehicleModification`.
 - `[x]` легкая taxonomy категорий запчастей `PartCategory` с флагом `fitment_required`.
 - `[ ]` tenant/catalog capability для отключения автозапчастного enrichment в неавтомобильных нишах.
 - `[ ]` мониторинг/алерты качества источников.
@@ -155,11 +155,11 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 ### P0.3 VehicleGeneration / VehicleModification
 
-- [ ] Добавить `VehicleGeneration`.
+- [x] Добавить `VehicleGeneration`.
 - [ ] Добавить `VehicleModification`, если данных поколения недостаточно.
-- [ ] Хранить `body_code`, `date_from`, `date_to`.
-- [ ] Добавить nullable links из `GlobalPartFitment` на generation/modification.
-- [ ] Не удалять raw `generation/modification`.
+- [x] Хранить `body_code`, `date_from`, `date_to`.
+- [~] Добавить nullable links из `GlobalPartFitment` на generation/modification: generation есть, modification еще нет.
+- [x] Не удалять raw `generation/modification`.
 
 **Verify:** `W213`, годы выпуска и модификация двигателя сохраняются как raw данные,
 а normalized FK появляется только при уверенном match.
@@ -565,7 +565,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 - [x] Добавить `VehicleMake`.
 - [x] Добавить `VehicleModel`.
-- [ ] Добавить `VehicleGeneration`.
+- [x] Добавить `VehicleGeneration`.
 - [ ] Добавить `VehicleModification`, если данных поколений недостаточно.
 - [x] Добавить aliases для марок и моделей.
 - [x] Нормализовать названия марок: `MERCEDES`, `MB`, `MERCEDES-BENZ`.
@@ -579,7 +579,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - [x] Добавить `GlobalPartFitment` или аналогичный индекс.
 - [x] Хранить ключи `normalized_brand + normalized_article`.
 - [ ] Хранить ключи `normalized_oem_code`.
-- [~] Хранить ссылку на `VehicleMake/Model/Generation`: make/model есть, generation еще нет.
+- [x] Хранить ссылку на `VehicleMake/Model/Generation`.
 - [x] Хранить `source_id`, `source_url`, `confidence`, `needs_review`, `last_seen_at`.
 - [x] Не хранить цены, остатки, склады и tenant-коммерческие данные.
 - [ ] Разрешить несколько источников на одну связь.
