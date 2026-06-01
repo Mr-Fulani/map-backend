@@ -2,7 +2,11 @@ BASE_PRODUCT_BRANDS = [
     {'name': 'Bosch', 'aliases': ['BOSCH'], 'domains': ['auto_parts', 'electronics', 'construction_repair']},
     {'name': 'Brembo', 'aliases': ['BREMBO'], 'domains': ['auto_parts']},
     {'name': 'KYB', 'aliases': ['Kayaba'], 'domains': ['auto_parts']},
-    {'name': 'Mercedes-Benz', 'aliases': ['Mercedes', 'Mersedes', 'Mersedes-Benz', 'MB'], 'domains': ['auto_parts', 'transport']},
+    {
+        'name': 'Mercedes-Benz',
+        'aliases': ['Mercedes', 'Mersedes', 'Mersedes-Benz', 'MB'],
+        'domains': ['auto_parts', 'transport'],
+    },
     {'name': 'Toyota', 'aliases': ['TOYOTA-LEXUS'], 'domains': ['auto_parts', 'transport']},
     {'name': 'Lexus', 'aliases': [], 'domains': ['auto_parts', 'transport']},
     {'name': 'Hyundai-Kia', 'aliases': ['HYUNDAI-KIA', 'Hyundai Kia'], 'domains': ['auto_parts', 'transport']},

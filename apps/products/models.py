@@ -79,10 +79,6 @@ class TenantCatalogCategory(TimestampedModel):
         return self.name
 
     def save(self, *args, **kwargs):
-        self.normalized_name = ''.join(char for char in self.name.upper() if char.isalnum())
-        super().save(*args, **kwargs)
-
-    def save(self, *args, **kwargs):
         self.normalized_name = ''.join(char for char in self.name.lower() if char.isalnum())
         if self.root_domain_id:
             self.domain = self.root_domain.slug
@@ -144,6 +140,10 @@ class ProductBrand(TimestampedModel):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        self.normalized_name = ''.join(char for char in self.name.upper() if char.isalnum())
+        super().save(*args, **kwargs)
 
 
 class ProductBrandAlias(TimestampedModel):
