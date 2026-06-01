@@ -17,7 +17,7 @@ from apps.ai_agent.validators import (
 )
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
-from apps.products.models import ProductCrossCode
+from apps.products.models import ProductCrossCode, ProductEnrichmentFact
 from apps.products.part_parsers import ParsedFitment
 from apps.products.services import ProductService
 from apps.products.services import ProductEnrichmentService
@@ -223,7 +223,8 @@ class TestDescriptionAgent:
 
         message = DescriptionAgent()._build_message(product)
 
-        assert 'Проверенные данные обогащения' in message
+        assert 'Данные обогащения из каталогов' in message
+        assert 'Проверенные факты' in message
         assert 'Ширина: 114 мм' in message
         assert 'Вероятные марки авто по OEM/Cross: MERCEDES-BENZ' in message
         assert 'MERCEDES-BENZ: A0004206000' in message
@@ -261,6 +262,34 @@ class TestDescriptionAgent:
 
         assert 'MERCEDES-BENZ E-CLASS W213' in message
         assert 'BMW 5 G30' not in message
+        assert 'Исключено спорных фактов: 1' in message
+
+    def test_build_message_includes_only_trusted_enrichment_facts(self):
+        tenant = make_tenant('trusted-facts-agent-co')
+        product = make_product(tenant)
+        ProductEnrichmentService.create_fact(
+            tenant=tenant,
+            product=product,
+            fact_type=ProductEnrichmentFact.FactType.DESCRIPTION_HINT,
+            name='Ось установки',
+            value='задняя ось',
+            confidence=0.95,
+        )
+        ProductEnrichmentService.create_fact(
+            tenant=tenant,
+            product=product,
+            fact_type=ProductEnrichmentFact.FactType.DESCRIPTION_HINT,
+            name='Спорная совместимость',
+            value='подходит для BMW 5 G30',
+            confidence=0.4,
+            needs_review=True,
+        )
+
+        message = DescriptionAgent()._build_message(product)
+
+        assert 'Подсказки для описания: Ось установки: задняя ось' in message
+        assert 'подходит для BMW 5 G30' not in message
+        assert 'Исключено спорных фактов: 1' in message
 
     def test_no_regeneration_on_price_change(self):
         """price_only изменение не требует перегенерации (через detect_change_type)."""

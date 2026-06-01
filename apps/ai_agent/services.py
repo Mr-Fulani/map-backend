@@ -2,20 +2,14 @@ import anthropic
 from django.conf import settings
 from django.db.models import F
 
+from apps.ai_agent.enrichment_context import ProductAIEnrichmentContextBuilder
 from apps.ai_agent.prompts import SYSTEM_PROMPT
 from apps.ai_agent.validators import (
     BannedWordsError, VagueFitmentError, ValidationError, validate_json_response,
 )
 from apps.billing.services import LimitChecker
-from apps.products.source_policy import should_auto_apply_fitment
 
 MAX_RETRIES = 2  # Максимум попыток через Claude перед fallback на OpenAI
-
-_NON_VEHICLE_CROSS_MANUFACTURERS = {
-    'ATE', 'BOSCH', 'BREMBO', 'DELPHI', 'FEBI', 'FERODO', 'GATES', 'HELLA',
-    'INA', 'KYB', 'LEMFORDER', 'LUK', 'MANN-FILTER', 'MAHLE', 'MEYLE',
-    'MONROE', 'NGK', 'SACHS', 'SKF', 'TEXTAR', 'TRW', 'VALEO',
-}
 
 
 class AICreditsExhausted(Exception):
@@ -67,7 +61,7 @@ class DescriptionAgent:
 
     def _build_message(self, product, variation_index: int = 0) -> str:
         """Формирует текст запроса к модели из полей товара."""
-        enrichment_lines = self._build_enrichment_lines(product)
+        enrichment_context = ProductAIEnrichmentContextBuilder().build(product)
         lines = [
             f'Артикул: {product.article}',
             f'Название: {product.name}',
@@ -79,11 +73,11 @@ class DescriptionAgent:
         ]
         if product.description_1c:
             lines.append(f'Описание из 1С: {product.description_1c}')
-        if enrichment_lines:
+        if enrichment_context.has_context:
             lines.extend([
                 '',
-                'Проверенные данные обогащения из каталогов:',
-                *enrichment_lines,
+                'Данные обогащения из каталогов:',
+                *enrichment_context.to_prompt_lines(),
                 (
                     'Используй эти данные как факты. Если есть строка "Подходит к автомобилям", '
                     'обязательно укажи эти автомобили в первом абзаце: марка, модель, поколение '
@@ -102,68 +96,6 @@ class DescriptionAgent:
         if variation_index > 0:
             lines.append(f'\nЭто вариант #{variation_index + 1}. Используй другую структуру первого абзаца.')
         return '\n'.join(line for line in lines if line)
-
-    def _build_enrichment_lines(self, product) -> list[str]:
-        """Добавляет enrichment-факты в prompt без выдумывания применяемости."""
-        attributes = list(product.attributes.all().order_by('name')[:12])
-        cross_codes = list(product.cross_codes.all().order_by('manufacturer', 'code')[:20])
-        fitments = [
-            fitment
-            for fitment in product.fitments.all().order_by('make', 'model', 'generation')[:30]
-            if should_auto_apply_fitment(fitment)
-        ]
-
-        lines = []
-        if attributes:
-            values = '; '.join(f'{item.name}: {item.value}' for item in attributes)
-            lines.append(f'Характеристики: {values}')
-        if cross_codes:
-            vehicle_makes = self._extract_vehicle_makes_from_cross_codes(cross_codes)
-            if vehicle_makes:
-                lines.append(
-                    'Вероятные марки авто по OEM/Cross: '
-                    + ', '.join(vehicle_makes)
-                )
-            values = '; '.join(
-                f'{item.manufacturer}: {item.code}' if item.manufacturer else item.code
-                for item in cross_codes
-            )
-            lines.append(f'OEM/Cross-коды: {values}')
-        if fitments:
-            values = []
-            for item in fitments:
-                parts = [
-                    item.make,
-                    item.model,
-                    item.generation,
-                    item.modification,
-                    f'{item.power_hp} л.с.' if item.power_hp else '',
-                ]
-                values.append(' '.join(part for part in parts if part))
-            lines.append(f'Подходит к автомобилям: {"; ".join(values)}')
-        return lines
-
-    @staticmethod
-    def _extract_vehicle_makes_from_cross_codes(cross_codes) -> list[str]:
-        makes = []
-        for item in cross_codes:
-            manufacturer = (item.manufacturer or '').strip()
-            if not manufacturer:
-                continue
-            parts = [
-                part.strip(' .')
-                for part in manufacturer.replace('&', '/').split('/')
-            ]
-            for part in parts:
-                normalized = part.upper()
-                if (
-                    len(normalized) < 2
-                    or normalized in _NON_VEHICLE_CROSS_MANUFACTURERS
-                    or normalized in makes
-                ):
-                    continue
-                makes.append(normalized)
-        return makes[:8]
 
     def _call_claude(self, product, plan_slug: str, variation_index: int = 0) -> dict:
         """Вызывает Claude API и парсит JSON-ответ."""
