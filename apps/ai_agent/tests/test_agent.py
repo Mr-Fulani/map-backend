@@ -228,6 +228,8 @@ class TestDescriptionAgent:
         assert 'Вероятные марки авто по OEM/Cross: MERCEDES-BENZ' in message
         assert 'MERCEDES-BENZ: A0004206000' in message
         assert 'MERCEDES-BENZ E-CLASS W213 E 220 d 194 л.с.' in message
+        assert 'обязательно укажи эти автомобили в первом абзаце' in message
+        assert 'Фразу "также подходит" используй только для автомобилей' in message
 
     def test_build_message_uses_vehicle_make_from_cross_without_fitment(self):
         tenant = make_tenant('cross-make-agent-co')
@@ -241,6 +243,7 @@ class TestDescriptionAgent:
         message = DescriptionAgent()._build_message(product)
 
         assert 'Вероятные марки авто по OEM/Cross: HYUNDAI, KIA' in message
+        assert 'Модели и поколения не придумывай' in message
 
     def test_build_message_excludes_reviewable_fitments(self):
         tenant = make_tenant('reviewable-fitment-agent-co')

@@ -182,11 +182,13 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 - [ ] Сформировать единый enrichment context из `VehicleFitment`, OEM/cross,
       аналогов и `ProductEnrichmentFact`.
-- [ ] Не давать AI достраивать отсутствующие авто по догадке.
+- [x] Не давать AI достраивать отсутствующие авто по догадке.
 - [ ] Если применяемость спорная, писать осторожную формулировку или отправлять
       факт в review.
 - [x] Покрыть тестом сценарий: 1С дала только name/brand/article, global graph уже
       знает fitments, агент получил конкретные авто.
+- [x] Усилить prompt: конкретные авто обязательны только из trusted fitment, а
+      при OEM/Cross без fitment агент пишет только марки и просит сверку.
 
 **Verify:** описание товара содержит конкретные авто только из структурных
 trusted данных, а не из предположений по названию.
