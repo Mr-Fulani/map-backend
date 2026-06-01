@@ -358,9 +358,12 @@ def _enqueue_price_update(listing_id: int) -> None:
 
 
 def _enqueue_ai_generation(product_id: int) -> None:
-    """Ставит задачу генерации AI-описания в Celery."""
-    from apps.ai_agent.tasks import generate_description_task
-    generate_description_task.delay(product_id)
+    """Ставит enrichment-aware задачу генерации AI-описания в Celery."""
+    from apps.products.models import Product
+    from apps.products.services import ProductService
+
+    product = Product.objects.select_related('tenant').get(pk=product_id)
+    ProductService.schedule_ai_generation(product, product.tenant)
 
 
 def _enqueue_unpublish(listing_id: int) -> None:

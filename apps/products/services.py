@@ -258,9 +258,14 @@ class ProductService:
         return product, 'unchanged'
 
     @staticmethod
-    def schedule_ai_generation(product, tenant) -> None:
+    def schedule_ai_generation(
+        product, tenant, source_id: str = DEFAULT_PART_SOURCE,
+    ) -> dict:
         """
-        Проверяет лимит AI-кредитов и ставит задачу генерации описания в очередь Celery.
+        Проверяет лимит AI-кредитов и ставит генерацию описания в очередь.
+
+        Для автозапчастей без trusted применяемости сначала запускает enrichment,
+        чтобы агент получил данные из global graph или внешнего источника.
 
         Raises:
             QuotaExceeded: превышен лимит AI-генераций тенанта.
@@ -271,8 +276,27 @@ class ProductService:
         can, reason = LimitChecker().can_generate_ai(tenant)
         if not can:
             raise QuotaExceeded(reason)
+        if ProductEnrichmentService.should_enrich_before_ai(tenant, product):
+            job = ProductEnrichmentService.create_parse_job(
+                tenant=tenant,
+                product=product,
+                brand=product.brand,
+                article=product.article,
+                normalized_article=normalize_cross_code(product.article),
+                source_id=source_id,
+            )
+            from apps.products.tasks import parse_single_part_then_generate_description
+            transaction.on_commit(lambda: parse_single_part_then_generate_description.delay(job.pk))
+            return {
+                'mode': 'enrich_then_generate',
+                'job_id': job.pk,
+            }
         product_id = product.pk
         transaction.on_commit(lambda: _enqueue_ai_generation(product_id))
+        return {
+            'mode': 'generate',
+            'job_id': None,
+        }
 
     @staticmethod
     def detect_change_type(old_data: dict, new_data: dict) -> str:
@@ -494,6 +518,26 @@ class ProductEnrichmentService:
             normalized_article=normalized_article,
             source_id=source_id,
         )
+
+    @classmethod
+    def has_trusted_fitments(cls, product: Product) -> bool:
+        return any(
+            should_auto_apply_fitment(fitment)
+            for fitment in product.fitments.all()
+        )
+
+    @classmethod
+    def should_enrich_before_ai(cls, tenant, product: Product) -> bool:
+        if not getattr(tenant, 'supports_auto_parts_enrichment', True):
+            return False
+        if not product.article:
+            return False
+        if (
+            getattr(tenant, 'requires_product_auto_parts_check', False)
+            and not cls.is_product_auto_part_candidate(product)
+        ):
+            return False
+        return not cls.has_trusted_fitments(product)
 
     @classmethod
     def save_parsed_part(
@@ -868,6 +912,13 @@ class ProductBulkActionService:
                         else parse_single_part
                     )
                     transaction.on_commit(lambda pk=parse_job.pk, celery_task=task: celery_task.delay(pk))
+                    queued += 1
+                elif job.action == ProductBulkActionJob.Action.GENERATE_DESCRIPTIONS:
+                    try:
+                        ProductService.schedule_ai_generation(product, job.tenant, source_id=job.source_id)
+                    except QuotaExceeded:
+                        job.skipped_count += 1
+                        continue
                     queued += 1
                 elif job.action == ProductBulkActionJob.Action.CLASSIFY_CATALOG_DOMAIN:
                     ProductEnrichmentService.classify_product_catalog_domain(product)
