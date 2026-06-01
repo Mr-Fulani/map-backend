@@ -167,12 +167,13 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 ### P0.4 Накопление и применение применяемости
 
-- [ ] По `Product.brand + Product.article` сначала искать `GlobalPart`.
-- [ ] Если есть trusted `GlobalPartFitment`, применять его в tenant `VehicleFitment`.
+- [x] По `Product.brand + Product.article` сначала искать `GlobalPart`.
+- [x] Если есть trusted `GlobalPartFitment`, применять его в tenant `VehicleFitment`.
 - [ ] Если данных нет или мало, запускать внешний enrichment source.
 - [ ] После parser success сохранять OEM/cross/аналоги и fitments в global graph.
-- [ ] Для аналогов не создавать применяемость без явного fitment-факта.
-- [ ] В AI-контекст отдавать только trusted применяемость и явно маркировать reviewable данные.
+- [x] Для аналогов не создавать применяемость без явного fitment-факта.
+- [x] Перед AI-генерацией применять known OEM/cross/fitments из global graph.
+- [x] В AI-контекст отдавать только trusted применяемость и явно маркировать reviewable данные.
 
 **Verify:** товар с бедными данными из 1С получает применяемость из global graph
 или parser-а, а AI-описание пишет только подтвержденные марки/модели/поколения.
@@ -184,8 +185,8 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - [ ] Не давать AI достраивать отсутствующие авто по догадке.
 - [ ] Если применяемость спорная, писать осторожную формулировку или отправлять
       факт в review.
-- [ ] Покрыть тестом сценарий: 1С дала только name/brand/article, parser нашел
-      fitments, агент получил конкретные авто.
+- [x] Покрыть тестом сценарий: 1С дала только name/brand/article, global graph уже
+      знает fitments, агент получил конкретные авто.
 
 **Verify:** описание товара содержит конкретные авто только из структурных
 trusted данных, а не из предположений по названию.

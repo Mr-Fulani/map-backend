@@ -5,6 +5,7 @@ import anthropic
 import pytest
 
 from apps.ai_agent.services import AICreditsExhausted, DescriptionAgent
+from apps.ai_agent.tasks import generate_description_task
 from apps.ai_agent.validators import (
     BannedWordsError,
     VagueFitmentError,
@@ -17,8 +18,10 @@ from apps.ai_agent.validators import (
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
 from apps.products.models import ProductCrossCode
+from apps.products.part_parsers import ParsedFitment
 from apps.products.services import ProductService
 from apps.products.services import ProductEnrichmentService
+from apps.products.services import ProductKnowledgeGraphService
 from apps.tenants.services import TenantService
 
 
@@ -265,3 +268,32 @@ class TestDescriptionAgent:
                'condition': 'new', 'category': 'A'}
         change_type = ProductService.detect_change_type(old, new)
         assert change_type == 'price_only'
+
+    def test_generate_task_applies_known_fitments_before_prompt(self):
+        tenant = make_tenant('known-fitment-ai-co')
+        product = make_product(tenant)
+        part = ProductKnowledgeGraphService.upsert_part(
+            brand=product.brand,
+            article=product.article,
+            source_id='tachka',
+        )
+        ProductKnowledgeGraphService.upsert_fitment(
+            part=part,
+            fitment=ParsedFitment(
+                make='MERCEDES-BENZ',
+                model='E-CLASS',
+                generation='W213',
+                confidence=0.95,
+            ),
+            source_id='tachka',
+        )
+
+        with patch('apps.ai_agent.services.anthropic.Anthropic') as mock_cls:
+            mock_cls.return_value.messages.create.return_value = _mock_claude_response(VALID_RESPONSE)
+            result = generate_description_task(product.pk)
+
+        product.refresh_from_db()
+        assert result['fitments_count'] == 1
+        assert product.fitments.filter(make='MERCEDES-BENZ', model='E-CLASS', generation='W213').exists()
+        message = mock_cls.return_value.messages.create.call_args.kwargs['messages'][0]['content']
+        assert 'MERCEDES-BENZ E-CLASS W213' in message

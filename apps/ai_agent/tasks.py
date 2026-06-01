@@ -18,6 +18,11 @@ def generate_description_task(self, product_id: int):
     if not can:
         return {'skipped': True, 'reason': reason}
 
+    from apps.products.services import ProductKnowledgeGraphService
+    applied_knowledge = ProductKnowledgeGraphService.apply_known_knowledge_to_product(product)
+    if applied_knowledge['relations_count'] or applied_knowledge['fitments_count']:
+        product.refresh_from_db()
+
     try:
         result = DescriptionAgent().generate(product, tenant)
     except AICreditsExhausted as exc:
@@ -48,4 +53,5 @@ def generate_description_task(self, product_id: int):
         'product_id': product_id,
         'title': result['title'],
         'confidence': result['confidence'],
+        **applied_knowledge,
     }
