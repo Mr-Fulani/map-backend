@@ -361,24 +361,28 @@ PartCategory перетирает категорию tenant-а
 
 - Нормализованный справочник `VehicleGeneration/VehicleModification`.
 - Массовое назначение tenant-категорий товарам.
-- Merge-policy для ручной классификации vs rules-based классификации.
 - Редактирование mappings в dashboard beyond MVP.
-- Приоритеты нескольких источников.
-- Правила конфликтов между источниками.
+- Отдельная очередь operator review для больших объёмов спорных данных.
+- Подключение второго enrichment source поверх source quality policy.
 - UI для просмотра глобального графа в tenant dashboard.
+- Поиск товаров tenant-а по марке/модели/поколению авто.
 
 ## Следующий логичный шаг
 
-Сначала добавить tenant-scoped категории и merge-policy классификации, затем
-source priority и conflict resolution:
+Следующий P0 — Vehicle Knowledge Base v2. Нужно добавить поколения и, если
+данных поколения недостаточно, модификации:
 
 ```text
-Product.category_1c -> TenantCatalogCategory -> ProductCatalogClassification
-manual classification policy
-source fitment strings
-  -> source priority/conflict rules
-  -> safer GlobalPartFitment approval
+GlobalPartFitment raw make/model/generation/modification
+  -> VehicleMake / VehicleModel
+  -> VehicleGeneration
+  -> VehicleModification (optional)
+  -> tenant product search by vehicle
 ```
+
+Raw строки применяемости остаются всегда. Нормализованные FK добавляются только
+когда сопоставление уверенное; сомнительные поколения/модификации должны уходить
+в review, а не перетирать полезную применяемость.
 
 Это позволит не только хранить строки применяемости, но и устойчиво фильтровать,
 нормализовать и разрешать конфликты между несколькими источниками.
