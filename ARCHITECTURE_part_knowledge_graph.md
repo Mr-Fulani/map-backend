@@ -57,9 +57,10 @@ Enrichment-парсер обогащает каталог tenant-а характ
 `GlobalPartFitment` — доказанная применяемость глобального артикула к автомобилю,
 полученная из источника, который явно отдал fitment-данные.
 
-`VehicleMake` и `VehicleModel` — нормализованный справочник авто. Raw строки
-`make/model` в `GlobalPartFitment` остаются источником правды для отладки, а FK
-на справочник добавляются только когда сопоставление уверенное.
+`VehicleMake`, `VehicleModel` и `VehicleGeneration` — нормализованный справочник
+авто. Raw строки `make/model/generation` в `GlobalPartFitment` остаются
+источником правды для отладки, а FK на справочник добавляются только когда
+сопоставление уверенное.
 
 `PartCategory` — легкий platform-level справочник категорий автозапчастей. Он
 нужен для будущих правил применяемости, фильтрации и AI-контекста, но не заменяет
@@ -359,7 +360,7 @@ PartCategory перетирает категорию tenant-а
 
 ## Что не решено в этой итерации
 
-- Нормализованный справочник `VehicleGeneration/VehicleModification`.
+- Нормализованный справочник `VehicleModification`.
 - Массовое назначение tenant-категорий товарам.
 - Редактирование mappings в dashboard beyond MVP.
 - Отдельная очередь operator review для больших объёмов спорных данных.
@@ -369,20 +370,25 @@ PartCategory перетирает категорию tenant-а
 
 ## Следующий логичный шаг
 
-Следующий P0 — Vehicle Knowledge Base v2. Нужно добавить поколения и, если
-данных поколения недостаточно, модификации:
+Следующий P0 — Vehicle Knowledge Base v2 для накопления применяемости и AI-
+описаний. Нужно не начинать с пользовательского поиска по авто, а усилить поток:
+товар tenant-а -> global graph -> parser при нехватке данных -> trusted факты для
+AI.
 
 ```text
-GlobalPartFitment raw make/model/generation/modification
-  -> VehicleMake / VehicleModel
-  -> VehicleGeneration
-  -> VehicleModification (optional)
-  -> tenant product search by vehicle
+Product brand/article/name
+  -> GlobalPart by normalized_brand + normalized_article
+  -> trusted GlobalPartFitment / OEM / cross / analogue relations
+  -> tenant VehicleFitment + enrichment facts
+  -> AI description context
 ```
 
 Raw строки применяемости остаются всегда. Нормализованные FK добавляются только
 когда сопоставление уверенное; сомнительные поколения/модификации должны уходить
 в review, а не перетирать полезную применяемость.
+
+Поиск товаров по авто остается следующим продуктовым слоем после того, как база
+применяемости достаточно наполняется и агент получает достоверные факты.
 
 Это позволит не только хранить строки применяемости, но и устойчиво фильтровать,
 нормализовать и разрешать конфликты между несколькими источниками.

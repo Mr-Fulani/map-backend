@@ -5,7 +5,7 @@
 > **Оценка:** 6-8 недель на production-ready MVP с запасом на разбор верстки источника
 > **Подход:** сначала надежное enrichment-ядро без коммерческих данных, потом масштабирование и AI
 > **Multi-tenant:** фича общая для платформы, но результаты записываются в каталог конкретного tenant
-> **Статус на 01.06.2026:** enrichment MVP, первая версия platform knowledge graph, tenant-категории, source quality policy, operator review workflow, базовая нормализация марок/моделей авто и справочник брендов реализованы; следующий P0 — Vehicle Knowledge Base v2: поколения, модификации и поиск по авто
+> **Статус на 01.06.2026:** enrichment MVP, первая версия platform knowledge graph, tenant-категории, source quality policy, operator review workflow, базовая нормализация марок/моделей авто и справочник брендов реализованы; следующий P0 — Vehicle Knowledge Base v2: накопление применяемости и подготовка фактов для AI-описаний
 
 ---
 
@@ -57,11 +57,11 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - `[~]` качество данных: source quality policy и operator review workflow добавлены; отдельная очередь проверки нужна при росте объёма спорных данных.
 - `[~]` массовые действия: batch/cooldown есть, но pause/resume/cancel еще нужно довести в API/UI.
 - `[~]` глобальный граф артикулов: модель, обучение, search fallback, source priority и конфликт-правила есть; дальше нужен review workflow.
-- `[~]` глобальная применяемость: `GlobalPartFitment` связан с `VehicleMake/VehicleModel`, но еще нет `VehicleGeneration/VehicleModification`.
+- `[~]` глобальная применяемость: `GlobalPartFitment` связан с `VehicleMake/VehicleModel/VehicleGeneration`, но еще нет `VehicleModification`.
 
 Не реализовано:
 
-- `[ ]` platform-level справочник `VehicleGeneration/VehicleModification`.
+- `[ ]` platform-level справочник `VehicleModification`.
 - `[x]` легкая taxonomy категорий запчастей `PartCategory` с флагом `fitment_required`.
 - `[ ]` tenant/catalog capability для отключения автозапчастного enrichment в неавтомобильных нишах.
 - `[ ]` мониторинг/алерты качества источников.
@@ -131,8 +131,9 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 ## Следующий P0 — Vehicle Knowledge Base v2
 
-**Цель:** довести применяемость от нормализованных марок/моделей до поколений,
-модификаций и поиска товаров по авто.
+**Цель:** чтобы система по товару tenant-а могла найти, накопить и применить
+достоверную применяемость: марка, модель, поколение, OEM/cross/аналоги и
+подходящие авто для AI-описания без выдумок.
 
 ### P0.1 VehicleMake / VehicleModel
 
@@ -155,16 +156,41 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 ### P0.3 VehicleGeneration / VehicleModification
 
-- [ ] Добавить `VehicleGeneration`.
+- [x] Добавить `VehicleGeneration`.
 - [ ] Добавить `VehicleModification`, если данных поколения недостаточно.
-- [ ] Хранить `body_code`, `date_from`, `date_to`.
-- [ ] Добавить nullable links из `GlobalPartFitment` на generation/modification.
-- [ ] Не удалять raw `generation/modification`.
+- [x] Хранить `body_code`, `date_from`, `date_to`.
+- [~] Добавить nullable links из `GlobalPartFitment` на generation/modification: generation есть, modification еще нет.
+- [x] Не удалять raw `generation/modification`.
 
 **Verify:** `W213`, годы выпуска и модификация двигателя сохраняются как raw данные,
 а normalized FK появляется только при уверенном match.
 
-### P0.4 Поиск товаров по авто
+### P0.4 Накопление и применение применяемости
+
+- [ ] По `Product.brand + Product.article` сначала искать `GlobalPart`.
+- [ ] Если есть trusted `GlobalPartFitment`, применять его в tenant `VehicleFitment`.
+- [ ] Если данных нет или мало, запускать внешний enrichment source.
+- [ ] После parser success сохранять OEM/cross/аналоги и fitments в global graph.
+- [ ] Для аналогов не создавать применяемость без явного fitment-факта.
+- [ ] В AI-контекст отдавать только trusted применяемость и явно маркировать reviewable данные.
+
+**Verify:** товар с бедными данными из 1С получает применяемость из global graph
+или parser-а, а AI-описание пишет только подтвержденные марки/модели/поколения.
+
+### P0.5 Факты для AI-описания
+
+- [ ] Сформировать единый enrichment context из `VehicleFitment`, OEM/cross,
+      аналогов и `ProductEnrichmentFact`.
+- [ ] Не давать AI достраивать отсутствующие авто по догадке.
+- [ ] Если применяемость спорная, писать осторожную формулировку или отправлять
+      факт в review.
+- [ ] Покрыть тестом сценарий: 1С дала только name/brand/article, parser нашел
+      fitments, агент получил конкретные авто.
+
+**Verify:** описание товара содержит конкретные авто только из структурных
+trusted данных, а не из предположений по названию.
+
+### P0.6 Поиск товаров по авто
 
 - [ ] API для выбора марки, модели, поколения.
 - [ ] Фильтр товаров tenant-а по применяемости.
@@ -174,14 +200,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 **Verify:** tenant может выбрать авто и увидеть только свои товары, подходящие к
 этой марке/модели/поколению.
 
-### P0.5 Frontend cleanup
-
-- [ ] В массовых действиях оставить единый сценарий `Обогатить и сгенерировать`.
-- [ ] Убрать старые/дублирующие пункты, которые теперь входят в объединенный pipeline.
-
-**Verify:** пользователь не видит конкурирующие действия, которые запускают разные части одного pipeline.
-
-### P0.6 Нишевая безопасность
+### P0.7 Нишевая безопасность
 
 - [x] Зафиксировать, что auto-parts enrichment не должен запускаться автоматически для generic/jewellery/apparel tenant-ов.
 - [x] Добавить `CatalogDomain` и tenant-enabled catalog roots.
@@ -565,7 +584,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 - [x] Добавить `VehicleMake`.
 - [x] Добавить `VehicleModel`.
-- [ ] Добавить `VehicleGeneration`.
+- [x] Добавить `VehicleGeneration`.
 - [ ] Добавить `VehicleModification`, если данных поколений недостаточно.
 - [x] Добавить aliases для марок и моделей.
 - [x] Нормализовать названия марок: `MERCEDES`, `MB`, `MERCEDES-BENZ`.
@@ -579,7 +598,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - [x] Добавить `GlobalPartFitment` или аналогичный индекс.
 - [x] Хранить ключи `normalized_brand + normalized_article`.
 - [ ] Хранить ключи `normalized_oem_code`.
-- [~] Хранить ссылку на `VehicleMake/Model/Generation`: make/model есть, generation еще нет.
+- [x] Хранить ссылку на `VehicleMake/Model/Generation`.
 - [x] Хранить `source_id`, `source_url`, `confidence`, `needs_review`, `last_seen_at`.
 - [x] Не хранить цены, остатки, склады и tenant-коммерческие данные.
 - [ ] Разрешить несколько источников на одну связь.

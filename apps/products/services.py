@@ -12,7 +12,7 @@ from apps.products.models import (
     Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
     ProductCrossCode, ProductEnrichmentFact, ProductParseJob, ReviewStatus, VehicleFitment,
     TenantCatalogCategory, TenantCategoryMapping, ProductBrand, ProductBrandAlias,
-    VehicleMake, VehicleModel,
+    VehicleGeneration, VehicleMake, VehicleModel,
 )
 from apps.products.part_category_seed import (
     BASE_PART_CATEGORY_TREE, normalize_category_name,
@@ -944,6 +944,10 @@ class VehicleKnowledgeService:
         return cls.normalize_name(value)
 
     @classmethod
+    def normalize_generation(cls, value: str) -> str:
+        return cls.normalize_name(value)
+
+    @classmethod
     def upsert_make(cls, name: str) -> VehicleMake | None:
         normalized = cls.normalize_make(name)
         if not normalized:
@@ -972,19 +976,65 @@ class VehicleKnowledgeService:
         return model
 
     @classmethod
-    def resolve_fitment(cls, fitment) -> tuple[VehicleMake | None, VehicleModel | None]:
+    def upsert_generation(
+        cls, model: VehicleModel, name: str, date_from: str = '', date_to: str = '',
+    ) -> VehicleGeneration | None:
+        normalized = cls.normalize_generation(name)
+        if not normalized:
+            return None
+        generation, created = VehicleGeneration.objects.get_or_create(
+            model=model,
+            normalized_name=normalized,
+            defaults={
+                'name': name.strip()[:100],
+                'body_code': name.strip()[:50],
+                'date_from': date_from[:20],
+                'date_to': date_to[:20],
+                'aliases': [name.strip()] if name.strip() else [],
+            },
+        )
+        if not created:
+            update_fields = ['updated_at']
+            aliases_before = list(generation.aliases)
+            cls._append_alias(generation, name, save=False)
+            if aliases_before != generation.aliases:
+                update_fields.append('aliases')
+            if date_from and not generation.date_from:
+                generation.date_from = date_from[:20]
+                update_fields.append('date_from')
+            if date_to and not generation.date_to:
+                generation.date_to = date_to[:20]
+                update_fields.append('date_to')
+            if update_fields != ['updated_at']:
+                generation.save(update_fields=update_fields)
+        return generation
+
+    @classmethod
+    def resolve_fitment(
+        cls, fitment,
+    ) -> tuple[VehicleMake | None, VehicleModel | None, VehicleGeneration | None]:
         make = cls.upsert_make(fitment.make)
         if make is None:
-            return None, None
-        return make, cls.upsert_model(make, fitment.model)
+            return None, None, None
+        model = cls.upsert_model(make, fitment.model)
+        if model is None:
+            return make, None, None
+        generation = cls.upsert_generation(
+            model,
+            fitment.generation,
+            date_from=fitment.date_from,
+            date_to=fitment.date_to,
+        )
+        return make, model, generation
 
     @staticmethod
-    def _append_alias(instance, alias: str) -> None:
+    def _append_alias(instance, alias: str, save: bool = True) -> None:
         alias = (alias or '').strip()
         if not alias or alias in instance.aliases:
             return
         instance.aliases = [*instance.aliases, alias][:50]
-        instance.save(update_fields=['aliases', 'updated_at'])
+        if save:
+            instance.save(update_fields=['aliases', 'updated_at'])
 
 
 class ProductKnowledgeGraphService:
@@ -1102,7 +1152,7 @@ class ProductKnowledgeGraphService:
         cls, part: GlobalPart, fitment, source_id: str = '',
         source_url: str = '',
     ) -> GlobalPartFitment:
-        vehicle_make, vehicle_model = VehicleKnowledgeService.resolve_fitment(fitment)
+        vehicle_make, vehicle_model, vehicle_generation = VehicleKnowledgeService.resolve_fitment(fitment)
         incoming_needs_review = fitment.needs_review
         global_fitment, created = GlobalPartFitment.objects.get_or_create(
             part=part,
@@ -1116,6 +1166,7 @@ class ProductKnowledgeGraphService:
             defaults={
                 'vehicle_make': vehicle_make,
                 'vehicle_model': vehicle_model,
+                'vehicle_generation': vehicle_generation,
                 'date_from': fitment.date_from[:20],
                 'date_to': fitment.date_to[:20],
                 'source_url': source_url,
@@ -1141,10 +1192,12 @@ class ProductKnowledgeGraphService:
                 global_fitment.vehicle_make = vehicle_make
             if vehicle_model and global_fitment.vehicle_model_id is None:
                 global_fitment.vehicle_model = vehicle_model
+            if vehicle_generation and global_fitment.vehicle_generation_id is None:
+                global_fitment.vehicle_generation = vehicle_generation
             global_fitment.save(update_fields=[
                 'last_seen_at', 'confidence', 'needs_review', 'date_from',
                 'date_to', 'source_url', 'raw_text', 'vehicle_make',
-                'vehicle_model', 'updated_at',
+                'vehicle_model', 'vehicle_generation', 'updated_at',
             ])
         elif (
             has_conflicting_fitment(part.fitments.exclude(pk=global_fitment.pk), global_fitment)

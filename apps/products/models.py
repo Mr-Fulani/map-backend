@@ -667,6 +667,44 @@ class VehicleModel(TimestampedModel):
         return f'{self.make} {self.name}'.strip()
 
 
+class VehicleGeneration(TimestampedModel):
+    """Нормализованное поколение/кузов авто внутри модели."""
+
+    model = models.ForeignKey(
+        VehicleModel, on_delete=models.CASCADE, related_name='generations',
+        verbose_name='Модель',
+    )
+    name = models.CharField(max_length=100, verbose_name='Поколение')
+    normalized_name = models.CharField(
+        max_length=100, db_index=True, verbose_name='Нормализованное поколение',
+    )
+    body_code = models.CharField(max_length=50, blank=True, verbose_name='Код кузова')
+    date_from = models.CharField(max_length=20, blank=True, verbose_name='Дата с')
+    date_to = models.CharField(max_length=20, blank=True, verbose_name='Дата по')
+    aliases = ArrayField(
+        models.CharField(max_length=100), default=list, blank=True,
+        verbose_name='Алиасы',
+    )
+
+    class Meta:
+        verbose_name = 'Поколение авто'
+        verbose_name_plural = 'Поколения авто'
+        ordering = ['model__make__name', 'model__name', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['model', 'normalized_name'],
+                name='unique_vehicle_generation_per_model',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['model', 'normalized_name']),
+            models.Index(fields=['body_code']),
+        ]
+
+    def __str__(self):
+        return f'{self.model} {self.name}'.strip()
+
+
 class VehicleFitment(TimestampedModel):
     """Применяемость товара к автомобилю."""
 
@@ -739,6 +777,10 @@ class GlobalPartFitment(TimestampedModel):
         VehicleModel, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='global_fitments', verbose_name='Нормализованная модель',
     )
+    vehicle_generation = models.ForeignKey(
+        VehicleGeneration, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='global_fitments', verbose_name='Нормализованное поколение',
+    )
     make = models.CharField(max_length=100, blank=True, db_index=True, verbose_name='Марка')
     model = models.CharField(max_length=150, db_index=True, verbose_name='Модель')
     generation = models.CharField(max_length=100, blank=True, verbose_name='Поколение')
@@ -760,6 +802,7 @@ class GlobalPartFitment(TimestampedModel):
         indexes = [
             models.Index(fields=['make', 'model']),
             models.Index(fields=['vehicle_make', 'vehicle_model']),
+            models.Index(fields=['vehicle_model', 'vehicle_generation']),
             models.Index(fields=['part', 'needs_review']),
             models.Index(fields=['source_id', 'needs_review']),
         ]
