@@ -169,8 +169,8 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 - [x] По `Product.brand + Product.article` сначала искать `GlobalPart`.
 - [x] Если есть trusted `GlobalPartFitment`, применять его в tenant `VehicleFitment`.
-- [ ] Если данных нет или мало, запускать внешний enrichment source.
-- [ ] После parser success сохранять OEM/cross/аналоги и fitments в global graph.
+- [x] Если данных нет или мало, запускать внешний enrichment source перед AI.
+- [x] После parser success сохранять OEM/cross/аналоги и fitments в global graph.
 - [x] Для аналогов не создавать применяемость без явного fitment-факта.
 - [x] Перед AI-генерацией применять known OEM/cross/fitments из global graph.
 - [x] В AI-контекст отдавать только trusted применяемость и явно маркировать reviewable данные.
@@ -189,6 +189,8 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
       знает fitments, агент получил конкретные авто.
 - [x] Усилить prompt: конкретные авто обязательны только из trusted fitment, а
       при OEM/Cross без fitment агент пишет только марки и просит сверку.
+- [x] Единая постановка генерации: auto-parts товар без trusted fitment сначала
+      получает enrichment job, затем AI-описание.
 
 **Verify:** описание товара содержит конкретные авто только из структурных
 trusted данных, а не из предположений по названию.

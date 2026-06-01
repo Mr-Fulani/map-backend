@@ -6,7 +6,7 @@ import pytest
 from apps.products.models import GlobalPartRelation, Product, ProductCrossCode
 from apps.products.part_fetchers import FetchedPage
 from apps.products.part_parsers import ParsedPart, TachkaPartParser, parse_fitment_line
-from apps.products.services import ProductEnrichmentService
+from apps.products.services import ProductEnrichmentService, ProductService
 from apps.tenants.services import TenantService
 
 
@@ -257,6 +257,52 @@ def test_run_parse_job_applies_known_knowledge_before_external_fetch(monkeypatch
     assert result['fitments_count'] == 1
     assert job.parsed_data['applied_from'] == 'knowledge_graph'
     assert product_b.fitments.filter(model='E-CLASS').exists()
+
+
+@pytest.mark.django_db
+def test_schedule_ai_generation_enriches_auto_part_without_fitments(
+    django_capture_on_commit_callbacks,
+):
+    tenant = make_tenant('ai-enrich-before-generate')
+    product = make_product(tenant)
+
+    with patch('apps.products.tasks.parse_single_part_then_generate_description.delay') as parse_delay:
+        with patch('apps.ai_agent.tasks.generate_description_task.delay') as ai_delay:
+            with django_capture_on_commit_callbacks(execute=True):
+                result = ProductService.schedule_ai_generation(product, tenant)
+
+    assert result['mode'] == 'enrich_then_generate'
+    assert result['job_id'] is not None
+    assert tenant.product_parse_jobs.filter(product=product).count() == 1
+    parse_delay.assert_called_once_with(result['job_id'])
+    ai_delay.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_schedule_ai_generation_uses_plain_ai_when_fitments_are_already_trusted(
+    django_capture_on_commit_callbacks,
+):
+    tenant = make_tenant('ai-generate-with-fitments')
+    product = make_product(tenant)
+    ProductEnrichmentService.create_fitment(
+        tenant=tenant,
+        product=product,
+        make='MERCEDES-BENZ',
+        model='E-CLASS',
+        generation='W213',
+        confidence=0.95,
+    )
+
+    with patch('apps.products.tasks.parse_single_part_then_generate_description.delay') as parse_delay:
+        with patch('apps.ai_agent.tasks.generate_description_task.delay') as ai_delay:
+            with django_capture_on_commit_callbacks(execute=True):
+                result = ProductService.schedule_ai_generation(product, tenant)
+
+    assert result['mode'] == 'generate'
+    assert result['job_id'] is None
+    assert tenant.product_parse_jobs.count() == 0
+    parse_delay.assert_not_called()
+    ai_delay.assert_called_once_with(product.pk)
 
 
 @pytest.mark.django_db

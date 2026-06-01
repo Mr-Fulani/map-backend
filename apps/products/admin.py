@@ -207,12 +207,12 @@ class ProductAdmin(ModelAdmin):
 
     @admin.action(description='Перегенерировать AI-описание для выбранных')
     def regenerate_description_selected(self, request, queryset):
-        """Ставит задачи генерации AI-описания для выбранных товаров."""
-        from apps.ai_agent.tasks import generate_description_task
+        """Ставит enrichment-aware задачи генерации AI-описания для выбранных товаров."""
+        from apps.products.services import ProductService
 
         queued = 0
-        for product in queryset:
-            generate_description_task.delay(product.pk)
+        for product in queryset.select_related('tenant'):
+            ProductService.schedule_ai_generation(product, product.tenant)
             queued += 1
         self.message_user(request, f'Задачи генерации описания поставлены в очередь: {queued}.')
 

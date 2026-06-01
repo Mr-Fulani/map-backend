@@ -94,6 +94,29 @@ def test_bulk_action_enrich_then_generate_uses_chained_task(django_capture_on_co
 
 
 @pytest.mark.django_db
+def test_bulk_generate_descriptions_uses_enrichment_aware_scheduler(django_capture_on_commit_callbacks):
+    tenant = make_tenant('bulk-ai-enrichment-aware')
+    product = make_product(tenant, 'P1')
+    job = ProductBulkActionService.create_job(
+        tenant=tenant,
+        action=ProductBulkActionJob.Action.GENERATE_DESCRIPTIONS,
+        product_ids=[product.pk],
+    )
+
+    with patch('apps.products.tasks.parse_single_part_then_generate_description.delay') as chained_delay:
+        with patch('apps.ai_agent.tasks.generate_description_task.delay') as ai_delay:
+            with django_capture_on_commit_callbacks(execute=True):
+                result = ProductBulkActionService.process_next_batch(job.pk)
+
+    job.refresh_from_db()
+    assert result['status'] == ProductBulkActionJob.Status.SUCCESS
+    assert job.queued_count == 1
+    assert tenant.product_parse_jobs.filter(product=product).count() == 1
+    chained_delay.assert_called_once()
+    ai_delay.assert_not_called()
+
+
+@pytest.mark.django_db
 def test_bulk_enrichment_rejects_non_auto_parts_tenant():
     tenant = make_tenant('bulk-jewellery')
     tenant.catalog_domain = 'jewellery'
