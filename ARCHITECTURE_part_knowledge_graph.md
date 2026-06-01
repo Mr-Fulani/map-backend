@@ -370,20 +370,25 @@ PartCategory перетирает категорию tenant-а
 
 ## Следующий логичный шаг
 
-Следующий P0 — Vehicle Knowledge Base v2. Нужно добавить модификации, если
-данных поколения недостаточно, и подготовить поиск товаров по авто:
+Следующий P0 — Vehicle Knowledge Base v2 для накопления применяемости и AI-
+описаний. Нужно не начинать с пользовательского поиска по авто, а усилить поток:
+товар tenant-а -> global graph -> parser при нехватке данных -> trusted факты для
+AI.
 
 ```text
-GlobalPartFitment raw make/model/generation/modification
-  -> VehicleMake / VehicleModel
-  -> VehicleGeneration
-  -> VehicleModification (optional)
-  -> tenant product search by vehicle
+Product brand/article/name
+  -> GlobalPart by normalized_brand + normalized_article
+  -> trusted GlobalPartFitment / OEM / cross / analogue relations
+  -> tenant VehicleFitment + enrichment facts
+  -> AI description context
 ```
 
 Raw строки применяемости остаются всегда. Нормализованные FK добавляются только
 когда сопоставление уверенное; сомнительные поколения/модификации должны уходить
 в review, а не перетирать полезную применяемость.
+
+Поиск товаров по авто остается следующим продуктовым слоем после того, как база
+применяемости достаточно наполняется и агент получает достоверные факты.
 
 Это позволит не только хранить строки применяемости, но и устойчиво фильтровать,
 нормализовать и разрешать конфликты между несколькими источниками.
