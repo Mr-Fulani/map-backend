@@ -180,7 +180,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 
 ### P0.5 Факты для AI-описания
 
-- [ ] Сформировать единый enrichment context из `VehicleFitment`, OEM/cross,
+- [x] Сформировать единый enrichment context из `VehicleFitment`, OEM/cross,
       аналогов и `ProductEnrichmentFact`.
 - [x] Не давать AI достраивать отсутствующие авто по догадке.
 - [ ] Если применяемость спорная, писать осторожную формулировку или отправлять
@@ -191,6 +191,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
       при OEM/Cross без fitment агент пишет только марки и просит сверку.
 - [x] Единая постановка генерации: auto-parts товар без trusted fitment сначала
       получает enrichment job, затем AI-описание.
+- [x] Разделить AI-контекст на trusted, cautious и исключенные review-факты.
 
 **Verify:** описание товара содержит конкретные авто только из структурных
 trusted данных, а не из предположений по названию.
