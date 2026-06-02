@@ -10,6 +10,17 @@ from apps.products.services import (
 )
 
 
+def _write_sync_log(tenant, event_type: str, status: str, message: str) -> None:
+    """Записывает событие в SyncLog — не падает при ошибках."""
+    try:
+        from apps.sync.models import SyncLog
+        SyncLog.objects.create(
+            tenant=tenant, event_type=event_type, status=status, message=message,
+        )
+    except Exception:
+        pass
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='sync_import')
 def import_from_datasource(self, connection_id: int):
     try:
@@ -41,12 +52,19 @@ def import_from_datasource(self, connection_id: int):
         connection.last_sync_status = DataSourceConnection.STATUS_OK
         connection.last_error = ''
         connection.save(update_fields=['last_sync_at', 'last_sync_status', 'last_error'])
+
+        _write_sync_log(
+            tenant, 'datasource_import', 'ok',
+            f'Импорт «{connection.name}»: создано {counts["created"]}, '
+            f'обновлено {counts["updated"]}, без изменений {counts["unchanged"]}',
+        )
         return counts
 
     except Exception as exc:
         connection.last_sync_status = DataSourceConnection.STATUS_ERROR
         connection.last_error = str(exc)
         connection.save(update_fields=['last_sync_status', 'last_error'])
+        _write_sync_log(tenant, 'datasource_import', 'error', str(exc))
         raise self.retry(exc=exc)
 
 

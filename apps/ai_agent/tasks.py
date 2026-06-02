@@ -5,6 +5,20 @@ from apps.billing.services import LimitChecker
 from apps.products.models import Product
 
 
+def _write_sync_log(tenant, status: str, message: str) -> None:
+    """Записывает событие description_gen в SyncLog — не падает при ошибках."""
+    try:
+        from apps.sync.models import SyncLog
+        SyncLog.objects.create(
+            tenant=tenant,
+            event_type=SyncLog.EVENT_DESCRIPTION_GEN,
+            status=status,
+            message=message,
+        )
+    except Exception:
+        pass
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=60,
              retry_backoff=True, queue='ai_generate')
 def generate_description_task(self, product_id: int):
@@ -16,6 +30,7 @@ def generate_description_task(self, product_id: int):
     tenant = product.tenant
     can, reason = LimitChecker().can_generate_ai(tenant)
     if not can:
+        _write_sync_log(tenant, 'warn', f'Лимит AI-кредитов исчерпан: {reason}')
         return {'skipped': True, 'reason': reason}
 
     from apps.products.services import ProductKnowledgeGraphService
@@ -26,8 +41,10 @@ def generate_description_task(self, product_id: int):
     try:
         result = DescriptionAgent().generate(product, tenant)
     except AICreditsExhausted as exc:
+        _write_sync_log(tenant, 'warn', str(exc))
         return {'skipped': True, 'reason': str(exc)}
     except Exception as exc:
+        _write_sync_log(tenant, 'error', f'Ошибка генерации AI для товара #{product_id}: {exc}')
         raise self.retry(exc=exc)
 
     # Сохраняем на уровень Product (всегда видно на странице товара)
@@ -49,6 +66,10 @@ def generate_description_task(self, product_id: int):
         ai_confidence=result['confidence'],
     )
 
+    _write_sync_log(
+        tenant, 'ok',
+        f'Описание сгенерировано для «{result["title"]}», confidence={result["confidence"]:.2f}',
+    )
     return {
         'product_id': product_id,
         'title': result['title'],

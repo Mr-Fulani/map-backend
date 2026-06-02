@@ -66,13 +66,14 @@ class Tenant(TimestampedModel):
         JEWELLERY = 'jewellery', 'Украшения'
         APPAREL = 'apparel', 'Одежда'
         OTHER = 'other', 'Другое'
+        UNKNOWN = 'unknown', 'Не определено'
 
     name = models.CharField(max_length=200, verbose_name='Название')
     slug = models.SlugField(unique=True, verbose_name='Slug')
     is_active = models.BooleanField(default=True, verbose_name='Активен')
     catalog_domain = models.CharField(
         max_length=50,
-        default=CatalogDomain.AUTO_PARTS, verbose_name='Домен каталога',
+        default=CatalogDomain.UNKNOWN, verbose_name='Домен каталога',
     )
     trial_ends_at = models.DateTimeField(null=True, blank=True, verbose_name='Окончание триала')
 

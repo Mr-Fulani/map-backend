@@ -18,14 +18,14 @@ class TestTenantService:
         membership = TenantUser.objects.get(tenant=tenant, user__email='owner@test.com')
         assert membership.role == TenantUser.ROLE_OWNER
 
-    def test_create_tenant_enables_default_catalog_root(self):
+    def test_create_tenant_default_catalog_domain_is_unknown(self):
+        """При создании тенанта дефолтный домен каталога — 'unknown' (Не определено)."""
         tenant, _ = TenantService.create_tenant(
             name='Catalog Co', slug='catalog-co',
             owner_email='catalog@test.com', owner_password='pass12345',
         )
 
-        assert tenant.enabled_catalog_domains.filter(domain__slug='auto_parts', is_enabled=True).exists()
-        assert tenant.catalog_categories.filter(root_domain__slug='auto_parts').exists()
+        assert tenant.catalog_domain == 'unknown'
 
     def test_create_tenant_returns_api_key(self):
         """При создании тенанта возвращается plaintext API Key."""
