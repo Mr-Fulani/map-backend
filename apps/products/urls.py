@@ -5,7 +5,8 @@ from apps.products.views import (
     ProductCatalogClassificationReviewView, ProductCrossCodesView, ProductDetailView,
     ProductEnrichmentFactReviewView, ProductEnrichmentFactsView, ProductFitmentReviewView, ProductFitmentsView,
     ProductCatalogCategoryAssignView, ProductListView, ProductParseJobDetailView,
-    ProductParseView, ProductPublishView, ProductRegenerateView, ProductSearchView,
+    ProductParseView, ProductPublishView, ProductRegenerateView, ProductReviewQueueActionView,
+    ProductReviewQueueView, ProductSearchView,
     ProductSyncView, TenantCatalogCategoryDefaultImageView,
     TenantCatalogCategoryDetailView, TenantCatalogCategoryListView,
     TenantCategoryMappingDetailView,
@@ -19,6 +20,12 @@ urlpatterns = [
     path('parse-jobs/<int:pk>/', ProductParseJobDetailView.as_view(), name='product-parse-job-detail'),
     path('bulk-actions/', ProductBulkActionView.as_view(), name='product-bulk-action'),
     path('bulk-actions/<int:pk>/', ProductBulkActionDetailView.as_view(), name='product-bulk-action-detail'),
+    path('review-queue/', ProductReviewQueueView.as_view(), name='product-review-queue'),
+    path(
+        'review-queue/<str:item_type>/<int:record_id>/<str:action>/',
+        ProductReviewQueueActionView.as_view(),
+        name='product-review-queue-action',
+    ),
     path('catalog-categories/', TenantCatalogCategoryListView.as_view(), name='tenant-catalog-category-list'),
     path(
         'catalog-categories/assign/',

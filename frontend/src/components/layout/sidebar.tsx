@@ -13,6 +13,7 @@ import {
   ListOrdered,
   ScrollText,
   BarChart3,
+  ClipboardCheck,
   Settings,
   CreditCard,
   Webhook,
@@ -44,6 +45,11 @@ const navItems = [
     title: 'Листинги',
     href: '/dashboard/listings',
     icon: ListOrdered,
+  },
+  {
+    title: 'Проверка',
+    href: '/dashboard/review',
+    icon: ClipboardCheck,
   },
   {
     title: 'Логи',

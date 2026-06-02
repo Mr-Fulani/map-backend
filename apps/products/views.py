@@ -20,6 +20,7 @@ from apps.products.models import (
     VehicleFitment,
 )
 from apps.products.serializers import (
+    ProductCatalogClassificationSerializer,
     ProductBulkActionJobSerializer, ProductCrossCodeSerializer, ProductEnrichmentFactSerializer,
     ProductDetailSerializer, ProductParseJobSerializer, ProductSerializer,
     TenantCatalogCategorySerializer, TenantCategoryMappingSerializer,
@@ -614,6 +615,162 @@ def _set_review_state(obj, request, review_status: str) -> None:
     obj.reviewed_at = now()
     obj.reviewed_by = _review_actor(request)
     obj.save(update_fields=['review_status', 'needs_review', 'reviewed_at', 'reviewed_by', 'updated_at'])
+
+
+def _review_product_payload(product) -> dict:
+    return {
+        'id': product.pk,
+        'article': product.article,
+        'name': product.name,
+        'brand': product.brand,
+        'category_1c': product.category_1c,
+    }
+
+
+def _serialize_review_item(item_type: str, obj) -> dict:
+    product = obj.product
+    if item_type == 'fitment':
+        title = ' '.join(
+            part for part in [obj.make, obj.model, obj.generation, obj.modification]
+            if part
+        )
+        source_id = obj.source_id
+        payload = VehicleFitmentSerializer(obj).data
+        reason = obj.raw_text or title
+    elif item_type == 'fact':
+        title = f'{obj.name}: {obj.value}'
+        source_id = obj.source_id
+        payload = ProductEnrichmentFactSerializer(obj).data
+        reason = obj.raw_text or obj.value
+    else:
+        title = dict(ProductCatalogClassification.Domain.choices).get(obj.domain, obj.domain)
+        source_id = obj.source
+        payload = ProductCatalogClassificationSerializer(obj).data
+        reason = obj.reason
+    return {
+        'id': f'{item_type}:{obj.pk}',
+        'type': item_type,
+        'record_id': obj.pk,
+        'product': _review_product_payload(product),
+        'title': title,
+        'reason': reason,
+        'source_id': source_id,
+        'confidence': obj.confidence,
+        'needs_review': obj.needs_review,
+        'review_status': obj.review_status,
+        'created_at': obj.created_at,
+        'updated_at': obj.updated_at,
+        'payload': payload,
+    }
+
+
+def _review_queue_search_filter(search: str) -> Q:
+    return (
+        Q(product__article__icontains=search)
+        | Q(product__name__icontains=search)
+        | Q(product__brand__icontains=search)
+    )
+
+
+def _bad_review_action_response():
+    return Response({'status': 'error', 'code': 'bad_action'}, status=status.HTTP_404_NOT_FOUND)
+
+
+@extend_schema(tags=['Products'])
+class ProductReviewQueueView(APIView):
+    """GET /api/v1/products/review-queue/ — единая очередь спорных enrichment-данных."""
+
+    VALID_TYPES = {'fitment', 'fact', 'classification'}
+
+    def get(self, request):
+        item_type = request.query_params.get('type', '').strip()
+        if item_type and item_type not in self.VALID_TYPES:
+            return Response(
+                {'status': 'error', 'code': 'bad_type'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        product_id = request.query_params.get('product_id', '').strip()
+        source_id = request.query_params.get('source_id', '').strip()
+        search = request.query_params.get('search', '').strip()
+
+        items = []
+        if not item_type or item_type == 'fitment':
+            qs = VehicleFitment.objects.select_related('product').filter(
+                tenant=request.tenant,
+                needs_review=True,
+                review_status=ReviewStatus.PENDING,
+            )
+            if product_id:
+                qs = qs.filter(product_id=product_id)
+            if source_id:
+                qs = qs.filter(source_id=source_id)
+            if search:
+                qs = qs.filter(_review_queue_search_filter(search))
+            items.extend(_serialize_review_item('fitment', obj) for obj in qs)
+
+        if not item_type or item_type == 'fact':
+            qs = ProductEnrichmentFact.objects.select_related('product').filter(
+                tenant=request.tenant,
+                needs_review=True,
+                review_status=ReviewStatus.PENDING,
+            )
+            if product_id:
+                qs = qs.filter(product_id=product_id)
+            if source_id:
+                qs = qs.filter(source_id=source_id)
+            if search:
+                qs = qs.filter(_review_queue_search_filter(search))
+            items.extend(_serialize_review_item('fact', obj) for obj in qs)
+
+        if not item_type or item_type == 'classification':
+            qs = ProductCatalogClassification.objects.select_related('product').filter(
+                tenant=request.tenant,
+                needs_review=True,
+                review_status=ReviewStatus.PENDING,
+            )
+            if product_id:
+                qs = qs.filter(product_id=product_id)
+            if source_id:
+                qs = qs.filter(source=source_id)
+            if search:
+                qs = qs.filter(_review_queue_search_filter(search))
+            items.extend(_serialize_review_item('classification', obj) for obj in qs)
+
+        items.sort(key=lambda item: item['updated_at'], reverse=True)
+        paginator = MapPagination()
+        page = paginator.paginate_queryset(items, request)
+        return paginator.get_paginated_response(page)
+
+
+@extend_schema(tags=['Products'])
+class ProductReviewQueueActionView(APIView):
+    """POST /api/v1/products/review-queue/{type}/{id}/{approve|reject}/."""
+
+    def post(self, request, item_type: str, record_id: int, action: str):
+        if action not in ['approve', 'reject']:
+            return _bad_review_action_response()
+        if item_type == 'fitment':
+            item = get_object_or_404(VehicleFitment, pk=record_id, tenant=request.tenant)
+            review_status = ReviewStatus.APPROVED if action == 'approve' else ReviewStatus.REJECTED
+            _set_review_state(item, request, review_status)
+            ProductEnrichmentService.refresh_product_denormalized_enrichment(item.product)
+            item.product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability', 'updated_at'])
+            return Response({'status': 'ok', 'data': _serialize_review_item(item_type, item)})
+        if item_type == 'fact':
+            item = get_object_or_404(ProductEnrichmentFact, pk=record_id, tenant=request.tenant)
+            review_status = ReviewStatus.APPROVED if action == 'approve' else ReviewStatus.REJECTED
+            _set_review_state(item, request, review_status)
+            return Response({'status': 'ok', 'data': _serialize_review_item(item_type, item)})
+        if item_type == 'classification':
+            product = get_object_or_404(
+                Product,
+                tenant=request.tenant,
+                catalog_classification__pk=record_id,
+            )
+            view = ProductCatalogClassificationReviewView()
+            return view.post(request, product.pk, action)
+        return Response({'status': 'error', 'code': 'bad_type'}, status=status.HTTP_400_BAD_REQUEST)
 
 
 @extend_schema(tags=['Products'])
