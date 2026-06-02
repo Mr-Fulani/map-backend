@@ -176,7 +176,7 @@ class TestPeriodicTasksSmoke:
         from apps.marketplaces.tasks import refresh_avito_stats
 
         result = refresh_avito_stats()
-        assert 'accounts_checked' in result
+        assert 'accounts_scheduled' in result
 
     def test_cleanup_old_logs_runs_without_error(self):
         """cleanup_old_logs запускается и возвращает счётчик удалённых."""

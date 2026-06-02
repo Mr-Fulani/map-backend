@@ -1,6 +1,8 @@
+import datetime
+
 from django.db import transaction
 
-from apps.marketplaces.models import CategoryMapping, Listing
+from apps.marketplaces.models import CategoryMapping, Listing, ListingStats
 
 
 class CategoryMappingService:
@@ -349,6 +351,77 @@ def _enqueue_publish_or_update(listing_id: int, is_new: bool) -> None:
         publish_listing_task.delay(listing_id)
     else:
         update_listing_task.delay(listing_id)
+
+
+class StatsService:
+    """Сервис получения и сохранения ежедневной статистики листингов с Avito."""
+
+    @staticmethod
+    def _fetch_raw(account, item_ids: list[str], date_from: datetime.date, date_to: datetime.date) -> list[dict]:
+        """
+        Вызывает AvitoAdapter.get_stats и возвращает сырой ответ API.
+
+        Вынесен отдельным методом для удобного mock-а в тестах.
+        """
+        from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
+        return AvitoAdapter(account).get_stats(item_ids, date_from, date_to)
+
+    @classmethod
+    def fetch_for_account(
+        cls,
+        account,
+        date_from: datetime.date,
+        date_to: datetime.date,
+    ) -> int:
+        """
+        Получает статистику активных листингов аккаунта за период и сохраняет в ListingStats.
+
+        Использует bulk_create с update_conflicts — идемпотентен при повторном вызове.
+        Возвращает количество обработанных записей (не уникальных: один листинг × N дней).
+        """
+        listings = list(
+            Listing.objects.filter(
+                account=account,
+                status=Listing.STATUS_ACTIVE,
+                external_id__isnull=False,
+            ).values('id', 'external_id', 'tenant_id')
+        )
+        if not listings:
+            return 0
+
+        listing_by_external = {item['external_id']: item for item in listings}
+        raw = cls._fetch_raw(account, list(listing_by_external.keys()), date_from, date_to)
+
+        to_upsert = []
+        for item in raw:
+            info = listing_by_external.get(str(item.get('itemId', '')))
+            if not info:
+                continue
+            for day in item.get('stats', []):
+                views = int(day.get('views', 0) or 0)
+                impressions = int(day.get('uniqViews', 0) or 0)
+                contacts = int(day.get('contacts', 0) or 0)
+                ctr = round(views / impressions * 100, 2) if impressions else 0.0
+                to_upsert.append(ListingStats(
+                    listing_id=info['id'],
+                    tenant_id=info['tenant_id'],
+                    date=day['date'],
+                    views=views,
+                    impressions=impressions,
+                    contacts=contacts,
+                    ctr=ctr,
+                ))
+
+        if not to_upsert:
+            return 0
+
+        ListingStats.objects.bulk_create(
+            to_upsert,
+            update_conflicts=True,
+            unique_fields=['listing_id', 'date'],
+            update_fields=['views', 'impressions', 'contacts', 'ctr'],
+        )
+        return len(to_upsert)
 
 
 def _enqueue_price_update(listing_id: int) -> None:
