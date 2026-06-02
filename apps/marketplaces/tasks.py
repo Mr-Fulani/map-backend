@@ -1,3 +1,5 @@
+import datetime
+
 from celery import shared_task
 from django.core.cache import cache
 from django.utils.timezone import now
@@ -304,12 +306,16 @@ def reconcile_listings():
 @shared_task(queue='avito_update')
 def refresh_avito_stats():
     """
-    Запускает проверку теневого бана для всех активных аккаунтов.
+    Ежечасно обновляет ListingStats и запускает проверку теневого бана.
 
-    Запускается ежечасно через Celery Beat.
+    За каждый аккаунт: запрашивает статистику за вчера и сегодня из Avito Stats API,
+    сохраняет в ListingStats, параллельно проверяет shadow ban.
     """
     from apps.anti_ban.tasks import check_shadow_ban_task
     from apps.marketplaces.models import MarketplaceAccount
+
+    today = datetime.date.today()
+    date_from = today - datetime.timedelta(days=1)
 
     account_ids = list(MarketplaceAccount.objects.filter(
         is_active=True,
@@ -317,5 +323,31 @@ def refresh_avito_stats():
 
     for account_id in account_ids:
         check_shadow_ban_task.delay(account_id)
+        fetch_stats_for_account_task.delay(account_id, str(date_from), str(today))
 
-    return {'accounts_checked': len(account_ids)}
+    return {'accounts_scheduled': len(account_ids)}
+
+
+@shared_task(bind=True, max_retries=3, retry_backoff=True, queue='avito_update')
+def fetch_stats_for_account_task(self, account_id: int, date_from_str: str, date_to_str: str):
+    """
+    Загружает статистику одного аккаунта Avito за указанный период.
+
+    Вызывается из refresh_avito_stats и management command refresh_stats_history.
+    """
+    from apps.marketplaces.models import MarketplaceAccount
+    from apps.marketplaces.services import StatsService
+
+    try:
+        account = MarketplaceAccount.objects.select_related('tenant').get(pk=account_id)
+    except MarketplaceAccount.DoesNotExist:
+        return
+
+    date_from = datetime.date.fromisoformat(date_from_str)
+    date_to = datetime.date.fromisoformat(date_to_str)
+
+    try:
+        count = StatsService.fetch_for_account(account, date_from, date_to)
+        return {'account_id': account_id, 'records': count}
+    except Exception as exc:
+        raise self.retry(exc=exc)

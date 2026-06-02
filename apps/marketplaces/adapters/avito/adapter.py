@@ -1,3 +1,5 @@
+import datetime
+
 import requests
 
 from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
@@ -5,6 +7,7 @@ from apps.marketplaces.adapters.avito.error_handler import handle_avito_error
 from apps.marketplaces.adapters.avito.rate_limiter import AvitoRateLimiter
 
 AVITO_API_BASE = 'https://api.avito.ru'
+_STATS_CHUNK = 200  # максимум item_ids за один запрос к Stats API
 
 
 class AvitoAdapter:
@@ -81,3 +84,43 @@ class AvitoAdapter:
                              f'/core/v1/accounts/{self.account.external_id}/items/{listing.external_id}',
                              'update')
         return resp.json()
+
+    def get_stats(
+        self,
+        item_ids: list[str],
+        date_from: datetime.date,
+        date_to: datetime.date,
+    ) -> list[dict]:
+        """
+        Запрашивает статистику листингов из Avito Stats API.
+
+        Разбивает item_ids на чанки по 200 (лимит Avito).
+        Возвращает список объектов: [{itemId, stats: [{date, views, uniqViews, contacts}]}].
+        """
+        if not item_ids:
+            return []
+
+        token = self._auth.get_token(self.account)
+        headers = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+        user_id = self.account.external_id
+        url = f'{AVITO_API_BASE}/stats/v1/accounts/{user_id}/items'
+
+        result = []
+        for i in range(0, len(item_ids), _STATS_CHUNK):
+            chunk = item_ids[i:i + _STATS_CHUNK]
+            payload = {
+                'dateFrom': date_from.isoformat(),
+                'dateTo': date_to.isoformat(),
+                'itemIds': [int(x) for x in chunk],
+                'fields': ['uniqViews', 'views', 'contacts'],
+            }
+            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            if resp.status_code == 401:
+                self._auth.invalidate(self.account)
+                token = self._auth.get_token(self.account)
+                headers['Authorization'] = f'Bearer {token}'
+                resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            resp.raise_for_status()
+            result.extend(resp.json().get('result', {}).get('items', []))
+
+        return result
