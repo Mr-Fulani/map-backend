@@ -236,6 +236,9 @@ export const productApi = {
     api.post(`/products/${productId}/fitments/${fitmentId}/${action}/`),
   reviewEnrichmentFact: (productId: number, factId: number, action: 'approve' | 'reject') =>
     api.post(`/products/${productId}/enrichment-facts/${factId}/${action}/`),
+  reviewQueue: (params?: Record<string, unknown>) => api.get('/products/review-queue/', { params }),
+  reviewQueueAction: (type: string, recordId: number, action: 'approve' | 'reject') =>
+    api.post(`/products/review-queue/${type}/${recordId}/${action}/`),
   uploadCatalogCategoryImage: (id: number, file: File) => {
     const formData = new FormData();
     formData.append('image', file);

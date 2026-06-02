@@ -124,7 +124,8 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 - [x] Не применять rejected fitments в `Product.applicability`.
 - [x] Дать dashboard-фильтр товаров, где есть данные на проверке.
 - [x] Показать approve/reject controls в карточке товара.
-- [ ] Расширить очередь проверки отдельным списком/страницей, если объём спорных данных станет большим.
+- [x] Добавить tenant-scoped API-очередь проверки для fitments/classifications/facts.
+- [x] Сделать отдельную dashboard-страницу очереди проверки поверх API.
 
 **Verify:** оператор может отклонить спорную применяемость, после чего она остаётся
 в истории источника, но не используется в денормализованной применяемости товара.

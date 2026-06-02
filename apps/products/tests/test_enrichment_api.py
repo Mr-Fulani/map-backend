@@ -7,8 +7,8 @@ from django.test import Client
 
 from apps.products.enrichment import normalize_part_code
 from apps.products.models import (
-    Product, ProductCatalogClassification, ProductCrossCode, ReviewStatus, VehicleFitment,
-    TenantCatalogCategory, TenantCategoryMapping,
+    Product, ProductCatalogClassification, ProductCrossCode, ProductEnrichmentFact,
+    ReviewStatus, VehicleFitment, TenantCatalogCategory, TenantCategoryMapping,
 )
 from apps.products.services import ProductEnrichmentService
 from apps.tenants.models import CatalogDomain
@@ -192,6 +192,139 @@ def test_fitment_review_rejects_other_tenant_record():
     assert response.status_code == 404
     fitment_b.refresh_from_db()
     assert fitment_b.review_status == ReviewStatus.PENDING
+
+
+@pytest.mark.django_db
+def test_review_queue_lists_tenant_scoped_pending_items():
+    tenant, api_key = make_tenant('review-queue-owner')
+    other_tenant, _ = make_tenant('review-queue-other')
+    product = make_product(tenant, name='Колодки BREMBO P50136')
+    other_product = make_product(other_tenant, article='P2', name='Колодки TRW P2')
+    fitment = VehicleFitment.objects.create(
+        tenant=tenant,
+        product=product,
+        source_id='tachka',
+        make='BMW',
+        model='5',
+        generation='G30',
+        confidence=0.4,
+        needs_review=True,
+    )
+    fact = ProductEnrichmentFact.objects.create(
+        tenant=tenant,
+        product=product,
+        source_id='tachka',
+        fact_type=ProductEnrichmentFact.FactType.DESCRIPTION_HINT,
+        name='Спорный факт',
+        value='требует проверки',
+        confidence=0.4,
+        needs_review=True,
+    )
+    VehicleFitment.objects.create(
+        tenant=other_tenant,
+        product=other_product,
+        source_id='tachka',
+        make='AUDI',
+        model='A6',
+        confidence=0.4,
+        needs_review=True,
+    )
+    client = Client()
+
+    response = client.get(
+        '/api/v1/products/review-queue/',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    ids = {item['id'] for item in data}
+    assert ids == {f'fitment:{fitment.pk}', f'fact:{fact.pk}'}
+    assert all(item['product']['id'] == product.pk for item in data)
+
+
+@pytest.mark.django_db
+def test_review_queue_lists_pending_classifications():
+    tenant, api_key = make_tenant('review-queue-classification-list')
+    product = make_product(tenant, name='Колодки BREMBO P50136')
+    classification = ProductCatalogClassification.objects.create(
+        tenant=tenant,
+        product=product,
+        domain=ProductCatalogClassification.Domain.AUTO_PARTS,
+        confidence=0.75,
+        source=ProductCatalogClassification.Source.RULES,
+        reason='Найдены признаки автозапчасти.',
+        needs_review=True,
+    )
+    client = Client()
+
+    response = client.get(
+        '/api/v1/products/review-queue/',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    assert data[0]['id'] == f'classification:{classification.pk}'
+    assert data[0]['title'] == 'Автозапчасть'
+    assert data[0]['reason'] == 'Найдены признаки автозапчасти.'
+
+
+@pytest.mark.django_db
+def test_review_queue_approves_fitment_and_refreshes_applicability():
+    tenant, api_key = make_tenant('review-queue-approve-fitment')
+    product = make_product(tenant)
+    fitment = VehicleFitment.objects.create(
+        tenant=tenant,
+        product=product,
+        source_id='tachka',
+        make='MERCEDES-BENZ',
+        model='E-CLASS',
+        generation='W213',
+        confidence=0.4,
+        needs_review=True,
+    )
+    client = Client()
+
+    response = client.post(
+        f'/api/v1/products/review-queue/fitment/{fitment.pk}/approve/',
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    fitment.refresh_from_db()
+    product.refresh_from_db()
+    assert fitment.review_status == ReviewStatus.APPROVED
+    assert fitment.needs_review is False
+    assert product.applicability[0]['model'] == 'E-CLASS'
+
+
+@pytest.mark.django_db
+def test_review_queue_cannot_approve_unknown_classification():
+    tenant, api_key = make_tenant('review-queue-unknown-classification')
+    product = make_product(tenant, name='Неясный товар')
+    classification = ProductCatalogClassification.objects.create(
+        tenant=tenant,
+        product=product,
+        domain=ProductCatalogClassification.Domain.UNKNOWN,
+        confidence=0.3,
+        source=ProductCatalogClassification.Source.RULES,
+        reason='Не найдено достаточно признаков.',
+        needs_review=True,
+    )
+    client = Client()
+
+    response = client.post(
+        f'/api/v1/products/review-queue/classification/{classification.pk}/approve/',
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 400
+    assert response.json()['code'] == 'unknown_classification'
+    classification.refresh_from_db()
+    assert classification.review_status == ReviewStatus.PENDING
 
 
 @pytest.mark.django_db
