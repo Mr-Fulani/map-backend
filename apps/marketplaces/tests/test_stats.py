@@ -72,8 +72,8 @@ def test_fetch_for_account_creates_listing_stats():
     listing = make_listing(tenant, account, external_id='9990001')
 
     raw = avito_stats_response('9990001', [
-        {'date': '2026-05-01', 'views': 100, 'uniqViews': 80, 'contacts': 5},
-        {'date': '2026-05-02', 'views': 120, 'uniqViews': 90, 'contacts': 7},
+        {'date': '2026-05-01', 'uniqViews': 80, 'views': 100, 'uniqContacts': 5, 'contacts': 6},
+        {'date': '2026-05-02', 'uniqViews': 90, 'views': 120, 'uniqContacts': 7, 'contacts': 9},
     ])
 
     with patch.object(StatsService, '_fetch_raw', return_value=raw):
@@ -89,9 +89,9 @@ def test_fetch_for_account_creates_listing_stats():
 
     s1 = stats[0]
     assert s1.date == datetime.date(2026, 5, 1)
-    assert s1.views == 100
-    assert s1.impressions == 80
-    assert s1.contacts == 5
+    assert s1.views == 80        # uniqViews → views
+    assert s1.impressions == 100  # views → impressions
+    assert s1.contacts == 5      # uniqContacts → contacts
     assert s1.tenant == tenant
 
 
@@ -102,15 +102,16 @@ def test_fetch_for_account_calculates_ctr():
     account = make_account(tenant)
     make_listing(tenant, account, external_id='9990002')
 
+    # uniqViews=20, views=200 → ctr = 20/200*100 = 10.0
     raw = avito_stats_response('9990002', [
-        {'date': '2026-05-01', 'views': 10, 'uniqViews': 200, 'contacts': 1},
+        {'date': '2026-05-01', 'uniqViews': 20, 'views': 200, 'uniqContacts': 1, 'contacts': 2},
     ])
 
     with patch.object(StatsService, '_fetch_raw', return_value=raw):
         StatsService.fetch_for_account(account, datetime.date(2026, 5, 1), datetime.date(2026, 5, 1))
 
     stat = ListingStats.objects.get(date=datetime.date(2026, 5, 1))
-    assert stat.ctr == round(10 / 200 * 100, 2)
+    assert stat.ctr == round(20 / 200 * 100, 2)
 
 
 @pytest.mark.django_db
@@ -120,18 +121,18 @@ def test_fetch_for_account_upserts_on_duplicate_date():
     account = make_account(tenant)
     make_listing(tenant, account, external_id='9990003')
 
-    day = [{'date': '2026-05-01', 'views': 50, 'uniqViews': 100, 'contacts': 2}]
+    day = [{'date': '2026-05-01', 'uniqViews': 50, 'views': 100, 'uniqContacts': 2, 'contacts': 3}]
     with patch.object(StatsService, '_fetch_raw', return_value=avito_stats_response('9990003', day)):
         StatsService.fetch_for_account(account, datetime.date(2026, 5, 1), datetime.date(2026, 5, 1))
 
-    day_updated = [{'date': '2026-05-01', 'views': 75, 'uniqViews': 120, 'contacts': 3}]
+    day_updated = [{'date': '2026-05-01', 'uniqViews': 75, 'views': 120, 'uniqContacts': 4, 'contacts': 5}]
     with patch.object(StatsService, '_fetch_raw', return_value=avito_stats_response('9990003', day_updated)):
         StatsService.fetch_for_account(account, datetime.date(2026, 5, 1), datetime.date(2026, 5, 1))
 
     assert ListingStats.objects.count() == 1
     stat = ListingStats.objects.get()
-    assert stat.views == 75
-    assert stat.contacts == 3
+    assert stat.views == 75       # uniqViews обновился
+    assert stat.contacts == 4     # uniqContacts обновился
 
 
 @pytest.mark.django_db
@@ -141,7 +142,7 @@ def test_fetch_for_account_ignores_unknown_item_ids():
     account = make_account(tenant)
 
     raw = avito_stats_response('9999999', [
-        {'date': '2026-05-01', 'views': 10, 'uniqViews': 20, 'contacts': 1},
+        {'date': '2026-05-01', 'uniqViews': 10, 'views': 20, 'uniqContacts': 1, 'contacts': 1},
     ])
     with patch.object(StatsService, '_fetch_raw', return_value=raw):
         count = StatsService.fetch_for_account(
