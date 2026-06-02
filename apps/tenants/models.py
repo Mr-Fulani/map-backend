@@ -61,8 +61,8 @@ class Tenant(TimestampedModel):
 
     class CatalogDomain(models.TextChoices):
         AUTO_PARTS = 'auto_parts', 'Автозапчасти'
-        MIXED = 'mixed', 'Смешанный каталог'
-        GENERIC = 'generic', 'Обычный каталог'
+        MIXED = 'mixed', 'Авто-ти + Другие товары'
+        GENERIC = 'generic', 'Смешанный каталог'
         JEWELLERY = 'jewellery', 'Украшения'
         APPAREL = 'apparel', 'Одежда'
         OTHER = 'other', 'Другое'
