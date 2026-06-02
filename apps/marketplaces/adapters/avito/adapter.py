@@ -95,7 +95,8 @@ class AvitoAdapter:
         Запрашивает статистику листингов из Avito Stats API.
 
         Разбивает item_ids на чанки по 200 (лимит Avito).
-        Возвращает список объектов: [{itemId, stats: [{date, views, uniqViews, contacts}]}].
+        История хранится 270 дней. periodGrouping="day" — обязательно для дневной разбивки.
+        Возвращает список: [{itemId, stats: [{date, uniqViews, views, uniqContacts, ...}]}].
         """
         if not item_ids:
             return []
@@ -112,7 +113,8 @@ class AvitoAdapter:
                 'dateFrom': date_from.isoformat(),
                 'dateTo': date_to.isoformat(),
                 'itemIds': [int(x) for x in chunk],
-                'fields': ['uniqViews', 'views', 'contacts'],
+                'fields': ['uniqViews', 'views', 'uniqContacts', 'contacts'],
+                'periodGrouping': 'day',
             }
             resp = requests.post(url, headers=headers, json=payload, timeout=30)
             if resp.status_code == 401:

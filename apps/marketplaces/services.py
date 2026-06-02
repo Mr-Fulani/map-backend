@@ -398,9 +398,12 @@ class StatsService:
             if not info:
                 continue
             for day in item.get('stats', []):
-                views = int(day.get('views', 0) or 0)
-                impressions = int(day.get('uniqViews', 0) or 0)
-                contacts = int(day.get('contacts', 0) or 0)
+                # uniqViews — уникальные просмотры карточки (views в нашей модели)
+                # views — все просмотры, используем как прокси для показов (impressions)
+                # uniqContacts — уникальные контакты (contacts в нашей модели)
+                views = int(day.get('uniqViews', 0) or 0)
+                impressions = int(day.get('views', 0) or 0)
+                contacts = int(day.get('uniqContacts', 0) or 0)
                 ctr = round(views / impressions * 100, 2) if impressions else 0.0
                 to_upsert.append(ListingStats(
                     listing_id=info['id'],
