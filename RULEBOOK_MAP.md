@@ -660,5 +660,51 @@ SyncLog.objects.create(payload={'token': token, ...})  # хранить толь
 
 ---
 
+## ЧАСТЬ 9 — ВНЕШНИЕ РЕСУРСЫ И ДОКУМЕНТАЦИЯ
+
+### 9.1 Avito API
+
+> **Правило:** перед реализацией любого нового метода Avito API — сверять с реальной документацией. Не писать по предположениям.
+
+**Список всех OpenAPI спецификаций Avito:**
+```
+https://developers.avito.ru/web/1/openapi/list
+```
+
+**Просмотр через Swagger Editor:**
+```
+https://editor.swagger.io/
+→ File → Import URL → вставить нужный URL спецификации
+```
+
+**Загрузка через curl:**
+```bash
+# Список всех API
+curl "https://developers.avito.ru/web/1/openapi/list" -H "Accept: application/json"
+
+# Скачать спецификацию
+curl "https://developers.avito.ru/web/1/openapi/spec" > avito-openapi.json
+```
+
+**Что обязательно проверять перед реализацией:**
+- HTTP метод (GET / POST / PATCH)
+- Точный URL и версия (`/core/v1/`, `/stats/v1/`, etc.)
+- Тело запроса — имена полей (camelCase vs snake_case), обязательные параметры
+- Структура ответа — вложенность, имена полей
+- Rate limits и батч-лимиты (например, 200 itemIds за запрос для Stats API)
+- Срок хранения данных (Stats API — 270 дней истории)
+
+**Реализованные методы и что проверено:**
+
+| Метод | Endpoint | Верифицирован |
+|---|---|---|
+| Публикация | `POST /core/v1/accounts/{id}/items` | частично |
+| Обновление | `PUT /core/v1/accounts/{id}/items/{item_id}` | частично |
+| Цена | `PATCH /core/v1/accounts/{id}/items/{item_id}` | частично |
+| Статус | `GET /core/v1/accounts/{id}/items/{item_id}` | частично |
+| Статистика | `POST /stats/v1/accounts/{id}/items` | ✅ по документации |
+
+---
+
 *RULEBOOK v1.0 — MAP. Май 2026.*
 *Обновляется через PR при изменении архитектурных решений.*
