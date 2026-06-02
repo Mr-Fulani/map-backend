@@ -5,6 +5,7 @@ from django.contrib import admin
 from django.utils import timezone
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin
+from unfold.widgets import UnfoldAdminSelectWidget
 
 from apps.tenants.models import (
     APIKey, CatalogDomain, Tenant, TenantCatalogDomain, TenantUser, WebhookEndpoint,
@@ -125,6 +126,7 @@ class TenantAdmin(ModelAdmin):
                 choices=choices,
                 label='Домен каталога',
                 help_text='Список доменов управляется суперюзером в разделе “Домены каталога”.',
+                widget=UnfoldAdminSelectWidget(),
             )
         return form
 

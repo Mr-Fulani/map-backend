@@ -25,6 +25,8 @@ def _write_billing_log(tenant, status: str, message: str) -> None:
         )
     except Exception:
         pass
+
+
 GRACE_PERIOD_DAYS = 7
 
 

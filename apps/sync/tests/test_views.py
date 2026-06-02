@@ -5,10 +5,6 @@
 """
 import pytest
 
-from apps.datasources.encryption import encrypt
-from apps.datasources.models import DataSourceConnection
-from apps.marketplaces.models import Listing, MarketplaceAccount
-from apps.products.models import Product
 from apps.sync.models import SyncLog
 from apps.tenants.services import TenantService
 
