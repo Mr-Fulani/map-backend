@@ -667,23 +667,29 @@ SyncLog.objects.create(payload={'token': token, ...})  # хранить толь
 > **Правило:** перед реализацией любого нового метода Avito API — сверять с реальной документацией. Не писать по предположениям.
 
 **Список всех OpenAPI спецификаций Avito:**
+```bash
+curl "https://developers.avito.ru/web/1/openapi/list"
 ```
-https://developers.avito.ru/web/1/openapi/list
+
+**Скачать нужные спецификации (нужны для MAP):**
+```bash
+# Главный — публикация, обновление, удаление, статусы, статистика (/core/v1/ и /stats/v1/)
+curl "https://developers.avito.ru/web/1/openapi/item" > avito-item-api.json
+
+# OAuth токены
+curl "https://developers.avito.ru/web/1/openapi/auth" > avito-auth-api.json
+
+# Информация о пользователе/аккаунте
+curl "https://developers.avito.ru/web/1/openapi/user" > avito-user-api.json
 ```
+
+> ⚠️ Слага `core` и `stats` не существует — оба входят в слаг **`item`**.
+> Слаг `item`: «API для получения статистики по объявлениям, применения дополнительных услуг,
+> а также просмотр статусов объявлений».
 
 **Просмотр через Swagger Editor:**
 ```
-https://editor.swagger.io/
-→ File → Import URL → вставить нужный URL спецификации
-```
-
-**Загрузка через curl:**
-```bash
-# Список всех API
-curl "https://developers.avito.ru/web/1/openapi/list" -H "Accept: application/json"
-
-# Скачать спецификацию
-curl "https://developers.avito.ru/web/1/openapi/spec" > avito-openapi.json
+https://editor.swagger.io/ → File → Import URL → вставить URL спецификации
 ```
 
 **Что обязательно проверять перед реализацией:**
@@ -696,13 +702,13 @@ curl "https://developers.avito.ru/web/1/openapi/spec" > avito-openapi.json
 
 **Реализованные методы и что проверено:**
 
-| Метод | Endpoint | Верифицирован |
-|---|---|---|
-| Публикация | `POST /core/v1/accounts/{id}/items` | частично |
-| Обновление | `PUT /core/v1/accounts/{id}/items/{item_id}` | частично |
-| Цена | `PATCH /core/v1/accounts/{id}/items/{item_id}` | частично |
-| Статус | `GET /core/v1/accounts/{id}/items/{item_id}` | частично |
-| Статистика | `POST /stats/v1/accounts/{id}/items` | ✅ по документации |
+| Метод | Endpoint | Спека | Верифицирован |
+|---|---|---|---|
+| Публикация | `POST /core/v1/accounts/{id}/items` | `item` | частично |
+| Обновление | `PUT /core/v1/accounts/{id}/items/{item_id}` | `item` | частично |
+| Цена | `PATCH /core/v1/accounts/{id}/items/{item_id}` | `item` | частично |
+| Статус | `GET /core/v1/accounts/{id}/items/{item_id}` | `item` | частично |
+| Статистика | `POST /stats/v1/accounts/{id}/items` | `item` | ✅ по документации |
 
 ---
 
