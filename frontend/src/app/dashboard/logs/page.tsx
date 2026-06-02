@@ -26,15 +26,15 @@ interface Meta {
 
 const STATUS_FILTERS = [
   { value: '', label: 'Все' },
-  { value: 'success', label: 'Успех' },
+  { value: 'ok', label: 'Успех' },
   { value: 'error', label: 'Ошибки' },
-  { value: 'warning', label: 'Предупреждения' },
+  { value: 'warn', label: 'Предупреждения' },
 ];
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = {
-  success: 'default',
+  ok: 'default',
   error: 'destructive',
-  warning: 'secondary',
+  warn: 'secondary',
 };
 
 export default function LogsPage() {

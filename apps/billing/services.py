@@ -11,6 +11,20 @@ from apps.tenants.models import Tenant
 logger = logging.getLogger(__name__)
 
 TRIAL_DAYS = 14
+
+
+def _write_billing_log(tenant, status: str, message: str) -> None:
+    """Записывает биллинговое событие в SyncLog — не падает при ошибках."""
+    try:
+        from apps.sync.models import SyncLog
+        SyncLog.objects.create(
+            tenant=tenant,
+            event_type=SyncLog.EVENT_BILLING,
+            status=status,
+            message=message,
+        )
+    except Exception:
+        pass
 GRACE_PERIOD_DAYS = 7
 
 
@@ -200,6 +214,7 @@ class BillingService:
             tenant.pk, LEVEL_BILLING,
             f'Оплата {invoice.amount}₽ прошла успешно. Подписка активирована.',
         )
+        _write_billing_log(tenant, 'ok', f'Оплата {invoice.amount}₽ прошла успешно')
         logger.info('Вебхук payment.succeeded: tenant=%s, amount=%s', tenant.slug, amount)
 
     @staticmethod
@@ -210,10 +225,11 @@ class BillingService:
 
         Переводит Invoice в статус failed.
         """
-        updated = Invoice.objects.filter(yookassa_payment_id=payment_id).update(
-            status=Invoice.STATUS_FAILED,
-        )
-        logger.warning('Вебхук payment.canceled: payment_id=%s, обновлено=%d', payment_id, updated)
+        invoice = Invoice.objects.filter(yookassa_payment_id=payment_id).select_related('tenant').first()
+        Invoice.objects.filter(yookassa_payment_id=payment_id).update(status=Invoice.STATUS_FAILED)
+        if invoice:
+            _write_billing_log(invoice.tenant, 'warn', f'Оплата не прошла (payment_id={payment_id})')
+        logger.warning('Вебхук payment.canceled: payment_id=%s', payment_id)
 
     @staticmethod
     @transaction.atomic

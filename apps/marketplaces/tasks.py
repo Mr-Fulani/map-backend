@@ -33,6 +33,21 @@ def _notify_error(tenant, message: str, listing=None) -> None:
     )
 
 
+def _write_log(tenant, event_type: str, status: str, message: str, listing=None) -> None:
+    """Записывает событие в SyncLog — не падает при ошибках."""
+    try:
+        from apps.sync.models import SyncLog
+        SyncLog.objects.create(
+            tenant=tenant,
+            event_type=event_type,
+            status=status,
+            message=message,
+            listing=listing,
+        )
+    except Exception:
+        pass
+
+
 def _notify_critical(tenant, message: str) -> None:
     """Асинхронно отправляет critical-уведомление тенанту."""
     from apps.notifications.tasks import send_notification_task
@@ -82,6 +97,11 @@ def publish_listing_task(self, listing_id: int):
             listing.external_id = external_id
             listing.status = Listing.STATUS_ACTIVE
             listing.published_at = now()
+            _write_log(
+                listing.tenant, 'listing_publish', 'ok',
+                f'Объявление «{listing.title or listing.product.name}» опубликовано на Avito',
+                listing=listing,
+            )
         except TokenExpiredError as exc:
             raise self.retry(exc=exc, countdown=5)
         except NotFoundError:
@@ -134,6 +154,11 @@ def update_listing_task(self, listing_id: int):
         AvitoAdapter(listing.account).update(listing)
         listing.last_sync_at = now()
         listing.save(update_fields=['last_sync_at'])
+        _write_log(
+            listing.tenant, 'listing_update', 'ok',
+            f'Объявление «{listing.title or listing.product.name}» обновлено на Avito',
+            listing=listing,
+        )
     except NotFoundError:
         listing.external_id = None
         listing.status = Listing.STATUS_DRAFT
@@ -152,6 +177,11 @@ def update_price_task(self, listing_id: int):
         AvitoAdapter(listing.account).update_price(listing)
         listing.last_sync_at = now()
         listing.save(update_fields=['last_sync_at'])
+        _write_log(
+            listing.tenant, 'listing_price_update', 'ok',
+            f'Цена «{listing.title or listing.product.name}» обновлена: {listing.price_on_listing}₽',
+            listing=listing,
+        )
     except (ServerError, RateLimitError) as exc:
         raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
 
@@ -165,6 +195,11 @@ def unpublish_listing_task(self, listing_id: int):
         AvitoAdapter(listing.account).unpublish(listing)
         listing.status = Listing.STATUS_ARCHIVED
         listing.save(update_fields=['status'])
+        _write_log(
+            listing.tenant, 'listing_unpublish', 'ok',
+            f'Объявление «{listing.title or listing.product.name}» снято с публикации',
+            listing=listing,
+        )
     except NotFoundError:
         listing.status = Listing.STATUS_ARCHIVED
         listing.save(update_fields=['status'])
@@ -183,6 +218,11 @@ def delete_listing_task(self, listing_id: int):
         AvitoAdapter(listing.account).delete(listing)
         listing.status = Listing.STATUS_DELETED
         listing.save(update_fields=['status'])
+        _write_log(
+            listing.tenant, 'listing_delete', 'ok',
+            f'Объявление «{listing.title or listing.product.name}» удалено с Avito',
+            listing=listing,
+        )
     except NotFoundError:
         listing.status = Listing.STATUS_DELETED
         listing.save(update_fields=['status'])
@@ -200,13 +240,24 @@ def check_moderation_task(self, listing_id: int):
         avito_status = data.get('status', '')
         if avito_status == 'active':
             listing.status = Listing.STATUS_ACTIVE
+            _write_log(
+                listing.tenant, 'moderation', 'ok',
+                f'Объявление «{listing.title or listing.product.name}» прошло модерацию Avito',
+                listing=listing,
+            )
         elif avito_status in ('rejected', 'blocked'):
             listing.status = Listing.STATUS_REJECTED
             listing.rejection_reason = data.get('rejection_reason', '')
+            reason_txt = f': {listing.rejection_reason}' if listing.rejection_reason else ''
             _notify_error(
                 listing.tenant,
                 f'Объявление «{listing.title or listing.product.name}» отклонено при модерации Avito'
-                + (f': {listing.rejection_reason}' if listing.rejection_reason else '.'),
+                + reason_txt,
+                listing=listing,
+            )
+            _write_log(
+                listing.tenant, 'moderation', 'warn',
+                f'Отклонено модерацией{reason_txt}',
                 listing=listing,
             )
         listing.last_sync_at = now()
