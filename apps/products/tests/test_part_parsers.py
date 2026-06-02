@@ -53,8 +53,12 @@ SEARCH_HTML = """
 """
 
 
-def make_tenant(slug):
+def make_tenant(slug, catalog_domain='auto_parts'):
     tenant, _ = TenantService.create_tenant(slug, slug, f'{slug}@test.com', 'pass12345')
+    tenant.catalog_domain = catalog_domain
+    tenant.save(update_fields=['catalog_domain'])
+    from apps.products.services import ProductCategorySeedService
+    ProductCategorySeedService.enable_tenant_catalog_domain(tenant, catalog_domain)
     return tenant
 
 
