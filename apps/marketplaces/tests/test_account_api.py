@@ -164,6 +164,23 @@ class TestMarketplaceAccountAPI:
         )
         assert resp.status_code == 404
 
+    def test_create_account_schedules_autoload_profile_setup(self):
+        """После создания аккаунта Avito планируется задача настройки Autoload профиля."""
+        from unittest.mock import patch
+        from django.test import Client
+        tenant, key = make_tenant('acc-autoload')
+
+        with patch('apps.marketplaces.services.setup_autoload_profile_task') as mock_task:
+            Client().post('/api/v1/accounts/', {
+                'name': 'Test',
+                'marketplace': 'avito',
+                'external_id': 'al-001',
+                'client_id': 'x',
+                'client_secret': 'y',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+
+            mock_task.delay.assert_called_once()
+
     def test_duplicate_external_id_returns_409(self):
         """Создание дублирующего external_id возвращает 409."""
         from django.test import Client

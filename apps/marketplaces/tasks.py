@@ -412,3 +412,38 @@ def fetch_stats_for_account_task(self, account_id: int, date_from_str: str, date
         return {'account_id': account_id, 'records': count}
     except Exception as exc:
         raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, queue='avito_publish')
+def setup_autoload_profile_task(self, account_id: int):
+    """
+    Регистрирует feed URL тенанта в профиле Avito Autoload.
+
+    Вызывается автоматически после создания MarketplaceAccount.
+    Использует email владельца тенанта как report_email.
+    При ошибке делает retry — не блокирует создание аккаунта.
+    """
+    from apps.marketplaces.models import MarketplaceAccount
+    from apps.tenants.models import TenantUser
+
+    try:
+        account = MarketplaceAccount.objects.select_related('tenant').get(pk=account_id)
+    except MarketplaceAccount.DoesNotExist:
+        return
+
+    owner = (
+        TenantUser.objects
+        .filter(tenant=account.tenant, role=TenantUser.ROLE_OWNER)
+        .select_related('user')
+        .first()
+    )
+    report_email = owner.user.email if owner else account.tenant.slug + '@map.local'
+
+    try:
+        AvitoAdapter(account).setup_autoload_profile(report_email)
+        _write_log(
+            account.tenant, 'autoload_profile_setup', 'ok',
+            f'Autoload профиль Avito настроен для {account.name}',
+        )
+    except Exception as exc:
+        raise self.retry(exc=exc, countdown=backoff(self.request.retries))
