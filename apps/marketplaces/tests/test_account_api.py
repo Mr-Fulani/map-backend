@@ -170,7 +170,11 @@ class TestMarketplaceAccountAPI:
         from django.test import Client
         tenant, key = make_tenant('acc-autoload')
 
-        with patch('apps.marketplaces.services.setup_autoload_profile_task') as mock_task:
+        with patch('apps.marketplaces.tasks.setup_autoload_profile_task') as mock_task, \
+             patch('apps.marketplaces.services.transaction') as mock_tx:
+            # В тестах on_commit не срабатывает — вызываем коллбэк немедленно
+            mock_tx.on_commit.side_effect = lambda fn: fn()
+
             Client().post('/api/v1/accounts/', {
                 'name': 'Test',
                 'marketplace': 'avito',
