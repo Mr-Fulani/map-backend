@@ -8,7 +8,7 @@ from django.conf import settings
 
 from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 from apps.marketplaces.adapters.avito.error_handler import handle_avito_error
-from apps.marketplaces.adapters.avito.feed_builder import build_feed, get_ad_id
+from apps.marketplaces.adapters.avito.feed_builder import build_feed
 from apps.marketplaces.adapters.avito.rate_limiter import AvitoRateLimiter
 from apps.marketplaces.base import BaseMarketplaceAdapter
 
