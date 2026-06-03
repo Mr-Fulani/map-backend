@@ -280,9 +280,10 @@ class AvitoAdapter(BaseMarketplaceAdapter):
                     'feed_url': self._feed_public_url(),
                 }
             ],
-            'schedule': {
-                'period': 'daily',
-            },
+            # Каждый день в 3:00 и 12:00 МСК, до 50 000 объявлений за период
+            'schedule': [
+                {'rate': 50000, 'weekdays': [0, 1, 2, 3, 4, 5, 6], 'time_slots': [3, 12]},
+            ],
         }
         resp = requests.post(
             f'{AVITO_API_BASE}/autoload/v2/profile',
