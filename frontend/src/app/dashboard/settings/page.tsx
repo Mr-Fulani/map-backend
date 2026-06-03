@@ -972,6 +972,30 @@ export default function SettingsPage() {
               </CardHeader>
               <CardContent>
                 <form onSubmit={createAccount} className="space-y-4">
+                  {/* Предупреждение об Автозагрузке */}
+                  <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-sm space-y-1">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                      <div>
+                        <p className="font-medium text-amber-600">Требуется Avito Автозагрузка</p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          Для публикации объявлений через API нужна платная услуга Avito Автозагрузка (3 000 ₽/мес).
+                          Активируйте её в{' '}
+                          <a
+                            href="https://www.avito.ru/autoload/settings"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-0.5 text-primary hover:underline"
+                          >
+                            кабинете Avito
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                          {' '}до или после подключения аккаунта.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="space-y-2">
                     <Label>Название аккаунта</Label>
                     <Input 
