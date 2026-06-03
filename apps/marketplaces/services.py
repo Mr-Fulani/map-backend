@@ -305,7 +305,7 @@ class MarketplaceAccountService:
             credentials_enc, data.get('external_id', '')
         )
         try:
-            return MarketplaceAccount.objects.create(
+            account = MarketplaceAccount.objects.create(
                 tenant=tenant,
                 name=data['name'],
                 marketplace=data['marketplace'],
@@ -314,6 +314,13 @@ class MarketplaceAccountService:
             )
         except Exception:
             raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
+
+        # Регистрируем feed URL в Avito Autoload после коммита транзакции
+        if account.marketplace == MarketplaceAccount.MARKETPLACE_AVITO:
+            from apps.marketplaces.tasks import setup_autoload_profile_task
+            transaction.on_commit(lambda: setup_autoload_profile_task.delay(account.pk))
+
+        return account
 
     @staticmethod
     def update_credentials(account, data: dict):
