@@ -7,11 +7,7 @@ import responses as responses_lib
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
 from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
-from apps.marketplaces.adapters.avito.error_handler import (
-    NotFoundError,
-    TokenExpiredError,
-    backoff,
-)
+from apps.marketplaces.adapters.avito.error_handler import backoff
 from apps.marketplaces.adapters.avito.feed_builder import build_feed, get_ad_id
 from apps.marketplaces.models import Listing, MarketplaceAccount
 from apps.products.services import ProductService

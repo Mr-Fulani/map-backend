@@ -9,10 +9,7 @@ from apps.anti_ban.velocity import VelocityController
 from apps.billing.services import LimitChecker
 from apps.marketplaces.adapters.avito.adapter import AvitoAdapter, FeedUploadError
 from apps.marketplaces.adapters.avito.error_handler import (
-    NotFoundError,
-    RejectedError,
     ServerError,
-    TokenExpiredError,
     backoff,
 )
 from apps.marketplaces.adapters.avito.feed_builder import get_ad_id
