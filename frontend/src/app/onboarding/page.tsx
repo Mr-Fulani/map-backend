@@ -1,11 +1,12 @@
 /**
- * Onboarding Wizard — 5-шаговый мастер настройки.
+ * Onboarding Wizard — 6-шаговый мастер настройки.
  *
  * Шаг 1: Подключение Avito (client_id + client_secret)
- * Шаг 2: Источник данных (1С HTTP / XML / CSV)
- * Шаг 3: Тест подключения + импорт 10 товаров
- * Шаг 4: Маппинг категорий 1С → Avito
- * Шаг 5: Первая синхронизация → готово
+ * Шаг 2: Активация Avito Автозагрузки (один раз в кабинете Avito)
+ * Шаг 3: Источник данных (1С HTTP / XML / CSV)
+ * Шаг 4: Тест подключения + импорт 10 товаров
+ * Шаг 5: Маппинг категорий 1С → Avito
+ * Шаг 6: Первая синхронизация → готово
  */
 
 'use client';
@@ -17,6 +18,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Progress } from '@/components/ui/progress';
 import { Zap } from 'lucide-react';
 import { StepAvito } from './steps/step-avito';
+import { StepAutoload } from './steps/step-autoload';
 import { StepDatasource } from './steps/step-datasource';
 import { StepTest } from './steps/step-test';
 import { StepCategories } from './steps/step-categories';
@@ -24,10 +26,11 @@ import { StepSync } from './steps/step-sync';
 
 const STEPS = [
   { id: 1, title: 'Подключение Avito', description: 'Введите API-ключи Avito' },
-  { id: 2, title: 'Источник данных', description: 'Откуда берём товары' },
-  { id: 3, title: 'Тест подключения', description: 'Проверяем всё работает' },
-  { id: 4, title: 'Категории', description: 'Маппинг категорий' },
-  { id: 5, title: 'Запуск', description: 'Первая синхронизация' },
+  { id: 2, title: 'Автозагрузка', description: 'Активируйте публикацию объявлений' },
+  { id: 3, title: 'Источник данных', description: 'Откуда берём товары' },
+  { id: 4, title: 'Тест подключения', description: 'Проверяем всё работает' },
+  { id: 5, title: 'Категории', description: 'Маппинг категорий' },
+  { id: 6, title: 'Запуск', description: 'Первая синхронизация' },
 ];
 
 export default function OnboardingPage() {
@@ -141,27 +144,34 @@ export default function OnboardingPage() {
               />
             )}
             {currentStep === 2 && (
-              <StepDatasource
+              <StepAutoload
                 data={wizardData}
                 onNext={handleNext}
                 onBack={handleBack}
               />
             )}
             {currentStep === 3 && (
-              <StepTest
+              <StepDatasource
                 data={wizardData}
                 onNext={handleNext}
                 onBack={handleBack}
               />
             )}
             {currentStep === 4 && (
-              <StepCategories
+              <StepTest
                 data={wizardData}
                 onNext={handleNext}
                 onBack={handleBack}
               />
             )}
             {currentStep === 5 && (
+              <StepCategories
+                data={wizardData}
+                onNext={handleNext}
+                onBack={handleBack}
+              />
+            )}
+            {currentStep === 6 && (
               <StepSync
                 data={wizardData}
                 onFinish={handleFinish}

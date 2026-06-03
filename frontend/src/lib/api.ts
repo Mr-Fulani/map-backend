@@ -262,6 +262,7 @@ export const accountApi = {
   create: (data: Record<string, unknown>) => api.post('/accounts/', data),
   patch: (id: number, data: Record<string, unknown>) => api.patch(`/accounts/${id}/`, data),
   delete: (id: number) => api.delete(`/accounts/${id}/`),
+  checkAutoload: (id: number) => api.get(`/accounts/${id}/autoload-status/`),
 };
 
 // Categories

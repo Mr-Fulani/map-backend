@@ -91,6 +91,47 @@ class MarketplaceAccountDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@extend_schema(tags=['Accounts'])
+class AutoloadStatusView(APIView):
+    """GET /api/v1/accounts/{id}/autoload-status/ — проверить активирована ли Автозагрузка Avito."""
+
+    def get(self, request, pk):
+        """
+        Проверяет активирован ли Avito Autoload для аккаунта.
+
+        Возвращает:
+          {"activated": true, "feed_url": "https://..."}  — если профиль найден
+          {"activated": false, "feed_url": "https://...", "activate_url": "https://www.avito.ru/autoload/settings"}
+        """
+        try:
+            account = MarketplaceAccount.objects.get(pk=pk, tenant=request.tenant)
+        except MarketplaceAccount.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
+        import requests as req
+        from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
+
+        adapter = AvitoAdapter(account)
+        feed_url = adapter._feed_public_url()
+
+        try:
+            token = AvitoAuthManager().get_token(account)
+            resp = req.get(
+                'https://api.avito.ru/autoload/v2/profile',
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=10,
+            )
+            activated = resp.status_code == 200
+        except Exception:
+            activated = False
+
+        payload = {'activated': activated, 'feed_url': feed_url}
+        if not activated:
+            payload['activate_url'] = 'https://www.avito.ru/autoload/settings'
+        return Response(payload)
+
+
 class UnmappedCategoriesView(APIView):
     def get(self, request):
         categories = CategoryMappingService.get_unmapped_categories(request.tenant)
