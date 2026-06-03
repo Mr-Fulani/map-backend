@@ -7,7 +7,7 @@ from django.utils.timezone import now
 from apps.anti_ban.ramp_up import GradualRampUp
 from apps.anti_ban.velocity import VelocityController
 from apps.billing.services import LimitChecker
-from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
+from apps.marketplaces.adapters.avito.adapter import AvitoAdapter, FeedUploadError
 from apps.marketplaces.adapters.avito.error_handler import (
     NotFoundError,
     RejectedError,
@@ -15,6 +15,7 @@ from apps.marketplaces.adapters.avito.error_handler import (
     TokenExpiredError,
     backoff,
 )
+from apps.marketplaces.adapters.avito.feed_builder import get_ad_id
 from apps.marketplaces.adapters.avito.rate_limiter import RateLimitError
 from apps.marketplaces.models import Listing
 from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR
@@ -62,6 +63,12 @@ def _get_listing(listing_id: int) -> Listing:
 
 @shared_task(bind=True, max_retries=3, queue='avito_publish')
 def publish_listing_task(self, listing_id: int):
+    """
+    Проверяет лимиты и загружает листинг в Avito через Autoload-фид.
+
+    Avito обрабатывает фид асинхронно: external_id придёт через poll_feed_results_task.
+    Статус после успешной загрузки фида: PENDING (ждёт обработки Avito).
+    """
     listing = _get_listing(listing_id)
 
     if listing.external_id:
@@ -83,95 +90,71 @@ def publish_listing_task(self, listing_id: int):
             )
             return
 
-        # Проверка gradual ramp-up — лимит публикаций в первые дни работы тенанта
         ramp = GradualRampUp()
         published_today = ramp.get_published_today(listing.tenant)
         if not ramp.is_allowed(listing.tenant, published_today):
-            # Откладываем задачу на следующий день, не теряем
             raise self.retry(exc=RuntimeError('Ramp-up limit reached'), countdown=3600)
 
-        # Проверка velocity — защита от слишком быстрых публикаций
         if not VelocityController().is_allowed(listing.account, 'publish'):
             raise self.retry(exc=RuntimeError('Velocity limit exceeded'), countdown=300)
 
         try:
-            external_id = AvitoAdapter(listing.account).publish(listing)
-            listing.external_id = external_id
-            listing.status = Listing.STATUS_ACTIVE
-            listing.published_at = now()
+            AvitoAdapter(listing.account).flush_feed([listing])
+            listing.status = Listing.STATUS_PENDING
+            listing.save(update_fields=['status'])
             _write_log(
                 listing.tenant, 'listing_publish', 'ok',
-                f'Объявление «{listing.title or listing.product.name}» опубликовано на Avito',
+                f'Фид загружен для «{listing.title or listing.product.name}», ожидаем Avito',
                 listing=listing,
             )
-        except TokenExpiredError as exc:
-            raise self.retry(exc=exc, countdown=5)
-        except NotFoundError:
-            # При первичной публикации 404 означает ошибку аккаунта (неверный user_id или нет доступа)
-            listing.status = Listing.STATUS_REJECTED
-            listing.rejection_reason = 'Аккаунт не найден в Avito API. Проверьте User ID аккаунта.'
-            _notify_error(
-                listing.tenant,
-                f'Не удалось опубликовать «{listing.title or listing.product.name}»: '
-                f'аккаунт {listing.account.name!r} не найден в Avito API (ошибка 404). '
-                f'Проверьте User ID в настройках аккаунта.',
-                listing=listing,
+            # Запускаем polling результатов через 10 минут
+            poll_feed_results_task.apply_async(
+                args=[listing.account.pk],
+                countdown=600,
             )
-        except RejectedError as exc:
-            listing.status = Listing.STATUS_REJECTED
-            listing.rejection_reason = exc.reason
-            _notify_error(
-                listing.tenant,
-                f'Объявление «{listing.title or listing.product.name}» отклонено Avito: {exc.reason}',
-                listing=listing,
-            )
-        except RateLimitError as exc:
-            listing.retry_count += 1
-            listing.next_retry_at = now()
-            listing.save(update_fields=['status', 'retry_count', 'next_retry_at'])
-            raise self.retry(exc=exc, countdown=exc.retry_after)
-        except (ServerError, Exception) as exc:
+        except FeedUploadError as exc:
             listing.retry_count += 1
             if self.request.retries >= self.max_retries:
                 listing.status = Listing.STATUS_REJECTED
-                listing.rejection_reason = f'Ошибка сервера после {self.max_retries} попыток: {exc}'
-                _notify_error(
-                    listing.tenant,
-                    f'Не удалось опубликовать «{listing.title or listing.product.name}» '
-                    f'после {self.max_retries} попыток: {exc}',
-                    listing=listing,
-                )
+                listing.rejection_reason = str(exc)
+                listing.save(update_fields=['status', 'rejection_reason', 'retry_count'])
+                _notify_error(listing.tenant, str(exc), listing=listing)
+                return
+            listing.save(update_fields=['retry_count'])
             raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
-        finally:
-            listing.save()
+        except (ServerError, RateLimitError) as exc:
+            listing.retry_count += 1
+            listing.save(update_fields=['retry_count'])
+            raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
 
 
 @shared_task(bind=True, max_retries=3, queue='avito_update')
 def update_listing_task(self, listing_id: int):
+    """Обновляет содержимое объявления через перезагрузку фида."""
     listing = _get_listing(listing_id)
     if not listing.external_id:
         publish_listing_task.delay(listing_id)
         return
     try:
-        AvitoAdapter(listing.account).update(listing)
+        AvitoAdapter(listing.account).flush_feed([listing])
         listing.last_sync_at = now()
         listing.save(update_fields=['last_sync_at'])
         _write_log(
             listing.tenant, 'listing_update', 'ok',
-            f'Объявление «{listing.title or listing.product.name}» обновлено на Avito',
+            f'Фид обновлён для «{listing.title or listing.product.name}»',
             listing=listing,
         )
-    except NotFoundError:
-        listing.external_id = None
-        listing.status = Listing.STATUS_DRAFT
-        listing.save(update_fields=['external_id', 'status'])
-        publish_listing_task.delay(listing_id)
-    except (ServerError, RateLimitError) as exc:
+    except (FeedUploadError, ServerError, RateLimitError) as exc:
         raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
 
 
 @shared_task(bind=True, max_retries=5, queue='avito_price')
 def update_price_task(self, listing_id: int):
+    """
+    Обновляет цену через REST API: POST /core/v1/items/{item_id}/update_price.
+
+    Единственная write-операция Avito, доступная без фида.
+    """
     listing = _get_listing(listing_id)
     if not listing.external_id:
         return
@@ -190,46 +173,127 @@ def update_price_task(self, listing_id: int):
 
 @shared_task(bind=True, max_retries=3, queue='avito_delete')
 def unpublish_listing_task(self, listing_id: int):
+    """Снимает объявление с публикации через фид (статус Remove)."""
     listing = _get_listing(listing_id)
+    listing.status = Listing.STATUS_ARCHIVED
+    listing.save(update_fields=['status'])
     if not listing.external_id:
         return
     try:
-        AvitoAdapter(listing.account).unpublish(listing)
-        listing.status = Listing.STATUS_ARCHIVED
-        listing.save(update_fields=['status'])
+        AvitoAdapter(listing.account).flush_feed([listing])
         _write_log(
             listing.tenant, 'listing_unpublish', 'ok',
-            f'Объявление «{listing.title or listing.product.name}» снято с публикации',
+            f'Запрос на снятие «{listing.title or listing.product.name}» отправлен в Avito',
             listing=listing,
         )
-    except NotFoundError:
-        listing.status = Listing.STATUS_ARCHIVED
-        listing.save(update_fields=['status'])
-    except (ServerError, RateLimitError) as exc:
+    except (FeedUploadError, ServerError, RateLimitError) as exc:
         raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
 
 
 @shared_task(bind=True, max_retries=3, queue='avito_delete')
 def delete_listing_task(self, listing_id: int):
+    """Удаляет объявление через фид (статус Remove)."""
     listing = _get_listing(listing_id)
+    listing.status = Listing.STATUS_DELETED
+    listing.save(update_fields=['status'])
     if not listing.external_id:
-        listing.status = Listing.STATUS_DELETED
-        listing.save(update_fields=['status'])
         return
     try:
-        AvitoAdapter(listing.account).delete(listing)
-        listing.status = Listing.STATUS_DELETED
-        listing.save(update_fields=['status'])
+        AvitoAdapter(listing.account).flush_feed([listing])
         _write_log(
             listing.tenant, 'listing_delete', 'ok',
-            f'Объявление «{listing.title or listing.product.name}» удалено с Avito',
+            f'Запрос на удаление «{listing.title or listing.product.name}» отправлен в Avito',
             listing=listing,
         )
-    except NotFoundError:
-        listing.status = Listing.STATUS_DELETED
-        listing.save(update_fields=['status'])
-    except (ServerError, RateLimitError) as exc:
+    except (FeedUploadError, ServerError, RateLimitError) as exc:
         raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
+
+
+@shared_task(bind=True, max_retries=5, queue='avito_publish')
+def flush_feed_task(self, account_id: int):
+    """
+    Собирает все PENDING листинги аккаунта и загружает один батч-фид.
+
+    Запускается по расписанию (каждые 10 мин) или вручную после накопления изменений.
+    """
+    from apps.marketplaces.models import MarketplaceAccount
+    try:
+        account = MarketplaceAccount.objects.select_related('tenant').get(pk=account_id)
+    except MarketplaceAccount.DoesNotExist:
+        return
+
+    listings = list(
+        Listing.objects.filter(
+            account=account,
+            status=Listing.STATUS_PENDING,
+            external_id__isnull=True,
+        ).select_related('tenant', 'product')
+    )
+    if not listings:
+        return
+
+    try:
+        AvitoAdapter(account).flush_feed(listings)
+        _write_log(
+            account.tenant, 'feed_flush', 'ok',
+            f'Фид загружен: {len(listings)} объявлений для {account.name}',
+        )
+        poll_feed_results_task.apply_async(args=[account_id], countdown=600)
+    except (FeedUploadError, ServerError) as exc:
+        raise self.retry(exc=exc, countdown=backoff(self.request.retries))
+
+
+@shared_task(bind=True, max_retries=10, queue='avito_publish')
+def poll_feed_results_task(self, account_id: int):
+    """
+    Опрашивает Avito Autoload о результатах обработки фида.
+
+    Сопоставляет ad_id (publish_idempotency_key) с avito_id и обновляет
+    Listing.external_id + status='active' для опубликованных объявлений.
+
+    Запускается через 10 мин после flush_feed_task; при необходимости повторяет.
+    """
+    from apps.marketplaces.models import MarketplaceAccount
+    try:
+        account = MarketplaceAccount.objects.select_related('tenant').get(pk=account_id)
+    except MarketplaceAccount.DoesNotExist:
+        return
+
+    pending = list(
+        Listing.objects.filter(
+            account=account,
+            status=Listing.STATUS_PENDING,
+            external_id__isnull=True,
+        ).select_related('tenant', 'product')
+    )
+    if not pending:
+        return
+
+    ad_ids = [get_ad_id(lst) for lst in pending]
+    results = AvitoAdapter(account).get_feed_results(ad_ids)
+
+    # Индекс: ad_id → avito_id
+    mapping = {item['ad_id']: item.get('avito_id') for item in results}
+
+    published_count = 0
+    for listing in pending:
+        avito_id = mapping.get(get_ad_id(listing))
+        if avito_id:
+            listing.external_id = str(avito_id)
+            listing.status = Listing.STATUS_ACTIVE
+            listing.published_at = listing.published_at or now()
+            listing.save(update_fields=['external_id', 'status', 'published_at'])
+            published_count += 1
+
+    _write_log(
+        account.tenant, 'feed_poll', 'ok',
+        f'Получены ID Avito: {published_count}/{len(pending)} объявлений для {account.name}',
+    )
+
+    # Если часть листингов ещё не обработана — повторяем через 5 мин
+    still_pending = len(pending) - published_count
+    if still_pending and self.request.retries < self.max_retries:
+        raise self.retry(exc=RuntimeError(f'{still_pending} listing(s) still pending'), countdown=300)
 
 
 @shared_task(bind=True, max_retries=3, queue='avito_update')
