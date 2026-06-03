@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2 } from 'lucide-react';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { profileApi, datasourceApi } from '@/lib/api';
 
 interface ApiKey {
@@ -121,6 +121,9 @@ export default function SettingsPage() {
   const [togglingAccountId, setTogglingAccountId] = useState<number | null>(null);
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
   const [editAccountName, setEditAccountName] = useState('');
+  const [autoloadStatus, setAutoloadStatus] = useState<Record<number, { activated: boolean; feed_url: string } | null>>({});
+  const [checkingAutoloadId, setCheckingAutoloadId] = useState<number | null>(null);
+  const [copiedFeedId, setCopiedFeedId] = useState<number | null>(null);
   const [deletingDatasourceId, setDeletingDatasourceId] = useState<number | null>(null);
   const [creatingCatalogCategory, setCreatingCatalogCategory] = useState(false);
   const [uploadingCategoryImageId, setUploadingCategoryImageId] = useState<number | null>(null);
@@ -406,6 +409,26 @@ export default function SettingsPage() {
     } finally {
       setDeletingAccountId(null);
     }
+  }
+
+  async function checkAutoloadStatus(id: number) {
+    setCheckingAutoloadId(id);
+    try {
+      const { data } = await accountApi.checkAutoload(id);
+      setAutoloadStatus((prev) => ({ ...prev, [id]: data }));
+      if (data.activated) toast.success('Автозагрузка активирована!');
+      else toast.error('Автозагрузка ещё не активирована');
+    } catch {
+      toast.error('Не удалось проверить статус');
+    } finally {
+      setCheckingAutoloadId(null);
+    }
+  }
+
+  async function copyFeedUrl(id: number, url: string) {
+    await navigator.clipboard.writeText(url);
+    setCopiedFeedId(id);
+    setTimeout(() => setCopiedFeedId(null), 2000);
   }
 
   async function deleteDatasource(id: number) {
@@ -1017,8 +1040,11 @@ export default function SettingsPage() {
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {accounts.map((acc) => (
+                  {accounts.map((acc) => {
+                    const al = autoloadStatus[acc.id];
+                    return (
                     <div key={acc.id} className="rounded-lg border p-4 space-y-3">
+                      {/* Название + переключатель */}
                       <div className="flex items-center justify-between gap-3">
                         <div className="flex-1 min-w-0">
                           {editingAccountId === acc.id ? (
@@ -1080,8 +1106,77 @@ export default function SettingsPage() {
                           </Button>
                         </div>
                       </div>
+
+                      {/* Статус Avito Автозагрузки */}
+                      {al?.activated ? (
+                        <div className="flex items-center gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-sm">
+                          <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
+                          <span className="text-green-600 font-medium">Автозагрузка активирована</span>
+                        </div>
+                      ) : (
+                        <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 space-y-2">
+                          <div className="flex items-start gap-2">
+                            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                            <div className="text-sm">
+                              <p className="font-medium text-amber-600">
+                                {al === undefined ? 'Статус Автозагрузки неизвестен' : 'Автозагрузка не активирована'}
+                              </p>
+                              <p className="text-xs text-muted-foreground mt-0.5">
+                                Для публикации объявлений нужно активировать Avito Автозагрузку (3 000 ₽/мес).
+                              </p>
+                            </div>
+                          </div>
+                          <div className="space-y-1.5 pl-6">
+                            <p className="text-xs text-muted-foreground">
+                              1.{' '}
+                              <a
+                                href="https://www.avito.ru/autoload/settings"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-primary hover:underline"
+                              >
+                                Откройте настройки Автозагрузки
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
+                            </p>
+                            {al?.feed_url && (
+                              <div className="flex items-center gap-2">
+                                <p className="text-xs text-muted-foreground shrink-0">2. URL фида:</p>
+                                <code className="flex-1 truncate rounded bg-muted px-2 py-0.5 text-xs">
+                                  {al.feed_url}
+                                </code>
+                                <button
+                                  onClick={() => copyFeedUrl(acc.id, al.feed_url)}
+                                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                                  title="Скопировать"
+                                >
+                                  {copiedFeedId === acc.id
+                                    ? <Check className="h-3.5 w-3.5 text-green-500" />
+                                    : <Copy className="h-3.5 w-3.5" />
+                                  }
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex gap-2 pl-6">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => checkAutoloadStatus(acc.id)}
+                              disabled={checkingAutoloadId === acc.id}
+                            >
+                              {checkingAutoloadId === acc.id
+                                ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                                : null}
+                              {al === undefined ? 'Проверить статус' : 'Проверить снова'}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
