@@ -1,9 +1,10 @@
 /**
  * Шаг 2: Активация Avito Автозагрузки.
  *
- * Avito Автозагрузка — обязательный сервис для публикации объявлений через API.
+ * Avito Автозагрузка — сервис для публикации объявлений через API.
  * Пользователь должен активировать его один раз в своём кабинете Avito и
- * указать там URL нашего фида. Без этого публикация невозможна.
+ * указать там URL нашего фида. Без этого публикация невозможна, но шаг
+ * можно пропустить и вернуться к настройке позже.
  */
 
 'use client';
@@ -65,6 +66,11 @@ export function StepAutoload({ data, onNext, onBack }: StepAutoloadProps) {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  function handleSkip() {
+    toast.info('Автозагрузку можно подключить позже в настройках.');
+    onNext({ autoload_skipped: true, autoload_activated: false });
+  }
+
   return (
     <div className="space-y-6">
       {/* Объяснение */}
@@ -75,7 +81,7 @@ export function StepAutoload({ data, onNext, onBack }: StepAutoloadProps) {
             <p className="font-medium text-amber-500">Требуется одно действие в кабинете Avito</p>
             <p className="text-muted-foreground">
               Avito Автозагрузка — это сервис, через который наша платформа публикует ваши
-              объявления. Его нужно активировать один раз вручную. Это займёт около 2 минут.
+              объявления. Его можно активировать сейчас или позже в настройках.
             </p>
           </div>
         </div>
@@ -170,6 +176,12 @@ export function StepAutoload({ data, onNext, onBack }: StepAutoloadProps) {
 
         <div className="flex gap-3">
           {!activated && (
+            <Button variant="ghost" onClick={handleSkip}>
+              Настроить позже
+            </Button>
+          )}
+
+          {!activated && (
             <Button variant="outline" onClick={handleCheck} disabled={isChecking}>
               {isChecking ? (
                 <>
@@ -182,7 +194,10 @@ export function StepAutoload({ data, onNext, onBack }: StepAutoloadProps) {
             </Button>
           )}
 
-          <Button onClick={() => onNext()} disabled={!activated}>
+          <Button
+            onClick={() => onNext({ autoload_skipped: false, autoload_activated: true })}
+            disabled={!activated}
+          >
             Продолжить
             <ArrowRight className="ml-2 h-4 w-4" />
           </Button>

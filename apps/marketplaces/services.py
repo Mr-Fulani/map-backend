@@ -1,6 +1,6 @@
 import datetime
 
-from django.db import transaction
+from django.db import IntegrityError, transaction
 
 from apps.marketplaces.models import CategoryMapping, Listing, ListingStats
 
@@ -70,6 +70,10 @@ class NoActiveAccounts(Exception):
 
 class AccountAlreadyExists(Exception):
     """Аккаунт с таким external_id уже существует у тенанта."""
+
+
+class InvalidMarketplaceCredentials(Exception):
+    """Credentials маркетплейса не прошли проверку через API."""
 
 
 class ListingService:
@@ -264,8 +268,8 @@ class MarketplaceAccountService:
     """Сервис управления аккаунтами маркетплейсов: создание, обновление credentials."""
 
     @staticmethod
-    def _fetch_avito_user_id(credentials_enc: str, fallback: str) -> str:
-        """Получает числовой user_id из Avito API по credentials; возвращает fallback при ошибке."""
+    def _fetch_avito_user_id(credentials_enc: str) -> str:
+        """Получает числовой user_id из Avito API по credentials."""
         import requests as req
         from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 
@@ -282,9 +286,12 @@ class MarketplaceAccountService:
                 timeout=10,
             )
             resp.raise_for_status()
-            return str(resp.json()['id'])
+            user_id = resp.json().get('id')
         except Exception:
-            return fallback
+            raise InvalidMarketplaceCredentials('Не удалось проверить Avito API-ключи')
+        if not user_id:
+            raise InvalidMarketplaceCredentials('Avito API не вернул user_id аккаунта')
+        return str(user_id)
 
     @staticmethod
     def create(tenant, data: dict):
@@ -301,9 +308,7 @@ class MarketplaceAccountService:
             'client_id': data['client_id'],
             'client_secret': data['client_secret'],
         })
-        external_id = MarketplaceAccountService._fetch_avito_user_id(
-            credentials_enc, data.get('external_id', '')
-        )
+        external_id = MarketplaceAccountService._fetch_avito_user_id(credentials_enc)
         try:
             account = MarketplaceAccount.objects.create(
                 tenant=tenant,
@@ -312,7 +317,7 @@ class MarketplaceAccountService:
                 external_id=external_id,
                 credentials_enc=credentials_enc,
             )
-        except Exception:
+        except IntegrityError:
             raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
 
         # Регистрируем feed URL в Avito Autoload после коммита транзакции
@@ -328,12 +333,16 @@ class MarketplaceAccountService:
         from apps.datasources.encryption import encrypt
         account.name = data['name']
         account.marketplace = data['marketplace']
-        account.external_id = data['external_id']
-        account.credentials_enc = encrypt({
+        credentials_enc = encrypt({
             'client_id': data['client_id'],
             'client_secret': data['client_secret'],
         })
-        account.save(update_fields=['name', 'marketplace', 'external_id', 'credentials_enc'])
+        account.external_id = MarketplaceAccountService._fetch_avito_user_id(credentials_enc)
+        account.credentials_enc = credentials_enc
+        try:
+            account.save(update_fields=['name', 'marketplace', 'external_id', 'credentials_enc'])
+        except IntegrityError:
+            raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
         return account
 
     @staticmethod

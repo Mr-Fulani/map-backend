@@ -2,6 +2,7 @@ from django.conf import settings
 from rest_framework import serializers
 
 from apps.marketplaces.models import AvitoCategory, CategoryMapping, Listing, MarketplaceAccount
+from apps.products.media import get_publishable_product_images
 
 
 class AvitoCategorySerializer(serializers.ModelSerializer):
@@ -111,7 +112,7 @@ class ListingDetailSerializer(ListingSerializer):
                 'position': img.position,
                 'is_primary': img.is_primary,
             }
-            for img in obj.product.images.order_by('position')
+            for img in get_publishable_product_images(obj.product)
         ]
         if images:
             return images

@@ -1,5 +1,6 @@
 import datetime
 import logging
+import re
 
 import boto3
 import requests
@@ -22,6 +23,14 @@ class FeedUploadError(Exception):
     """Не удалось загрузить фид на S3 или уведомить Avito."""
 
 
+def _key_part(value: object, fallback: str) -> str:
+    raw = str(value or '').strip().lower()
+    raw = re.sub(r'\s+', '-', raw)
+    raw = re.sub(r'[^0-9a-z_-]+', '', raw)
+    raw = raw.strip('-_')
+    return raw or fallback
+
+
 class AvitoAdapter(BaseMarketplaceAdapter):
     """
     Адаптер Avito. Feed-based: publish/update/unpublish/delete работают через Autoload XML.
@@ -29,7 +38,7 @@ class AvitoAdapter(BaseMarketplaceAdapter):
 
     Публикация объявлений на Avito:
       1. Генерируем XML-фид (Avito Autoload formatVersion=3).
-      2. Загружаем на Yandex S3 по пути feeds/{account_id}/feed.xml.
+      2. Загружаем на Yandex S3 по пути feeds/{tenant_slug}/avito/{account_slug}/feed.xml.
       3. Вызываем POST /autoload/v1/upload — Avito скачивает файл с pre-configured URL.
       4. Через GET /autoload/v2/items/avito_ids сопоставляем наши ad_id с avito_id.
 
@@ -66,7 +75,12 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         return resp
 
     def _feed_s3_key(self) -> str:
-        return f'feeds/{self.account.pk}/feed.xml'
+        tenant_slug = _key_part(getattr(self.account.tenant, 'slug', ''), 'tenant')
+        marketplace = _key_part(getattr(self.account, 'marketplace', ''), 'marketplace')
+        account_slug = _key_part(getattr(self.account, 'name', ''), f'account-{self.account.pk}')
+        feed_key = f'feeds/{tenant_slug}/{marketplace}/{account_slug}-{self.account.pk}/feed.xml'
+        prefix = str(getattr(settings, 'MEDIA_KEY_PREFIX', '') or '').strip('/')
+        return f'{prefix}/{feed_key}' if prefix else feed_key
 
     def _feed_public_url(self) -> str:
         bucket = settings.YC_S3_BUCKET

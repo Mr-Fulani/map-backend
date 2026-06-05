@@ -440,6 +440,13 @@ class ProductEnrichmentService:
         )
 
     @staticmethod
+    def product_catalog_supports_auto_parts(product: Product) -> bool:
+        category = product.catalog_category
+        if category is None or category.root_domain is None:
+            return False
+        return category.root_domain.supports_auto_parts_enrichment
+
+    @staticmethod
     def get_product_tenant_category(product: Product) -> TenantCatalogCategory | None:
         if product.catalog_category_id:
             return product.catalog_category
@@ -459,14 +466,24 @@ class ProductEnrichmentService:
 
     @classmethod
     def ensure_product_auto_parts_eligible(cls, tenant, product: Product | None) -> None:
-        cls.ensure_auto_parts_enabled(tenant)
         if product is None and getattr(tenant, 'requires_product_auto_parts_check', False):
             raise ProductIsNotAutoPart(
                 'Для смешанного каталога нужно указать товар, чтобы проверить, что это автозапчасть.'
             )
+        if product is None:
+            cls.ensure_auto_parts_enabled(tenant)
+            return
+
+        product_category_supports = cls.product_catalog_supports_auto_parts(product)
+        if not getattr(tenant, 'supports_auto_parts_enrichment', True) and not product_category_supports:
+            raise AutoPartsEnrichmentDisabled(
+                'Автозапчастное обогащение доступно только для каталога автозапчастей.'
+            )
         if (
-            product is not None
-            and getattr(tenant, 'requires_product_auto_parts_check', False)
+            (
+                getattr(tenant, 'requires_product_auto_parts_check', False)
+                or product_category_supports
+            )
             and not cls.is_product_auto_part_candidate(product)
         ):
             raise ProductIsNotAutoPart(

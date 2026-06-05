@@ -26,6 +26,7 @@ import {
   RefreshCw,
   Sparkles,
   Database,
+  Settings,
 } from 'lucide-react';
 import { getCategoryPlaceholder } from '@/lib/category-placeholder';
 import { useDebounce } from '@/lib/hooks';
@@ -77,6 +78,7 @@ interface CatalogDomain {
   name: string;
   short_name: string;
   is_active: boolean;
+  is_enabled_for_tenant: boolean;
 }
 
 interface Meta {
@@ -261,14 +263,15 @@ export default function ProductsPage() {
   const bulkProgress = bulkJob && bulkJob.total_count > 0
     ? Math.round((bulkJob.processed_count / bulkJob.total_count) * 100)
     : 0;
+  const manageableCatalogDomains = catalogDomains.filter((domain) => !['mixed', 'unknown'].includes(domain.slug));
+  const enabledCatalogDomains = manageableCatalogDomains.filter((domain) => domain.is_enabled_for_tenant);
+  const disabledCatalogDomains = manageableCatalogDomains.filter((domain) => !domain.is_enabled_for_tenant);
   const domainFilters = [
     { value: '', label: 'Все домены' },
-    ...(catalogDomains.length > 0
-      ? catalogDomains.map((domain) => ({
-          value: domain.slug,
-          label: domain.short_name || domain.name,
-        }))
-      : Object.entries(CATALOG_DOMAIN_LABELS).map(([value, label]) => ({ value, label }))),
+    ...enabledCatalogDomains.map((domain) => ({
+      value: domain.slug,
+      label: domain.short_name || domain.name,
+    })),
   ];
 
   const catalogDomainLabel = (slug: string) => {
@@ -438,6 +441,21 @@ export default function ProductsPage() {
           </Button>
         ))}
       </div>
+
+      {disabledCatalogDomains.length > 0 && (
+        <div className="flex flex-col gap-3 rounded-lg border bg-muted/30 p-3 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-sm text-muted-foreground">
+            В фильтрах показаны только подключённые домены. Ещё можно подключить:{' '}
+            {disabledCatalogDomains.map((domain) => domain.short_name || domain.name).join(', ')}.
+          </p>
+          <Button asChild size="sm" variant="outline" className="shrink-0">
+            <Link href="/dashboard/settings#catalog-categories">
+              <Settings className="h-4 w-4" />
+              Настройки категорий
+            </Link>
+          </Button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs font-medium text-muted-foreground">

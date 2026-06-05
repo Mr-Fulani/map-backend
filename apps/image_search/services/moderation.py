@@ -14,6 +14,7 @@ from apps.products.storage import (
     MAX_DIMENSION,
     MAX_PHOTOS,
     THUMB_DIMENSION,
+    _product_media_keys,
     _resize,
     _to_jpeg_bytes,
 )
@@ -32,7 +33,11 @@ def approve(image: ProductImage, reviewed_by=None) -> ProductImage:
     image.status = ProductImage.Status.AUTO_APPROVED
     image.reviewed_at = now()
     image.reviewed_by = reviewed_by
-    image.save(update_fields=['status', 'reviewed_at', 'reviewed_by'])
+    update_fields = ['status', 'reviewed_at', 'reviewed_by']
+    if not image.product.images.filter(is_primary=True).exists():
+        image.is_primary = True
+        update_fields.append('is_primary')
+    image.save(update_fields=update_fields)
     return image
 
 
@@ -46,10 +51,16 @@ def reject(image: ProductImage, reviewed_by=None) -> ProductImage:
     Returns:
         Обновлённый ProductImage.
     """
+    was_primary = image.is_primary
     image.status = ProductImage.Status.REJECTED
+    if was_primary:
+        image.is_primary = False
     image.reviewed_at = now()
     image.reviewed_by = reviewed_by
-    image.save(update_fields=['status', 'reviewed_at', 'reviewed_by'])
+    update_fields = ['status', 'reviewed_at', 'reviewed_by']
+    if was_primary:
+        update_fields.append('is_primary')
+    image.save(update_fields=update_fields)
     return image
 
 
@@ -88,7 +99,7 @@ def upload_image(product, raw_bytes: bytes) -> ProductImage | None:
     """
     from PIL import Image, UnidentifiedImageError
 
-    if product.images.count() >= MAX_PHOTOS:
+    if product.images.exclude(status=ProductImage.Status.REJECTED).count() >= MAX_PHOTOS:
         return None
 
     sha = hashlib.sha256(raw_bytes).hexdigest()
@@ -104,9 +115,7 @@ def upload_image(product, raw_bytes: bytes) -> ProductImage | None:
     original_bytes = _to_jpeg_bytes(_resize(img.copy(), MAX_DIMENSION))
     thumb_bytes = _to_jpeg_bytes(_resize(img.copy(), THUMB_DIMENSION))
 
-    base_key = f'products/{product.tenant_id}/{product.pk}/{sha}'
-    s3_key = f'{base_key}.jpg'
-    s3_key_thumb = f'{base_key}_thumb.jpg'
+    s3_key, s3_key_thumb = _product_media_keys(product, sha)
 
     default_storage.save(s3_key, io.BytesIO(original_bytes))
     default_storage.save(s3_key_thumb, io.BytesIO(thumb_bytes))

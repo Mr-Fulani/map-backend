@@ -17,6 +17,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Zap, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
+function flattenErrorMessages(value: unknown): string[] {
+  if (!value) return [];
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(flattenErrorMessages);
+  if (typeof value === 'object') return Object.values(value).flatMap(flattenErrorMessages);
+  return [String(value)];
+}
+
 export default function RegisterPage() {
   const [form, setForm] = useState({
     name: '',
@@ -60,10 +68,8 @@ export default function RegisterPage() {
       router.push('/onboarding');
     } catch (err: unknown) {
       const errorData = (err as { response?: { data?: Record<string, unknown> } })?.response?.data;
-      const message =
-        typeof errorData === 'object'
-          ? Object.values(errorData || {}).flat().join('. ')
-          : 'Ошибка регистрации';
+      const messages = flattenErrorMessages(errorData?.message ?? errorData?.detail ?? errorData?.errors ?? errorData);
+      const message = messages.length > 0 ? messages.join('. ') : 'Ошибка регистрации';
       toast.error(message);
     } finally {
       setIsLoading(false);
