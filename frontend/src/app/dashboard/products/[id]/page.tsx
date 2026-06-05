@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useRef, useCallback } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { productApi, imageApi } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Separator } from '@/components/ui/separator';
 import { toast } from 'sonner';
+import { getPreviousDashboardHref } from '@/lib/navigation-history';
 import {
   ArrowLeft,
   RefreshCw,
@@ -24,6 +25,10 @@ import {
   X,
   Trash2,
 } from 'lucide-react';
+
+function isProductsListHref(value: string | null): value is string {
+  return value === '/dashboard/products' || Boolean(value?.startsWith('/dashboard/products?'));
+}
 
 interface ProductImage {
   id: number;
@@ -205,6 +210,9 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 export default function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const returnTo = searchParams.get('returnTo');
+  const [catalogHref, setCatalogHref] = useState('/dashboard/products');
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -218,6 +226,18 @@ export default function ProductDetailPage() {
   const [imageActionId, setImageActionId] = useState<number | null>(null);
 
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const previousHref = getPreviousDashboardHref();
+    if (isProductsListHref(previousHref)) {
+      setCatalogHref(previousHref);
+      return;
+    }
+
+    if (isProductsListHref(returnTo)) {
+      setCatalogHref(returnTo);
+    }
+  }, [returnTo]);
   const searching = searchTaskId !== null;
   const [generatingDescription, setGeneratingDescription] = useState(false);
   const [parseJobId, setParseJobId] = useState<number | null>(null);
@@ -523,7 +543,7 @@ export default function ProductDetailPage() {
     <div className="space-y-6">
       {/* Навигация */}
       <div className="flex items-center gap-3">
-        <Link href="/dashboard/products">
+        <Link href={catalogHref}>
           <Button variant="ghost" size="sm">
             <ArrowLeft className="mr-2 h-4 w-4" />
             Каталог
