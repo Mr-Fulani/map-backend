@@ -12,6 +12,7 @@ import { useEffect } from 'react';
 import { Sidebar } from '@/components/layout/sidebar';
 import { Header } from '@/components/layout/header';
 import { DashboardNavigationHistory } from '@/components/layout/navigation-history';
+import { NavigationProgress } from '@/components/layout/navigation-progress';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
 export default function DashboardLayout({
@@ -46,6 +47,7 @@ export default function DashboardLayout({
   return (
     <TooltipProvider delayDuration={0}>
       <DashboardNavigationHistory />
+      <NavigationProgress />
       <div className="flex h-screen overflow-hidden">
         <Sidebar />
         <div className="flex flex-1 flex-col overflow-hidden">
