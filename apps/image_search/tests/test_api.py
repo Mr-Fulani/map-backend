@@ -2,6 +2,7 @@
 
 import pytest
 from django.test import Client
+from unittest.mock import patch
 
 from apps.products.models import Product, ProductImage
 from apps.tenants.services import TenantService
@@ -120,6 +121,26 @@ class TestModerationViews:
         assert resp.json()['data']['status'] == 'auto_approved'
         product_image.refresh_from_db()
         assert product_image.status == ProductImage.Status.AUTO_APPROVED
+        assert product_image.is_primary is True
+
+    def test_approve_не_меняет_существующее_главное(self, tenant_client, product, product_image):
+        other = ProductImage.objects.create(
+            product=product,
+            s3_key='products/test/1/other.jpg',
+            sha256='other',
+            position=1,
+            is_primary=True,
+        )
+
+        resp = tenant_client.post(
+            f'/api/v1/products/{product.pk}/images/{product_image.pk}/approve/',
+        )
+
+        assert resp.status_code == 200
+        product_image.refresh_from_db()
+        other.refresh_from_db()
+        assert product_image.is_primary is False
+        assert other.is_primary is True
 
     def test_reject_меняет_статус(self, tenant_client, product, product_image):
         resp = tenant_client.post(
@@ -129,6 +150,19 @@ class TestModerationViews:
         assert resp.json()['data']['status'] == 'rejected'
         product_image.refresh_from_db()
         assert product_image.status == ProductImage.Status.REJECTED
+
+    def test_reject_снимает_главное_фото(self, tenant_client, product, product_image):
+        product_image.is_primary = True
+        product_image.save(update_fields=['is_primary'])
+
+        resp = tenant_client.post(
+            f'/api/v1/products/{product.pk}/images/{product_image.pk}/reject/',
+        )
+
+        assert resp.status_code == 200
+        product_image.refresh_from_db()
+        assert product_image.status == ProductImage.Status.REJECTED
+        assert product_image.is_primary is False
 
     def test_set_primary_устанавливает_флаг(self, tenant_client, product, product_image):
         resp = tenant_client.put(
@@ -169,6 +203,27 @@ class TestImageDeleteView:
         )
         assert resp.status_code == 204
         assert not ProductImage.objects.filter(pk=product_image.pk).exists()
+
+    def test_product_delete_удаляет_медиа_товара_из_storage(self, product):
+        image = ProductImage.objects.create(
+            product=product,
+            s3_key='dev/products/test-corp-img/auto_parts/brakes/original.jpg',
+            s3_key_thumb='dev/products/test-corp-img/auto_parts/brakes/thumb.jpg',
+            s3_key_preview='dev/products/test-corp-img/auto_parts/brakes/preview.jpg',
+            sha256='delete-media',
+            position=0,
+        )
+
+        with patch('django.core.files.storage.default_storage.delete') as storage_delete:
+            product.delete()
+
+        assert not ProductImage.objects.filter(pk=image.pk).exists()
+        deleted_keys = {call.args[0] for call in storage_delete.call_args_list}
+        assert deleted_keys == {
+            'dev/products/test-corp-img/auto_parts/brakes/original.jpg',
+            'dev/products/test-corp-img/auto_parts/brakes/thumb.jpg',
+            'dev/products/test-corp-img/auto_parts/brakes/preview.jpg',
+        }
 
     def test_delete_чужого_изображения_404(self, db):
         """Нельзя удалить изображение чужого тенанта."""

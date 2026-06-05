@@ -1,4 +1,5 @@
 from datetime import timedelta
+from urllib.parse import unquote, urlparse
 
 from celery import shared_task
 from django.utils.timezone import now
@@ -119,7 +120,7 @@ def download_enrichment_images(
 
     saved = 0
     pipeline = PhotoUploadPipeline()
-    for url in image_urls[:10]:
+    for url in _clean_enrichment_image_urls(image_urls)[:10]:
         image = pipeline.process(
             url,
             product,
@@ -129,6 +130,37 @@ def download_enrichment_images(
         if image is not None:
             saved += 1
     return {'product_id': product_id, 'saved': saved}
+
+
+def _clean_enrichment_image_urls(image_urls: list[str]) -> list[str]:
+    """Фильтрует служебные картинки и дедуплицирует варианты одного product image."""
+    result = []
+    seen = set()
+    for url in image_urls:
+        identity = _enrichment_image_identity(url)
+        if not identity or identity in seen:
+            continue
+        seen.add(identity)
+        result.append(url)
+    return result
+
+
+def _enrichment_image_identity(url: str) -> str:
+    parsed = urlparse(str(url or '').strip())
+    if parsed.scheme not in ('http', 'https') or not parsed.netloc:
+        return ''
+    path = unquote(parsed.path).lower()
+    full = unquote(url).lower()
+    if (
+        parsed.netloc.endswith('getclicky.com')
+        or 'brandlogos/' in path
+        or path.endswith('.gif')
+        or '/other/mask.' in full
+    ):
+        return ''
+    if 'tachka.ru' in parsed.netloc and '/brand/' in path:
+        return f'tachka:{path[path.index("/brand/"):]}'
+    return f'{parsed.netloc}:{path}'
 
 
 def _queue_enrichment_images(result: dict) -> None:

@@ -1,6 +1,8 @@
 import io
 from xml.etree import ElementTree as ET
 
+from django.conf import settings
+
 
 # Соответствие значений condition из Product → Avito
 _CONDITION_MAP = {
@@ -39,6 +41,7 @@ def build_feed(listings: list) -> bytes:
             getattr(product, 'condition', ''), 'Новое'
         )
         ET.SubElement(ad, 'AllowEmail').text = 'Нет'
+        _add_images(ad, product)
 
         if listing.status in (Listing.STATUS_ARCHIVED, Listing.STATUS_DELETED):
             ET.SubElement(ad, 'Status').text = 'Remove'
@@ -67,3 +70,29 @@ def _get_avito_category(listing) -> str:
     except Exception:
         pass
     return _DEFAULT_CATEGORY
+
+
+def _add_images(ad, product) -> None:
+    """Добавляет в фид только одобренные/ручные/импортированные фото."""
+    from django.core.files.storage import default_storage
+    from apps.products.media import get_publishable_product_images
+
+    urls = []
+    cdn = getattr(settings, 'YC_CDN_DOMAIN', '')
+    is_s3 = hasattr(default_storage, 'bucket_name')
+    for image in get_publishable_product_images(product):
+        if cdn and image.s3_key and is_s3:
+            url = f'https://{cdn}/{image.s3_key}'
+        elif image.s3_key:
+            url = default_storage.url(image.s3_key)
+        else:
+            url = image.url_source or ''
+        if url.startswith('http'):
+            urls.append(url)
+
+    if not urls:
+        return
+
+    images = ET.SubElement(ad, 'Images')
+    for url in urls[:10]:
+        ET.SubElement(images, 'Image', url=url)

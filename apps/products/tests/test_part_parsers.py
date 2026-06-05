@@ -373,3 +373,21 @@ def test_parse_task_queues_enrichment_images():
         ['https://tachka.ru/images/p50136.jpg'],
         'tachka',
     )
+
+
+def test_clean_enrichment_image_urls_filters_service_images_and_tachka_variants():
+    from apps.products.tasks import _clean_enrichment_image_urls
+
+    urls = [
+        'https://img.tachka.ru/a=/trim:top-left:50/fit-in/1500x1875/brand/brembo/brembo-P50136-fWiOnIu.jpg',
+        'https://img.tachka.ru/b=/trim:top-left:50/fit-in/420x800/brand/brembo/brembo-P50136-fWiOnIu.jpg',
+        'https://img.tachka.ru/c=/trim:top-left:50/fit-in/2000x0/filters:watermark(other/mask.png,0,0,0)/brand/brembo/brembo-P50136-fWiOnIu.jpg',
+        'https://img.tachka.ru/logo=/trim:top-left:50/fit-in/200x0/brandlogos/brembo.png',
+        'https://in.getclicky.com/100846186ns.gif',
+        'https://img.tachka.ru/d=/trim:top-left:50/fit-in/420x800/brand/brembo/brembo-P50136-other.jpg',
+    ]
+
+    assert _clean_enrichment_image_urls(urls) == [
+        urls[0],
+        urls[5],
+    ]

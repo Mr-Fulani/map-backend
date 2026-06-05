@@ -201,6 +201,39 @@ class TestListingDetailSerializer:
         assert len(data['images']) == 1
         assert data['images'][0]['position'] == 0
 
+    def test_detail_excludes_images_waiting_for_review_or_rejected(self):
+        """Preview листинга показывает только фото, разрешённые к публикации."""
+        from apps.marketplaces.serializers import ListingDetailSerializer
+
+        tenant = make_tenant('detail-img-filter-co')
+        listing = make_listing(tenant)
+        ProductImage.objects.create(
+            product=listing.product,
+            s3_key='products/review.jpg',
+            sha256='review',
+            position=0,
+            status=ProductImage.Status.NEEDS_REVIEW,
+        )
+        ProductImage.objects.create(
+            product=listing.product,
+            s3_key='products/rejected.jpg',
+            sha256='rejected',
+            position=1,
+            status=ProductImage.Status.REJECTED,
+        )
+        approved = ProductImage.objects.create(
+            product=listing.product,
+            s3_key='products/approved.jpg',
+            sha256='approved',
+            position=2,
+            status=ProductImage.Status.AUTO_APPROVED,
+        )
+
+        data = ListingDetailSerializer(listing).data
+
+        assert len(data['images']) == 1
+        assert data['images'][0]['id'] == approved.pk
+
     def test_confidence_display_low(self):
         """ai_confidence_display показывает 'Низкая' при confidence < 0.5."""
         from apps.marketplaces.serializers import ListingDetailSerializer

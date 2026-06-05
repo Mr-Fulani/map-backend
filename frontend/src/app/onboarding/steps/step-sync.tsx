@@ -30,6 +30,7 @@ export function StepSync({ data, onFinish, onBack }: StepSyncProps) {
 
   const datasourceId = data.datasource_id as number | undefined;
   const isCSV = (data.datasource_type as string) === 'csv';
+  const autoloadSkipped = data.autoload_skipped === true;
 
   async function startSync() {
     setSyncStatus('syncing');
@@ -65,16 +66,30 @@ export function StepSync({ data, onFinish, onBack }: StepSyncProps) {
           <div>
             <h3 className="text-xl font-bold">Всё готово! 🎉</h3>
             <p className="mt-2 text-sm text-muted-foreground">
-              Синхронизация запущена. Ваши товары будут автоматически
-              <br />
-              публиковаться на Avito в течение ближайших минут.
+              {autoloadSkipped ? (
+                <>
+                  Можно изучить платформу и завершить настройку
+                  <br />
+                  Автозагрузки позже в разделе «Настройки».
+                </>
+              ) : (
+                <>
+                  Синхронизация запущена. Ваши товары будут автоматически
+                  <br />
+                  публиковаться на Avito в течение ближайших минут.
+                </>
+              )}
             </p>
           </div>
 
           <div className="mt-4 w-full max-w-sm space-y-2 rounded-lg border bg-muted/30 p-4 text-left text-sm">
             <p className="font-medium">Что дальше:</p>
             <ul className="space-y-1 text-muted-foreground">
-              <li>• Следите за статусом публикации в разделе «Листинги»</li>
+              {autoloadSkipped ? (
+                <li>• Подключите Avito Автозагрузку в разделе «Настройки»</li>
+              ) : (
+                <li>• Следите за статусом публикации в разделе «Листинги»</li>
+              )}
               <li>• Настройте уведомления в Telegram</li>
               <li>• Синхронизация запускается автоматически каждые 5 минут</li>
             </ul>
@@ -124,6 +139,12 @@ export function StepSync({ data, onFinish, onBack }: StepSyncProps) {
             <span className="text-muted-foreground">Категории:</span>
             <span className="font-medium">
               {data.categories_mapped ? 'Настроены' : 'Будут настроены позже'}
+            </span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-muted-foreground">Автозагрузка:</span>
+            <span className="font-medium">
+              {autoloadSkipped ? 'Будет настроена позже' : 'Настроена'}
             </span>
           </div>
         </div>

@@ -365,8 +365,10 @@ export default function ProductDetailPage() {
       setParseJobId(res.data.data.job_id);
       setParseThenGenerate(generateAfter);
       toast.info(generateAfter ? 'Запущено: обогащение, затем генерация описания' : 'Обогащение запущено');
-    } catch {
-      toast.error(generateAfter ? 'Не удалось запустить подготовку описания' : 'Не удалось запустить обогащение');
+    } catch (err: unknown) {
+      const responseData = (err as { response?: { data?: { code?: string; message?: string } } })?.response?.data;
+      const message = responseData?.message;
+      toast.error(message ?? (generateAfter ? 'Не удалось запустить подготовку описания' : 'Не удалось запустить обогащение'));
     } finally {
       setActionLoading(null);
     }
@@ -867,7 +869,7 @@ export default function ProductDetailPage() {
               ) : (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
                   {images
-                    .sort((a, b) => a.position - b.position)
+                    .sort((a, b) => Number(b.is_primary) - Number(a.is_primary) || a.position - b.position)
                     .map((img) => (
                       <div key={img.id} className="space-y-1">
                         <div className="relative aspect-square overflow-hidden rounded-lg border bg-muted">
@@ -894,6 +896,7 @@ export default function ProductDetailPage() {
                           variant={IMAGE_STATUS_VARIANTS[img.status] ?? 'outline'}
                           className="text-xs w-full justify-center"
                         >
+                          {img.is_primary ? 'Главное • ' : ''}
                           {IMAGE_STATUS_LABELS[img.status] ?? img.status}
                         </Badge>
                         <div className="flex gap-1">

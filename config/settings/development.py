@@ -11,6 +11,7 @@ SECRET_KEY = os.environ.get(
 )
 
 ALLOWED_HOSTS = ['*']
+MEDIA_KEY_PREFIX = os.environ.get('MEDIA_KEY_PREFIX', 'dev').strip('/')
 
 DATABASES = {
     'default': dj_database_url.config(
@@ -38,14 +39,15 @@ LOGGING = {
     },
 }
 
-# В dev используем локальное хранилище
-STORAGES = {
-    'default': {
-        'BACKEND': 'django.core.files.storage.FileSystemStorage',
-    },
-    'staticfiles': {
-        'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
-    },
-}
+if not YC_S3_BUCKET:
+    # В dev без S3 используем локальное хранилище.
+    STORAGES = {
+        'default': {
+            'BACKEND': 'django.core.files.storage.FileSystemStorage',
+        },
+        'staticfiles': {
+            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
+        },
+    }
 
 EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'

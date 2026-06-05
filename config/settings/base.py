@@ -363,6 +363,7 @@ YC_S3_BUCKET = os.environ.get('YC_S3_BUCKET', '')
 YC_S3_ACCESS_KEY = os.environ.get('YC_S3_ACCESS_KEY', '')
 YC_S3_SECRET_KEY = os.environ.get('YC_S3_SECRET_KEY', '')
 YC_CDN_DOMAIN = os.environ.get('YC_CDN_DOMAIN', '')
+MEDIA_KEY_PREFIX = os.environ.get('MEDIA_KEY_PREFIX', '').strip('/')
 
 if YC_S3_BUCKET:
     STORAGES = {

@@ -77,6 +77,7 @@ interface CatalogDomain {
   name: string;
   short_name: string;
   is_active: boolean;
+  is_enabled_for_tenant: boolean;
 }
 
 interface Meta {
@@ -233,7 +234,7 @@ export default function ProductsPage() {
     try {
       const res = await tenantApi.catalogDomains();
       const domains = (res.data.data ?? []) as CatalogDomain[];
-      setCatalogDomains(domains.filter((domain) => domain.is_active));
+      setCatalogDomains(domains.filter((domain) => domain.is_active && domain.is_enabled_for_tenant));
     } catch {
       setCatalogDomains([]);
     }
@@ -263,12 +264,10 @@ export default function ProductsPage() {
     : 0;
   const domainFilters = [
     { value: '', label: 'Все домены' },
-    ...(catalogDomains.length > 0
-      ? catalogDomains.map((domain) => ({
-          value: domain.slug,
-          label: domain.short_name || domain.name,
-        }))
-      : Object.entries(CATALOG_DOMAIN_LABELS).map(([value, label]) => ({ value, label }))),
+    ...catalogDomains.map((domain) => ({
+      value: domain.slug,
+      label: domain.short_name || domain.name,
+    })),
   ];
 
   const catalogDomainLabel = (slug: string) => {
