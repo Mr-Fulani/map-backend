@@ -1,4 +1,5 @@
 from datetime import timedelta
+import logging
 from urllib.parse import unquote, urlparse
 
 from celery import shared_task
@@ -9,6 +10,8 @@ from apps.datasources.registry import get_adapter
 from apps.products.services import (
     ProductBulkActionService, ProductEnrichmentService, ProductService,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def _write_sync_log(tenant, event_type: str, status: str, message: str) -> None:
@@ -74,7 +77,7 @@ def import_from_datasource(self, connection_id: int):
 def parse_single_part(self, job_id: int):
     try:
         result = ProductEnrichmentService.run_parse_job(job_id)
-        _queue_enrichment_images(result)
+        _save_enrichment_images(result)
         return result
     except Exception as exc:
         raise self.retry(exc=exc)
@@ -85,7 +88,7 @@ def parse_single_part(self, job_id: int):
 def parse_single_part_then_generate_description(self, job_id: int):
     try:
         result = ProductEnrichmentService.run_parse_job(job_id)
-        _queue_enrichment_images(result)
+        _save_enrichment_images(result)
         product_id = result.get('product_id')
         if product_id:
             from apps.ai_agent.tasks import generate_description_task
@@ -110,13 +113,19 @@ def download_enrichment_images(
     self, product_id: int, image_urls: list[str], source_id: str = 'tachka',
 ):
     """Скачивает изображения, найденные parser enrichment, через текущий ProductImage pipeline."""
-    from apps.products.models import Product, ProductImage
-    from apps.products.storage import PhotoUploadPipeline
+    from apps.products.models import Product
 
     try:
         product = Product.objects.get(pk=product_id)
     except Product.DoesNotExist:
         return {'error': f'Product {product_id} not found'}
+
+    return _download_enrichment_images(product, image_urls, source_id)
+
+
+def _download_enrichment_images(product, image_urls: list[str], source_id: str = 'tachka') -> dict:
+    from apps.products.models import ProductImage
+    from apps.products.storage import PhotoUploadPipeline
 
     saved = 0
     pipeline = PhotoUploadPipeline()
@@ -129,7 +138,7 @@ def download_enrichment_images(
         )
         if image is not None:
             saved += 1
-    return {'product_id': product_id, 'saved': saved}
+    return {'product_id': product.pk, 'saved': saved}
 
 
 def _clean_enrichment_image_urls(image_urls: list[str]) -> list[str]:
@@ -171,4 +180,22 @@ def _queue_enrichment_images(result: dict) -> None:
             product_id,
             image_urls,
             result.get('source_id') or 'tachka',
+        )
+
+
+def _save_enrichment_images(result: dict) -> None:
+    product_id = result.get('product_id')
+    image_urls = result.get('image_urls') or []
+    if not product_id or not image_urls:
+        return
+
+    try:
+        from apps.products.models import Product
+        product = Product.objects.get(pk=product_id)
+        _download_enrichment_images(product, image_urls, result.get('source_id') or 'tachka')
+    except Exception:
+        logger.warning(
+            'Failed to save enrichment images for product=%s',
+            product_id,
+            exc_info=True,
         )

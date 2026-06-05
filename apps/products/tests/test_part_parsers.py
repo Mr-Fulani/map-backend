@@ -351,7 +351,7 @@ def test_run_parse_job_falls_back_to_search_results(monkeypatch):
     assert product.cross_codes.filter(normalized_code='4851080863').exists()
 
 
-def test_parse_task_queues_enrichment_images():
+def test_parse_task_saves_enrichment_images_before_finishing():
     from apps.products.tasks import parse_single_part
 
     result = {
@@ -365,14 +365,10 @@ def test_parse_task_queues_enrichment_images():
     with patch(
         'apps.products.tasks.ProductEnrichmentService.run_parse_job',
         return_value=result,
-    ), patch('apps.products.tasks.download_enrichment_images.delay') as delay:
+    ), patch('apps.products.tasks._save_enrichment_images') as save_images:
         assert parse_single_part.run(1) == result
 
-    delay.assert_called_once_with(
-        10,
-        ['https://tachka.ru/images/p50136.jpg'],
-        'tachka',
-    )
+    save_images.assert_called_once_with(result)
 
 
 def test_clean_enrichment_image_urls_filters_service_images_and_tachka_variants():
