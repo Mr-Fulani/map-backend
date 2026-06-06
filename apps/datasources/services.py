@@ -61,10 +61,11 @@ class ConnectionService:
         from apps.products.services import ProductService
         from django.utils.timezone import now
 
-        connection, _ = DataSourceConnection.objects.get_or_create(
+        connection = DataSourceConnection.objects.create(
             tenant=tenant,
             type=DataSourceConnection.TYPE_CSV,
-            defaults={'name': file_name}
+            name=file_name,
+            credentials=encrypt({'file_name': file_name}),
         )
 
         counts = {'created': 0, 'updated': 0, 'unchanged': 0}

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { tenantApi, accountApi, notificationApi, productApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -139,6 +139,12 @@ export default function SettingsPage() {
   // File upload state
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [uploadingCsv, setUploadingCsv] = useState(false);
+  const [newDatasourceType, setNewDatasourceType] = useState<'1c_http' | '1c_xml'>('1c_http');
+  const [newDatasourceName, setNewDatasourceName] = useState('Основной склад');
+  const [newDatasourceUrl, setNewDatasourceUrl] = useState('');
+  const [newDatasourceUser, setNewDatasourceUser] = useState('');
+  const [newDatasourcePassword, setNewDatasourcePassword] = useState('');
+  const [creatingDatasource, setCreatingDatasource] = useState(false);
   
   // Add Avito Account state
   const [showAddAccount, setShowAddAccount] = useState(false);
@@ -204,6 +210,11 @@ export default function SettingsPage() {
       }));
   const enabledDomainOptions = domainOptions.filter((domain) => domain.is_enabled_for_tenant);
 
+  const loadDatasources = useCallback(async () => {
+    const r = await datasourceApi.list();
+    setDatasources(r.data.data ?? r.data);
+  }, []);
+
   // Подставляем телефон из данных пользователя при загрузке
   useEffect(() => {
     if (user && 'phone' in user) {
@@ -229,8 +240,7 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setLoadingAccounts(false));
 
-    datasourceApi.list()
-      .then((r) => setDatasources(r.data.data ?? r.data))
+    loadDatasources()
       .catch(() => {})
       .finally(() => setLoadingDatasources(false));
 
@@ -250,7 +260,7 @@ export default function SettingsPage() {
       })
       .catch(() => {})
       .finally(() => setLoadingNotif(false));
-  }, []);
+  }, [loadDatasources]);
 
   async function loadCatalogCategories() {
     setLoadingCatalogCategories(true);
@@ -607,15 +617,41 @@ export default function SettingsPage() {
       const { data: uploadResult } = await datasourceApi.uploadCsv(csvFile);
       toast.success(`Файл загружен: ${uploadResult.data?.rows_count || uploadResult.items?.length || 0} строк`);
       setCsvFile(null);
-      
-      const r = await datasourceApi.list();
-      setDatasources(r.data.data ?? r.data);
+      await loadDatasources();
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string; message?: string } } };
       const message = axiosErr?.response?.data?.detail || axiosErr?.response?.data?.message || 'Ошибка загрузки файла';
       toast.error(message);
     } finally {
       setUploadingCsv(false);
+    }
+  }
+
+  async function handleCreateDatasource(e: React.FormEvent) {
+    e.preventDefault();
+    setCreatingDatasource(true);
+    try {
+      await datasourceApi.create({
+        name: newDatasourceName,
+        type: newDatasourceType,
+        credentials: {
+          url: newDatasourceUrl,
+          user: newDatasourceUser,
+          password: newDatasourcePassword,
+        },
+      });
+      toast.success('Источник данных добавлен');
+      setNewDatasourceName('Основной склад');
+      setNewDatasourceUrl('');
+      setNewDatasourceUser('');
+      setNewDatasourcePassword('');
+      await loadDatasources();
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string; message?: string } } };
+      const message = axiosErr?.response?.data?.detail || axiosErr?.response?.data?.message || 'Не удалось добавить источник';
+      toast.error(message);
+    } finally {
+      setCreatingDatasource(false);
     }
   }
 
@@ -1211,9 +1247,102 @@ export default function SettingsPage() {
         <TabsContent value="datasources" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
+              <CardTitle>Добавить источник данных</CardTitle>
+              <CardDescription>
+                Подключите несколько складов, баз 1С или файловых выгрузок для одного аккаунта.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleCreateDatasource} className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="datasource-type">Тип источника</Label>
+                    <select
+                      id="datasource-type"
+                      value={newDatasourceType}
+                      onChange={(event) => setNewDatasourceType(event.target.value as '1c_http' | '1c_xml')}
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    >
+                      <option value="1c_http">1С HTTP-сервис</option>
+                      <option value="1c_xml">1С XML выгрузка</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="datasource-name">Название</Label>
+                    <Input
+                      id="datasource-name"
+                      placeholder="Основной склад"
+                      value={newDatasourceName}
+                      onChange={(event) => setNewDatasourceName(event.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="datasource-url">URL источника</Label>
+                  <Input
+                    id="datasource-url"
+                    placeholder="https://your-1c.server.ru/avito-sync"
+                    value={newDatasourceUrl}
+                    onChange={(event) => setNewDatasourceUrl(event.target.value)}
+                    required
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="datasource-user">Логин</Label>
+                    <Input
+                      id="datasource-user"
+                      value={newDatasourceUser}
+                      onChange={(event) => setNewDatasourceUser(event.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="datasource-password">Пароль</Label>
+                    <Input
+                      id="datasource-password"
+                      type="password"
+                      value={newDatasourcePassword}
+                      onChange={(event) => setNewDatasourcePassword(event.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    type="submit"
+                    disabled={
+                      creatingDatasource ||
+                      !newDatasourceName ||
+                      !newDatasourceUrl ||
+                      !newDatasourceUser ||
+                      !newDatasourcePassword
+                    }
+                  >
+                    {creatingDatasource ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Добавляем...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="mr-2 h-4 w-4" />
+                        Добавить источник
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Загрузить прайс-лист (CSV/Excel)</CardTitle>
               <CardDescription>
-                Ручная загрузка файла с товарами. Обязательные колонки: article, name, price, stock_qty.
+                Каждый загруженный файл сохраняется как отдельный источник. Обязательные колонки: article, name, price, stock_qty.
               </CardDescription>
             </CardHeader>
             <CardContent>
