@@ -183,5 +183,7 @@ def test_bulk_classification_action_classifies_products(django_capture_on_commit
     assert result['status'] == ProductBulkActionJob.Status.SUCCESS
     assert job.success_count == 2
     assert job.queued_count == 2
+    assert auto_part.catalog_category is not None
+    assert auto_part.catalog_category.name == 'Тормозные колодки'
     assert auto_part.catalog_classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
     assert jewellery.catalog_classification.domain == ProductCatalogClassification.Domain.JEWELLERY

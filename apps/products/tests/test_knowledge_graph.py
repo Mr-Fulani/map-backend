@@ -266,6 +266,20 @@ def test_base_part_categories_seed_platform_and_tenant_catalogs():
 
 
 @pytest.mark.django_db
+def test_tenant_category_seed_merges_new_aliases_for_existing_categories():
+    tenant = make_tenant('part-category-alias-merge')
+    category = tenant.catalog_categories.get(name='Тормозные диски')
+    category.aliases = ['Диски тормозные']
+    category.save(update_fields=['aliases', 'updated_at'])
+
+    ProductCategorySeedService.seed_tenant_default_categories(tenant)
+
+    category.refresh_from_db()
+    assert 'Диск торм.' in category.aliases
+    assert 'Тормозной диск' in category.aliases
+
+
+@pytest.mark.django_db
 def test_known_global_fitments_apply_to_other_tenant_product():
     tenant_a = make_tenant('kg-fitment-owner')
     tenant_b = make_tenant('kg-fitment-consumer')

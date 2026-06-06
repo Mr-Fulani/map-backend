@@ -166,7 +166,7 @@ function bulkStatusText(job: BulkActionJob) {
     return `Пауза до следующего batch: ${new Date(job.next_batch_at).toLocaleTimeString('ru-RU')}`;
   }
   if (job.action === 'classify_catalog_domain' && job.status === 'success') {
-    return 'Классификация товаров завершена';
+    return 'Классификация доменов и категорий товаров завершена';
   }
   if (job.status === 'success') return 'Все задачи поставлены в очередь';
   if (job.status === 'failed') return 'Постановка задач завершилась с ошибкой';
@@ -202,6 +202,7 @@ export default function ProductsPage() {
   const [bulkJob, setBulkJob] = useState<BulkActionJob | null>(null);
   const [bulkError, setBulkError] = useState('');
   const [bulkUpdatedAt, setBulkUpdatedAt] = useState<string | null>(null);
+  const lastBulkStatusRef = useRef<string | null>(null);
   const didMountFiltersRef = useRef(false);
   const supportsAutoPartsEnrichment = tenant?.catalog_domain
     ? ['auto_parts', 'mixed'].includes(tenant.catalog_domain)
@@ -358,6 +359,7 @@ export default function ProductsPage() {
         pause_seconds: 60,
       });
       setBulkJob(unwrapBulkActionJob(res.data));
+      lastBulkStatusRef.current = null;
       setBulkUpdatedAt(new Date().toLocaleTimeString('ru-RU', {
         hour: '2-digit',
         minute: '2-digit',
@@ -409,6 +411,17 @@ export default function ProductsPage() {
 
     return () => window.clearTimeout(timer);
   }, [bulkJob, refreshBulkJob]);
+
+  useEffect(() => {
+    if (!bulkJob) return;
+
+    const previousStatus = lastBulkStatusRef.current;
+    lastBulkStatusRef.current = bulkJob.status;
+
+    if (bulkJob.status === 'success' && previousStatus !== 'success') {
+      load();
+    }
+  }, [bulkJob, load]);
 
   return (
     <div className="space-y-4">
@@ -572,7 +585,7 @@ export default function ProductsPage() {
                   onClick={() => runBulkEnrichment('classify_catalog_domain')}
                   disabled={bulkLoading}
                 >
-                  Определить домен товаров
+                  Определить домен и категории товаров
                 </DropdownMenuItem>
                 {supportsAutoPartsEnrichment ? (
                   <DropdownMenuItem
