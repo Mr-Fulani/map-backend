@@ -6,6 +6,8 @@ services:
         REQUIREMENTS: requirements/prod.txt
     command: gunicorn config.wsgi:application -w 4 -b 0.0.0.0:8000 --timeout 120
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
     depends_on:
       db:
         condition: service_healthy
@@ -21,9 +23,14 @@ services:
       start_period: 40s
 
   celery_worker:
-    build: .
-    command: celery -A config worker -Q sync_import,avito_publish,avito_update,avito_price,avito_delete,ai_generate,notifications,billing --concurrency=4 -l warning
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements/prod.txt
+    command: celery -A config worker -Q sync_import,avito_publish,avito_update,avito_price,avito_delete,ai_generate,notifications,billing,part_parsing,part_parsing_bulk --concurrency=4 -l warning
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
     depends_on:
       db:
         condition: service_healthy
@@ -37,14 +44,40 @@ services:
       start_period: 30s
 
   celery_beat:
-    build: .
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements/prod.txt
     command: celery -A config beat -S django_celery_beat.schedulers:DatabaseScheduler -l warning
     env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  celery_worker_images:
+    build:
+      context: .
+      args:
+        REQUIREMENTS: requirements/prod.txt
+    command: celery -A config worker -Q image_search,image_search_bulk --concurrency=2 -n worker-images@%h -l warning
+    env_file: .env
+    environment:
+      DJANGO_SETTINGS_MODULE: config.settings.production
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d worker-images@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
 
   frontend:
     build:

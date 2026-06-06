@@ -5,6 +5,14 @@ set -e
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 COMPOSE="docker compose -f docker-compose.prod.yml"
+LOG_TAIL="${PROD_LOG_TAIL:-200}"
+COMPOSE_LOG_SERVICES=(db redis django celery_worker celery_beat celery_worker_images frontend nginx)
+
+show_logs() {
+  echo ""
+  echo "==> Последние логи Docker Compose (tail=${LOG_TAIL}):"
+  $COMPOSE logs --tail="$LOG_TAIL" "${COMPOSE_LOG_SERVICES[@]}" || true
+}
 
 # ── 1. Подтянуть код ──────────────────────────────────────────────────────────
 echo "==> git pull..."
@@ -40,7 +48,7 @@ for i in $(seq 1 40); do
     echo "    Django готов."
     break
   fi
-  if [ "$i" -eq 40 ]; then echo "    ОШИБКА: Django не запустился."; $COMPOSE logs django --tail=20; exit 1; fi
+  if [ "$i" -eq 40 ]; then echo "    ОШИБКА: Django не запустился."; show_logs; exit 1; fi
   sleep 3
 done
 
@@ -61,3 +69,7 @@ echo "    Backend:  https://$(hostname -f 2>/dev/null || echo localhost)"
 echo "    Swagger:  https://$(hostname -f 2>/dev/null || echo localhost)/api/docs/"
 echo ""
 $COMPOSE ps
+
+echo ""
+echo "==> Live logs Docker Compose (tail=${LOG_TAIL}). Для выхода нажмите Ctrl+C, контейнеры продолжат работать."
+$COMPOSE logs --tail="$LOG_TAIL" -f "${COMPOSE_LOG_SERVICES[@]}"
