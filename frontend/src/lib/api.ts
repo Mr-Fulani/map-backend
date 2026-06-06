@@ -263,6 +263,14 @@ export const accountApi = {
   patch: (id: number, data: Record<string, unknown>) => api.patch(`/accounts/${id}/`, data),
   delete: (id: number) => api.delete(`/accounts/${id}/`),
   checkAutoload: (id: number) => api.get(`/accounts/${id}/autoload-status/`),
+  listPlacementAddresses: (params?: Record<string, unknown>) =>
+    api.get('/accounts/placement-addresses/', { params }),
+  createPlacementAddress: (data: Record<string, unknown>) =>
+    api.post('/accounts/placement-addresses/', data),
+  patchPlacementAddress: (id: number, data: Record<string, unknown>) =>
+    api.patch(`/accounts/placement-addresses/${id}/`, data),
+  deletePlacementAddress: (id: number) =>
+    api.delete(`/accounts/placement-addresses/${id}/`),
 };
 
 // Categories
@@ -280,9 +288,24 @@ export const listingApi = {
   get: (id: number) => api.get(`/listings/${id}/`),
   approve: (id: number) => api.post(`/listings/${id}/approve/`),
   publish: (id: number) => api.post(`/listings/${id}/publish/`),
+  archive: (id: number) => api.post(`/listings/${id}/archive/`),
+  delete: (id: number) => api.post(`/listings/${id}/delete/`),
+  checkStatus: (id: number) => api.post(`/listings/${id}/check-status/`),
   regenerate: (id: number) => api.post(`/listings/${id}/regenerate/`),
-  updateContent: (id: number, data: { title?: string; description_ai?: string }) =>
+  updateContent: (id: number, data: {
+    title?: string;
+    description_ai?: string;
+    address_override?: string;
+    seller_address_id_override?: string;
+    manager_name_override?: string;
+    contact_phone_override?: string;
+    placement_address?: number | null;
+    account_id?: number;
+    price_on_listing?: string;
+  }) =>
     api.patch(`/listings/${id}/`, data),
+  bulkPlacement: (data: Record<string, unknown>) =>
+    api.post('/listings/bulk-placement/', data),
 };
 
 // Logs

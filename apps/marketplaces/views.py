@@ -6,20 +6,32 @@ from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.marketplaces.models import CategoryMapping, Listing, ListingStats, MarketplaceAccount
+from apps.marketplaces.models import (
+    CategoryMapping,
+    Listing,
+    ListingStats,
+    MarketplaceAccount,
+    MarketplacePlacementAddress,
+)
 from apps.marketplaces.serializers import (
     CategoryMappingSerializer,
     CategoryMappingWriteSerializer,
     ListingDetailSerializer,
+    ListingFieldsSerializer,
+    ListingBulkPlacementSerializer,
+    ListingPlacementSerializer,
     ListingSerializer,
+    MarketplaceAccountPlacementSerializer,
     MarketplaceAccountSerializer,
     MarketplaceAccountWriteSerializer,
+    MarketplacePlacementAddressSerializer,
 )
 from apps.core.pagination import MapPagination
 from apps.marketplaces.services import (
     AccountAlreadyExists,
     CategoryMappingService,
     InvalidMarketplaceCredentials,
+    ListingAccountConflict,
     InvalidListingStatus,
     ListingNotFound,
     ListingService,
@@ -95,7 +107,20 @@ class MarketplaceAccountDetailView(APIView):
         account = self._get_account(pk, request.tenant)
         if account is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
-        account = MarketplaceAccountService.update_partial(account, request.data)
+        placement_fields = {
+            field: request.data[field]
+            for field in (
+                'default_address',
+                'default_seller_address_id',
+                'default_manager_name',
+                'default_contact_phone',
+            )
+            if field in request.data
+        }
+        serializer = MarketplaceAccountPlacementSerializer(data=placement_fields, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = {**request.data, **serializer.validated_data}
+        account = MarketplaceAccountService.update_partial(account, data)
         return Response(MarketplaceAccountSerializer(account).data)
 
     def delete(self, request, pk):
@@ -146,6 +171,79 @@ class AutoloadStatusView(APIView):
         if not activated:
             payload['activate_url'] = 'https://www.avito.ru/autoload/settings'
         return Response(payload)
+
+
+@extend_schema(tags=['Accounts'])
+class MarketplacePlacementAddressListView(APIView):
+    """GET/POST /api/v1/accounts/placement-addresses/ — справочник адресов размещения."""
+
+    def get(self, request):
+        qs = MarketplacePlacementAddress.objects.filter(tenant=request.tenant).select_related('account')
+        account_id = request.query_params.get('account', '').strip()
+        if account_id:
+            qs = qs.filter(account_id=account_id)
+        return Response(MarketplacePlacementAddressSerializer(qs, many=True).data)
+
+    def post(self, request):
+        serializer = MarketplacePlacementAddressSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            account = MarketplaceAccount.objects.get(pk=data['account'].pk, tenant=request.tenant)
+        except MarketplaceAccount.DoesNotExist:
+            return Response({'detail': 'Аккаунт Avito не найден'}, status=status.HTTP_404_NOT_FOUND)
+        if data.get('is_default'):
+            MarketplacePlacementAddress.objects.filter(
+                tenant=request.tenant,
+                account=account,
+                is_default=True,
+            ).update(is_default=False)
+        address = MarketplacePlacementAddress.objects.create(
+            tenant=request.tenant,
+            account=account,
+            **{key: value for key, value in data.items() if key != 'account'},
+        )
+        return Response(MarketplacePlacementAddressSerializer(address).data, status=status.HTTP_201_CREATED)
+
+
+@extend_schema(tags=['Accounts'])
+class MarketplacePlacementAddressDetailView(APIView):
+    """PATCH/DELETE /api/v1/accounts/placement-addresses/{id}/."""
+
+    def _get_address(self, pk, tenant):
+        try:
+            return MarketplacePlacementAddress.objects.get(pk=pk, tenant=tenant)
+        except MarketplacePlacementAddress.DoesNotExist:
+            return None
+
+    def patch(self, request, pk):
+        address = self._get_address(pk, request.tenant)
+        if address is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        serializer = MarketplacePlacementAddressSerializer(address, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        if 'account' in data and data['account'].tenant_id != request.tenant.id:
+            return Response({'detail': 'Аккаунт Avito не найден'}, status=status.HTTP_404_NOT_FOUND)
+        if data.get('is_default'):
+            account = data.get('account', address.account)
+            MarketplacePlacementAddress.objects.filter(
+                tenant=request.tenant,
+                account=account,
+                is_default=True,
+            ).exclude(pk=address.pk).update(is_default=False)
+        for field, value in data.items():
+            setattr(address, field, value)
+        address.save()
+        return Response(MarketplacePlacementAddressSerializer(address).data)
+
+    def delete(self, request, pk):
+        address = self._get_address(pk, request.tenant)
+        if address is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        address.is_active = False
+        address.save(update_fields=['is_active'])
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
 
 class UnmappedCategoriesView(APIView):
@@ -251,14 +349,39 @@ class ListingDetailView(APIView):
         """
         title = request.data.get('title')
         description_ai = request.data.get('description_ai')
+        placement_serializer = ListingPlacementSerializer(data=request.data, partial=True)
+        placement_serializer.is_valid(raise_exception=True)
+        fields_serializer = ListingFieldsSerializer(data=request.data, partial=True)
+        fields_serializer.is_valid(raise_exception=True)
         try:
             listing = ListingService.update_content(pk, request.tenant, title, description_ai)
+            listing = ListingService.update_listing_fields(pk, request.tenant, fields_serializer.validated_data)
+            listing = ListingService.update_placement(pk, request.tenant, placement_serializer.validated_data)
         except ListingNotFound:
             return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        except ListingAccountConflict as exc:
+            return Response({'status': 'error', 'code': 'account_conflict', 'message': str(exc)},
+                            status=status.HTTP_409_CONFLICT)
         except InvalidListingStatus as exc:
             return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
                             status=status.HTTP_400_BAD_REQUEST)
         return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
+
+
+@extend_schema(tags=['Listings'])
+class ListingBulkPlacementView(APIView):
+    """POST /api/v1/listings/bulk-placement/ — массово назначить адресные поля."""
+
+    def post(self, request):
+        serializer = ListingBulkPlacementSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        filters = {
+            field: data.get(field)
+            for field in ('listing_ids', 'account_id', 'status', 'category_source', 'catalog_category_id')
+        }
+        updated = ListingService.bulk_update_placement(request.tenant, filters, data)
+        return Response({'status': 'ok', 'data': {'updated': updated}})
 
 
 @extend_schema(tags=['Listings'])
@@ -291,6 +414,55 @@ class ListingPublishView(APIView):
             return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
                             status=status.HTTP_400_BAD_REQUEST)
         return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
+
+
+@extend_schema(tags=['Listings'])
+class ListingArchiveView(APIView):
+    """POST /api/v1/listings/{id}/archive/ — снять объявление с публикации."""
+
+    def post(self, request, pk):
+        try:
+            listing = ListingService.archive(pk, request.tenant)
+        except ListingNotFound:
+            return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        except InvalidListingStatus as exc:
+            return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
+
+
+@extend_schema(tags=['Listings'])
+class ListingDeleteView(APIView):
+    """POST /api/v1/listings/{id}/delete/ — удалить объявление через feed Remove."""
+
+    def post(self, request, pk):
+        try:
+            listing = ListingService.delete(pk, request.tenant)
+        except ListingNotFound:
+            return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        except InvalidListingStatus as exc:
+            return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
+
+
+@extend_schema(tags=['Listings'])
+class ListingCheckStatusView(APIView):
+    """POST /api/v1/listings/{id}/check-status/ — вручную проверить статус Avito feed."""
+
+    def post(self, request, pk):
+        try:
+            listing = ListingService.check_avito_status(pk, request.tenant)
+        except ListingNotFound:
+            return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        except InvalidListingStatus as exc:
+            return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
+                            status=status.HTTP_400_BAD_REQUEST)
+        return Response({
+            'status': 'ok',
+            'message': 'Проверка статуса Avito поставлена в очередь',
+            'data': ListingDetailSerializer(listing, context={'request': request}).data,
+        })
 
 
 @extend_schema(tags=['Listings'])

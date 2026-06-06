@@ -64,6 +64,10 @@ class InvalidListingStatus(Exception):
     """Операция недопустима для текущего статуса листинга."""
 
 
+class ListingAccountConflict(Exception):
+    """Для товара уже есть листинг на выбранном аккаунте."""
+
+
 class NoActiveAccounts(Exception):
     """У тенанта нет ни одного активного аккаунта маркетплейса."""
 
@@ -85,7 +89,13 @@ class ListingService:
         try:
             return (
                 Listing.objects
-                .select_related('product', 'product__catalog_category', 'account')
+                .select_related(
+                    'product',
+                    'product__catalog_category',
+                    'account',
+                    'placement_address',
+                    'bulk_placement_address',
+                )
                 .prefetch_related('product__images')
                 .get(pk=listing_id, tenant=tenant)
             )
@@ -136,6 +146,36 @@ class ListingService:
             )
         lid = listing.pk
         transaction.on_commit(lambda: _enqueue_publish_or_update(lid, is_new=True))
+        return listing
+
+    @staticmethod
+    def archive(listing_id: int, tenant) -> Listing:
+        """Снимает листинг с публикации через feed Remove."""
+        listing = ListingService.get_for_tenant(listing_id, tenant)
+        if listing.status in (Listing.STATUS_ARCHIVED, Listing.STATUS_DELETED):
+            raise InvalidListingStatus(f'Листинг уже в статусе {listing.status}')
+        lid = listing.pk
+        transaction.on_commit(lambda: _enqueue_unpublish(lid))
+        return listing
+
+    @staticmethod
+    def delete(listing_id: int, tenant) -> Listing:
+        """Удаляет листинг локально и отправляет Remove в feed, если есть external_id."""
+        listing = ListingService.get_for_tenant(listing_id, tenant)
+        if listing.status == Listing.STATUS_DELETED:
+            raise InvalidListingStatus('Листинг уже удалён')
+        lid = listing.pk
+        transaction.on_commit(lambda: _enqueue_delete(lid))
+        return listing
+
+    @staticmethod
+    def check_avito_status(listing_id: int, tenant) -> Listing:
+        """Ставит ручную проверку статуса feed/модерации Avito для аккаунта листинга."""
+        listing = ListingService.get_for_tenant(listing_id, tenant)
+        if listing.status != Listing.STATUS_PENDING:
+            raise InvalidListingStatus('Проверка Avito доступна только для объявлений на модерации Avito')
+        account_id = listing.account_id
+        transaction.on_commit(lambda: _enqueue_poll_feed_results(account_id))
         return listing
 
     @staticmethod
@@ -191,6 +231,112 @@ class ListingService:
         if update_fields:
             listing.save(update_fields=update_fields)
         return listing
+
+    @staticmethod
+    def update_listing_fields(listing_id: int, tenant, data: dict) -> Listing:
+        """Обновляет аккаунт и цену листинга с tenant-safe проверками."""
+        listing = ListingService.get_for_tenant(listing_id, tenant)
+        if listing.status in (Listing.STATUS_ACTIVE, Listing.STATUS_DELETED):
+            raise InvalidListingStatus(f'Нельзя редактировать листинг в статусе {listing.status}')
+
+        update_fields = []
+        if 'account_id' in data:
+            from apps.marketplaces.models import MarketplaceAccount
+            try:
+                account = MarketplaceAccount.objects.get(
+                    pk=data['account_id'],
+                    tenant=tenant,
+                    is_active=True,
+                )
+            except MarketplaceAccount.DoesNotExist:
+                raise ListingNotFound('Аккаунт Avito не найден')
+            exists = Listing.objects.filter(
+                tenant=tenant,
+                product=listing.product,
+                account=account,
+            ).exclude(pk=listing.pk).exists()
+            if exists:
+                raise ListingAccountConflict('Для этого товара уже есть листинг на выбранном аккаунте')
+            listing.account = account
+            update_fields.append('account')
+            if listing.placement_address and listing.placement_address.account_id != account.pk:
+                listing.placement_address = None
+                update_fields.append('placement_address')
+
+        if 'price_on_listing' in data:
+            listing.price_on_listing = data['price_on_listing']
+            update_fields.append('price_on_listing')
+
+        if update_fields:
+            listing.save(update_fields=update_fields)
+        return listing
+
+    @staticmethod
+    def update_placement(listing_id: int, tenant, data: dict) -> Listing:
+        """Обновляет адресные override-поля листинга."""
+        listing = ListingService.get_for_tenant(listing_id, tenant)
+        update_fields = []
+        for field in (
+            'address_override',
+            'seller_address_id_override',
+            'manager_name_override',
+            'contact_phone_override',
+        ):
+            if field in data:
+                setattr(listing, field, str(data[field] or '').strip())
+                update_fields.append(field)
+        if 'placement_address' in data:
+            listing.placement_address = _get_placement_address(
+                tenant,
+                listing.account,
+                data.get('placement_address'),
+            )
+            update_fields.append('placement_address')
+        if update_fields:
+            listing.save(update_fields=update_fields)
+        return listing
+
+    @staticmethod
+    def bulk_update_placement(tenant, filters: dict, data: dict) -> int:
+        """Массово обновляет адресные поля листингов тенанта ниже ручных override."""
+        qs = Listing.objects.filter(tenant=tenant)
+        listing_ids = filters.get('listing_ids')
+        if listing_ids:
+            qs = qs.filter(pk__in=listing_ids)
+        if filters.get('account_id'):
+            qs = qs.filter(account_id=filters['account_id'])
+        if filters.get('status'):
+            qs = qs.filter(status=filters['status'])
+        if filters.get('category_source'):
+            qs = qs.filter(product__category_1c=filters['category_source'])
+        if filters.get('catalog_category_id'):
+            qs = qs.filter(product__catalog_category_id=filters['catalog_category_id'])
+
+        field_map = {
+            'address_override': 'bulk_address',
+            'seller_address_id_override': 'bulk_seller_address_id',
+            'manager_name_override': 'bulk_manager_name',
+            'contact_phone_override': 'bulk_contact_phone',
+        }
+        updates = {}
+        for input_field, model_field in field_map.items():
+            if input_field in data:
+                updates[model_field] = str(data[input_field] or '').strip()
+        if 'placement_address' in data:
+            address_id = data.get('placement_address')
+            if address_id:
+                from apps.marketplaces.models import MarketplacePlacementAddress
+                try:
+                    address = MarketplacePlacementAddress.objects.get(pk=address_id, tenant=tenant, is_active=True)
+                except MarketplacePlacementAddress.DoesNotExist:
+                    raise ListingNotFound('Адрес размещения не найден')
+                qs = qs.filter(account=address.account)
+                updates['bulk_placement_address'] = address
+            else:
+                updates['bulk_placement_address'] = None
+        if not updates:
+            return 0
+        return qs.update(**updates)
 
     @staticmethod
     def archive_product(product, tenant) -> int:
@@ -347,7 +493,7 @@ class MarketplaceAccountService:
 
     @staticmethod
     def update_partial(account, data: dict):
-        """Частично обновляет аккаунт: is_active и/или name."""
+        """Частично обновляет аккаунт: is_active, name и настройки размещения."""
         update_fields = []
         if 'is_active' in data:
             account.is_active = bool(data['is_active'])
@@ -355,6 +501,15 @@ class MarketplaceAccountService:
         if 'name' in data:
             account.name = str(data['name'])[:200]
             update_fields.append('name')
+        for field in (
+            'default_address',
+            'default_seller_address_id',
+            'default_manager_name',
+            'default_contact_phone',
+        ):
+            if field in data:
+                setattr(account, field, str(data[field] or '').strip())
+                update_fields.append(field)
         if update_fields:
             account.save(update_fields=update_fields)
         return account
@@ -443,6 +598,22 @@ class StatsService:
         return len(to_upsert)
 
 
+def _get_placement_address(tenant, account, address_id):
+    """Возвращает активный адрес tenant-а для конкретного аккаунта или None."""
+    if not address_id:
+        return None
+    from apps.marketplaces.models import MarketplacePlacementAddress
+    try:
+        return MarketplacePlacementAddress.objects.get(
+            pk=address_id,
+            tenant=tenant,
+            account=account,
+            is_active=True,
+        )
+    except MarketplacePlacementAddress.DoesNotExist:
+        raise ListingNotFound('Адрес размещения не найден')
+
+
 def _enqueue_price_update(listing_id: int) -> None:
     """Ставит задачу обновления цены листинга в Celery."""
     from apps.marketplaces.tasks import update_price_task
@@ -462,3 +633,15 @@ def _enqueue_unpublish(listing_id: int) -> None:
     """Ставит задачу снятия листинга с публикации в Celery."""
     from apps.marketplaces.tasks import unpublish_listing_task
     unpublish_listing_task.delay(listing_id)
+
+
+def _enqueue_delete(listing_id: int) -> None:
+    """Ставит задачу удаления листинга в Celery."""
+    from apps.marketplaces.tasks import delete_listing_task
+    delete_listing_task.delay(listing_id)
+
+
+def _enqueue_poll_feed_results(account_id: int) -> None:
+    """Ставит ручную проверку результатов Avito feed в Celery."""
+    from apps.marketplaces.tasks import poll_feed_results_task
+    poll_feed_results_task.delay(account_id)

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import { listingApi, imageApi } from '@/lib/api';
+import { accountApi, listingApi, imageApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -20,7 +20,7 @@ import {
 import { getCategoryPlaceholder } from '@/lib/category-placeholder';
 
 interface ListingImage {
-  id: number;
+  id: number | null;
   url: string;
   thumb_url: string;
   position: number;
@@ -34,14 +34,42 @@ interface ListingDetail {
   product_id: number;
   product_article: string;
   product_name: string;
+  account_id: number;
   account_name: string;
   title: string;
   description_ai: string;
   ai_confidence: number | null;
   ai_confidence_display: string;
   price_on_listing: string;
+  placement_address: number | null;
+  address_override: string;
+  seller_address_id_override: string;
+  manager_name_override: string;
+  contact_phone_override: string;
+  bulk_address: string;
+  bulk_seller_address_id: string;
+  bulk_manager_name: string;
+  bulk_contact_phone: string;
   rejection_reason: string;
   images: ListingImage[];
+}
+
+interface Account {
+  id: number;
+  name: string;
+  is_active: boolean;
+}
+
+interface PlacementAddress {
+  id: number;
+  account: number;
+  account_name: string;
+  name: string;
+  seller_address_id: string;
+  address: string;
+  manager_name: string;
+  contact_phone: string;
+  is_default: boolean;
 }
 
 interface Props {
@@ -84,6 +112,15 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [editing, setEditing] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
+  const [editAddress, setEditAddress] = useState('');
+  const [editSellerAddressId, setEditSellerAddressId] = useState('');
+  const [editManagerName, setEditManagerName] = useState('');
+  const [editContactPhone, setEditContactPhone] = useState('');
+  const [editPlacementAddressId, setEditPlacementAddressId] = useState('');
+  const [editAccountId, setEditAccountId] = useState('');
+  const [editPrice, setEditPrice] = useState('');
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [placementAddresses, setPlacementAddresses] = useState<PlacementAddress[]>([]);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [photoLoading, setPhotoLoading] = useState<number | 'upload' | null>(null);
@@ -92,6 +129,19 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const publishPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const open = listingId !== null;
+
+  const applyListingState = (data: ListingDetail) => {
+    setListing(data);
+    setEditTitle(data.title);
+    setEditDesc(data.description_ai);
+    setEditAddress(data.address_override || '');
+    setEditSellerAddressId(data.seller_address_id_override || '');
+    setEditManagerName(data.manager_name_override || '');
+    setEditContactPhone(data.contact_phone_override || '');
+    setEditPlacementAddressId(data.placement_address ? String(data.placement_address) : '');
+    setEditAccountId(String(data.account_id));
+    setEditPrice(data.price_on_listing);
+  };
 
   useEffect(() => {
     if (listingId === null) {
@@ -106,9 +156,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     listingApi.get(listingId)
       .then((res) => {
         const data: ListingDetail = res.data.data;
-        setListing(data);
-        setEditTitle(data.title);
-        setEditDesc(data.description_ai);
+        applyListingState(data);
         // Ставим главное фото активным
         const primaryIdx = data.images.findIndex((i) => i.is_primary);
         setActiveIdx(primaryIdx >= 0 ? primaryIdx : 0);
@@ -116,6 +164,30 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       .catch(() => onClose())
       .finally(() => setLoading(false));
   }, [listingId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    accountApi.list()
+      .then((res) => setAccounts(res.data.data ?? res.data))
+      .catch(() => setAccounts([]));
+    accountApi.listPlacementAddresses()
+      .then((res) => setPlacementAddresses(res.data.data ?? res.data))
+      .catch(() => setPlacementAddresses([]));
+  }, []);
+
+  const visiblePlacementAddresses = placementAddresses.filter((address) => (
+    !editAccountId || address.account === Number(editAccountId)
+  ));
+  const selectedPlacementAddress = placementAddresses.find((address) => (
+    address.id === Number(editPlacementAddressId)
+  ));
+
+  useEffect(() => {
+    if (!editPlacementAddressId) return;
+    const selected = placementAddresses.find((address) => address.id === Number(editPlacementAddressId));
+    if (selected && editAccountId && selected.account !== Number(editAccountId)) {
+      setEditPlacementAddressId('');
+    }
+  }, [editAccountId, editPlacementAddressId, placementAddresses]);
 
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) onClose();
@@ -183,7 +255,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
           if (updated.status === 'active') {
             toast.success('Объявление опубликовано!');
           } else if (updated.status === 'pending') {
-            toast.info('Объявление отправлено на модерацию.');
+            toast.info('Объявление отправлено на модерацию Avito.');
           } else if (updated.status === 'rejected') {
             toast.error(`Публикация отклонена: ${updated.rejection_reason || 'неизвестная причина'}`);
           } else {
@@ -206,6 +278,9 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const handleRegenerate = () =>
     callAction('regenerate', () => listingApi.regenerate(listing!.id), 'Задача генерации поставлена в очередь');
 
+  const handleCheckStatus = () =>
+    callAction('checkStatus', () => listingApi.checkStatus(listing!.id), 'Проверка статуса Avito поставлена в очередь', false);
+
   const handleSaveEdit = async () => {
     if (!listing) return;
     setActionLoading('save');
@@ -213,12 +288,22 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       const res = await listingApi.updateContent(listing.id, {
         title: editTitle,
         description_ai: editDesc,
+        account_id: editAccountId ? Number(editAccountId) : undefined,
+        price_on_listing: editPrice,
+        placement_address: editPlacementAddressId ? Number(editPlacementAddressId) : null,
+        address_override: editAddress,
+        seller_address_id_override: editSellerAddressId,
+        manager_name_override: editManagerName,
+        contact_phone_override: editContactPhone,
       });
-      setListing(res.data.data);
+      applyListingState(res.data.data);
       setEditing(false);
+      onActionDone();
       toast.success('Сохранено');
-    } catch {
-      toast.error('Не удалось сохранить');
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string; detail?: string } } })
+        ?.response?.data;
+      toast.error(message?.message || message?.detail || 'Не удалось сохранить');
     } finally {
       setActionLoading(null);
     }
@@ -284,6 +369,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const isDraft = listing?.status === 'draft';
   const isRejected = listing?.status === 'rejected';
   const isArchived = listing?.status === 'archived';
+  const isPending = listing?.status === 'pending';
   const canPublish = isDraft || isRejected || isArchived;
   const canRegenerate = isReview || isDraft || isRejected;
   const busy = actionLoading !== null;
@@ -384,25 +470,29 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                       {/* Управление — появляется при наведении */}
                       <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-md flex items-center justify-center gap-0.5">
                         {!img.is_primary && (
+                          img.id !== null && (
+                            <button
+                              type="button"
+                              onClick={() => handleSetPrimary(img.id!)}
+                              disabled={photoLoading === img.id}
+                              className="p-1 bg-white/20 rounded hover:bg-white/40 disabled:opacity-50"
+                              title="Сделать главным"
+                            >
+                              <Crown className="h-3 w-3 text-white" />
+                            </button>
+                          )
+                        )}
+                        {img.id !== null && (
                           <button
                             type="button"
-                            onClick={() => handleSetPrimary(img.id)}
+                            onClick={() => handleDeletePhoto(img.id!)}
                             disabled={photoLoading === img.id}
-                            className="p-1 bg-white/20 rounded hover:bg-white/40 disabled:opacity-50"
-                            title="Сделать главным"
+                            className="p-1 bg-white/20 rounded hover:bg-red-500/70 disabled:opacity-50"
+                            title="Удалить"
                           >
-                            <Crown className="h-3 w-3 text-white" />
+                            <Trash2 className="h-3 w-3 text-white" />
                           </button>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => handleDeletePhoto(img.id)}
-                          disabled={photoLoading === img.id}
-                          className="p-1 bg-white/20 rounded hover:bg-red-500/70 disabled:opacity-50"
-                          title="Удалить"
-                        >
-                          <Trash2 className="h-3 w-3 text-white" />
-                        </button>
                       </div>
                     </div>
                   ))}
@@ -460,11 +550,101 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
               </div>
 
               {/* Цена и аккаунт */}
-              <div className="flex items-center justify-between rounded-md border p-3">
-                <span className="text-muted-foreground text-sm">{listing.account_name}</span>
-                <span className="text-xl font-bold">
-                  {Number(listing.price_on_listing).toLocaleString('ru-RU')} ₽
-                </span>
+              <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Аккаунт Avito</p>
+                  <select
+                    value={editAccountId}
+                    onChange={(e) => {
+                      setEditAccountId(e.target.value);
+                      setEditPlacementAddressId('');
+                    }}
+                    disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                    className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
+                  >
+                    {accounts.map((account) => (
+                      <option key={account.id} value={account.id}>
+                        {account.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Цена объявления</p>
+                  <Input
+                    value={editPrice}
+                    onChange={(e) => setEditPrice(e.target.value)}
+                    disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                    inputMode="decimal"
+                    className="h-9 min-w-0 text-sm"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2 rounded-md border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium">Размещение</p>
+                    <p className="text-xs text-muted-foreground">
+                      Адрес точки продаж из настроек Avito-аккаунта. Он попадёт в feed как место размещения.
+                    </p>
+                  </div>
+                </div>
+                <div className="grid min-w-0 gap-2">
+                  <select
+                    value={editPlacementAddressId}
+                    onChange={(e) => setEditPlacementAddressId(e.target.value)}
+                    className="h-8 w-full min-w-0 rounded-md border bg-background px-3 text-xs"
+                  >
+                    <option value="">Использовать адрес аккаунта или массовое правило</option>
+                    {visiblePlacementAddresses.map((address) => (
+                      <option key={address.id} value={address.id}>
+                        {address.name}
+                        {address.is_default ? ' · по умолчанию' : ''}
+                        {address.seller_address_id ? ` · ID ${address.seller_address_id}` : ''}
+                        {address.address ? ` · ${address.address}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedPlacementAddress && (
+                    <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                      <p className="font-medium text-foreground">{selectedPlacementAddress.name}</p>
+                      <p>
+                        {selectedPlacementAddress.seller_address_id
+                          ? `ID адреса Avito: ${selectedPlacementAddress.seller_address_id}`
+                          : selectedPlacementAddress.address || 'Адрес без текстового значения'}
+                      </p>
+                      {(selectedPlacementAddress.contact_phone || selectedPlacementAddress.manager_name) && (
+                        <p>
+                          {[selectedPlacementAddress.manager_name, selectedPlacementAddress.contact_phone]
+                            .filter(Boolean)
+                            .join(' · ')}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                  {visiblePlacementAddresses.length === 0 && (
+                    <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                      Для выбранного аккаунта ещё нет адресов. Добавьте их в Настройки → Маркетплейсы → Avito.
+                    </p>
+                  )}
+                  {!editPlacementAddressId && !editAddress && !editSellerAddressId &&
+                    (listing.bulk_address || listing.bulk_seller_address_id) && (
+                      <p className="text-xs text-muted-foreground">
+                        Сейчас применится массовое размещение: {
+                          listing.bulk_seller_address_id
+                            ? `ID адреса Avito ${listing.bulk_seller_address_id}`
+                            : listing.bulk_address
+                        }
+                      </p>
+                    )}
+                  {!editPlacementAddressId && !editAddress && !editSellerAddressId &&
+                    !listing.bulk_address && !listing.bulk_seller_address_id && (
+                      <p className="text-xs text-muted-foreground">
+                        Сейчас применится адрес аккаунта или категории.
+                      </p>
+                    )}
+                </div>
               </div>
 
               {/* Причина отклонения */}
@@ -480,11 +660,22 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                 {editing ? (
                   <>
                     <Button onClick={handleSaveEdit} disabled={busy} className="w-full">
-                      {actionLoading === 'save' ? 'Сохранение...' : 'Сохранить изменения'}
+                      {actionLoading === 'save' ? 'Сохраняем...' : 'Сохранить'}
                     </Button>
                     <Button
                       variant="outline"
-                      onClick={() => { setEditing(false); setEditTitle(listing.title); setEditDesc(listing.description_ai); }}
+                      onClick={() => {
+                        setEditing(false);
+                        setEditTitle(listing.title);
+                        setEditDesc(listing.description_ai);
+                        setEditAccountId(String(listing.account_id));
+                        setEditPrice(listing.price_on_listing);
+                        setEditAddress(listing.address_override || '');
+                        setEditSellerAddressId(listing.seller_address_id_override || '');
+                        setEditManagerName(listing.manager_name_override || '');
+                        setEditContactPhone(listing.contact_phone_override || '');
+                        setEditPlacementAddressId(listing.placement_address ? String(listing.placement_address) : '');
+                      }}
                       disabled={busy}
                       className="w-full"
                     >
@@ -493,6 +684,9 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                   </>
                 ) : (
                   <>
+                    <Button onClick={handleSaveEdit} disabled={busy} className="w-full">
+                      {actionLoading === 'save' ? 'Сохраняем...' : 'Сохранить'}
+                    </Button>
                     {isReview && (
                       <Button
                         onClick={handleApprove}
@@ -517,6 +711,17 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                         }
                       </Button>
                     )}
+                    {isPending && (
+                      <Button
+                        variant="secondary"
+                        onClick={handleCheckStatus}
+                        disabled={busy}
+                        className="w-full"
+                      >
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                        {actionLoading === 'checkStatus' ? 'Проверяем...' : 'Проверить статус Avito'}
+                      </Button>
+                    )}
                     {canRegenerate && (
                       <Button
                         variant="secondary"
@@ -535,7 +740,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                       className="w-full"
                     >
                       <Pencil className="mr-2 h-4 w-4" />
-                      Редактировать текст
+                      Редактировать текст объявления
                     </Button>
                   </>
                 )}

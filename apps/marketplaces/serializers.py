@@ -1,7 +1,13 @@
 from django.conf import settings
 from rest_framework import serializers
 
-from apps.marketplaces.models import AvitoCategory, CategoryMapping, Listing, MarketplaceAccount
+from apps.marketplaces.models import (
+    AvitoCategory,
+    CategoryMapping,
+    Listing,
+    MarketplaceAccount,
+    MarketplacePlacementAddress,
+)
 from apps.products.media import get_publishable_product_images
 
 
@@ -30,7 +36,25 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MarketplaceAccount
-        fields = ['id', 'name', 'marketplace', 'external_id', 'is_active', 'created_at']
+        fields = [
+            'id', 'name', 'marketplace', 'external_id', 'is_active',
+            'default_address', 'default_seller_address_id',
+            'default_manager_name', 'default_contact_phone',
+            'created_at',
+        ]
+        read_only_fields = ['created_at']
+
+
+class MarketplacePlacementAddressSerializer(serializers.ModelSerializer):
+    account_name = serializers.CharField(source='account.name', read_only=True)
+
+    class Meta:
+        model = MarketplacePlacementAddress
+        fields = [
+            'id', 'account', 'account_name', 'name', 'seller_address_id', 'address',
+            'manager_name', 'contact_phone', 'is_default', 'is_active',
+            'created_at',
+        ]
         read_only_fields = ['created_at']
 
 
@@ -40,6 +64,7 @@ class ListingSerializer(serializers.ModelSerializer):
     product_id = serializers.IntegerField(source='product.pk', read_only=True)
     product_article = serializers.CharField(source='product.article', read_only=True)
     product_name = serializers.CharField(source='product.name', read_only=True)
+    account_id = serializers.IntegerField(source='account.pk', read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
 
@@ -47,8 +72,14 @@ class ListingSerializer(serializers.ModelSerializer):
         model = Listing
         fields = [
             'id', 'status', 'status_display',
-            'product_id', 'product_article', 'product_name', 'account_name',
+            'product_id', 'product_article', 'product_name', 'account_id', 'account_name',
             'title', 'price_on_listing', 'external_id', 'external_url',
+            'placement_address',
+            'address_override', 'seller_address_id_override',
+            'manager_name_override', 'contact_phone_override',
+            'bulk_placement_address',
+            'bulk_address', 'bulk_seller_address_id',
+            'bulk_manager_name', 'bulk_contact_phone',
             'rejection_reason', 'retry_count', 'published_at', 'created_at',
         ]
         read_only_fields = fields
@@ -141,3 +172,42 @@ class MarketplaceAccountWriteSerializer(serializers.Serializer):
     external_id = serializers.CharField(max_length=100)
     client_id = serializers.CharField(write_only=True)
     client_secret = serializers.CharField(write_only=True)
+
+
+class MarketplaceAccountPlacementSerializer(serializers.Serializer):
+    default_address = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    default_seller_address_id = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    default_manager_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    default_contact_phone = serializers.CharField(max_length=50, required=False, allow_blank=True)
+
+
+class ListingPlacementSerializer(serializers.Serializer):
+    placement_address = serializers.IntegerField(required=False, allow_null=True)
+    address_override = serializers.CharField(max_length=500, required=False, allow_blank=True)
+    seller_address_id_override = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    manager_name_override = serializers.CharField(max_length=100, required=False, allow_blank=True)
+    contact_phone_override = serializers.CharField(max_length=50, required=False, allow_blank=True)
+
+
+class ListingFieldsSerializer(serializers.Serializer):
+    account_id = serializers.IntegerField(required=False)
+    price_on_listing = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, min_value=0)
+
+
+class ListingBulkPlacementSerializer(ListingPlacementSerializer):
+    listing_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, allow_empty=False,
+    )
+    account_id = serializers.IntegerField(required=False)
+    status = serializers.CharField(max_length=20, required=False, allow_blank=True)
+    category_source = serializers.CharField(max_length=300, required=False, allow_blank=True)
+    catalog_category_id = serializers.IntegerField(required=False)
+
+    def validate(self, attrs):
+        has_filter = any(
+            attrs.get(field)
+            for field in ('listing_ids', 'account_id', 'status', 'category_source', 'catalog_category_id')
+        )
+        if not has_filter:
+            raise serializers.ValidationError('Укажите хотя бы один фильтр для массового обновления.')
+        return attrs

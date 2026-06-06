@@ -1,17 +1,75 @@
 #!/usr/bin/env bash
-# Запуск всего проекта: очистка мусора → Docker → миграции → Next.js
+# Перезапуск всего проекта: stop → cleanup → Docker → миграции → Next.js → live logs
 set -e
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 
-# ── 1. Очистка мусора (volumes не трогаем — там БД) ──────────────────────────
-echo "==> Очистка остановленных контейнеров и висячих образов..."
-docker container prune -f > /dev/null
-docker image prune -f > /dev/null
-docker builder prune -f --filter "until=24h" > /dev/null
+MODE="fast"
+case "${1:-}" in
+  ""|"--fast")
+    MODE="fast"
+    ;;
+  "--clean"|"--deep")
+    MODE="clean"
+    ;;
+  "-h"|"--help")
+    echo "Использование: ./dev.sh [--fast|--clean]"
+    echo "  --fast   быстрый перезапуск, лёгкая очистка мусора (по умолчанию)"
+    echo "  --clean  глубокий перезапуск с очисткой build/cache мусора"
+    exit 0
+    ;;
+  *)
+    echo "Использование: ./dev.sh [--fast|--clean]"
+    exit 1
+    ;;
+esac
 
-# ── 2. БД и Redis — сначала ───────────────────────────────────────────────────
+LOG_TAIL="${DEV_LOG_TAIL:-200}"
+COMPOSE_LOG_SERVICES=(db redis django celery_worker celery_beat celery_worker_images)
+
+stop_port_process() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1; then
+    local pids
+    pids="$(lsof -ti "tcp:${port}" 2>/dev/null || true)"
+    if [ -n "$pids" ]; then
+      echo "==> Остановка процессов на порту ${port}..."
+      kill $pids 2>/dev/null || true
+      for _ in $(seq 1 20); do
+        sleep 0.2
+        pids="$(lsof -ti "tcp:${port}" 2>/dev/null || true)"
+        if [ -z "$pids" ]; then
+          return
+        fi
+      done
+      echo "==> Принудительная остановка процессов на порту ${port}..."
+      kill -9 $pids 2>/dev/null || true
+    fi
+  fi
+}
+
+# ── 1. Полная остановка текущего окружения ────────────────────────────────────
+echo "==> Остановка текущих сервисов..."
+docker compose down --remove-orphans
+stop_port_process 3000
+
+# ── 2. Очистка мусора (volumes не трогаем — там БД) ──────────────────────────
+if [ "$MODE" = "clean" ]; then
+  echo "==> Глубокая очистка контейнерного и frontend-кеша..."
+  docker container prune -f > /dev/null
+  docker image prune -af > /dev/null
+  docker builder prune -af > /dev/null
+  rm -rf "$ROOT_DIR/frontend/.next"
+else
+  echo "==> Быстрая очистка остановленных контейнеров и висячих образов..."
+  docker container prune -f > /dev/null
+  docker image prune -f > /dev/null
+  docker builder prune -f --filter "until=24h" > /dev/null
+  rm -rf "$ROOT_DIR/frontend/.next/static"
+fi
+
+# ── 3. БД и Redis — сначала ───────────────────────────────────────────────────
 echo "==> Запуск db, redis..."
 docker compose up -d db redis
 
@@ -25,13 +83,13 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
-# ── 3. Django ─────────────────────────────────────────────────────────────────
+# ── 4. Django ─────────────────────────────────────────────────────────────────
 echo "==> Запуск django..."
 docker compose up -d django
 
 echo "==> Ожидание готовности Django..."
 for i in $(seq 1 30); do
-  if curl -sf http://localhost:8000/api/health/ > /dev/null 2>&1; then
+  if curl -sf http://localhost:8000/api/v1/health/ > /dev/null 2>&1; then
     echo "    Django готов."
     break
   fi
@@ -39,15 +97,15 @@ for i in $(seq 1 30); do
   sleep 2
 done
 
-# ── 4. Миграции ───────────────────────────────────────────────────────────────
+# ── 5. Миграции ───────────────────────────────────────────────────────────────
 echo "==> Применение миграций..."
 docker compose exec -T django python manage.py migrate
 
-# ── 5. Остальные сервисы ──────────────────────────────────────────────────────
-echo "==> Запуск celery, nginx, frontend..."
-docker compose up -d
+# ── 6. Остальные backend-сервисы ──────────────────────────────────────────────
+echo "==> Запуск celery..."
+docker compose up -d celery_worker celery_beat celery_worker_images
 
-# ── 6. Next.js dev server ─────────────────────────────────────────────────────
+# ── 7. Next.js dev server ─────────────────────────────────────────────────────
 echo "==> Запуск фронтенда (Next.js)..."
 cd "$ROOT_DIR/frontend"
 npm run dev &
@@ -61,5 +119,15 @@ echo "    Swagger:  http://localhost:8000/api/docs/"
 echo ""
 echo "  Для остановки нажмите Ctrl+C"
 
-trap "echo '==> Остановка фронтенда...'; kill $FRONTEND_PID 2>/dev/null; exit 0" INT TERM
-wait $FRONTEND_PID
+cleanup() {
+  echo "==> Остановка фоновых процессов..."
+  kill "$FRONTEND_PID" 2>/dev/null || true
+  exit 0
+}
+
+trap cleanup INT TERM
+
+echo ""
+echo "==> Live logs всех сервисов Docker Compose (tail=${LOG_TAIL}) + frontend:"
+docker compose logs --tail="$LOG_TAIL" -f "${COMPOSE_LOG_SERVICES[@]}" || true
+cleanup

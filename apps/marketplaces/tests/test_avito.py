@@ -10,8 +10,9 @@ from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 from apps.marketplaces.adapters.avito.error_handler import backoff
 from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
 from apps.marketplaces.adapters.avito.feed_builder import build_feed, get_ad_id
-from apps.marketplaces.models import Listing, MarketplaceAccount
-from apps.products.models import ProductImage
+from apps.marketplaces.models import CategoryMapping, Listing, MarketplaceAccount, MarketplacePlacementAddress
+from apps.marketplaces.services import ListingService
+from apps.products.models import ProductImage, TenantCatalogCategory
 from apps.products.services import ProductService
 from apps.tenants.services import TenantService
 
@@ -229,6 +230,225 @@ class TestFeedBuilder:
         assert 'needs-review.jpg' not in xml_str
         assert 'rejected.jpg' not in xml_str
         assert xml_str.index(primary.s3_key) < xml_str.index(secondary.s3_key)
+
+    def test_build_feed_uses_category_default_image_when_product_has_no_images(self):
+        tenant = make_tenant('feed-category-image-co')
+        account = make_account(tenant)
+        category = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Тормоза',
+            normalized_name='тормоза',
+            domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+            default_image_s3_key='catalog-categories/feed/default.jpg',
+        )
+        product = make_product(tenant)
+        product.catalog_category = category
+        product.save(update_fields=['catalog_category'])
+        listing = make_listing(tenant, product, account)
+
+        with patch('django.core.files.storage.default_storage.url') as storage_url:
+            storage_url.side_effect = lambda key: f'https://cdn.example.com/{key}'
+            xml_str = build_feed([listing]).decode('utf-8')
+
+        assert '<Images>' in xml_str
+        assert f'https://cdn.example.com/{category.default_image_s3_key}' in xml_str
+
+    def test_build_feed_uses_account_default_address(self):
+        tenant = make_tenant('feed-account-address-co')
+        account = make_account(tenant)
+        account.default_address = 'Москва, улица Ленина, 1'
+        account.default_manager_name = 'Иван'
+        account.default_contact_phone = '+7 900 000-00-00'
+        account.save(update_fields=['default_address', 'default_manager_name', 'default_contact_phone'])
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+
+        assert '<Address>Москва, улица Ленина, 1</Address>' in xml_str
+        assert '<ManagerName>Иван</ManagerName>' in xml_str
+        assert '<ContactPhone>+7 900 000-00-00</ContactPhone>' in xml_str
+
+    def test_build_feed_prefers_seller_address_id_over_address(self):
+        tenant = make_tenant('feed-seller-address-co')
+        account = make_account(tenant)
+        account.default_address = 'Москва, улица Ленина, 1'
+        account.default_seller_address_id = '123456789'
+        account.save(update_fields=['default_address', 'default_seller_address_id'])
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+
+        assert '<SellerAddressID>123456789</SellerAddressID>' in xml_str
+        assert '<Address>' not in xml_str
+
+    def test_build_feed_category_address_overrides_account_address(self):
+        tenant = make_tenant('feed-category-address-co')
+        account = make_account(tenant)
+        account.default_address = 'Москва, улица Ленина, 1'
+        account.save(update_fields=['default_address'])
+        product = make_product(tenant)
+        CategoryMapping.objects.create(
+            tenant=tenant,
+            marketplace='avito',
+            category_source=product.category_1c,
+            category_target='Запчасти и аксессуары',
+            category_id=1,
+            attributes_map={'address': 'Казань, улица Кремлёвская, 1'},
+        )
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+
+        assert '<Address>Казань, улица Кремлёвская, 1</Address>' in xml_str
+        assert 'Москва, улица Ленина, 1' not in xml_str
+
+    def test_build_feed_listing_address_overrides_category_address(self):
+        tenant = make_tenant('feed-listing-address-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        CategoryMapping.objects.create(
+            tenant=tenant,
+            marketplace='avito',
+            category_source=product.category_1c,
+            category_target='Запчасти и аксессуары',
+            category_id=1,
+            attributes_map={'address': 'Казань, улица Кремлёвская, 1'},
+        )
+        listing = make_listing(tenant, product, account)
+        listing.address_override = 'Самара, Московское шоссе, 10'
+        listing.save(update_fields=['address_override'])
+
+        xml_str = build_feed([listing]).decode('utf-8')
+
+        assert '<Address>Самара, Московское шоссе, 10</Address>' in xml_str
+        assert 'Казань, улица Кремлёвская, 1' not in xml_str
+
+    def test_build_feed_listing_address_overrides_bulk_address(self):
+        tenant = make_tenant('feed-listing-over-bulk-address-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+        listing.bulk_address = 'Казань, улица Кремлёвская, 1'
+        listing.address_override = 'Самара, Московское шоссе, 10'
+        listing.save(update_fields=['bulk_address', 'address_override'])
+
+        xml_str = build_feed([listing]).decode('utf-8')
+
+        assert '<Address>Самара, Московское шоссе, 10</Address>' in xml_str
+        assert 'Казань, улица Кремлёвская, 1' not in xml_str
+
+    def test_build_feed_uses_listing_placement_address(self):
+        tenant = make_tenant('feed-listing-placement-address-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        address = MarketplacePlacementAddress.objects.create(
+            tenant=tenant,
+            account=account,
+            name='Склад МКАД',
+            seller_address_id='avito-address-1',
+            address='Москва, МКАД',
+            manager_name='Мария',
+            contact_phone='+7 900 111-22-33',
+        )
+        listing = make_listing(tenant, product, account, placement_address=address)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+
+        assert '<SellerAddressID>avito-address-1</SellerAddressID>' in xml_str
+        assert '<Address>' not in xml_str
+        assert '<ManagerName>Мария</ManagerName>' in xml_str
+        assert '<ContactPhone>+7 900 111-22-33</ContactPhone>' in xml_str
+
+    def test_build_feed_uses_bulk_placement_address_before_category(self):
+        tenant = make_tenant('feed-bulk-placement-address-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        address = MarketplacePlacementAddress.objects.create(
+            tenant=tenant,
+            account=account,
+            name='СПб склад',
+            address='Санкт-Петербург, Невский проспект, 1',
+        )
+        CategoryMapping.objects.create(
+            tenant=tenant,
+            marketplace='avito',
+            category_source=product.category_1c,
+            category_target='Запчасти и аксессуары',
+            category_id=1,
+            attributes_map={'address': 'Казань, улица Кремлёвская, 1'},
+        )
+        listing = make_listing(tenant, product, account, bulk_placement_address=address)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+
+        assert '<Address>Санкт-Петербург, Невский проспект, 1</Address>' in xml_str
+        assert 'Казань, улица Кремлёвская, 1' not in xml_str
+
+    def test_build_feed_uses_account_default_placement_address(self):
+        tenant = make_tenant('feed-default-placement-address-co')
+        account = make_account(tenant)
+        account.default_address = 'Москва, улица Ленина, 1'
+        account.save(update_fields=['default_address'])
+        MarketplacePlacementAddress.objects.create(
+            tenant=tenant,
+            account=account,
+            name='Основной адрес',
+            address='Нижний Новгород, Большая Покровская, 1',
+            is_default=True,
+        )
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+
+        assert '<Address>Нижний Новгород, Большая Покровская, 1</Address>' in xml_str
+        assert 'Москва, улица Ленина, 1' not in xml_str
+
+    def test_update_listing_fields_changes_account_and_price(self):
+        tenant = make_tenant('listing-fields-co')
+        account = make_account(tenant)
+        next_account = MarketplaceAccount.objects.create(
+            tenant=tenant,
+            name='Second Account',
+            external_id='54321',
+            credentials_enc=encrypt({'client_id': 'cid2', 'client_secret': 'csec2'}),
+        )
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+
+        updated = ListingService.update_listing_fields(listing.pk, tenant, {
+            'account_id': next_account.pk,
+            'price_on_listing': Decimal('4100.00'),
+        })
+
+        assert updated.account_id == next_account.pk
+        assert updated.price_on_listing == Decimal('4100.00')
+        assert '<Price>4100</Price>' in build_feed([updated]).decode('utf-8')
+
+    def test_update_listing_fields_clears_placement_address_when_account_changes(self):
+        tenant = make_tenant('listing-fields-clear-placement-co')
+        account = make_account(tenant)
+        next_account = MarketplaceAccount.objects.create(
+            tenant=tenant,
+            name='Second Account',
+            external_id='54321',
+            credentials_enc=encrypt({'client_id': 'cid2', 'client_secret': 'csec2'}),
+        )
+        product = make_product(tenant)
+        address = MarketplacePlacementAddress.objects.create(
+            tenant=tenant,
+            account=account,
+            name='Старый адрес',
+            address='Москва',
+        )
+        listing = make_listing(tenant, product, account, placement_address=address)
+
+        updated = ListingService.update_listing_fields(listing.pk, tenant, {'account_id': next_account.pk})
+
+        assert updated.account_id == next_account.pk
+        assert updated.placement_address_id is None
 
 
 @pytest.mark.django_db
