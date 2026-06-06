@@ -39,9 +39,10 @@ class TenantService:
         BillingService.start_trial(tenant)
 
         from apps.products.services import ProductCategorySeedService
-        ProductCategorySeedService.enable_tenant_catalog_domain(tenant, tenant.catalog_domain)
-        if tenant.catalog_domain == Tenant.CatalogDomain.MIXED:
-            ProductCategorySeedService.enable_tenant_catalog_domain(tenant, Tenant.CatalogDomain.AUTO_PARTS)
+        if tenant.catalog_domain != Tenant.CatalogDomain.UNKNOWN:
+            ProductCategorySeedService.enable_tenant_catalog_domain(tenant, tenant.catalog_domain)
+            if tenant.catalog_domain == Tenant.CatalogDomain.MIXED:
+                ProductCategorySeedService.enable_tenant_catalog_domain(tenant, Tenant.CatalogDomain.AUTO_PARTS)
 
         return tenant, plaintext
 

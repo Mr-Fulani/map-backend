@@ -59,6 +59,9 @@ $COMPOSE exec -T django python manage.py migrate
 echo "==> Сбор статики..."
 $COMPOSE exec -T django python manage.py collectstatic --noinput > /dev/null
 
+echo "==> Засев категорий каталога для всех тенантов..."
+$COMPOSE exec -T django python manage.py seed_tenant_categories
+
 # ── 6. Все остальные сервисы ──────────────────────────────────────────────────
 echo "==> Запуск celery, frontend, nginx..."
 $COMPOSE up -d --build
