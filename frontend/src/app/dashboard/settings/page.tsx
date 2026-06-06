@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store } from 'lucide-react';
 import { profileApi, datasourceApi } from '@/lib/api';
 
 interface ApiKey {
@@ -85,7 +85,7 @@ interface CatalogCategoryMapping {
 }
 
 const SETTINGS_TABS = [
-  'profile', 'organization', 'api-keys', 'accounts', 'datasources',
+  'profile', 'organization', 'api-keys', 'marketplaces', 'datasources',
   'catalog-categories', 'notifications',
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
@@ -157,7 +157,8 @@ export default function SettingsPage() {
   const didMount = useRef(false);
   useEffect(() => {
     function syncTab() {
-      const hash = window.location.hash.slice(1) as SettingsTab;
+      const rawHash = window.location.hash.slice(1);
+      const hash = (rawHash === 'accounts' ? 'marketplaces' : rawHash) as SettingsTab;
       if (SETTINGS_TABS.includes(hash)) setActiveTab(hash);
     }
     syncTab();
@@ -741,7 +742,7 @@ export default function SettingsPage() {
             <TabsTrigger value="profile">Профиль</TabsTrigger>
             <TabsTrigger value="organization">Организация</TabsTrigger>
             <TabsTrigger value="api-keys">API-ключи</TabsTrigger>
-            <TabsTrigger value="accounts">Avito-аккаунты</TabsTrigger>
+            <TabsTrigger value="marketplaces">Маркетплейсы</TabsTrigger>
             <TabsTrigger value="datasources">Источники данных</TabsTrigger>
             <TabsTrigger value="catalog-categories">Категории</TabsTrigger>
             <TabsTrigger value="notifications">Уведомления</TabsTrigger>
@@ -996,8 +997,8 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Avito аккаунты */}
-        <TabsContent value="accounts" className="mt-4 space-y-4">
+        {/* Маркетплейсы */}
+        <TabsContent value="marketplaces" className="mt-4 space-y-4">
           {showAddAccount && (
             <Card>
               <CardHeader>
@@ -1079,8 +1080,11 @@ export default function SettingsPage() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Avito-аккаунты</CardTitle>
-                <CardDescription>Подключённые аккаунты маркетплейсов</CardDescription>
+                <div className="flex items-center gap-2">
+                  <CardTitle>Avito</CardTitle>
+                  <Badge variant="default">Доступно</Badge>
+                </div>
+                <CardDescription>Аккаунты, Автозагрузка и публикация объявлений на Avito</CardDescription>
               </div>
               {!showAddAccount && (
                 <Button onClick={() => setShowAddAccount(true)} size="sm">
@@ -1239,6 +1243,27 @@ export default function SettingsPage() {
                   })}
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <CardTitle>Дром</CardTitle>
+                  <Badge variant="secondary">Скоро</Badge>
+                </div>
+                <CardDescription>Заглушка для будущего подключения объявлений на Дром</CardDescription>
+              </div>
+              <Button size="sm" variant="outline" disabled>
+                <Store className="mr-2 h-4 w-4" />
+                Недоступно
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
+                Интеграция с Дром пока не подключена. Здесь появятся аккаунты, статусы публикации и настройки синхронизации.
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
