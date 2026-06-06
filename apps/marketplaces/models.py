@@ -72,6 +72,12 @@ class MarketplaceAccount(TimestampedModel):
     token_expires_at = models.DateTimeField(null=True, blank=True, verbose_name='Токен истекает')
     requests_this_hour = models.PositiveIntegerField(default=0, verbose_name='Запросов за текущий час')
     hour_bucket_reset_at = models.DateTimeField(null=True, blank=True, verbose_name='Сброс счётчика запросов')
+    default_address = models.CharField(max_length=500, blank=True, verbose_name='Адрес по умолчанию')
+    default_seller_address_id = models.CharField(
+        max_length=100, blank=True, verbose_name='ID адреса продавца Avito по умолчанию',
+    )
+    default_manager_name = models.CharField(max_length=100, blank=True, verbose_name='Контактное лицо')
+    default_contact_phone = models.CharField(max_length=50, blank=True, verbose_name='Контактный телефон')
 
     class Meta:
         verbose_name = 'Avito-аккаунт'
@@ -80,6 +86,35 @@ class MarketplaceAccount(TimestampedModel):
 
     def __str__(self):
         return f'{self.tenant.slug} / {self.name}'
+
+
+class MarketplacePlacementAddress(TimestampedModel):
+    """Сохранённый адрес размещения для аккаунта маркетплейса."""
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE,
+        related_name='marketplace_placement_addresses', verbose_name='Тенант',
+    )
+    account = models.ForeignKey(
+        MarketplaceAccount, on_delete=models.CASCADE,
+        related_name='placement_addresses', verbose_name='Аккаунт Avito',
+    )
+    name = models.CharField(max_length=200, verbose_name='Название')
+    seller_address_id = models.CharField(max_length=100, blank=True, verbose_name='ID адреса Avito')
+    address = models.CharField(max_length=500, blank=True, verbose_name='Регион/адрес размещения')
+    manager_name = models.CharField(max_length=100, blank=True, verbose_name='Контактное лицо')
+    contact_phone = models.CharField(max_length=50, blank=True, verbose_name='Контактный телефон')
+    is_default = models.BooleanField(default=False, verbose_name='По умолчанию')
+    is_active = models.BooleanField(default=True, verbose_name='Активен')
+
+    class Meta:
+        verbose_name = 'Адрес размещения'
+        verbose_name_plural = 'Адреса размещения'
+        ordering = ['account', '-is_default', 'name']
+        unique_together = [('tenant', 'account', 'name')]
+
+    def __str__(self):
+        return f'{self.account.name}: {self.name}'
 
 
 class Listing(TimestampedModel):
@@ -93,7 +128,7 @@ class Listing(TimestampedModel):
     STATUS_LIMIT_REACHED = 'limit_reached'
     STATUS_CHOICES = [
         (STATUS_DRAFT, 'Черновик'),
-        (STATUS_PENDING, 'На модерации'),
+        (STATUS_PENDING, 'На модерации Avito'),
         (STATUS_ACTIVE, 'Активно'),
         (STATUS_REJECTED, 'Отклонено'),
         (STATUS_ARCHIVED, 'В архиве'),
@@ -122,6 +157,26 @@ class Listing(TimestampedModel):
     ai_confidence = models.FloatField(null=True, blank=True, verbose_name='Уверенность AI (0–1)')
     price_on_listing = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Цена на объявлении, ₽')
     publish_idempotency_key = models.UUIDField(default=uuid.uuid4, unique=True, verbose_name='Ключ идемпотентности')
+    placement_address = models.ForeignKey(
+        MarketplacePlacementAddress, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='manual_listings', verbose_name='Адрес размещения',
+    )
+    address_override = models.CharField(max_length=500, blank=True, verbose_name='Адрес объявления')
+    seller_address_id_override = models.CharField(
+        max_length=100, blank=True, verbose_name='ID адреса продавца Avito',
+    )
+    manager_name_override = models.CharField(max_length=100, blank=True, verbose_name='Контактное лицо')
+    contact_phone_override = models.CharField(max_length=50, blank=True, verbose_name='Контактный телефон')
+    bulk_address = models.CharField(max_length=500, blank=True, verbose_name='Массово назначенный адрес')
+    bulk_seller_address_id = models.CharField(
+        max_length=100, blank=True, verbose_name='Массово назначенный ID адреса продавца Avito',
+    )
+    bulk_manager_name = models.CharField(max_length=100, blank=True, verbose_name='Массово назначенное контактное лицо')
+    bulk_contact_phone = models.CharField(max_length=50, blank=True, verbose_name='Массово назначенный телефон')
+    bulk_placement_address = models.ForeignKey(
+        MarketplacePlacementAddress, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='bulk_listings', verbose_name='Массово назначенный адрес размещения',
+    )
     retry_count = models.PositiveSmallIntegerField(default=0, verbose_name='Количество попыток')
     next_retry_at = models.DateTimeField(null=True, blank=True, verbose_name='Следующая попытка')
     published_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата публикации')

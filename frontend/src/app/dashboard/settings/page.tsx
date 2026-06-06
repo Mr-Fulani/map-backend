@@ -30,7 +30,24 @@ interface Account {
   marketplace: string;
   external_id: string;
   is_active: boolean;
+  default_address: string;
+  default_seller_address_id: string;
+  default_manager_name: string;
+  default_contact_phone: string;
   created_at: string;
+}
+
+interface PlacementAddress {
+  id: number;
+  account: number;
+  account_name: string;
+  name: string;
+  seller_address_id: string;
+  address: string;
+  manager_name: string;
+  contact_phone: string;
+  is_default: boolean;
+  is_active: boolean;
 }
 
 interface DataSource {
@@ -124,6 +141,16 @@ export default function SettingsPage() {
   const [autoloadStatus, setAutoloadStatus] = useState<Record<number, { activated: boolean; feed_url: string } | null>>({});
   const [checkingAutoloadId, setCheckingAutoloadId] = useState<number | null>(null);
   const [copiedFeedId, setCopiedFeedId] = useState<number | null>(null);
+  const [savingPlacementAccountId, setSavingPlacementAccountId] = useState<number | null>(null);
+  const [placementAddresses, setPlacementAddresses] = useState<PlacementAddress[]>([]);
+  const [savingAddressAccountId, setSavingAddressAccountId] = useState<number | null>(null);
+  const [addressDrafts, setAddressDrafts] = useState<Record<number, {
+    name: string;
+    seller_address_id: string;
+    address: string;
+    manager_name: string;
+    contact_phone: string;
+  }>>({});
   const [deletingDatasourceId, setDeletingDatasourceId] = useState<number | null>(null);
   const [creatingCatalogCategory, setCreatingCatalogCategory] = useState(false);
   const [uploadingCategoryImageId, setUploadingCategoryImageId] = useState<number | null>(null);
@@ -241,6 +268,8 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setLoadingAccounts(false));
 
+    loadPlacementAddresses();
+
     loadDatasources()
       .catch(() => {})
       .finally(() => setLoadingDatasources(false));
@@ -278,6 +307,15 @@ export default function SettingsPage() {
       toast.error('Не удалось загрузить категории каталога');
     } finally {
       setLoadingCatalogCategories(false);
+    }
+  }
+
+  async function loadPlacementAddresses() {
+    try {
+      const res = await accountApi.listPlacementAddresses();
+      setPlacementAddresses(res.data.data ?? res.data);
+    } catch {
+      setPlacementAddresses([]);
     }
   }
 
@@ -414,6 +452,99 @@ export default function SettingsPage() {
       toast.success('Название сохранено');
     } catch {
       toast.error('Не удалось сохранить название');
+    }
+  }
+
+  function updateAccountDraft(id: number, data: Partial<Account>) {
+    setAccounts((prev) => prev.map((a) => a.id === id ? { ...a, ...data } : a));
+  }
+
+  async function saveAccountPlacement(account: Account) {
+    setSavingPlacementAccountId(account.id);
+    try {
+      const res = await accountApi.patch(account.id, {
+        default_address: account.default_address || '',
+        default_seller_address_id: account.default_seller_address_id || '',
+        default_manager_name: account.default_manager_name || '',
+        default_contact_phone: account.default_contact_phone || '',
+      });
+      setAccounts((prev) => prev.map((a) => a.id === account.id ? (res.data.data ?? res.data) : a));
+      toast.success('Настройки размещения сохранены');
+    } catch {
+      toast.error('Не удалось сохранить настройки размещения');
+    } finally {
+      setSavingPlacementAccountId(null);
+    }
+  }
+
+  function updateAddressDraft(accountId: number, data: Partial<Record<'name' | 'seller_address_id' | 'address' | 'manager_name' | 'contact_phone', string>>) {
+    const emptyDraft = {
+      name: '',
+      seller_address_id: '',
+      address: '',
+      manager_name: '',
+      contact_phone: '',
+    };
+    setAddressDrafts((prev) => ({
+      ...prev,
+      [accountId]: { ...emptyDraft, ...(prev[accountId] || {}), ...data },
+    }));
+  }
+
+  async function createPlacementAddress(accountId: number) {
+    const draft = addressDrafts[accountId];
+    if (!draft?.name?.trim()) {
+      toast.error('Укажите название адреса');
+      return;
+    }
+    setSavingAddressAccountId(accountId);
+    try {
+      const res = await accountApi.createPlacementAddress({
+        account: accountId,
+        name: draft.name.trim(),
+        seller_address_id: draft.seller_address_id || '',
+        address: draft.address || '',
+        manager_name: draft.manager_name || '',
+        contact_phone: draft.contact_phone || '',
+        is_default: placementAddresses.filter((item) => item.account === accountId && item.is_active).length === 0,
+        is_active: true,
+      });
+      setPlacementAddresses((prev) => [...prev, res.data.data ?? res.data]);
+      setAddressDrafts((prev) => ({ ...prev, [accountId]: {
+        name: '',
+        seller_address_id: '',
+        address: '',
+        manager_name: '',
+        contact_phone: '',
+      } }));
+      toast.success('Адрес добавлен');
+    } catch {
+      toast.error('Не удалось добавить адрес');
+    } finally {
+      setSavingAddressAccountId(null);
+    }
+  }
+
+  async function setDefaultPlacementAddress(address: PlacementAddress) {
+    try {
+      const res = await accountApi.patchPlacementAddress(address.id, { is_default: true });
+      const updated = res.data.data ?? res.data;
+      setPlacementAddresses((prev) => prev.map((item) => {
+        if (item.account === address.account) return item.id === address.id ? updated : { ...item, is_default: false };
+        return item;
+      }));
+    } catch {
+      toast.error('Не удалось назначить адрес по умолчанию');
+    }
+  }
+
+  async function deletePlacementAddress(id: number) {
+    try {
+      await accountApi.deletePlacementAddress(id);
+      setPlacementAddresses((prev) => prev.filter((item) => item.id !== id));
+      toast.success('Адрес удалён');
+    } catch {
+      toast.error('Не удалось удалить адрес');
     }
   }
 
@@ -1114,6 +1245,14 @@ export default function SettingsPage() {
                 <div className="space-y-3">
                   {accounts.map((acc) => {
                     const al = autoloadStatus[acc.id];
+                    const accAddresses = placementAddresses.filter((item) => item.account === acc.id && item.is_active);
+                    const addressDraft = addressDrafts[acc.id] || {
+                      name: '',
+                      seller_address_id: '',
+                      address: '',
+                      manager_name: '',
+                      contact_phone: '',
+                    };
                     return (
                     <div key={acc.id} className="rounded-lg border p-4 space-y-3">
                       {/* Название + переключатель */}
@@ -1246,6 +1385,155 @@ export default function SettingsPage() {
                           </div>
                         </div>
                       )}
+
+                      <div className="rounded-md border bg-muted/20 p-3">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium">Размещение по умолчанию</p>
+                            <p className="text-xs text-muted-foreground">
+                              Эти поля попадут в feed, если у объявления или категории нет своего адреса.
+                            </p>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => saveAccountPlacement(acc)}
+                            disabled={savingPlacementAccountId === acc.id}
+                          >
+                            {savingPlacementAccountId === acc.id && (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            )}
+                            Сохранить
+                          </Button>
+                        </div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="space-y-1">
+                            <Label className="text-xs">ID адреса Avito</Label>
+                            <Input
+                              value={acc.default_seller_address_id || ''}
+                              onChange={(e) => updateAccountDraft(acc.id, { default_seller_address_id: e.target.value })}
+                              placeholder="ID адреса из Avito Pro"
+                              className="h-8 font-mono text-xs"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Контактный телефон</Label>
+                            <Input
+                              value={acc.default_contact_phone || ''}
+                              onChange={(e) => updateAccountDraft(acc.id, { default_contact_phone: e.target.value })}
+                              placeholder="+7 900 000-00-00"
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div className="space-y-1 md:col-span-2">
+                            <Label className="text-xs">Адрес</Label>
+                            <Input
+                              value={acc.default_address || ''}
+                              onChange={(e) => updateAccountDraft(acc.id, { default_address: e.target.value })}
+                              placeholder="Москва, улица Ленина, 1"
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                          <div className="space-y-1 md:col-span-2">
+                            <Label className="text-xs">Контактное лицо</Label>
+                            <Input
+                              value={acc.default_manager_name || ''}
+                              onChange={(e) => updateAccountDraft(acc.id, { default_manager_name: e.target.value })}
+                              placeholder="Имя менеджера"
+                              className="h-8 text-xs"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="rounded-md border bg-muted/20 p-3">
+                        <div className="mb-3">
+                          <p className="text-sm font-medium">Адреса размещения</p>
+                          <p className="text-xs text-muted-foreground">
+                            Сохраните адреса из Avito Pro, чтобы выбирать их в объявлениях и массовых действиях.
+                          </p>
+                        </div>
+                        <div className="space-y-2">
+                          {accAddresses.length === 0 ? (
+                            <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+                              Адресов пока нет. Добавьте хотя бы один адрес для этого аккаунта.
+                            </p>
+                          ) : accAddresses.map((address) => (
+                            <div key={address.id} className="flex flex-wrap items-center gap-2 rounded-md border bg-background px-3 py-2 text-xs">
+                              <span className="font-medium">{address.name}</span>
+                              {address.is_default && <Badge variant="secondary">По умолчанию</Badge>}
+                              {address.seller_address_id && (
+                                <code className="rounded bg-muted px-1.5 py-0.5">ID {address.seller_address_id}</code>
+                              )}
+                              {address.address && <span className="text-muted-foreground">{address.address}</span>}
+                              {address.contact_phone && <span className="text-muted-foreground">{address.contact_phone}</span>}
+                              <div className="ml-auto flex items-center gap-1">
+                                {!address.is_default && (
+                                  <Button
+                                    size="sm"
+                                    variant="ghost"
+                                    className="h-7 px-2 text-xs"
+                                    onClick={() => setDefaultPlacementAddress(address)}
+                                  >
+                                    По умолчанию
+                                  </Button>
+                                )}
+                                <Button
+                                  size="sm"
+                                  variant="ghost"
+                                  className="h-7 px-2 text-destructive hover:text-destructive"
+                                  onClick={() => deletePlacementAddress(address.id)}
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                        <div className="mt-3 grid gap-2 md:grid-cols-2">
+                          <Input
+                            value={addressDraft.name}
+                            onChange={(e) => updateAddressDraft(acc.id, { name: e.target.value })}
+                            placeholder="Название адреса"
+                            className="h-8 text-xs"
+                          />
+                          <Input
+                            value={addressDraft.seller_address_id}
+                            onChange={(e) => updateAddressDraft(acc.id, { seller_address_id: e.target.value })}
+                            placeholder="ID адреса Avito"
+                            className="h-8 font-mono text-xs"
+                          />
+                          <Input
+                            value={addressDraft.address}
+                            onChange={(e) => updateAddressDraft(acc.id, { address: e.target.value })}
+                            placeholder="Регион/адрес размещения"
+                            className="h-8 text-xs"
+                          />
+                          <Input
+                            value={addressDraft.contact_phone}
+                            onChange={(e) => updateAddressDraft(acc.id, { contact_phone: e.target.value })}
+                            placeholder="Контактный телефон"
+                            className="h-8 text-xs"
+                          />
+                          <Input
+                            value={addressDraft.manager_name}
+                            onChange={(e) => updateAddressDraft(acc.id, { manager_name: e.target.value })}
+                            placeholder="Контактное лицо"
+                            className="h-8 text-xs"
+                          />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => createPlacementAddress(acc.id)}
+                            disabled={savingAddressAccountId === acc.id}
+                          >
+                            {savingAddressAccountId === acc.id && (
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            )}
+                            Добавить адрес
+                          </Button>
+                        </div>
+                      </div>
                     </div>
                     );
                   })}
