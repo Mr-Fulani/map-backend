@@ -1,43 +1,19 @@
 /**
- * Onboarding Wizard — 6-шаговый мастер настройки.
- *
- * Шаг 1: Подключение Avito (client_id + client_secret)
- * Шаг 2: Активация Avito Автозагрузки (один раз в кабинете Avito)
- * Шаг 3: Источник данных (1С HTTP / XML / CSV)
- * Шаг 4: Тест подключения + импорт 10 товаров
- * Шаг 5: Маппинг категорий 1С → Avito
- * Шаг 6: Первая синхронизация → готово
+ * Onboarding — короткое завершение регистрации.
+ * Интеграции Avito и источники данных настраиваются в дашборде.
  */
 
 'use client';
 
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Progress } from '@/components/ui/progress';
-import { Zap } from 'lucide-react';
-import { StepAvito } from './steps/step-avito';
-import { StepAutoload } from './steps/step-autoload';
-import { StepDatasource } from './steps/step-datasource';
-import { StepTest } from './steps/step-test';
-import { StepCategories } from './steps/step-categories';
-import { StepSync } from './steps/step-sync';
-
-const STEPS = [
-  { id: 1, title: 'Подключение Avito', description: 'Введите API-ключи Avito' },
-  { id: 2, title: 'Автозагрузка', description: 'Активируйте публикацию объявлений' },
-  { id: 3, title: 'Источник данных', description: 'Откуда берём товары' },
-  { id: 4, title: 'Тест подключения', description: 'Проверяем всё работает' },
-  { id: 5, title: 'Категории', description: 'Маппинг категорий' },
-  { id: 6, title: 'Запуск', description: 'Первая синхронизация' },
-];
+import { Button } from '@/components/ui/button';
+import { ArrowRight, Database, Settings, Store, Zap } from 'lucide-react';
 
 export default function OnboardingPage() {
-  const [currentStep, setCurrentStep] = useState(1);
-  const [wizardData, setWizardData] = useState<Record<string, unknown>>({});
   const router = useRouter();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, tenant } = useAuth();
 
   if (isLoading) {
     return (
@@ -52,37 +28,12 @@ export default function OnboardingPage() {
     return null;
   }
 
-  const progress = (currentStep / STEPS.length) * 100;
-
-  function handleNext(data?: Record<string, unknown>) {
-    if (data) {
-      setWizardData((prev) => ({ ...prev, ...data }));
-    }
-    if (currentStep < STEPS.length) {
-      setCurrentStep(currentStep + 1);
-    }
-  }
-
-  function handleBack() {
-    if (currentStep > 1) {
-      setCurrentStep(currentStep - 1);
-    }
-  }
-
-  function handleFinish() {
-    router.push('/dashboard');
-  }
-
-  const stepInfo = STEPS[currentStep - 1];
-
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-br from-background via-background to-muted/30">
-      {/* Decorative */}
       <div className="pointer-events-none fixed inset-0 overflow-hidden">
         <div className="absolute -top-60 left-1/2 h-[500px] w-[500px] -translate-x-1/2 rounded-full bg-primary/3 blur-3xl" />
       </div>
 
-      {/* Header */}
       <header className="relative border-b bg-card/50 backdrop-blur-sm">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-4">
           <div className="flex items-center gap-2.5">
@@ -92,95 +43,52 @@ export default function OnboardingPage() {
             <span className="text-lg font-bold">MAP</span>
           </div>
           <div className="text-sm text-muted-foreground">
-            Шаг {currentStep} из {STEPS.length}
+            Регистрация завершена
           </div>
         </div>
       </header>
 
-      {/* Progress bar */}
-      <div className="relative mx-auto w-full max-w-3xl px-4 pt-6">
-        <Progress value={progress} className="h-2" />
-
-        {/* Step indicators */}
-        <div className="mt-3 flex justify-between">
-          {STEPS.map((step) => (
-            <div
-              key={step.id}
-              className={`flex flex-col items-center text-center ${
-                step.id <= currentStep
-                  ? 'text-primary'
-                  : 'text-muted-foreground/50'
-              }`}
-            >
-              <div
-                className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold transition-colors ${
-                  step.id < currentStep
-                    ? 'bg-primary text-primary-foreground'
-                    : step.id === currentStep
-                      ? 'border-2 border-primary text-primary'
-                      : 'border border-muted-foreground/30 text-muted-foreground/50'
-                }`}
-              >
-                {step.id < currentStep ? '✓' : step.id}
-              </div>
-              <span className="mt-1 hidden text-xs sm:block">{step.title}</span>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* Step content */}
-      <div className="relative mx-auto w-full max-w-3xl flex-1 px-4 py-8">
-        <Card>
+      <main className="relative mx-auto flex w-full max-w-3xl flex-1 items-center px-4 py-8">
+        <Card className="w-full">
           <CardHeader>
-            <CardTitle>{stepInfo.title}</CardTitle>
-            <CardDescription>{stepInfo.description}</CardDescription>
+            <CardTitle>Аккаунт готов</CardTitle>
+            <CardDescription>
+              {tenant?.name
+                ? `${tenant.name} создан. Подключения можно настроить в дашборде, когда будет удобно.`
+                : 'Подключения можно настроить в дашборде, когда будет удобно.'}
+            </CardDescription>
           </CardHeader>
-          <CardContent>
-            {currentStep === 1 && (
-              <StepAvito
-                data={wizardData}
-                onNext={handleNext}
-              />
-            )}
-            {currentStep === 2 && (
-              <StepAutoload
-                data={wizardData}
-                onNext={handleNext}
-                onBack={handleBack}
-              />
-            )}
-            {currentStep === 3 && (
-              <StepDatasource
-                data={wizardData}
-                onNext={handleNext}
-                onBack={handleBack}
-              />
-            )}
-            {currentStep === 4 && (
-              <StepTest
-                data={wizardData}
-                onNext={handleNext}
-                onBack={handleBack}
-              />
-            )}
-            {currentStep === 5 && (
-              <StepCategories
-                data={wizardData}
-                onNext={handleNext}
-                onBack={handleBack}
-              />
-            )}
-            {currentStep === 6 && (
-              <StepSync
-                data={wizardData}
-                onFinish={handleFinish}
-                onBack={handleBack}
-              />
-            )}
+          <CardContent className="space-y-6">
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border p-4">
+                <Settings className="mb-3 h-5 w-5 text-primary" />
+                <p className="text-sm font-medium">Профиль и команда</p>
+                <p className="mt-1 text-xs text-muted-foreground">Основные настройки аккаунта.</p>
+              </div>
+              <div className="rounded-lg border p-4">
+                <Store className="mb-3 h-5 w-5 text-primary" />
+                <p className="text-sm font-medium">Avito-аккаунты</p>
+                <p className="mt-1 text-xs text-muted-foreground">Подключение вынесено в настройки.</p>
+              </div>
+              <div className="rounded-lg border p-4">
+                <Database className="mb-3 h-5 w-5 text-primary" />
+                <p className="text-sm font-medium">Источники данных</p>
+                <p className="mt-1 text-xs text-muted-foreground">1C и файлы добавляются отдельно.</p>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
+              <Button variant="outline" onClick={() => router.push('/dashboard/settings')}>
+                Открыть настройки
+              </Button>
+              <Button onClick={() => router.push('/dashboard')}>
+                Перейти в дашборд
+                <ArrowRight className="ml-2 h-4 w-4" />
+              </Button>
+            </div>
           </CardContent>
         </Card>
-      </div>
+      </main>
     </div>
   );
 }
