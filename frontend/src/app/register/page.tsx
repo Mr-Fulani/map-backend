@@ -25,6 +25,26 @@ function flattenErrorMessages(value: unknown): string[] {
   return [String(value)];
 }
 
+const CYRILLIC_TO_LATIN: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z',
+  и: 'i', й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r',
+  с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh',
+  щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+};
+
+function makeAsciiSlug(value: string) {
+  return value
+    .toLowerCase()
+    .split('')
+    .map((char) => CYRILLIC_TO_LATIN[char] ?? char)
+    .join('')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .substring(0, 50);
+}
+
 export default function RegisterPage() {
   const [form, setForm] = useState({
     name: '',
@@ -40,12 +60,7 @@ export default function RegisterPage() {
     setForm((prev) => ({ ...prev, [field]: value }));
     // Автогенерация slug из name
     if (field === 'name') {
-      const slug = value
-        .toLowerCase()
-        .replace(/[^a-zа-я0-9\s-]/g, '')
-        .replace(/\s+/g, '-')
-        .replace(/-+/g, '-')
-        .substring(0, 50);
+      const slug = makeAsciiSlug(value);
       setForm((prev) => ({ ...prev, slug }));
     }
   }
@@ -114,13 +129,13 @@ export default function RegisterPage() {
                   id="slug"
                   placeholder="avtozapchasti"
                   value={form.slug}
-                  onChange={(e) => handleChange('slug', e.target.value)}
+                  onChange={(e) => handleChange('slug', makeAsciiSlug(e.target.value))}
                   required
                   className="font-mono text-sm"
                 />
               </div>
               <p className="text-xs text-muted-foreground">
-                map.domain.ru/t/{form.slug || 'your-slug'}/
+                Только английские буквы, цифры и дефисы: map.domain.ru/t/{form.slug || 'your-slug'}/
               </p>
             </div>
             <div className="space-y-2">
