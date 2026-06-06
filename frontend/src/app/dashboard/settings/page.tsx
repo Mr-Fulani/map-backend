@@ -376,10 +376,18 @@ export default function SettingsPage() {
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status?: number; data?: Record<string, unknown> } };
       if (axiosErr?.response?.status === 409) {
-        toast.error('Аккаунт с таким Client ID уже существует');
+        const message = String(axiosErr.response.data?.detail || 'Этот аккаунт Avito уже подключён');
+        toast.error(message);
         return;
       }
-      toast.error('Ошибка при добавлении аккаунта');
+      const errorData = axiosErr?.response?.data;
+      const message = String(
+        errorData?.message ||
+        errorData?.detail ||
+        errorData?.errors ||
+        'Ошибка при добавлении аккаунта',
+      );
+      toast.error(message);
     } finally {
       setCreatingAccount(false);
     }

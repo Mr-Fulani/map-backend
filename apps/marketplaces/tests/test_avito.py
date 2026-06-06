@@ -94,6 +94,25 @@ class TestAvitoAuthManager:
         manager.get_token(account)
         assert len(responses_lib.calls) == 1
 
+    @responses_lib.activate
+    def test_refresh_unsaved_account_does_not_cache_none_key(self):
+        responses_lib.add(
+            responses_lib.POST, 'https://api.avito.ru/token',
+            json={'access_token': 'tok-validation', 'expires_in': 3600},
+            status=200,
+        )
+        from django.core.cache import cache
+        cache.clear()
+
+        account = MagicMock()
+        account.pk = None
+        account.credentials_enc = encrypt({'client_id': 'cid', 'client_secret': 'csec'})
+
+        token = AvitoAuthManager()._refresh(account)
+
+        assert token == 'tok-validation'
+        assert cache.get('avito:token:None') is None
+
 
 # ------------------------------------------------------------------ #
 #  Feed builder                                                       #

@@ -288,7 +288,7 @@ class MarketplaceAccountService:
             resp.raise_for_status()
             user_id = resp.json().get('id')
         except Exception:
-            raise InvalidMarketplaceCredentials('Не удалось проверить Avito API-ключи')
+            raise InvalidMarketplaceCredentials('Не удалось проверить Avito API-ключи. Проверьте их правильность.')
         if not user_id:
             raise InvalidMarketplaceCredentials('Avito API не вернул user_id аккаунта')
         return str(user_id)
