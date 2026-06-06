@@ -63,6 +63,9 @@ $COMPOSE exec -T django python manage.py collectstatic --noinput > /dev/null
 echo "==> Запуск celery, frontend, nginx..."
 $COMPOSE up -d --build
 
+echo "==> Перезапуск nginx для обновления upstream DNS..."
+$COMPOSE restart nginx
+
 echo ""
 echo "  Деплой завершён:"
 echo "    Backend:  https://$(hostname -f 2>/dev/null || echo localhost)"
