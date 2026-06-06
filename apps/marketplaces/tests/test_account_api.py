@@ -5,8 +5,10 @@
 изоляцию тенантов, защиту credentials.
 """
 import pytest
+from unittest.mock import patch
 
 from apps.datasources.encryption import decrypt
+from apps.marketplaces.services import InvalidMarketplaceCredentials
 from apps.marketplaces.models import MarketplaceAccount
 
 
@@ -14,6 +16,13 @@ def make_tenant(slug):
     from apps.tenants.services import TenantService
     tenant, plaintext = TenantService.create_tenant(slug, slug, f'{slug}@t.com', 'pass')
     return tenant, plaintext
+
+
+def mock_avito_user_id(value):
+    return patch(
+        'apps.marketplaces.services.MarketplaceAccountService._fetch_avito_user_id',
+        return_value=value,
+    )
 
 
 @pytest.mark.django_db
@@ -24,13 +33,14 @@ class TestMarketplaceAccountAPI:
         tenant, key = make_tenant('acc-create')
         c = Client()
 
-        resp = c.post('/api/v1/accounts/', {
-            'name': 'Основной',
-            'marketplace': 'avito',
-            'external_id': '111222',
-            'client_id': 'cid',
-            'client_secret': 'csec',
-        }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+        with mock_avito_user_id('111222'):
+            resp = c.post('/api/v1/accounts/', {
+                'name': 'Основной',
+                'marketplace': 'avito',
+                'external_id': '111222',
+                'client_id': 'cid',
+                'client_secret': 'csec',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
 
         assert resp.status_code == 201
         data = resp.json()
@@ -46,13 +56,14 @@ class TestMarketplaceAccountAPI:
         tenant, key = make_tenant('acc-enc')
         c = Client()
 
-        c.post('/api/v1/accounts/', {
-            'name': 'Enc Test',
-            'marketplace': 'avito',
-            'external_id': '999',
-            'client_id': 'my_client_id',
-            'client_secret': 'my_secret',
-        }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+        with mock_avito_user_id('999'):
+            c.post('/api/v1/accounts/', {
+                'name': 'Enc Test',
+                'marketplace': 'avito',
+                'external_id': '999',
+                'client_id': 'my_client_id',
+                'client_secret': 'my_secret',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
 
         account = MarketplaceAccount.objects.get(tenant=tenant)
         decrypted = decrypt(bytes(account.credentials_enc))
@@ -67,13 +78,14 @@ class TestMarketplaceAccountAPI:
         t2, k2 = make_tenant('acc-list-2')
 
         for tenant, key in [(t1, k1), (t2, k2)]:
-            Client().post('/api/v1/accounts/', {
-                'name': 'Acc',
-                'marketplace': 'avito',
-                'external_id': tenant.slug,
-                'client_id': 'x',
-                'client_secret': 'y',
-            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+            with mock_avito_user_id(tenant.slug):
+                Client().post('/api/v1/accounts/', {
+                    'name': 'Acc',
+                    'marketplace': 'avito',
+                    'external_id': tenant.slug,
+                    'client_id': 'x',
+                    'client_secret': 'y',
+                }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
 
         resp = Client().get('/api/v1/accounts/', HTTP_AUTHORIZATION=f'Bearer {k1}')
         assert resp.status_code == 200
@@ -81,18 +93,54 @@ class TestMarketplaceAccountAPI:
         assert t1.slug in ids
         assert t2.slug not in ids
 
+    def test_tenant_can_create_multiple_accounts_for_same_marketplace(self):
+        """Один tenant может подключить несколько разных аккаунтов одного маркетплейса."""
+        from django.test import Client
+        tenant, key = make_tenant('acc-multi-avito')
+        c = Client()
+
+        with mock_avito_user_id('avito-user-1'):
+            first = c.post('/api/v1/accounts/', {
+                'name': 'Avito Москва',
+                'marketplace': 'avito',
+                'external_id': 'ignored-1',
+                'client_id': 'cid-1',
+                'client_secret': 'secret-1',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+
+        with mock_avito_user_id('avito-user-2'):
+            second = c.post('/api/v1/accounts/', {
+                'name': 'Avito Казань',
+                'marketplace': 'avito',
+                'external_id': 'ignored-2',
+                'client_id': 'cid-2',
+                'client_secret': 'secret-2',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert MarketplaceAccount.objects.filter(
+            tenant=tenant,
+            marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+        ).count() == 2
+
+        resp = c.get('/api/v1/accounts/', HTTP_AUTHORIZATION=f'Bearer {key}')
+        assert resp.status_code == 200
+        assert {account['external_id'] for account in resp.json()} == {'avito-user-1', 'avito-user-2'}
+
     def test_get_account_detail(self):
         """GET /api/v1/accounts/{id}/ возвращает аккаунт."""
         from django.test import Client
         tenant, key = make_tenant('acc-detail')
         c = Client()
-        create_resp = c.post('/api/v1/accounts/', {
-            'name': 'Detail',
-            'marketplace': 'avito',
-            'external_id': '321',
-            'client_id': 'x',
-            'client_secret': 'y',
-        }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+        with mock_avito_user_id('321'):
+            create_resp = c.post('/api/v1/accounts/', {
+                'name': 'Detail',
+                'marketplace': 'avito',
+                'external_id': '321',
+                'client_id': 'x',
+                'client_secret': 'y',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
 
         pk = create_resp.json()['id']
         resp = c.get(f'/api/v1/accounts/{pk}/', HTTP_AUTHORIZATION=f'Bearer {key}')
@@ -105,21 +153,23 @@ class TestMarketplaceAccountAPI:
         tenant, key = make_tenant('acc-update')
         c = Client()
 
-        pk = c.post('/api/v1/accounts/', {
-            'name': 'Old Name',
-            'marketplace': 'avito',
-            'external_id': '555',
-            'client_id': 'old_id',
-            'client_secret': 'old_sec',
-        }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}').json()['id']
+        with mock_avito_user_id('555'):
+            pk = c.post('/api/v1/accounts/', {
+                'name': 'Old Name',
+                'marketplace': 'avito',
+                'external_id': '555',
+                'client_id': 'old_id',
+                'client_secret': 'old_sec',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}').json()['id']
 
-        resp = c.put(f'/api/v1/accounts/{pk}/', {
-            'name': 'New Name',
-            'marketplace': 'avito',
-            'external_id': '555',
-            'client_id': 'new_id',
-            'client_secret': 'new_sec',
-        }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+        with mock_avito_user_id('555'):
+            resp = c.put(f'/api/v1/accounts/{pk}/', {
+                'name': 'New Name',
+                'marketplace': 'avito',
+                'external_id': '555',
+                'client_id': 'new_id',
+                'client_secret': 'new_sec',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
 
         assert resp.status_code == 200
         assert resp.json()['name'] == 'New Name'
@@ -132,13 +182,14 @@ class TestMarketplaceAccountAPI:
         tenant, key = make_tenant('acc-delete')
         c = Client()
 
-        pk = c.post('/api/v1/accounts/', {
-            'name': 'To Delete',
-            'marketplace': 'avito',
-            'external_id': '777',
-            'client_id': 'x',
-            'client_secret': 'y',
-        }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}').json()['id']
+        with mock_avito_user_id('777'):
+            pk = c.post('/api/v1/accounts/', {
+                'name': 'To Delete',
+                'marketplace': 'avito',
+                'external_id': '777',
+                'client_id': 'x',
+                'client_secret': 'y',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}').json()['id']
 
         resp = c.delete(f'/api/v1/accounts/{pk}/', HTTP_AUTHORIZATION=f'Bearer {key}')
         assert resp.status_code == 204
@@ -171,6 +222,7 @@ class TestMarketplaceAccountAPI:
         tenant, key = make_tenant('acc-autoload')
 
         with patch('apps.marketplaces.tasks.setup_autoload_profile_task') as mock_task, \
+             mock_avito_user_id('al-001'), \
              patch('apps.marketplaces.services.transaction') as mock_tx:
             # В тестах on_commit не срабатывает — вызываем коллбэк немедленно
             mock_tx.on_commit.side_effect = lambda fn: fn()
@@ -197,9 +249,32 @@ class TestMarketplaceAccountAPI:
             'client_id': 'x',
             'client_secret': 'y',
         }
-        c.post('/api/v1/accounts/', payload,
-               content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+        with mock_avito_user_id('same-id'):
+            c.post('/api/v1/accounts/', payload,
+                   content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
 
-        resp = c.post('/api/v1/accounts/', payload,
-                      content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+        with mock_avito_user_id('same-id'):
+            resp = c.post('/api/v1/accounts/', payload,
+                          content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
         assert resp.status_code == 409
+
+    def test_invalid_avito_credentials_return_400(self):
+        """Невалидные Avito credentials не сохраняются как аккаунт."""
+        from django.test import Client
+        tenant, key = make_tenant('acc-invalid-creds')
+
+        with patch(
+            'apps.marketplaces.services.MarketplaceAccountService._fetch_avito_user_id',
+            side_effect=InvalidMarketplaceCredentials('Не удалось проверить Avito API-ключи'),
+        ):
+            resp = Client().post('/api/v1/accounts/', {
+                'name': 'Invalid',
+                'marketplace': 'avito',
+                'external_id': 'bad',
+                'client_id': 'bad',
+                'client_secret': 'bad',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+
+        assert resp.status_code == 400
+        assert resp.json()['code'] == 'validation_error'
+        assert MarketplaceAccount.objects.filter(tenant=tenant).count() == 0

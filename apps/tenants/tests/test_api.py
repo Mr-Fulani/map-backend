@@ -37,6 +37,20 @@ class TestRegisterView:
         assert response.status_code == 400
         assert response.json()['status'] == 'error'
 
+    def test_register_rejects_non_ascii_slug_with_clear_error(self):
+        """Кириллический slug не сохраняется и возвращает понятную ошибку."""
+        client = Client()
+        response = client.post('/api/v1/auth/register/', {
+            'name': 'Моя Компания',
+            'slug': 'моя-компания',
+            'email': 'owner-rus@myco.com',
+            'password': 'strongpass123',
+        }, content_type='application/json')
+
+        assert response.status_code == 400
+        assert response.json()['status'] == 'error'
+        assert 'только английские буквы' in str(response.json())
+
 
 @pytest.mark.django_db
 class TestTenantDetailView:

@@ -430,6 +430,50 @@ def test_parse_endpoint_rejects_non_auto_parts_tenant():
 
 
 @pytest.mark.django_db
+def test_parse_endpoint_allows_enabled_auto_parts_domain_for_mixed_tenant(
+    django_capture_on_commit_callbacks,
+):
+    tenant, api_key = make_tenant('parse-jewellery-with-auto-parts', catalog_domain='jewellery')
+    from apps.products.services import ProductCategorySeedService
+    ProductCategorySeedService.enable_tenant_catalog_domain(tenant, 'auto_parts')
+    root_domain = CatalogDomain.objects.get(slug='auto_parts')
+    category = TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Тормозные колодки',
+        root_domain=root_domain,
+        domain=ProductCatalogClassification.Domain.AUTO_PARTS,
+    )
+    product = make_product(tenant, category_1c='Тормозные колодки')
+    product.catalog_category = category
+    product.save(update_fields=['catalog_category', 'updated_at'])
+    ProductCatalogClassification.objects.create(
+        tenant=tenant,
+        product=product,
+        domain=ProductCatalogClassification.Domain.AUTO_PARTS,
+        confidence=0.85,
+        source=ProductCatalogClassification.Source.RULES,
+        reason='Тип товара определён по категории каталога: Тормозные колодки.',
+        needs_review=False,
+    )
+    client = Client()
+
+    with patch('apps.products.tasks.parse_single_part.delay') as delay:
+        with django_capture_on_commit_callbacks(execute=True):
+            response = client.post(
+                '/api/v1/products/parse/',
+                {'product_id': product.pk},
+                content_type='application/json',
+                HTTP_AUTHORIZATION=f'Bearer {api_key}',
+            )
+
+    assert response.status_code == 201
+    data = response.json()['data']
+    job = tenant.product_parse_jobs.get(pk=data['job_id'])
+    assert job.product == product
+    delay.assert_called_once_with(job.pk)
+
+
+@pytest.mark.django_db
 def test_regenerate_endpoint_for_non_auto_parts_tenant_queues_ai_without_enrichment(
     django_capture_on_commit_callbacks,
 ):

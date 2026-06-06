@@ -31,9 +31,12 @@ class AvitoAuthManager:
         )
         resp.raise_for_status()
         data = resp.json()
-        # Храним с TTL чуть меньше реального — чтобы не использовать просроченный токен
-        ttl = data['expires_in'] - TOKEN_BUFFER_SECONDS
-        cache.set(TOKEN_KEY.format(account_id=account.pk), data['access_token'], timeout=ttl)
+        # Храним с TTL чуть меньше реального — чтобы не использовать просроченный токен.
+        # При проверке новых credentials аккаунт ещё не сохранён, поэтому pk=None:
+        # такой токен не должен попадать в общий cache.
+        if account.pk is not None:
+            ttl = data['expires_in'] - TOKEN_BUFFER_SECONDS
+            cache.set(TOKEN_KEY.format(account_id=account.pk), data['access_token'], timeout=ttl)
         return data['access_token']
 
     def invalidate(self, account) -> None:

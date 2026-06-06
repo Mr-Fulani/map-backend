@@ -8,8 +8,10 @@ from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
 from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 from apps.marketplaces.adapters.avito.error_handler import backoff
+from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
 from apps.marketplaces.adapters.avito.feed_builder import build_feed, get_ad_id
 from apps.marketplaces.models import Listing, MarketplaceAccount
+from apps.products.models import ProductImage
 from apps.products.services import ProductService
 from apps.tenants.services import TenantService
 
@@ -92,6 +94,25 @@ class TestAvitoAuthManager:
         manager.get_token(account)
         assert len(responses_lib.calls) == 1
 
+    @responses_lib.activate
+    def test_refresh_unsaved_account_does_not_cache_none_key(self):
+        responses_lib.add(
+            responses_lib.POST, 'https://api.avito.ru/token',
+            json={'access_token': 'tok-validation', 'expires_in': 3600},
+            status=200,
+        )
+        from django.core.cache import cache
+        cache.clear()
+
+        account = MagicMock()
+        account.pk = None
+        account.credentials_enc = encrypt({'client_id': 'cid', 'client_secret': 'csec'})
+
+        token = AvitoAuthManager()._refresh(account)
+
+        assert token == 'tok-validation'
+        assert cache.get('avito:token:None') is None
+
 
 # ------------------------------------------------------------------ #
 #  Feed builder                                                       #
@@ -163,6 +184,63 @@ class TestFeedBuilder:
 
         xml_str = build_feed(listings).decode('utf-8')
         assert xml_str.count('<Ad>') == 3
+
+    def test_build_feed_includes_only_publishable_images_primary_first(self):
+        tenant = make_tenant('feed-images-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+        ProductImage.objects.create(
+            product=product,
+            s3_key='products/feed/needs-review.jpg',
+            sha256='needs-review',
+            position=0,
+            status=ProductImage.Status.NEEDS_REVIEW,
+        )
+        secondary = ProductImage.objects.create(
+            product=product,
+            s3_key='products/feed/secondary.jpg',
+            sha256='secondary',
+            position=1,
+            status=ProductImage.Status.AUTO_APPROVED,
+        )
+        ProductImage.objects.create(
+            product=product,
+            s3_key='products/feed/rejected.jpg',
+            sha256='rejected',
+            position=2,
+            status=ProductImage.Status.REJECTED,
+        )
+        primary = ProductImage.objects.create(
+            product=product,
+            s3_key='products/feed/primary.jpg',
+            sha256='primary',
+            position=3,
+            is_primary=True,
+            status=ProductImage.Status.MANUALLY_SET,
+        )
+
+        with patch('django.core.files.storage.default_storage.url') as storage_url:
+            storage_url.side_effect = lambda key: f'https://cdn.example.com/{key}'
+            xml_str = build_feed([listing]).decode('utf-8')
+
+        assert f'https://cdn.example.com/{primary.s3_key}' in xml_str
+        assert f'https://cdn.example.com/{secondary.s3_key}' in xml_str
+        assert 'needs-review.jpg' not in xml_str
+        assert 'rejected.jpg' not in xml_str
+        assert xml_str.index(primary.s3_key) < xml_str.index(secondary.s3_key)
+
+
+@pytest.mark.django_db
+class TestAvitoAdapterFeedStorage:
+    def test_feed_s3_key_uses_prefix_tenant_marketplace_and_account(self, settings):
+        settings.MEDIA_KEY_PREFIX = 'dev'
+        tenant = make_tenant('feed-path-co')
+        account = make_account(tenant)
+
+        key = AvitoAdapter(account)._feed_s3_key()
+
+        assert key == f'dev/feeds/feed-path-co/avito/test-account-{account.pk}/feed.xml'
 
 
 # ------------------------------------------------------------------ #

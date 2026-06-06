@@ -19,6 +19,7 @@ from apps.core.pagination import MapPagination
 from apps.marketplaces.services import (
     AccountAlreadyExists,
     CategoryMappingService,
+    InvalidMarketplaceCredentials,
     InvalidListingStatus,
     ListingNotFound,
     ListingService,
@@ -43,6 +44,12 @@ class MarketplaceAccountListView(APIView):
             account = MarketplaceAccountService.create(request.tenant, serializer.validated_data)
         except AccountAlreadyExists as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+        except InvalidMarketplaceCredentials as exc:
+            return Response({
+                'status': 'error',
+                'code': 'validation_error',
+                'message': str(exc),
+            }, status=status.HTTP_400_BAD_REQUEST)
         return Response(MarketplaceAccountSerializer(account).data, status=status.HTTP_201_CREATED)
 
 
@@ -71,7 +78,16 @@ class MarketplaceAccountDetailView(APIView):
             return Response(status=status.HTTP_404_NOT_FOUND)
         serializer = MarketplaceAccountWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        account = MarketplaceAccountService.update_credentials(account, serializer.validated_data)
+        try:
+            account = MarketplaceAccountService.update_credentials(account, serializer.validated_data)
+        except AccountAlreadyExists as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+        except InvalidMarketplaceCredentials as exc:
+            return Response({
+                'status': 'error',
+                'code': 'validation_error',
+                'message': str(exc),
+            }, status=status.HTTP_400_BAD_REQUEST)
         return Response(MarketplaceAccountSerializer(account).data)
 
     def patch(self, request, pk):

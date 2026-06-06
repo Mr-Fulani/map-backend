@@ -44,6 +44,19 @@ class ProductCategorySeedService:
 
     SEED_SOURCE = 'platform_auto_parts_seed'
 
+    @staticmethod
+    def _merge_aliases(category, aliases: list[str]) -> bool:
+        merged = list(category.aliases)
+        changed = False
+        for alias in aliases:
+            if alias and alias not in merged:
+                merged.append(alias)
+                changed = True
+        if changed:
+            category.aliases = merged
+            category.save(update_fields=['aliases', 'updated_at'])
+        return changed
+
     @classmethod
     def seed_platform_categories(cls) -> int:
         created_count = 0
@@ -113,12 +126,14 @@ class ProductCategorySeedService:
                 },
             )
             created_count += int(created)
+            if not created:
+                cls._merge_aliases(root_category, root.get('aliases', []))
             for child in root.get('children', []):
                 if isinstance(child, tuple):
                     child_name, aliases = child[0], child[1]
                 else:
                     child_name, aliases = child, []
-                _, child_created = TenantCatalogCategory.objects.get_or_create(
+                child_category, child_created = TenantCatalogCategory.objects.get_or_create(
                     tenant=tenant,
                     parent=root_category,
                     normalized_name=normalize_category_name(child_name),
@@ -133,6 +148,8 @@ class ProductCategorySeedService:
                     },
                 )
                 created_count += int(child_created)
+                if not child_created:
+                    cls._merge_aliases(child_category, aliases)
         return created_count
 
 
@@ -440,33 +457,141 @@ class ProductEnrichmentService:
         )
 
     @staticmethod
+    def product_catalog_supports_auto_parts(product: Product) -> bool:
+        category = product.catalog_category
+        if category is None or category.root_domain is None:
+            return False
+        return category.root_domain.supports_auto_parts_enrichment
+
+    @staticmethod
     def get_product_tenant_category(product: Product) -> TenantCatalogCategory | None:
         if product.catalog_category_id:
             return product.catalog_category
         if not product.category_1c:
-            return None
+            return ProductEnrichmentService.infer_product_tenant_category(product)
         mapping = (
             TenantCategoryMapping.objects
             .select_related('category')
             .filter(tenant=product.tenant, source_category=product.category_1c)
             .first()
         )
-        if mapping is None:
+        if mapping is not None:
+            product.catalog_category = mapping.category
+            product.save(update_fields=['catalog_category', 'updated_at'])
+            return mapping.category
+        return ProductEnrichmentService.infer_product_tenant_category(product)
+
+    @staticmethod
+    def _category_word_matches(product_words: set[str], term_word: str) -> bool:
+        if term_word in product_words:
+            return True
+        if len(term_word) < 4:
+            return False
+
+        for product_word in product_words:
+            if len(product_word) < 4:
+                continue
+            stem_length = 3 if min(len(term_word), len(product_word)) <= 4 else 5
+            if term_word[:stem_length] == product_word[:stem_length]:
+                return True
+            if len(product_word) == 4 and term_word.startswith(product_word):
+                return True
+            if len(term_word) == 4 and product_word.startswith(term_word):
+                return True
+        return False
+
+    @staticmethod
+    def _category_match_score(product_words: set[str], normalized_text: str, category: TenantCatalogCategory) -> float:
+        score = 0.0
+        terms = [category.name, *category.aliases]
+        for index, term in enumerate(terms):
+            words = re.findall(r'[0-9a-zа-яё]+', term.lower())
+            words = [word for word in words if len(word) > 2]
+            if not words:
+                continue
+
+            matched_count = sum(
+                1 for word in words
+                if ProductEnrichmentService._category_word_matches(product_words, word)
+            )
+            if matched_count == 0:
+                continue
+
+            term_score = float(matched_count)
+            if matched_count == len(words):
+                term_score += len(words)
+            if normalize_category_name(term) in normalized_text:
+                term_score += len(words) * 2
+            if index == 0:
+                term_score += 0.25
+            score = max(score, term_score)
+
+        if score > 0 and category.parent_id:
+            score += 0.1
+        return score
+
+    @classmethod
+    def infer_product_tenant_category(cls, product: Product) -> TenantCatalogCategory | None:
+        text = ' '.join([
+            product.name or '',
+            product.category_1c or '',
+            product.description_1c or '',
+            product.brand or '',
+        ]).lower()
+        product_words = set(re.findall(r'[0-9a-zа-яё]+', text))
+        normalized_text = normalize_category_name(text)
+        if not product_words or not normalized_text:
             return None
-        product.catalog_category = mapping.category
+
+        enabled_domain_ids = TenantCatalogDomain.objects.filter(
+            tenant=product.tenant,
+            is_enabled=True,
+        ).values_list('domain_id', flat=True)
+        categories = (
+            TenantCatalogCategory.objects
+            .filter(
+                tenant=product.tenant,
+                is_active=True,
+                root_domain_id__in=enabled_domain_ids,
+            )
+            .select_related('parent', 'root_domain')
+        )
+
+        best_category = None
+        best_score = 0.0
+        for category in categories:
+            score = cls._category_match_score(product_words, normalized_text, category)
+            if score > best_score:
+                best_category = category
+                best_score = score
+
+        if best_category is None or best_score < 2:
+            return None
+
+        product.catalog_category = best_category
         product.save(update_fields=['catalog_category', 'updated_at'])
-        return mapping.category
+        return best_category
 
     @classmethod
     def ensure_product_auto_parts_eligible(cls, tenant, product: Product | None) -> None:
-        cls.ensure_auto_parts_enabled(tenant)
         if product is None and getattr(tenant, 'requires_product_auto_parts_check', False):
             raise ProductIsNotAutoPart(
                 'Для смешанного каталога нужно указать товар, чтобы проверить, что это автозапчасть.'
             )
+        if product is None:
+            cls.ensure_auto_parts_enabled(tenant)
+            return
+
+        product_category_supports = cls.product_catalog_supports_auto_parts(product)
+        if not getattr(tenant, 'supports_auto_parts_enrichment', True) and not product_category_supports:
+            raise AutoPartsEnrichmentDisabled(
+                'Автозапчастное обогащение доступно только для каталога автозапчастей.'
+            )
         if (
-            product is not None
-            and getattr(tenant, 'requires_product_auto_parts_check', False)
+            (
+                getattr(tenant, 'requires_product_auto_parts_check', False)
+                or product_category_supports
+            )
             and not cls.is_product_auto_part_candidate(product)
         ):
             raise ProductIsNotAutoPart(

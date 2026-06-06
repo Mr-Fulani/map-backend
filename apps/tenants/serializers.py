@@ -12,7 +12,13 @@ class RegisterSerializer(serializers.Serializer):
     """Регистрация нового тенанта."""
 
     name = serializers.CharField(max_length=200)
-    slug = serializers.SlugField(max_length=50)
+    slug = serializers.RegexField(
+        regex=r'^[a-z0-9-]+$',
+        max_length=50,
+        error_messages={
+            'invalid': 'URL-идентификатор должен содержать только английские буквы, цифры и дефисы.',
+        },
+    )
     email = serializers.EmailField()
     password = serializers.CharField(min_length=8, write_only=True)
 
