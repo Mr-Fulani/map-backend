@@ -1096,7 +1096,7 @@ export default function SettingsPage() {
                 </div>
               ) : accounts.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">
-                  Аккаунтов нет. Добавьте через онбординг.
+                  Аккаунтов нет. Нажмите «Добавить», чтобы подключить Avito-аккаунт.
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -1396,7 +1396,7 @@ export default function SettingsPage() {
                 </div>
               ) : datasources.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">
-                  Источников данных нет.
+                  Источников данных нет. Добавьте 1С-источник или загрузите прайс-лист выше.
                 </p>
               ) : (
                 <div className="space-y-3">
