@@ -93,6 +93,41 @@ class TestMarketplaceAccountAPI:
         assert t1.slug in ids
         assert t2.slug not in ids
 
+    def test_tenant_can_create_multiple_accounts_for_same_marketplace(self):
+        """Один tenant может подключить несколько разных аккаунтов одного маркетплейса."""
+        from django.test import Client
+        tenant, key = make_tenant('acc-multi-avito')
+        c = Client()
+
+        with mock_avito_user_id('avito-user-1'):
+            first = c.post('/api/v1/accounts/', {
+                'name': 'Avito Москва',
+                'marketplace': 'avito',
+                'external_id': 'ignored-1',
+                'client_id': 'cid-1',
+                'client_secret': 'secret-1',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+
+        with mock_avito_user_id('avito-user-2'):
+            second = c.post('/api/v1/accounts/', {
+                'name': 'Avito Казань',
+                'marketplace': 'avito',
+                'external_id': 'ignored-2',
+                'client_id': 'cid-2',
+                'client_secret': 'secret-2',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+
+        assert first.status_code == 201
+        assert second.status_code == 201
+        assert MarketplaceAccount.objects.filter(
+            tenant=tenant,
+            marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+        ).count() == 2
+
+        resp = c.get('/api/v1/accounts/', HTTP_AUTHORIZATION=f'Bearer {key}')
+        assert resp.status_code == 200
+        assert {account['external_id'] for account in resp.json()} == {'avito-user-1', 'avito-user-2'}
+
     def test_get_account_detail(self):
         """GET /api/v1/accounts/{id}/ возвращает аккаунт."""
         from django.test import Client

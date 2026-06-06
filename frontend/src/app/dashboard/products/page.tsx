@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import Link from 'next/link';
+import { useRouter, useSearchParams } from 'next/navigation';
 import axios from 'axios';
 import { productApi, tenantApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
@@ -165,7 +166,7 @@ function bulkStatusText(job: BulkActionJob) {
     return `Пауза до следующего batch: ${new Date(job.next_batch_at).toLocaleTimeString('ru-RU')}`;
   }
   if (job.action === 'classify_catalog_domain' && job.status === 'success') {
-    return 'Классификация товаров завершена';
+    return 'Классификация доменов и категорий товаров завершена';
   }
   if (job.status === 'success') return 'Все задачи поставлены в очередь';
   if (job.status === 'failed') return 'Постановка задач завершилась с ошибкой';
@@ -173,7 +174,14 @@ function bulkStatusText(job: BulkActionJob) {
   return 'Постановка задач выполняется';
 }
 
+function pageFromSearchParams(searchParams: { get: (name: string) => string | null }) {
+  const pageParam = Number(searchParams.get('page'));
+  return Number.isInteger(pageParam) && pageParam > 0 ? pageParam : 1;
+}
+
 export default function ProductsPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { tenant } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
@@ -187,7 +195,6 @@ export default function ProductsPage() {
   const [categoryAssignValue, setCategoryAssignValue] = useState<string>('');
   const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
   const [categoryAssignError, setCategoryAssignError] = useState('');
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -195,11 +202,30 @@ export default function ProductsPage() {
   const [bulkJob, setBulkJob] = useState<BulkActionJob | null>(null);
   const [bulkError, setBulkError] = useState('');
   const [bulkUpdatedAt, setBulkUpdatedAt] = useState<string | null>(null);
+  const lastBulkStatusRef = useRef<string | null>(null);
+  const didMountFiltersRef = useRef(false);
   const supportsAutoPartsEnrichment = tenant?.catalog_domain
     ? ['auto_parts', 'mixed'].includes(tenant.catalog_domain)
     : true;
 
   const debouncedSearch = useDebounce(search, 300);
+  const page = pageFromSearchParams(searchParams);
+  const currentListHref = `/dashboard/products${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
+
+  const updatePage = useCallback((nextPage: number) => {
+    const safePage = Math.max(1, nextPage);
+    const params = new URLSearchParams(searchParams.toString());
+
+    if (safePage === 1) {
+      params.delete('page');
+    } else {
+      params.set('page', String(safePage));
+    }
+
+    const query = params.toString();
+    const href = `/dashboard/products${query ? `?${query}` : ''}`;
+    router.replace(href, { scroll: false });
+  }, [router, searchParams]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -242,7 +268,13 @@ export default function ProductsPage() {
   }, []);
 
   useEffect(() => {
-    setPage(1);
+    if (!didMountFiltersRef.current) {
+      didMountFiltersRef.current = true;
+      return;
+    }
+
+    updatePage(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedSearch, exportFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   useEffect(() => {
@@ -327,6 +359,7 @@ export default function ProductsPage() {
         pause_seconds: 60,
       });
       setBulkJob(unwrapBulkActionJob(res.data));
+      lastBulkStatusRef.current = null;
       setBulkUpdatedAt(new Date().toLocaleTimeString('ru-RU', {
         hour: '2-digit',
         minute: '2-digit',
@@ -378,6 +411,17 @@ export default function ProductsPage() {
 
     return () => window.clearTimeout(timer);
   }, [bulkJob, refreshBulkJob]);
+
+  useEffect(() => {
+    if (!bulkJob) return;
+
+    const previousStatus = lastBulkStatusRef.current;
+    lastBulkStatusRef.current = bulkJob.status;
+
+    if (bulkJob.status === 'success' && previousStatus !== 'success') {
+      load();
+    }
+  }, [bulkJob, load]);
 
   return (
     <div className="space-y-4">
@@ -541,7 +585,7 @@ export default function ProductsPage() {
                   onClick={() => runBulkEnrichment('classify_catalog_domain')}
                   disabled={bulkLoading}
                 >
-                  Определить домен товаров
+                  Определить домен и категории товаров
                 </DropdownMenuItem>
                 {supportsAutoPartsEnrichment ? (
                   <DropdownMenuItem
@@ -658,7 +702,10 @@ export default function ProductsPage() {
                       />
                     </td>
                     <td className="px-4 py-2">
-                      <Link href={`/dashboard/products/${p.id}`} className="block">
+                      <Link
+                        href={`/dashboard/products/${p.id}?returnTo=${encodeURIComponent(currentListHref)}`}
+                        className="block"
+                      >
                         <div className="relative w-10 h-10 rounded-md overflow-hidden border bg-muted flex-shrink-0">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
@@ -676,7 +723,7 @@ export default function ProductsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <Link
-                        href={`/dashboard/products/${p.id}`}
+                        href={`/dashboard/products/${p.id}?returnTo=${encodeURIComponent(currentListHref)}`}
                         className="font-mono text-xs font-medium text-primary hover:underline"
                       >
                         {p.article}
@@ -684,7 +731,7 @@ export default function ProductsPage() {
                     </td>
                     <td className="px-4 py-3">
                       <Link
-                        href={`/dashboard/products/${p.id}`}
+                        href={`/dashboard/products/${p.id}?returnTo=${encodeURIComponent(currentListHref)}`}
                         className="line-clamp-1 hover:underline"
                       >
                         {p.name}
@@ -761,7 +808,7 @@ export default function ProductsPage() {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => setPage((p) => p - 1)}
+              onClick={() => updatePage(meta.page - 1)}
               disabled={!meta.prev}
             >
               <ChevronLeft className="h-4 w-4" />
@@ -770,7 +817,7 @@ export default function ProductsPage() {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => setPage((p) => p + 1)}
+              onClick={() => updatePage(meta.page + 1)}
               disabled={!meta.next}
             >
               Вперёд

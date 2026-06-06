@@ -156,6 +156,65 @@ def test_catalog_classification_uses_tenant_category_mapping():
 
 
 @pytest.mark.django_db
+def test_catalog_classification_infers_enabled_tenant_category_from_product_text():
+    tenant = make_tenant('classify-category-infer')
+    product = make_product(tenant, article='P50136', brand='BREMBO')
+    product.name = 'Колодка тормозная BREMBO P50136 Hyundai Kia'
+    product.save(update_fields=['name'])
+
+    classification = ProductEnrichmentService.classify_product_catalog_domain(product)
+
+    product.refresh_from_db()
+    assert product.catalog_category is not None
+    assert product.catalog_category.name == 'Тормозные колодки'
+    assert classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ('slug_suffix', 'name', 'expected_category'),
+    [
+        ('brake-disc', 'Диск торм. зад. Lexus ES 200 Toyota Camry', 'Тормозные диски'),
+        ('headlight', 'Фара правая Kia Rio 4 FB 2020-нв, галоген', 'Фары'),
+    ],
+)
+def test_catalog_classification_infers_category_with_word_forms_and_abbreviations(
+    slug_suffix, name, expected_category,
+):
+    tenant = make_tenant(f'classify-category-{slug_suffix}')
+    product = make_product(tenant, article='AUTO1', brand='OEM')
+    product.name = name
+    product.save(update_fields=['name'])
+
+    ProductEnrichmentService.classify_product_catalog_domain(product)
+
+    product.refresh_from_db()
+    assert product.catalog_category is not None
+    assert product.catalog_category.name == expected_category
+
+
+@pytest.mark.django_db
+def test_catalog_classification_does_not_infer_category_from_disabled_domain():
+    tenant = make_tenant('classify-category-disabled-domain')
+    electronics = CatalogDomain.objects.get(slug='electronics')
+    TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Смартфоны',
+        root_domain=electronics,
+        domain='electronics',
+        aliases=['iPhone'],
+    )
+    product = make_product(tenant, article='IPHONE15', brand='Apple')
+    product.name = 'iPhone 15 Pro Max'
+    product.save(update_fields=['name'])
+
+    ProductEnrichmentService.classify_product_catalog_domain(product)
+
+    product.refresh_from_db()
+    assert product.catalog_category is None
+
+
+@pytest.mark.django_db
 def test_catalog_classification_does_not_overwrite_manual_source_without_force():
     tenant = make_tenant('classify-manual-keep')
     product = make_product(tenant, article='P50136', brand='BREMBO')
@@ -200,7 +259,9 @@ def test_catalog_classification_force_can_overwrite_manual_source():
 
     assert classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
     assert classification.source == ProductCatalogClassification.Source.RULES
-    assert classification.reason.startswith('Найдены признаки автозапчасти')
+    product.refresh_from_db()
+    assert product.catalog_category is not None
+    assert product.catalog_category.name == 'Тормозные колодки'
 
 
 @pytest.mark.django_db

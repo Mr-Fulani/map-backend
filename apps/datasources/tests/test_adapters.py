@@ -10,6 +10,9 @@ import responses as responses_lib
 from apps.datasources.adapters.csv_adapter import CSVAdapter, CSVValidationError
 from apps.datasources.adapters.onec_http import OneCHTTPAdapter
 from apps.datasources.encryption import encrypt
+from apps.datasources.models import DataSourceConnection
+from apps.datasources.services import ConnectionService
+from apps.tenants.services import TenantService
 
 BASE_URL = 'http://1c.example.com'
 CREDS = {'url': BASE_URL, 'user': 'admin', 'password': 'secret'}
@@ -147,3 +150,17 @@ class TestCSVAdapter:
                 adapter.process_uploaded_file(path)
         finally:
             os.unlink(path)
+
+    @pytest.mark.django_db
+    def test_csv_upload_creates_separate_datasource_connections(self):
+        tenant, _ = TenantService.create_tenant('csv-multi', 'csv-multi', 'csv@test.com', 'pass12345')
+        items = [{'article': 'A100', 'name': 'Деталь', 'price': '100', 'stock_qty': 1}]
+
+        first = ConnectionService.process_csv_upload(tenant, 'first.xlsx', items)
+        second = ConnectionService.process_csv_upload(tenant, 'second.xlsx', items)
+
+        assert first['id'] != second['id']
+        assert DataSourceConnection.objects.filter(
+            tenant=tenant,
+            type=DataSourceConnection.TYPE_CSV,
+        ).count() == 2

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { tenantApi, accountApi, notificationApi, productApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store } from 'lucide-react';
 import { profileApi, datasourceApi } from '@/lib/api';
 
 interface ApiKey {
@@ -85,7 +85,7 @@ interface CatalogCategoryMapping {
 }
 
 const SETTINGS_TABS = [
-  'profile', 'organization', 'api-keys', 'accounts', 'datasources',
+  'profile', 'organization', 'api-keys', 'marketplaces', 'datasources',
   'catalog-categories', 'notifications',
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
@@ -139,6 +139,12 @@ export default function SettingsPage() {
   // File upload state
   const [csvFile, setCsvFile] = useState<File | null>(null);
   const [uploadingCsv, setUploadingCsv] = useState(false);
+  const [newDatasourceType, setNewDatasourceType] = useState<'1c_http' | '1c_xml'>('1c_http');
+  const [newDatasourceName, setNewDatasourceName] = useState('Основной склад');
+  const [newDatasourceUrl, setNewDatasourceUrl] = useState('');
+  const [newDatasourceUser, setNewDatasourceUser] = useState('');
+  const [newDatasourcePassword, setNewDatasourcePassword] = useState('');
+  const [creatingDatasource, setCreatingDatasource] = useState(false);
   
   // Add Avito Account state
   const [showAddAccount, setShowAddAccount] = useState(false);
@@ -151,7 +157,8 @@ export default function SettingsPage() {
   const didMount = useRef(false);
   useEffect(() => {
     function syncTab() {
-      const hash = window.location.hash.slice(1) as SettingsTab;
+      const rawHash = window.location.hash.slice(1);
+      const hash = (rawHash === 'accounts' ? 'marketplaces' : rawHash) as SettingsTab;
       if (SETTINGS_TABS.includes(hash)) setActiveTab(hash);
     }
     syncTab();
@@ -204,6 +211,11 @@ export default function SettingsPage() {
       }));
   const enabledDomainOptions = domainOptions.filter((domain) => domain.is_enabled_for_tenant);
 
+  const loadDatasources = useCallback(async () => {
+    const r = await datasourceApi.list();
+    setDatasources(r.data.data ?? r.data);
+  }, []);
+
   // Подставляем телефон из данных пользователя при загрузке
   useEffect(() => {
     if (user && 'phone' in user) {
@@ -229,8 +241,7 @@ export default function SettingsPage() {
       .catch(() => {})
       .finally(() => setLoadingAccounts(false));
 
-    datasourceApi.list()
-      .then((r) => setDatasources(r.data.data ?? r.data))
+    loadDatasources()
       .catch(() => {})
       .finally(() => setLoadingDatasources(false));
 
@@ -250,7 +261,7 @@ export default function SettingsPage() {
       })
       .catch(() => {})
       .finally(() => setLoadingNotif(false));
-  }, []);
+  }, [loadDatasources]);
 
   async function loadCatalogCategories() {
     setLoadingCatalogCategories(true);
@@ -365,10 +376,18 @@ export default function SettingsPage() {
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status?: number; data?: Record<string, unknown> } };
       if (axiosErr?.response?.status === 409) {
-        toast.error('Аккаунт с таким Client ID уже существует');
+        const message = String(axiosErr.response.data?.detail || 'Этот аккаунт Avito уже подключён');
+        toast.error(message);
         return;
       }
-      toast.error('Ошибка при добавлении аккаунта');
+      const errorData = axiosErr?.response?.data;
+      const message = String(
+        errorData?.message ||
+        errorData?.detail ||
+        errorData?.errors ||
+        'Ошибка при добавлении аккаунта',
+      );
+      toast.error(message);
     } finally {
       setCreatingAccount(false);
     }
@@ -607,15 +626,41 @@ export default function SettingsPage() {
       const { data: uploadResult } = await datasourceApi.uploadCsv(csvFile);
       toast.success(`Файл загружен: ${uploadResult.data?.rows_count || uploadResult.items?.length || 0} строк`);
       setCsvFile(null);
-      
-      const r = await datasourceApi.list();
-      setDatasources(r.data.data ?? r.data);
+      await loadDatasources();
     } catch (err: unknown) {
       const axiosErr = err as { response?: { data?: { detail?: string; message?: string } } };
       const message = axiosErr?.response?.data?.detail || axiosErr?.response?.data?.message || 'Ошибка загрузки файла';
       toast.error(message);
     } finally {
       setUploadingCsv(false);
+    }
+  }
+
+  async function handleCreateDatasource(e: React.FormEvent) {
+    e.preventDefault();
+    setCreatingDatasource(true);
+    try {
+      await datasourceApi.create({
+        name: newDatasourceName,
+        type: newDatasourceType,
+        credentials: {
+          url: newDatasourceUrl,
+          user: newDatasourceUser,
+          password: newDatasourcePassword,
+        },
+      });
+      toast.success('Источник данных добавлен');
+      setNewDatasourceName('Основной склад');
+      setNewDatasourceUrl('');
+      setNewDatasourceUser('');
+      setNewDatasourcePassword('');
+      await loadDatasources();
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { detail?: string; message?: string } } };
+      const message = axiosErr?.response?.data?.detail || axiosErr?.response?.data?.message || 'Не удалось добавить источник';
+      toast.error(message);
+    } finally {
+      setCreatingDatasource(false);
     }
   }
 
@@ -705,7 +750,7 @@ export default function SettingsPage() {
             <TabsTrigger value="profile">Профиль</TabsTrigger>
             <TabsTrigger value="organization">Организация</TabsTrigger>
             <TabsTrigger value="api-keys">API-ключи</TabsTrigger>
-            <TabsTrigger value="accounts">Avito-аккаунты</TabsTrigger>
+            <TabsTrigger value="marketplaces">Маркетплейсы</TabsTrigger>
             <TabsTrigger value="datasources">Источники данных</TabsTrigger>
             <TabsTrigger value="catalog-categories">Категории</TabsTrigger>
             <TabsTrigger value="notifications">Уведомления</TabsTrigger>
@@ -960,8 +1005,8 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Avito аккаунты */}
-        <TabsContent value="accounts" className="mt-4 space-y-4">
+        {/* Маркетплейсы */}
+        <TabsContent value="marketplaces" className="mt-4 space-y-4">
           {showAddAccount && (
             <Card>
               <CardHeader>
@@ -1043,8 +1088,11 @@ export default function SettingsPage() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between">
               <div>
-                <CardTitle>Avito-аккаунты</CardTitle>
-                <CardDescription>Подключённые аккаунты маркетплейсов</CardDescription>
+                <div className="flex items-center gap-2">
+                  <CardTitle>Avito</CardTitle>
+                  <Badge variant="default">Доступно</Badge>
+                </div>
+                <CardDescription>Аккаунты, Автозагрузка и публикация объявлений на Avito</CardDescription>
               </div>
               {!showAddAccount && (
                 <Button onClick={() => setShowAddAccount(true)} size="sm">
@@ -1060,7 +1108,7 @@ export default function SettingsPage() {
                 </div>
               ) : accounts.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">
-                  Аккаунтов нет. Добавьте через онбординг.
+                  Аккаунтов нет. Нажмите «Добавить», чтобы подключить Avito-аккаунт.
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -1205,15 +1253,129 @@ export default function SettingsPage() {
               )}
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between">
+              <div>
+                <div className="flex items-center gap-2">
+                  <CardTitle>Дром</CardTitle>
+                  <Badge variant="secondary">Скоро</Badge>
+                </div>
+                <CardDescription>Заглушка для будущего подключения объявлений на Дром</CardDescription>
+              </div>
+              <Button size="sm" variant="outline" disabled>
+                <Store className="mr-2 h-4 w-4" />
+                Недоступно
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
+                Интеграция с Дром пока не подключена. Здесь появятся аккаунты, статусы публикации и настройки синхронизации.
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* Источники данных */}
         <TabsContent value="datasources" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
+              <CardTitle>Добавить источник данных</CardTitle>
+              <CardDescription>
+                Подключите несколько складов, баз 1С или файловых выгрузок для одного аккаунта.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <form onSubmit={handleCreateDatasource} className="space-y-4">
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="datasource-type">Тип источника</Label>
+                    <select
+                      id="datasource-type"
+                      value={newDatasourceType}
+                      onChange={(event) => setNewDatasourceType(event.target.value as '1c_http' | '1c_xml')}
+                      className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                    >
+                      <option value="1c_http">1С HTTP-сервис</option>
+                      <option value="1c_xml">1С XML выгрузка</option>
+                    </select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="datasource-name">Название</Label>
+                    <Input
+                      id="datasource-name"
+                      placeholder="Основной склад"
+                      value={newDatasourceName}
+                      onChange={(event) => setNewDatasourceName(event.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="datasource-url">URL источника</Label>
+                  <Input
+                    id="datasource-url"
+                    placeholder="https://your-1c.server.ru/avito-sync"
+                    value={newDatasourceUrl}
+                    onChange={(event) => setNewDatasourceUrl(event.target.value)}
+                    required
+                    className="font-mono text-sm"
+                  />
+                </div>
+                <div className="grid gap-4 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="datasource-user">Логин</Label>
+                    <Input
+                      id="datasource-user"
+                      value={newDatasourceUser}
+                      onChange={(event) => setNewDatasourceUser(event.target.value)}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="datasource-password">Пароль</Label>
+                    <Input
+                      id="datasource-password"
+                      type="password"
+                      value={newDatasourcePassword}
+                      onChange={(event) => setNewDatasourcePassword(event.target.value)}
+                      required
+                    />
+                  </div>
+                </div>
+                <div className="flex justify-end">
+                  <Button
+                    type="submit"
+                    disabled={
+                      creatingDatasource ||
+                      !newDatasourceName ||
+                      !newDatasourceUrl ||
+                      !newDatasourceUser ||
+                      !newDatasourcePassword
+                    }
+                  >
+                    {creatingDatasource ? (
+                      <>
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        Добавляем...
+                      </>
+                    ) : (
+                      <>
+                        <Plus className="mr-2 h-4 w-4" />
+                        Добавить источник
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Загрузить прайс-лист (CSV/Excel)</CardTitle>
               <CardDescription>
-                Ручная загрузка файла с товарами. Обязательные колонки: article, name, price, stock_qty.
+                Каждый загруженный файл сохраняется как отдельный источник. Обязательные колонки: article, name, price, stock_qty.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -1267,7 +1429,7 @@ export default function SettingsPage() {
                 </div>
               ) : datasources.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">
-                  Источников данных нет.
+                  Источников данных нет. Добавьте 1С-источник или загрузите прайс-лист выше.
                 </p>
               ) : (
                 <div className="space-y-3">
