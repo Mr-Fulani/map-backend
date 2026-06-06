@@ -1,6 +1,6 @@
 /**
  * Страница регистрации — создание тенанта и пользователя.
- * После регистрации → redirect на /onboarding.
+ * После регистрации → redirect на настройки.
  */
 
 'use client';
@@ -65,7 +65,7 @@ export default function RegisterPage() {
       await refreshMe();
 
       toast.success('Регистрация успешна! Давайте настроим вашу платформу.');
-      router.push('/onboarding');
+      router.push('/dashboard/settings');
     } catch (err: unknown) {
       const errorData = (err as { response?: { data?: Record<string, unknown> } })?.response?.data;
       const messages = flattenErrorMessages(errorData?.message ?? errorData?.detail ?? errorData?.errors ?? errorData);
