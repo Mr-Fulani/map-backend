@@ -2,14 +2,15 @@ from django.core.management.base import BaseCommand
 
 from apps.products.catalog_category_seed import BASE_CATEGORY_TEMPLATE_TREE
 from apps.products.services import ProductCategorySeedService
-from apps.tenants.models import Tenant
+from apps.tenants.models import CatalogDomain, Tenant, TenantCatalogDomain
 
 
 class Command(BaseCommand):
-    """Засевает категории каталога для всех тенантов по всем включённым доменам.
+    """Засевает категории каталога для всех тенантов по всем доступным доменам.
 
-    Используется для первоначального наполнения продакшн БД после деплоя миграций
-    и для починки тенантов, созданных когда домен был 'unknown'.
+    Идемпотентна: использует get_or_create, существующие записи не изменяет.
+    Не перезаписывает настроенные пользователем категории и не включает
+    домены, которые пользователь явно отключил.
     """
 
     help = 'Seed catalog categories for all tenants across all available domains'
@@ -38,16 +39,38 @@ class Command(BaseCommand):
                 return
 
         domain_slugs = [domain_slug] if domain_slug else list(BASE_CATEGORY_TEMPLATE_TREE.keys())
+        domains_by_slug = {
+            d.slug: d
+            for d in CatalogDomain.objects.filter(slug__in=domain_slugs, is_active=True)
+        }
 
         total_created = 0
         for tenant in tenants:
             for slug in domain_slugs:
-                count = ProductCategorySeedService.enable_tenant_catalog_domain(tenant, slug)
+                domain = domains_by_slug.get(slug)
+                if domain is None:
+                    continue
+
+                # Создаём TenantCatalogDomain только если его ещё нет.
+                # Если пользователь уже включил или выключил домен — не трогаем.
+                _, domain_created = TenantCatalogDomain.objects.get_or_create(
+                    tenant=tenant,
+                    domain=domain,
+                    defaults={'is_enabled': True},
+                )
+
+                # Сеем категории только для включённых доменов.
+                # get_or_create внутри не перезаписывает существующие записи.
+                tenant_domain = TenantCatalogDomain.objects.filter(
+                    tenant=tenant, domain=domain, is_enabled=True,
+                ).first()
+                if tenant_domain is None:
+                    continue
+
+                count = ProductCategorySeedService.seed_tenant_default_categories(tenant, domain)
                 if count:
                     self.stdout.write(
-                        self.style.SUCCESS(
-                            f'  {tenant.slug} / {slug}: +{count} категорий'
-                        )
+                        self.style.SUCCESS(f'  {tenant.slug} / {slug}: +{count} категорий')
                     )
                     total_created += count
 
