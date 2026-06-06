@@ -1,12 +1,25 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { listingApi } from '@/lib/api';
+import { accountApi, listingApi, productApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ListOrdered, ExternalLink, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  Archive,
+  ExternalLink,
+  Loader2,
+  ListOrdered,
+  MapPin,
+  RefreshCw,
+  Send,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
+} from 'lucide-react';
 import ListingDrawer from '@/components/listings/ListingDrawer';
+import { toast } from 'sonner';
 
 interface Listing {
   id: number;
@@ -32,10 +45,29 @@ interface Meta {
   prev: string | null;
 }
 
+interface Account {
+  id: number;
+  name: string;
+}
+
+interface PlacementAddress {
+  id: number;
+  account: number;
+  account_name: string;
+  name: string;
+  seller_address_id: string;
+  address: string;
+  is_default: boolean;
+}
+
+interface SourceCategory {
+  source_category: string;
+}
+
 const STATUS_FILTERS = [
   { value: '', label: 'Все' },
   { value: 'active', label: 'Активные' },
-  { value: 'pending', label: 'Модерация' },
+  { value: 'pending', label: 'Модерация Avito' },
   { value: 'draft', label: 'Черновики' },
   { value: 'rejected', label: 'Отклонены' },
   { value: 'requires_review', label: 'Требуют проверки' },
@@ -59,6 +91,19 @@ export default function ListingsPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [sourceCategories, setSourceCategories] = useState<SourceCategory[]>([]);
+  const [bulkAccountId, setBulkAccountId] = useState('');
+  const [bulkStatus, setBulkStatus] = useState('');
+  const [bulkCategory, setBulkCategory] = useState('');
+  const [placementAddresses, setPlacementAddresses] = useState<PlacementAddress[]>([]);
+  const [bulkPlacementAddressId, setBulkPlacementAddressId] = useState('');
+  const [bulkSellerAddressId, setBulkSellerAddressId] = useState('');
+  const [bulkAddress, setBulkAddress] = useState('');
+  const [bulkManagerName, setBulkManagerName] = useState('');
+  const [bulkContactPhone, setBulkContactPhone] = useState('');
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [rowActionId, setRowActionId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -77,6 +122,81 @@ export default function ListingsPage() {
 
   useEffect(() => { setPage(1); }, [statusFilter]);
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    accountApi.list().then((res) => setAccounts(res.data.data ?? res.data)).catch(() => setAccounts([]));
+    accountApi.listPlacementAddresses()
+      .then((res) => setPlacementAddresses(res.data.data ?? res.data))
+      .catch(() => setPlacementAddresses([]));
+    productApi.catalogSourceCategories()
+      .then((res) => setSourceCategories(res.data.data ?? res.data))
+      .catch(() => setSourceCategories([]));
+  }, []);
+
+  const visiblePlacementAddresses = placementAddresses.filter((address) => (
+    !bulkAccountId || address.account === Number(bulkAccountId)
+  ));
+
+  useEffect(() => {
+    if (!bulkPlacementAddressId) return;
+    const selected = placementAddresses.find((address) => address.id === Number(bulkPlacementAddressId));
+    if (selected && bulkAccountId && selected.account !== Number(bulkAccountId)) {
+      setBulkPlacementAddressId('');
+    }
+  }, [bulkAccountId, bulkPlacementAddressId, placementAddresses]);
+
+  async function applyBulkPlacement() {
+    if (!bulkAccountId && !bulkStatus && !bulkCategory) return;
+    setBulkSaving(true);
+    try {
+      const res = await listingApi.bulkPlacement({
+        account_id: bulkAccountId ? Number(bulkAccountId) : undefined,
+        status: bulkStatus || undefined,
+        category_source: bulkCategory || undefined,
+        placement_address: bulkPlacementAddressId ? Number(bulkPlacementAddressId) : undefined,
+        seller_address_id_override: bulkSellerAddressId,
+        address_override: bulkAddress,
+        manager_name_override: bulkManagerName,
+        contact_phone_override: bulkContactPhone,
+      });
+      const updated = res.data.data?.updated ?? 0;
+      await load();
+      toast.success(`Обновлено объявлений: ${updated}`);
+    } catch {
+      toast.error('Не удалось применить настройки размещения');
+    } finally {
+      setBulkSaving(false);
+    }
+  }
+
+  async function runListingAction(
+    listing: Listing,
+    action: 'publish' | 'archive' | 'delete' | 'checkStatus',
+  ) {
+    setRowActionId(listing.id);
+    try {
+      if (action === 'publish') {
+        await listingApi.publish(listing.id);
+        toast.success('Публикация поставлена в очередь');
+      } else if (action === 'archive') {
+        await listingApi.archive(listing.id);
+        toast.success('Снятие с публикации поставлено в очередь');
+      } else if (action === 'delete') {
+        await listingApi.delete(listing.id);
+        toast.success('Удаление поставлено в очередь');
+      } else {
+        await listingApi.checkStatus(listing.id);
+        toast.success('Проверка статуса Avito поставлена в очередь');
+      }
+      await load();
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string; detail?: string } } })
+        ?.response?.data;
+      toast.error(message?.message || message?.detail || 'Не удалось выполнить действие');
+    } finally {
+      setRowActionId(null);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -101,6 +221,93 @@ export default function ListingsPage() {
         ))}
       </div>
 
+      <div className="rounded-lg border p-3">
+        <div className="mb-3 flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-muted-foreground" />
+          <p className="text-sm font-medium">Массовое размещение</p>
+        </div>
+        <div className="grid gap-2 lg:grid-cols-3">
+          <select
+            value={bulkAccountId}
+            onChange={(e) => {
+              setBulkAccountId(e.target.value);
+              setBulkPlacementAddressId('');
+            }}
+            className="h-9 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="">Любой аккаунт</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>{account.name}</option>
+            ))}
+          </select>
+          <select
+            value={bulkStatus}
+            onChange={(e) => setBulkStatus(e.target.value)}
+            className="h-9 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="">Любой статус</option>
+            {STATUS_FILTERS.filter((item) => item.value).map((item) => (
+              <option key={item.value} value={item.value}>{item.label}</option>
+            ))}
+          </select>
+          <select
+            value={bulkCategory}
+            onChange={(e) => setBulkCategory(e.target.value)}
+            className="h-9 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="">Любая категория источника</option>
+            {sourceCategories.map((category) => (
+              <option key={category.source_category} value={category.source_category}>
+                {category.source_category}
+              </option>
+            ))}
+          </select>
+          <select
+            value={bulkPlacementAddressId}
+            onChange={(e) => setBulkPlacementAddressId(e.target.value)}
+            className="h-9 rounded-md border bg-background px-3 text-sm lg:col-span-3"
+          >
+            <option value="">Адрес размещения из справочника</option>
+            {visiblePlacementAddresses.map((address) => (
+              <option key={address.id} value={address.id}>
+                {address.account_name} · {address.name}
+                {address.seller_address_id ? ` · ID ${address.seller_address_id}` : ''}
+                {address.address ? ` · ${address.address}` : ''}
+              </option>
+            ))}
+          </select>
+          <Input
+            value={bulkSellerAddressId}
+            onChange={(e) => setBulkSellerAddressId(e.target.value)}
+            placeholder="ID адреса Avito"
+            className="font-mono text-sm"
+          />
+          <Input
+            value={bulkAddress}
+            onChange={(e) => setBulkAddress(e.target.value)}
+            placeholder="Адрес"
+          />
+          <Input
+            value={bulkContactPhone}
+            onChange={(e) => setBulkContactPhone(e.target.value)}
+            placeholder="Контактный телефон"
+          />
+          <Input
+            value={bulkManagerName}
+            onChange={(e) => setBulkManagerName(e.target.value)}
+            placeholder="Контактное лицо"
+            className="lg:col-span-2"
+          />
+          <Button
+            onClick={applyBulkPlacement}
+            disabled={bulkSaving || (!bulkAccountId && !bulkStatus && !bulkCategory)}
+          >
+            {bulkSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Применить
+          </Button>
+        </div>
+      </div>
+
       {/* Таблица */}
       <div className="overflow-x-auto rounded-lg border">
         <table className="w-full text-sm">
@@ -112,7 +319,7 @@ export default function ListingsPage() {
               <th className="hidden px-4 py-3 font-medium md:table-cell">Аккаунт</th>
               <th className="px-4 py-3 font-medium text-right">Цена</th>
               <th className="hidden px-4 py-3 font-medium lg:table-cell">Опубликован</th>
-              <th className="px-4 py-3 font-medium" />
+              <th className="px-4 py-3 text-right font-medium">Действия</th>
             </tr>
           </thead>
           <tbody>
@@ -167,17 +374,75 @@ export default function ListingsPage() {
                         : '—'}
                     </td>
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                      {l.external_url && (
-                        <a
-                          href={l.external_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-                        >
-                          Avito
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      )}
+                      <div className="flex items-center justify-end gap-1">
+                        {l.external_url && (
+                          <a
+                            href={l.external_url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                            title="Открыть на Avito"
+                          >
+                            <ExternalLink className="h-4 w-4" />
+                          </a>
+                        )}
+                        {['draft', 'rejected', 'archived'].includes(l.status) && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 w-8 p-0"
+                            title="Опубликовать"
+                            onClick={() => runListingAction(l, 'publish')}
+                            disabled={rowActionId === l.id}
+                          >
+                            {rowActionId === l.id
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : <Send className="h-4 w-4" />}
+                          </Button>
+                        )}
+                        {['active', 'pending'].includes(l.status) && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 w-8 p-0"
+                            title="В архив"
+                            onClick={() => runListingAction(l, 'archive')}
+                            disabled={rowActionId === l.id}
+                          >
+                            {rowActionId === l.id
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : <Archive className="h-4 w-4" />}
+                          </Button>
+                        )}
+                        {l.status === 'pending' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 w-8 p-0"
+                            title="Проверить статус Avito"
+                            onClick={() => runListingAction(l, 'checkStatus')}
+                            disabled={rowActionId === l.id}
+                          >
+                            {rowActionId === l.id
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : <RefreshCw className="h-4 w-4" />}
+                          </Button>
+                        )}
+                        {l.status !== 'deleted' && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                            title="Удалить"
+                            onClick={() => runListingAction(l, 'delete')}
+                            disabled={rowActionId === l.id}
+                          >
+                            {rowActionId === l.id
+                              ? <Loader2 className="h-4 w-4 animate-spin" />
+                              : <Trash2 className="h-4 w-4" />}
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

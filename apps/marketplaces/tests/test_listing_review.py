@@ -6,10 +6,11 @@
 """
 import pytest
 from unittest.mock import patch
+from decimal import Decimal
 
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
-from apps.marketplaces.models import Listing, MarketplaceAccount
+from apps.marketplaces.models import Listing, MarketplaceAccount, MarketplacePlacementAddress
 from apps.marketplaces.services import InvalidListingStatus, ListingNotFound, ListingService
 from apps.products.models import Product, ProductImage
 from apps.tenants.services import TenantService
@@ -176,6 +177,111 @@ class TestListingServiceUpdateContent:
         result = ListingService.update_content(listing.pk, tenant, long_title, None)
 
         assert len(result.title) == 300
+
+
+@pytest.mark.django_db
+class TestListingDetailAPI:
+    def test_patch_changes_account_price_and_placement_address_together(self):
+        from django.test import Client
+
+        tenant, key = TenantService.create_tenant(
+            'listing-patch-placement-co',
+            'listing-patch-placement-co',
+            'listing-patch-placement-co@test.com',
+            'pass12345',
+        )
+        old_account = make_account(tenant)
+        new_account = MarketplaceAccount.objects.create(
+            tenant=tenant,
+            name='Second Avito',
+            marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+            external_id='ext-456',
+            credentials_enc=encrypt({'client_id': 'cid2', 'client_secret': 'csecret2'}),
+        )
+        product = make_product(tenant)
+        listing = Listing.objects.create(
+            tenant=tenant,
+            product=product,
+            account=old_account,
+            status=Listing.STATUS_DRAFT,
+            title='Тестовый заголовок',
+            description_ai='Тестовое AI-описание',
+            price_on_listing=500,
+        )
+        address = MarketplacePlacementAddress.objects.create(
+            tenant=tenant,
+            account=new_account,
+            name='Адрес нового аккаунта',
+            address='Москва',
+            is_active=True,
+        )
+
+        resp = Client().patch(
+            f'/api/v1/listings/{listing.pk}/',
+            {
+                'account_id': new_account.pk,
+                'price_on_listing': '777.00',
+                'placement_address': address.pk,
+            },
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {key}',
+        )
+
+        assert resp.status_code == 200
+        listing.refresh_from_db()
+        assert listing.account_id == new_account.pk
+        assert listing.price_on_listing == Decimal('777.00')
+        assert listing.placement_address_id == address.pk
+
+    def test_archive_and_delete_endpoints_enqueue_tasks(self, django_capture_on_commit_callbacks):
+        from django.test import Client
+
+        tenant, key = TenantService.create_tenant(
+            'listing-actions-co',
+            'listing-actions-co',
+            'listing-actions-co@test.com',
+            'pass12345',
+        )
+        listing = make_listing(tenant, status=Listing.STATUS_ACTIVE)
+
+        with patch('apps.marketplaces.services._enqueue_unpublish') as unpublish, \
+             django_capture_on_commit_callbacks(execute=True):
+            archive_resp = Client().post(
+                f'/api/v1/listings/{listing.pk}/archive/',
+                HTTP_AUTHORIZATION=f'Bearer {key}',
+            )
+        assert archive_resp.status_code == 200
+        unpublish.assert_called_once_with(listing.pk)
+
+        with patch('apps.marketplaces.services._enqueue_delete') as delete, \
+             django_capture_on_commit_callbacks(execute=True):
+            delete_resp = Client().post(
+                f'/api/v1/listings/{listing.pk}/delete/',
+                HTTP_AUTHORIZATION=f'Bearer {key}',
+            )
+        assert delete_resp.status_code == 200
+        delete.assert_called_once_with(listing.pk)
+
+    def test_check_status_endpoint_enqueues_feed_poll(self, django_capture_on_commit_callbacks):
+        from django.test import Client
+
+        tenant, key = TenantService.create_tenant(
+            'listing-check-status-co',
+            'listing-check-status-co',
+            'listing-check-status-co@test.com',
+            'pass12345',
+        )
+        listing = make_listing(tenant, status=Listing.STATUS_PENDING)
+
+        with patch('apps.marketplaces.services._enqueue_poll_feed_results') as poll, \
+             django_capture_on_commit_callbacks(execute=True):
+            resp = Client().post(
+                f'/api/v1/listings/{listing.pk}/check-status/',
+                HTTP_AUTHORIZATION=f'Bearer {key}',
+            )
+
+        assert resp.status_code == 200
+        poll.assert_called_once_with(listing.account_id)
 
 
 @pytest.mark.django_db

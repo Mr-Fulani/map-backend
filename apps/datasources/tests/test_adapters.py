@@ -130,6 +130,30 @@ class TestCSVAdapter:
         finally:
             os.unlink(path)
 
+    def test_xlsx_1c_report_with_two_row_header(self):
+        path = self._write_xlsx([
+            ['В отчет выведены результаты предварительного закрытия месяца.', None, None, None, None],
+            [None, None, None, None, None],
+            ['Себестоимость товаров предприятия', None, None, None, None],
+            [None, None, None, None, None],
+            ['Номенклатура.Производитель', 'Артикул', 'Номенклатура', 'Конечный остаток', None],
+            [None, None, None, 'Количество', 'Средняя цена'],
+            ['HYUNDAI/KIA/MOBIS', '98620H5500', 'БАЧОК СТЕКЛООМЫВАТЕЛЯ', 3, 3657.63],
+            [None, '28210H5100', 'Бачок воздухозаборника', 2, 1435.82],
+        ])
+        try:
+            adapter = CSVAdapter(connection=None)
+            items = adapter.process_uploaded_file(path)
+            assert len(items) == 2
+            assert items[0]['article'] == '98620H5500'
+            assert items[0]['name'] == 'БАЧОК СТЕКЛООМЫВАТЕЛЯ'
+            assert items[0]['brand'] == 'HYUNDAI/KIA/MOBIS'
+            assert items[0]['stock_qty'] == 3
+            assert items[0]['price'] == '3657.63'
+            assert items[1]['brand'] == 'HYUNDAI/KIA/MOBIS'
+        finally:
+            os.unlink(path)
+
     def test_preview_returns_correct_structure(self):
         path = self._write_csv('article,name,price,stock_qty\n' + 'A,B,1,1\n' * 15)
         try:
