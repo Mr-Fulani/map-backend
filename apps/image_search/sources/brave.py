@@ -114,8 +114,8 @@ class BraveImageSource(BaseImageSource):
         limit = resp.headers.get('X-RateLimit-Limit')
         if remaining is None:
             return
-        remaining = int(remaining)
-        limit = int(limit) if limit else '?'
+        remaining = int(remaining.split(',')[0].strip())
+        limit = int(limit.split(',')[0].strip()) if limit else '?'
         if remaining == 0:
             logger.error('[brave] КВОТА ИСЧЕРПАНА: 0/%s запросов осталось — пополните баланс', limit)
         elif remaining <= 50:
