@@ -31,7 +31,7 @@ from apps.products.services import (
     ProductIsNotAutoPart, ProductService,
 )
 from apps.products.tasks import import_from_datasource
-from apps.products.source_policy import DEFAULT_PART_SOURCE, get_part_source_config
+from apps.products.source_policy import DEFAULT_PART_SOURCE, get_part_source_config, get_part_source_policies
 from apps.tenants.models import CatalogDomain, TenantCatalogDomain
 
 
@@ -467,15 +467,23 @@ class ProductParseView(APIView):
         product_id = request.data.get('product_id')
         brand = str(request.data.get('brand') or '').strip()
         article = str(request.data.get('article') or '').strip()
-        source = str(request.data.get('source') or DEFAULT_PART_SOURCE).strip()
+        explicit_source = str(request.data.get('source') or '').strip()
         generate_after = bool(request.data.get('generate_after'))
-        try:
-            get_part_source_config(source)
-        except ValueError as exc:
-            return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+
+        if explicit_source:
+            try:
+                get_part_source_config(explicit_source)
+            except ValueError as exc:
+                return Response(
+                    {'status': 'error', 'code': 'validation_error', 'message': str(exc)},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            sources = [explicit_source]
+        else:
+            sources = [
+                sid for sid, policy in get_part_source_policies().items()
+                if policy.capabilities.supports_search
+            ]
 
         if product_id:
             product = get_object_or_404(Product, pk=product_id, tenant=request.tenant)
@@ -502,15 +510,22 @@ class ProductParseView(APIView):
                 )
             product = qs.get()
 
+        from apps.products.tasks import (
+            parse_single_part, parse_single_part_then_generate_description,
+        )
+
+        jobs = []
         try:
-            job = ProductEnrichmentService.create_parse_job(
-                tenant=request.tenant,
-                product=product,
-                brand=brand,
-                article=article,
-                normalized_article=normalize_part_code(article),
-                source_id=source,
-            )
+            for src in sources:
+                job = ProductEnrichmentService.create_parse_job(
+                    tenant=request.tenant,
+                    product=product,
+                    brand=brand,
+                    article=article,
+                    normalized_article=normalize_part_code(article),
+                    source_id=src,
+                )
+                jobs.append(job)
         except AutoPartsEnrichmentDisabled as exc:
             return Response(
                 {'status': 'error', 'code': 'auto_parts_enrichment_disabled', 'message': str(exc)},
@@ -522,20 +537,22 @@ class ProductParseView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        from apps.products.tasks import (
-            parse_single_part, parse_single_part_then_generate_description,
-        )
-        task = (
-            parse_single_part_then_generate_description
-            if generate_after else parse_single_part
-        )
-        transaction.on_commit(lambda: task.delay(job.pk))
+        policies = get_part_source_policies()
+        primary_job = max(jobs, key=lambda j: policies[j.source_id].priority)
+
+        for job in jobs:
+            is_primary = job.pk == primary_job.pk
+            task = (
+                parse_single_part_then_generate_description
+                if (generate_after and is_primary) else parse_single_part
+            )
+            transaction.on_commit(lambda pk=job.pk, t=task: t.delay(pk))
 
         return Response({
             'status': 'ok',
             'data': {
-                'job_id': job.pk,
-                'state': job.status,
+                'job_id': primary_job.pk,
+                'state': primary_job.status,
                 'generate_after': generate_after,
             },
         }, status=status.HTTP_201_CREATED)
