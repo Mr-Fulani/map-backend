@@ -800,8 +800,10 @@ export default function SettingsPage() {
     try {
       const res = await notificationApi.telegramConnect();
       const botUrl = res.data.data?.bot_url as string;
-      window.open(botUrl, '_blank');
-      toast.info('Откройте бота в Telegram и нажмите START. После привязки обновите страницу.');
+      // window.open блокируется мобильными браузерами после await — используем location.href.
+      // На мобильном iOS/Android это триггерит Universal Link и открывает приложение Telegram.
+      window.location.href = botUrl;
+      toast.info('Переходим в Telegram — нажмите START в чате с ботом. Вернитесь сюда и обновите страницу.');
     } catch {
       toast.error('Не удалось создать ссылку. Проверьте настройки бота на сервере.');
     } finally {
