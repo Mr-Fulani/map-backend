@@ -64,6 +64,14 @@ def run_for_product(product) -> list[ProductImage]:
     uploader = PhotoUploadPipeline()
     sources = get_active_sources(product)
 
+    # URL-уровень: не скачивать то, что уже было отклонено для этого товара
+    rejected_urls: set[str] = set(
+        product.images
+        .filter(status=ProductImage.Status.REJECTED)
+        .exclude(url_source='')
+        .values_list('url_source', flat=True)
+    )
+
     for source in sources:
         if len(saved) >= remaining_slots:
             break
@@ -100,8 +108,16 @@ def run_for_product(product) -> list[ProductImage]:
             if len(saved) >= remaining_slots:
                 break
 
+            if candidate.url in rejected_urls:
+                continue
+
             pi = uploader.process(candidate.url, product)
             if pi is None:
+                continue
+
+            # SHA256-уровень: пропустить если контент совпал с ранее отклонённым
+            if pi.status == ProductImage.Status.REJECTED:
+                rejected_urls.add(candidate.url)
                 continue
 
             # Статус зависит от скора: выше порога = авто-одобрено
