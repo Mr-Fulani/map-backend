@@ -133,7 +133,8 @@ def run_for_product(product) -> list[ProductImage]:
             error=error,
         )
 
-    # Обновляем кеш
+    # Обновляем кеш. Пустой результат кешируем на 1 час чтобы не блокировать повторные попытки.
+    cache_ttl = timedelta(days=cache_ttl_days) if saved else timedelta(hours=1)
     ImageSearchCache.objects.update_or_create(
         cache_key=cache_key,
         defaults={
@@ -141,7 +142,7 @@ def run_for_product(product) -> list[ProductImage]:
                 'product_image_ids': [pi.pk for pi in saved],
                 'count': len(saved),
             },
-            'expires_at': now() + timedelta(days=cache_ttl_days),
+            'expires_at': now() + cache_ttl,
         },
     )
 
