@@ -34,7 +34,7 @@ class ImageListView(APIView):
     def get(self, request, product_pk: int):
         """Возвращает все изображения товара, упорядоченные по позиции."""
         product = _get_product(product_pk, request.tenant)
-        images = product.images.order_by('position')
+        images = product.images.exclude(status='rejected').order_by('position')
         return Response({
             'status': 'ok',
             'data': ProductImageSerializer(images, many=True, context={'request': request}).data,
@@ -52,10 +52,11 @@ class ImageDetailView(APIView):
         return Response({'status': 'ok', 'data': ProductImageSerializer(image, context={'request': request}).data})
 
     def delete(self, request, product_pk: int, image_pk: int):
-        """Удаляет изображение и все его S3-файлы (через post_delete сигнал)."""
+        """Помечает изображение как отклонённое (сохраняет sha256/url для дедупликации)."""
         product = _get_product(product_pk, request.tenant)
         image = _get_image(product, image_pk)
-        image.delete()
+        image.status = ProductImage.Status.REJECTED
+        image.save(update_fields=['status'])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -65,8 +66,11 @@ class ImageSearchView(APIView):
 
     def post(self, request, product_pk: int):
         """Запускает Celery-задачу поиска изображений. Возвращает task_id для опроса статуса."""
+        from apps.image_search.models import ImageSearchCache
         from apps.image_search.tasks import search_images_for_product
         product = get_object_or_404(Product, pk=product_pk, tenant=request.tenant)
+        cache_key = f'img_search:{product.article}:{product.brand}'
+        ImageSearchCache.objects.filter(cache_key=cache_key).delete()
         task = search_images_for_product.delay(product.pk)
         return Response({'status': 'ok', 'data': {'task_id': task.id}})
 

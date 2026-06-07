@@ -41,7 +41,6 @@ def run_for_product(product) -> list[ProductImage]:
     cfg = settings.IMAGE_SEARCH_SETTINGS
     max_images = cfg['MAX_IMAGES_PER_PRODUCT']
     min_score = cfg['MIN_QUALITY_SCORE']
-    auto_approve_thresh = cfg['AUTO_APPROVE_THRESHOLD']
     cache_ttl_days = cfg['CACHE_TTL_DAYS']
 
     cache_key = f'img_search:{product.article}:{product.brand}'
@@ -120,12 +119,7 @@ def run_for_product(product) -> list[ProductImage]:
                 rejected_urls.add(candidate.url)
                 continue
 
-            # Статус зависит от скора: выше порога = авто-одобрено
-            status = (
-                ProductImage.Status.AUTO_APPROVED
-                if candidate.quality_score >= auto_approve_thresh
-                else ProductImage.Status.NEEDS_REVIEW
-            )
+            status = ProductImage.Status.NEEDS_REVIEW
 
             pi.source_id = candidate.source_id
             pi.tier = candidate.tier
