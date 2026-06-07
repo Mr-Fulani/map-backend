@@ -50,9 +50,10 @@ class Command(BaseCommand):
             return
 
         webhook_url = f'{site_url}/api/v1/notifications/webhook/telegram/'
-        # Первые 16 символов токена используются как secret_token —
-        # то же значение проверяется в TelegramBotWebhookView
-        secret_token = token[:16]
+        # Токен бота имеет вид "12345:ABCdef..." — берём часть после ":",
+        # она всегда состоит только из A-Z a-z 0-9 (что допускает Telegram).
+        # То же значение проверяется в TelegramBotWebhookView.
+        secret_token = token.split(':')[-1][:32]
 
         resp = requests.post(
             f'{base}/setWebhook',
