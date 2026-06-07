@@ -352,6 +352,7 @@ export const imageApi = {
   },
   bulkSearch: (productIds: number[]) =>
     api.post('/images/bulk-search/', { product_ids: productIds }),
+  getQuota: () => api.get('/images/quota/'),
 };
 
 // Webhooks

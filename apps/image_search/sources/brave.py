@@ -109,16 +109,21 @@ class BraveImageSource(BaseImageSource):
 
     @staticmethod
     def _log_rate_limit(resp) -> None:
-        """Логирует остаток квоты из заголовков ответа."""
+        """Логирует остаток квоты из заголовков ответа и сохраняет в кеш."""
         remaining = resp.headers.get('X-RateLimit-Remaining')
         limit = resp.headers.get('X-RateLimit-Limit')
         if remaining is None:
             return
         remaining = int(remaining.split(',')[0].strip())
-        limit = int(limit.split(',')[0].strip()) if limit else '?'
+        limit = int(limit.split(',')[0].strip()) if limit else None
         if remaining == 0:
             logger.error('[brave] КВОТА ИСЧЕРПАНА: 0/%s запросов осталось — пополните баланс', limit)
         elif remaining <= 50:
             logger.warning('[brave] квота заканчивается: ~%d/%s запросов осталось', remaining, limit)
         else:
             logger.info('[brave] квота: ~%d/%s запросов осталось', remaining, limit)
+
+        from django.core.cache import cache
+        cache.set('brave:quota:remaining', remaining, timeout=86400)
+        if limit is not None:
+            cache.set('brave:quota:limit', limit, timeout=86400)

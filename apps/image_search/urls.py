@@ -7,6 +7,7 @@ from apps.image_search.views import (
     ImageApproveView,
     ImageDetailView,
     ImageListView,
+    ImageQuotaView,
     ImageRejectView,
     ImageSearchStatusView,
     ImageSearchView,
@@ -62,5 +63,11 @@ urlpatterns = [
         'images/bulk-search/',
         BulkSearchView.as_view(),
         name='images-bulk-search',
+    ),
+    # Квота Brave API
+    path(
+        'images/quota/',
+        ImageQuotaView.as_view(),
+        name='images-quota',
     ),
 ]

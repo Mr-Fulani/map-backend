@@ -208,3 +208,26 @@ class BulkSearchView(APIView):
             'status': 'ok',
             'data': {'task_ids': task_ids, 'count': len(task_ids)},
         })
+
+
+@extend_schema(tags=['Images'])
+class ImageQuotaView(APIView):
+    """GET /api/v1/images/quota/ — текущая квота Brave Search API."""
+
+    def get(self, request):
+        """Возвращает остаток квоты из последнего ответа Brave API.
+
+        Данные обновляются автоматически после каждого поиска изображений.
+        Если поисков ещё не было, поля remaining и limit будут null.
+        """
+        from django.core.cache import cache
+        remaining = cache.get('brave:quota:remaining')
+        limit = cache.get('brave:quota:limit')
+        return Response({
+            'status': 'ok',
+            'data': {
+                'source': 'brave',
+                'remaining': remaining,
+                'limit': limit,
+            },
+        })

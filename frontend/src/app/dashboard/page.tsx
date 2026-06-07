@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { billingApi, logApi } from '@/lib/api';
+import { billingApi, imageApi, logApi } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ListOrdered, Package, Sparkles, AlertTriangle, TrendingUp, XCircle } from 'lucide-react';
+import { ListOrdered, Package, Sparkles, AlertTriangle, TrendingUp, XCircle, Image } from 'lucide-react';
 
 interface UsageData {
   listings: { used: number; limit: number | null };
@@ -89,21 +89,29 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: 'Отменена',
 };
 
+interface BraveQuota {
+  remaining: number | null;
+  limit: number | null;
+}
+
 export default function DashboardPage() {
   const [usage, setUsage] = useState<UsageData | null>(null);
   const [errorsCount, setErrorsCount] = useState(0);
+  const [braveQuota, setBraveQuota] = useState<BraveQuota>({ remaining: null, limit: null });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
         const today = new Date().toISOString().slice(0, 10);
-        const [usageRes, logsRes] = await Promise.all([
+        const [usageRes, logsRes, quotaRes] = await Promise.all([
           billingApi.getUsage(),
           logApi.list({ status: 'error', date: today }),
+          imageApi.getQuota(),
         ]);
         setUsage(usageRes.data.data);
         setErrorsCount(logsRes.data.meta?.total ?? 0);
+        setBraveQuota(quotaRes.data.data);
       } catch {
         // показываем нули вместо крэша
       } finally {
@@ -148,7 +156,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <KpiCard
           title="Активные объявления"
           value={usage?.listings.used ?? 0}
@@ -169,6 +177,14 @@ export default function DashboardPage() {
           limit={usage?.ai_credits.limit}
           icon={<Sparkles className="h-4 w-4" />}
           loading={loading}
+        />
+        <KpiCard
+          title="Brave квота (фото)"
+          value={braveQuota.remaining ?? 0}
+          limit={braveQuota.limit}
+          icon={<Image className="h-4 w-4" />}
+          loading={loading}
+          warning={(braveQuota.remaining ?? Infinity) <= 50}
         />
         <KpiCard
           title="Отклонено сейчас"
