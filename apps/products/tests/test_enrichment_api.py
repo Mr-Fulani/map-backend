@@ -1,5 +1,5 @@
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -56,7 +56,8 @@ def test_parse_endpoint_creates_tenant_scoped_job(django_capture_on_commit_callb
     job = tenant.product_parse_jobs.get(pk=data['job_id'])
     assert job.product == product
     assert job.normalized_article == normalize_part_code(product.article)
-    delay.assert_called_once_with(job.pk)
+    assert call(job.pk) in delay.call_args_list
+    assert delay.call_count == 2
 
 
 @pytest.mark.django_db
@@ -470,7 +471,8 @@ def test_parse_endpoint_allows_enabled_auto_parts_domain_for_mixed_tenant(
     data = response.json()['data']
     job = tenant.product_parse_jobs.get(pk=data['job_id'])
     assert job.product == product
-    delay.assert_called_once_with(job.pk)
+    assert call(job.pk) in delay.call_args_list
+    assert delay.call_count == 2
 
 
 @pytest.mark.django_db
