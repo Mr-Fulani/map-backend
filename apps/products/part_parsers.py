@@ -559,7 +559,161 @@ def _find_product_schema(payload):
     return None
 
 
+class RosskoPartParser:
+    """HTML parser для enrichment-данных каталога rossko.ru.
+
+    Не поддерживает прямую карточку по brand/article — только поиск через
+    /single/search/?q={article}, затем переход на страницу товара.
+    Все данные в SSR HTML без авторизации.
+    """
+
+    source_id = 'rossko'
+    base_url = 'https://rossko.ru'
+
+    def __init__(self, fetcher=None):
+        self.fetcher = fetcher or get_part_fetcher(self.source_id)
+
+    def build_search_url(self, article: str) -> str:
+        return f'{self.base_url}/single/search/?q={quote(normalize_part_code(article))}'
+
+    def fetch_search(self, article: str) -> tuple[str, str]:
+        """Ищет артикул, затем загружает страницу первого совпавшего товара."""
+        search_url = self.build_search_url(article)
+        search_page = self.fetcher.fetch(search_url)
+        search_page.raise_for_status()
+
+        product_url = self._extract_product_url(search_page.html, article)
+        if not product_url:
+            raise PartNotFound(f'Part not found in rossko: {article}')
+
+        product_page = self.fetcher.fetch(product_url)
+        if product_page.status_code == 404:
+            raise PartNotFound(f'Rossko product page not found: {product_url}')
+        product_page.raise_for_status()
+        return product_page.html, product_page.url
+
+    def parse_html(self, html: str, brand: str, article: str, source_url: str = '') -> ParsedPart:
+        """Извлекает enrichment-данные из HTML страницы товара rossko.ru."""
+        tree = HTMLParser(html)
+        raw_text = _normalize_lines(tree.body.text(separator='\n')) if tree.body else ''
+
+        title_node = tree.css_first('h1')
+        title = _normalize_spaces(title_node.text(separator=' ')) if title_node else ''
+
+        attributes, cross_codes = self._parse_features(tree)
+        fitments = self._parse_applicability(tree)
+        image_urls = self._parse_images(tree)
+
+        parsed = ParsedPart(
+            brand=brand.strip().upper(),
+            article=normalize_part_code(article),
+            title=title or f'{brand} {article}'.strip(),
+            attributes=attributes,
+            cross_codes=cross_codes,
+            fitments=fitments,
+            image_urls=image_urls,
+            source_url=source_url,
+            raw_text=raw_text[:20000],
+        )
+        return parsed
+
+    def _extract_product_url(self, html: str, article: str) -> str:
+        """Возвращает URL страницы товара с артикулом, совпадающим с искомым."""
+        tree = HTMLParser(html)
+        normalized = normalize_part_code(article)
+        for link in tree.css('a[data-role="product.href"]'):
+            oe_node = link.css_first('.oe')
+            if oe_node and normalize_part_code(oe_node.text()) == normalized:
+                href = (link.attributes.get('href') or '').split('?')[0]
+                if href.startswith('/card/'):
+                    return f'{self.base_url}{href}'
+        return ''
+
+    def _parse_features(self, tree: HTMLParser) -> tuple[dict[str, str], list[ParsedCrossCode]]:
+        """Парсит вкладку Характеристики: атрибуты и OEM-коды."""
+        attributes: dict[str, str] = {}
+        cross_codes: list[ParsedCrossCode] = []
+
+        features_tab = tree.css_first('[data-tab-id="features"]')
+        if not features_tab:
+            return attributes, cross_codes
+
+        for item in features_tab.css('.feature-item'):
+            label_node = item.css_first('.feature-item-label span')
+            value_node = item.css_first('.feature-item-value')
+            if not label_node or not value_node:
+                continue
+
+            label = _normalize_spaces(label_node.text())
+            if not label or label.lower().startswith('для артикула'):
+                continue
+
+            if label.upper() == 'OEM':
+                for line in value_node.text(separator='\n').splitlines():
+                    line = _normalize_spaces(line)
+                    if not line:
+                        continue
+                    parts = line.split(' ', 1)
+                    if len(parts) == 2:
+                        manufacturer, code = parts[0].strip(), parts[1].strip()
+                        if _looks_like_cross_code(code):
+                            cross_codes.append(ParsedCrossCode(
+                                manufacturer=manufacturer,
+                                code=code,
+                                code_type=ProductCrossCode.CodeType.OEM,
+                            ))
+            else:
+                value = _normalize_spaces(value_node.text(separator=' '))
+                if value:
+                    attributes[label] = value
+
+        return attributes, _dedupe_cross_codes(cross_codes)
+
+    def _parse_applicability(self, tree: HTMLParser) -> list[ParsedFitment]:
+        """Парсит вкладку Применимость: марка, модель, модификация."""
+        fitments: list[ParsedFitment] = []
+
+        appl_tab = tree.css_first('[data-tab-id="applicability"]')
+        if not appl_tab:
+            return fitments
+
+        for car in appl_tab.css('.car[data-role="applicability.car"]'):
+            make = (car.attributes.get('data-manufacturer') or '').strip()
+            model = (car.attributes.get('data-model') or '').strip()
+            if not make or not model:
+                continue
+
+            for li in car.css('.car-engines ul li'):
+                modification = _normalize_spaces(li.text())
+                if not modification:
+                    continue
+                engine_match = re.search(r'\(([^)]+)\)\s*$', modification)
+                engine_code = engine_match.group(1) if engine_match else ''
+                fitments.append(ParsedFitment(
+                    make=make,
+                    model=model,
+                    modification=modification,
+                    engine_code=engine_code,
+                    raw_text=f'{make} {model} {modification}',
+                    confidence=0.85,
+                    needs_review=False,
+                ))
+
+        return fitments[:500]
+
+    def _parse_images(self, tree: HTMLParser) -> list[str]:
+        """Извлекает URL изображений из microdata Schema.org Product."""
+        urls: list[str] = []
+        for link in tree.css('[itemtype*="schema.org/Product"] link[itemprop="image"]'):
+            href = (link.attributes.get('href') or '').strip()
+            if href and href not in urls:
+                urls.append(href)
+        return urls[:10]
+
+
 def get_part_parser(source_id: str):
     if source_id == TachkaPartParser.source_id:
         return TachkaPartParser()
+    if source_id == RosskoPartParser.source_id:
+        return RosskoPartParser()
     raise ValueError(f'Unknown part parser source: {source_id}')

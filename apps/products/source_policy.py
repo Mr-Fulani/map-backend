@@ -70,6 +70,23 @@ PART_SOURCE_POLICIES = {
             supports_related_parts=True,
         ),
     ),
+    'rossko': PartSourcePolicy(
+        source_id='rossko',
+        label='Rossko.ru',
+        priority=90,
+        trust_score=0.85,
+        default_pause_seconds=60,
+        min_pause_seconds=10,
+        batch_size=20,
+        transport='httpx',
+        capabilities=SourceCapabilities(
+            supports_product_page=False,
+            supports_search=True,
+            supports_fitments=True,
+            supports_images=True,
+            supports_related_parts=False,
+        ),
+    ),
 }
 
 

@@ -5,7 +5,7 @@ import pytest
 
 from apps.products.models import GlobalPartRelation, Product, ProductCrossCode
 from apps.products.part_fetchers import FetchedPage
-from apps.products.part_parsers import ParsedPart, TachkaPartParser, parse_fitment_line
+from apps.products.part_parsers import ParsedPart, RosskoPartParser, TachkaPartParser, parse_fitment_line
 from apps.products.services import ProductEnrichmentService, ProductService
 from apps.tenants.services import TenantService
 
@@ -388,3 +388,167 @@ def test_clean_enrichment_image_urls_filters_service_images_and_tachka_variants(
         urls[0],
         urls[5],
     ]
+
+
+ROSSKO_PRODUCT_HTML = """
+<html>
+<body>
+  <div itemtype="https://schema.org/Product" itemscope>
+    <meta itemprop="name" content="P 50 136 • Brembo Колодки тормозные дисковые задние" />
+    <link itemprop="image" href="https://imgs.rossko.ru/46/8C/NSII0016446647/1.jpg" />
+    <link itemprop="image" href="https://imgs.rossko.ru/46/8C/NSII0016446647/2.jpg" />
+    <h1>P 50 136 Brembo Колодки тормозные дисковые задние</h1>
+  </div>
+  <div class="card__tab-content-item" data-tab-id="features" data-role="card.details.tab.content.item">
+    <div class="features">
+      <div class="feature-item">
+        <div class="feature-item-label"><span>OEM</span></div>
+        <div class="feature-item-value">Mercedes 0004206000
+Mercedes A0004206100</div>
+      </div>
+      <div class="feature-item">
+        <div class="feature-item-label"><span>Толщина [мм]</span></div>
+        <div class="feature-item-value">16 мм</div>
+      </div>
+      <div class="feature-item">
+        <div class="feature-item-label"><span>Ширина [мм]</span></div>
+        <div class="feature-item-value">114.25</div>
+      </div>
+      <div class="feature-item">
+        <div class="feature-item-label"><span>WVA номер</span></div>
+        <div class="feature-item-value">22437, 22438</div>
+      </div>
+      <div class="feature-item">
+        <div class="feature-item-label"><span>для артикула №</span></div>
+        <div class="feature-item-value">P 50 136</div>
+      </div>
+    </div>
+  </div>
+  <div class="card__tab-content-item" data-tab-id="applicability" data-role="card.details.tab.content.item">
+    <div class="car-applicability">
+      <div class="cars" data-role="popup.body">
+        <div class="car" data-role="applicability.car" data-manufacturer="MERCEDES-BENZ" data-model="E-CLASS">
+          <div class="car-engines">
+            <ul>
+              <li>E 200 (213.042)</li>
+              <li>E 220 d 4-matic (213.005)</li>
+            </ul>
+          </div>
+        </div>
+        <div class="car" data-role="applicability.car" data-manufacturer="MERCEDES-BENZ" data-model="CLS">
+          <div class="car-engines">
+            <ul>
+              <li>CLS 220 d (257.314)</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+ROSSKO_SEARCH_HTML = """
+<html>
+<body>
+  <div class="data">
+    <a href="/card/brembo-p-50-136-nsii0016446647/?source=searchList&amp;ref=part_number"
+       class="brand-oe" data-role="product.href">
+      <span class="oe">P 50 136</span>
+      <span class="brand">Brembo</span>
+      <span class="name">Колодки тормозные дисковые задние</span>
+    </a>
+  </div>
+</body>
+</html>
+"""
+
+
+def test_rossko_parser_extracts_features_from_html():
+    parsed = RosskoPartParser().parse_html(
+        ROSSKO_PRODUCT_HTML,
+        brand='BREMBO',
+        article='P 50 136',
+        source_url='https://rossko.ru/card/brembo-p-50-136-nsii0016446647/',
+    )
+
+    assert parsed.normalized_article == 'P50136'
+    assert parsed.brand == 'BREMBO'
+    assert 'P 50 136' in parsed.title
+    assert parsed.attributes['Толщина [мм]'] == '16 мм'
+    assert parsed.attributes['Ширина [мм]'] == '114.25'
+    assert parsed.attributes['WVA номер'] == '22437, 22438'
+    assert 'для артикула №' not in parsed.attributes
+
+
+def test_rossko_parser_extracts_oem_codes():
+    parsed = RosskoPartParser().parse_html(
+        ROSSKO_PRODUCT_HTML,
+        brand='BREMBO',
+        article='P50136',
+    )
+
+    oem_codes = [c for c in parsed.cross_codes if c.code_type == ProductCrossCode.CodeType.OEM]
+    assert len(oem_codes) == 2
+    assert oem_codes[0].manufacturer == 'Mercedes'
+    assert oem_codes[0].code == '0004206000'
+    assert oem_codes[1].code == 'A0004206100'
+
+
+def test_rossko_parser_extracts_fitments():
+    parsed = RosskoPartParser().parse_html(
+        ROSSKO_PRODUCT_HTML,
+        brand='BREMBO',
+        article='P50136',
+    )
+
+    assert len(parsed.fitments) == 3
+    e_class = [f for f in parsed.fitments if f.model == 'E-CLASS']
+    assert len(e_class) == 2
+    assert e_class[0].make == 'MERCEDES-BENZ'
+    assert e_class[0].engine_code == '213.042'
+    assert e_class[1].engine_code == '213.005'
+    cls_fitments = [f for f in parsed.fitments if f.model == 'CLS']
+    assert cls_fitments[0].engine_code == '257.314'
+
+
+def test_rossko_parser_extracts_images():
+    parsed = RosskoPartParser().parse_html(
+        ROSSKO_PRODUCT_HTML,
+        brand='BREMBO',
+        article='P50136',
+    )
+
+    assert 'https://imgs.rossko.ru/46/8C/NSII0016446647/1.jpg' in parsed.image_urls
+    assert 'https://imgs.rossko.ru/46/8C/NSII0016446647/2.jpg' in parsed.image_urls
+
+
+def test_rossko_parser_find_product_url_from_search():
+    parser = RosskoPartParser()
+    url = parser._extract_product_url(ROSSKO_SEARCH_HTML, 'P50136')
+
+    assert url == 'https://rossko.ru/card/brembo-p-50-136-nsii0016446647/'
+
+
+def test_rossko_parser_uses_injected_fetcher_without_network():
+    calls = []
+
+    class FakeFetcher:
+        def fetch(self, url):
+            calls.append(url)
+            if 'single/search' in url:
+                return FetchedPage(html=ROSSKO_SEARCH_HTML, url=url, status_code=200)
+            return FetchedPage(
+                html=ROSSKO_PRODUCT_HTML,
+                url='https://rossko.ru/card/brembo-p-50-136-nsii0016446647/',
+                status_code=200,
+            )
+
+    html, source_url = RosskoPartParser(fetcher=FakeFetcher()).fetch_search('P50136')
+
+    assert len(calls) == 2
+    assert 'single/search' in calls[0]
+    assert 'brembo-p-50-136' in calls[1]
+    assert html == ROSSKO_PRODUCT_HTML
+    assert 'rossko.ru' in source_url
