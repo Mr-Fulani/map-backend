@@ -381,7 +381,7 @@ export default function ProductDetailPage() {
   async function startEnrichment(generateAfter = false) {
     setActionLoading(generateAfter ? 'enrich-generate' : 'enrich');
     try {
-      const res = await productApi.parse(Number(id), 'tachka', generateAfter);
+      const res = await productApi.parse(Number(id), '', generateAfter);
       setParseJobId(res.data.data.job_id);
       setParseThenGenerate(generateAfter);
       toast.info(generateAfter ? 'Запущено: обогащение, затем генерация описания' : 'Обогащение запущено');

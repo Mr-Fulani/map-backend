@@ -211,8 +211,8 @@ export const productApi = {
   publish: (id: number) => api.post(`/products/${id}/publish/`),
   archive: (id: number) => api.post(`/products/${id}/archive/`),
   regenerate: (id: number) => api.post(`/products/${id}/regenerate/`),
-  parse: (id: number, source = 'tachka', generateAfter = false) =>
-    api.post('/products/parse/', { product_id: id, source, generate_after: generateAfter }),
+  parse: (id: number, source = '', generateAfter = false) =>
+    api.post('/products/parse/', { product_id: id, source: source || undefined, generate_after: generateAfter }),
   parseJobStatus: (id: number) => api.get(`/products/parse-jobs/${id}/`),
   bulkAction: (data: {
     action: string;
