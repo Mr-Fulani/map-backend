@@ -201,7 +201,22 @@ class ProductDetailSerializer(ProductSerializer):
         ]
 
     def get_latest_parse_job(self, obj):
-        job = obj.parse_jobs.order_by('-created_at').first()
+        from apps.products.source_policy import PART_SOURCE_POLICIES
+        from django.db.models import Case, IntegerField, Value, When
+        priority_cases = [
+            When(source_id=sid, then=Value(policy.priority))
+            for sid, policy in PART_SOURCE_POLICIES.items()
+        ]
+        job = (
+            obj.parse_jobs
+            .annotate(src_priority=Case(
+                *priority_cases,
+                default=Value(0),
+                output_field=IntegerField(),
+            ))
+            .order_by('-src_priority', '-created_at')
+            .first()
+        )
         if job is None:
             return None
         return ProductParseJobSerializer(job).data
