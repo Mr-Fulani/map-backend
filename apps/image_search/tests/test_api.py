@@ -202,7 +202,9 @@ class TestImageDeleteView:
             f'/api/v1/products/{product.pk}/images/{product_image.pk}/',
         )
         assert resp.status_code == 204
-        assert not ProductImage.objects.filter(pk=product_image.pk).exists()
+        # soft-delete: запись остаётся в БД со статусом rejected (для дедупликации)
+        image = ProductImage.objects.get(pk=product_image.pk)
+        assert image.status == ProductImage.Status.REJECTED
 
     def test_product_delete_удаляет_медиа_товара_из_storage(self, product):
         image = ProductImage.objects.create(
