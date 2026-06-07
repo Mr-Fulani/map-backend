@@ -36,6 +36,16 @@ class BraveImageSource(BaseImageSource):
         """True если BRAVE_SEARCH_API_KEY задан в настройках."""
         return bool(settings.BRAVE_SEARCH_API_KEY)
 
+    def build_queries(self) -> list[tuple[str, str]]:
+        """Добавляет «автозапчасть» к каждому запросу — Brave без контекста возвращает нерелевантные результаты."""
+        base = super().build_queries()
+        result = []
+        for query, confidence in base:
+            if 'запчасть' not in query.lower():
+                query = f'{query} автозапчасть'
+            result.append((query, confidence))
+        return result
+
     def search(self) -> list[ImageCandidate]:
         """Ищет изображения через Brave Search API.
 
