@@ -20,6 +20,8 @@ except ImportError:
 _MAX_RESULTS_PER_QUERY = 15
 _MAX_QUERIES = 2
 _QUERY_DELAY_SEC = 1.5
+_RETRY_ATTEMPTS = 3
+_RETRY_BACKOFF_SEC = 3.0
 
 
 @register
@@ -55,31 +57,42 @@ class DuckDuckGoSource(BaseImageSource):
         for idx, (query, confidence) in enumerate(queries):
             if idx > 0:
                 time.sleep(_QUERY_DELAY_SEC)
+            results = self._search_with_retry(query)
+            for r in results:
+                url = r.get('image', '')
+                if not url or url in seen_urls:
+                    continue
+                seen_urls.add(url)
+                candidates.append(ImageCandidate(
+                    url=url,
+                    source_id=self.source_id,
+                    tier=self.tier,
+                    width=r.get('width', 0),
+                    height=r.get('height', 0),
+                    raw_meta={
+                        'confidence': confidence,
+                        'title': r.get('title', ''),
+                    },
+                ))
+
+        return candidates
+
+    def _search_with_retry(self, query: str) -> list[dict]:
+        """Выполняет поиск с повторными попытками при rate-limit ошибках."""
+        for attempt in range(_RETRY_ATTEMPTS):
             try:
                 with DDGS() as ddgs:
-                    results = list(ddgs.images(
+                    return list(ddgs.images(
                         keywords=query,
                         region='ru-ru',
                         max_results=_MAX_RESULTS_PER_QUERY,
                     ))
-                for r in results:
-                    url = r.get('image', '')
-                    if not url or url in seen_urls:
-                        continue
-                    seen_urls.add(url)
-                    candidates.append(ImageCandidate(
-                        url=url,
-                        source_id=self.source_id,
-                        tier=self.tier,
-                        width=r.get('width', 0),
-                        height=r.get('height', 0),
-                        raw_meta={
-                            'confidence': confidence,
-                            'title': r.get('title', ''),
-                        },
-                    ))
             except Exception as exc:
-                logger.warning(f'[ddg] ошибка для {query!r}: {exc}')
-                continue
-
-        return candidates
+                is_last = attempt == _RETRY_ATTEMPTS - 1
+                if is_last:
+                    logger.warning(f'[ddg] ошибка для {query!r}: {exc}')
+                    return []
+                wait = _RETRY_BACKOFF_SEC * (attempt + 1)
+                logger.debug(f'[ddg] попытка {attempt + 1} для {query!r}: {exc}, ждём {wait}s')
+                time.sleep(wait)
+        return []

@@ -73,7 +73,7 @@ export default function LogsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
+      <div className="min-w-0">
         <h1 className="text-2xl font-bold tracking-tight">Логи синхронизации</h1>
         <p className="text-muted-foreground">
           {meta ? `${meta.total.toLocaleString('ru-RU')} событий` : 'История событий'}
@@ -98,12 +98,50 @@ export default function LogsPage() {
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
-          className="w-auto"
+          className="w-full sm:w-auto"
         />
       </div>
 
       {/* Таблица */}
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="grid gap-3 md:hidden">
+        {loading
+          ? Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="rounded-lg border p-3">
+                <div className="space-y-2">
+                  <Skeleton className="h-5 w-24" />
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-4 w-full" />
+                </div>
+              </div>
+            ))
+          : logs.length === 0
+            ? (
+              <div className="rounded-lg border px-4 py-12 text-center text-muted-foreground">
+                <ScrollText className="mx-auto mb-3 h-10 w-10 opacity-30" />
+                Событий нет
+              </div>
+            )
+            : logs.map((log) => (
+              <div key={log.id} className="rounded-lg border bg-card p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <Badge variant={STATUS_VARIANT[log.status] ?? 'secondary'}>
+                      {log.status}
+                    </Badge>
+                    <p className="mt-2 break-words font-mono text-xs text-muted-foreground">
+                      {log.event_type}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {new Date(log.created_at).toLocaleDateString('ru-RU')}
+                  </span>
+                </div>
+                <p className="mt-2 break-words text-sm">{log.message || '—'}</p>
+              </div>
+            ))}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-lg border md:block">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50 text-left text-muted-foreground">
@@ -156,7 +194,7 @@ export default function LogsPage() {
       </div>
 
       {meta && meta.total > meta.page_size && (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted-foreground">
             Страница {meta.page} из {Math.ceil(meta.total / meta.page_size)}
           </p>

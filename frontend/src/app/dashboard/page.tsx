@@ -118,13 +118,13 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight">Дашборд</h1>
           <p className="text-muted-foreground">Обзор платформы автоматизации маркетплейсов</p>
         </div>
         {planLabel && subStatus && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">{planLabel}</span>
             <Badge variant={STATUS_VARIANTS[subStatus] ?? 'secondary'}>
               {STATUS_LABELS[subStatus] ?? subStatus}
@@ -135,8 +135,8 @@ export default function DashboardPage() {
 
       {/* Баннер grace period */}
       {!loading && subStatus === 'past_due' && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive flex items-center justify-between gap-4">
-          <div>
+        <div className="flex flex-col gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <span className="font-semibold">Триал истёк.</span>{' '}
             {usage?.grace_days_left != null && usage.grace_days_left > 0
               ? `Публикация и AI заблокированы. До полного отключения осталось ${usage.grace_days_left} дн. — оплатите подписку.`

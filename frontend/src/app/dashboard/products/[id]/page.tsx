@@ -295,7 +295,7 @@ export default function ProductDetailPage() {
             if (saved_count > 0) {
               toast.success(`Найдено фото: ${saved_count}`);
             } else {
-              toast.warning('Фото не найдены — попробуйте загрузить вручную');
+              toast.warning('Фото не найдены — сервис поиска ограничил запросы. Попробуйте через минуту или загрузите вручную.');
             }
             loadImages();
           } else {
@@ -869,6 +869,17 @@ export default function ProductDetailPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {searching && (
+                <div className="mb-4 flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+                  <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+                  <div>
+                    <p className="font-medium">Идёт поиск фотографий...</p>
+                    <p className="mt-0.5 text-xs opacity-80">
+                      Поиск может занять до 30 секунд — сервисы иногда ограничивают запросы, задача делает повторные попытки автоматически. Не нажимайте кнопку повторно.
+                    </p>
+                  </div>
+                </div>
+              )}
               {imagesLoading ? (
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                   {Array.from({ length: 4 }).map((_, i) => (
@@ -879,12 +890,6 @@ export default function ProductDetailPage() {
                 <div className="flex flex-col items-center gap-2 py-8 text-center text-muted-foreground">
                   <ImageOff className="h-8 w-8 opacity-30" />
                   <p className="text-sm">Фотографии не загружены</p>
-                  {searching && (
-                    <p className="text-xs flex items-center gap-1">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Идёт поиск...
-                    </p>
-                  )}
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">

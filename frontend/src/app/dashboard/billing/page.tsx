@@ -98,7 +98,7 @@ export default function BillingPage() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="min-w-0">
         <h1 className="text-2xl font-bold tracking-tight">Биллинг</h1>
         <p className="text-muted-foreground">Управление подпиской и платежами</p>
       </div>
@@ -169,7 +169,27 @@ export default function BillingPage() {
             {invoices.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">Платежей пока нет</p>
             ) : (
-              <div className="overflow-x-auto">
+              <>
+              <div className="grid gap-3 p-3 md:hidden">
+                {invoices.map((inv) => (
+                  <div key={inv.id} className="rounded-lg border p-3">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium">
+                          {Number(inv.amount).toLocaleString('ru-RU')} ₽
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {new Date(inv.created_at).toLocaleDateString('ru-RU')}
+                        </p>
+                      </div>
+                      <Badge variant={inv.status === 'succeeded' ? 'default' : 'secondary'}>
+                        {INVOICE_STATUS[inv.status] ?? inv.status}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="hidden overflow-x-auto md:block">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b bg-muted/50 text-left text-muted-foreground">
@@ -197,6 +217,7 @@ export default function BillingPage() {
                 </tbody>
               </table>
               </div>
+              </>
             )}
           </CardContent>
         </Card>

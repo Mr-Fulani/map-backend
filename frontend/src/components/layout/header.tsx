@@ -49,9 +49,9 @@ export function Header() {
         : '';
 
   return (
-    <header className="flex h-14 items-center justify-between border-b bg-card px-4 lg:px-6">
+    <header className="flex h-14 min-w-0 items-center justify-between gap-2 border-b bg-card px-3 sm:px-4 lg:px-6">
       {/* Left: Mobile menu + Tenant */}
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         {/* Mobile menu */}
         <Sheet>
           <SheetTrigger asChild>
@@ -66,11 +66,11 @@ export function Header() {
 
         {/* Tenant info */}
         {tenant && (
-          <div className="flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">{tenant.name}</span>
+          <div className="flex min-w-0 items-center gap-2">
+            <Building2 className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" />
+            <span className="min-w-0 truncate text-sm font-medium">{tenant.name}</span>
             {subscription && (
-              <Badge variant={planBadgeVariant} className="text-xs">
+              <Badge variant={planBadgeVariant} className="hidden shrink-0 text-xs sm:inline-flex">
                 {subscription.plan_name}{planStatusLabel}
               </Badge>
             )}
@@ -79,7 +79,7 @@ export function Header() {
       </div>
 
       {/* Right: Theme + User */}
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1 sm:gap-2">
         {/* Theme toggle */}
         <Button
           variant="ghost"

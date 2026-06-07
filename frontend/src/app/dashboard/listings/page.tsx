@@ -200,7 +200,7 @@ export default function ListingsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
+      <div className="min-w-0">
         <h1 className="text-2xl font-bold tracking-tight">Листинги</h1>
         <p className="text-muted-foreground">
           {meta ? `${meta.total.toLocaleString('ru-RU')} объявлений` : 'Загрузка...'}
@@ -233,7 +233,7 @@ export default function ListingsPage() {
               setBulkAccountId(e.target.value);
               setBulkPlacementAddressId('');
             }}
-            className="h-9 rounded-md border bg-background px-3 text-sm"
+            className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm"
           >
             <option value="">Любой аккаунт</option>
             {accounts.map((account) => (
@@ -243,7 +243,7 @@ export default function ListingsPage() {
           <select
             value={bulkStatus}
             onChange={(e) => setBulkStatus(e.target.value)}
-            className="h-9 rounded-md border bg-background px-3 text-sm"
+            className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm"
           >
             <option value="">Любой статус</option>
             {STATUS_FILTERS.filter((item) => item.value).map((item) => (
@@ -253,7 +253,7 @@ export default function ListingsPage() {
           <select
             value={bulkCategory}
             onChange={(e) => setBulkCategory(e.target.value)}
-            className="h-9 rounded-md border bg-background px-3 text-sm"
+            className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm"
           >
             <option value="">Любая категория источника</option>
             {sourceCategories.map((category) => (
@@ -265,7 +265,7 @@ export default function ListingsPage() {
           <select
             value={bulkPlacementAddressId}
             onChange={(e) => setBulkPlacementAddressId(e.target.value)}
-            className="h-9 rounded-md border bg-background px-3 text-sm lg:col-span-3"
+            className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm lg:col-span-3"
           >
             <option value="">Адрес размещения из справочника</option>
             {visiblePlacementAddresses.map((address) => (
@@ -309,7 +309,132 @@ export default function ListingsPage() {
       </div>
 
       {/* Таблица */}
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="grid gap-3 lg:hidden">
+        {loading
+          ? Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Skeleton className="h-5 w-24" />
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-2/3" />
+                  </div>
+                  <Skeleton className="h-8 w-20" />
+                </div>
+              </div>
+            ))
+          : listings.length === 0
+            ? (
+              <div className="rounded-lg border px-4 py-12 text-center text-muted-foreground">
+                <ListOrdered className="mx-auto mb-3 h-10 w-10 opacity-30" />
+                Листингов нет
+              </div>
+            )
+            : listings.map((l) => (
+              <div
+                key={l.id}
+                className="rounded-lg border bg-card p-3"
+                onClick={() => setSelectedId(l.id)}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <Badge variant={STATUS_VARIANT[l.status] ?? 'outline'}>
+                      {l.status_display}
+                    </Badge>
+                    <p className="mt-2 break-words text-sm font-medium leading-5">
+                      {l.title || l.product_name}
+                    </p>
+                    {l.rejection_reason && (
+                      <p className="mt-1 line-clamp-2 text-xs text-destructive">
+                        {l.rejection_reason}
+                      </p>
+                    )}
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      <span className="font-mono">{l.product_article}</span>
+                      {l.account_name && <span className="break-words">{l.account_name}</span>}
+                      <span>{Number(l.price_on_listing).toLocaleString('ru-RU')} ₽</span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {l.published_at
+                        ? `Опубликован: ${new Date(l.published_at).toLocaleDateString('ru-RU')}`
+                        : `Создан: ${new Date(l.created_at).toLocaleDateString('ru-RU')}`}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-col gap-1" onClick={(e) => e.stopPropagation()}>
+                    {l.external_url && (
+                      <a
+                        href={l.external_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                        title="Открыть на Avito"
+                      >
+                        <ExternalLink className="h-4 w-4" />
+                      </a>
+                    )}
+                    {['draft', 'rejected', 'archived'].includes(l.status) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0"
+                        title="Опубликовать"
+                        onClick={() => runListingAction(l, 'publish')}
+                        disabled={rowActionId === l.id}
+                      >
+                        {rowActionId === l.id
+                          ? <Loader2 className="h-4 w-4 animate-spin" />
+                          : <Send className="h-4 w-4" />}
+                      </Button>
+                    )}
+                    {['active', 'pending'].includes(l.status) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0"
+                        title="В архив"
+                        onClick={() => runListingAction(l, 'archive')}
+                        disabled={rowActionId === l.id}
+                      >
+                        {rowActionId === l.id
+                          ? <Loader2 className="h-4 w-4 animate-spin" />
+                          : <Archive className="h-4 w-4" />}
+                      </Button>
+                    )}
+                    {l.status === 'pending' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0"
+                        title="Проверить статус Avito"
+                        onClick={() => runListingAction(l, 'checkStatus')}
+                        disabled={rowActionId === l.id}
+                      >
+                        {rowActionId === l.id
+                          ? <Loader2 className="h-4 w-4 animate-spin" />
+                          : <RefreshCw className="h-4 w-4" />}
+                      </Button>
+                    )}
+                    {l.status !== 'deleted' && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 w-8 p-0 text-destructive hover:text-destructive"
+                        title="Удалить"
+                        onClick={() => runListingAction(l, 'delete')}
+                        disabled={rowActionId === l.id}
+                      >
+                        {rowActionId === l.id
+                          ? <Loader2 className="h-4 w-4 animate-spin" />
+                          : <Trash2 className="h-4 w-4" />}
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-lg border lg:block">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50 text-left text-muted-foreground">
@@ -451,7 +576,7 @@ export default function ListingsPage() {
       </div>
 
       {meta && meta.total > meta.page_size && (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted-foreground">
             Страница {meta.page} из {Math.ceil(meta.total / meta.page_size)}
           </p>

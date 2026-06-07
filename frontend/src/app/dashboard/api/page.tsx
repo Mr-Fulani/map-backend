@@ -122,7 +122,7 @@ export default function ApiPage() {
       </div>
 
       <Tabs defaultValue="webhooks">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto pb-1">
           <TabsList className="w-full sm:w-auto">
             <TabsTrigger value="webhooks">Вебхуки</TabsTrigger>
             <TabsTrigger value="docs">Документация API</TabsTrigger>
@@ -186,10 +186,10 @@ export default function ApiPage() {
               ) : (
                 <div className="space-y-3">
                   {webhooks.map((wh) => (
-                    <div key={wh.id} className="rounded-lg border p-4">
-                      <div className="flex items-start justify-between gap-2">
+                    <div key={wh.id} className="rounded-lg border p-3 sm:p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="min-w-0 flex-1">
-                          <p className="truncate font-mono text-sm font-medium">{wh.url}</p>
+                          <p className="break-all font-mono text-sm font-medium sm:truncate">{wh.url}</p>
                           <div className="mt-1 flex flex-wrap gap-1">
                             {wh.events.map((ev) => (
                               <Badge key={ev} variant="secondary" className="text-xs">
@@ -197,7 +197,7 @@ export default function ApiPage() {
                               </Badge>
                             ))}
                           </div>
-                          <div className="mt-2 flex items-center gap-2">
+                          <div className="mt-2 flex min-w-0 items-center gap-2">
                             <code className="rounded bg-muted px-2 py-0.5 font-mono text-xs text-muted-foreground">
                               {wh.secret.slice(0, 8)}...{wh.secret.slice(-4)}
                             </code>
@@ -214,7 +214,7 @@ export default function ApiPage() {
                             </Button>
                           </div>
                         </div>
-                        <div className="flex shrink-0 gap-1">
+                        <div className="flex shrink-0 gap-1 sm:justify-end">
                           <Button
                             size="sm"
                             variant="outline"
@@ -297,11 +297,11 @@ X-MAP-Event: listing.published
               <Separator />
               <div className="space-y-2">
                 <p className="text-sm font-medium">Базовый URL</p>
-                <code className="block rounded bg-muted px-3 py-2 font-mono text-xs">{apiBaseUrl}/api/v1/</code>
+                <code className="block break-all rounded bg-muted px-3 py-2 font-mono text-xs">{apiBaseUrl}/api/v1/</code>
               </div>
               <div className="space-y-2">
                 <p className="text-sm font-medium">Аутентификация</p>
-                <pre className="rounded bg-muted p-3 font-mono text-xs">
+                <pre className="overflow-x-auto rounded bg-muted p-3 font-mono text-xs">
 {`Authorization: Bearer map_sk_<ваш_ключ>
 # или JWT:
 Authorization: Bearer <access_token>`}

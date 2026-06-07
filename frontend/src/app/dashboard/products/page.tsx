@@ -425,7 +425,7 @@ export default function ProductsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
+      <div className="min-w-0">
         <h1 className="text-2xl font-bold tracking-tight">Каталог товаров</h1>
         <p className="text-muted-foreground">
           {meta ? `${meta.total.toLocaleString('ru-RU')} товаров` : 'Загрузка...'}
@@ -433,7 +433,7 @@ export default function ProductsPage() {
       </div>
 
       {/* Фильтры */}
-      <div className="flex flex-col gap-3 sm:flex-row">
+      <div className="flex flex-col gap-3 xl:flex-row">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -443,7 +443,7 @@ export default function ProductsPage() {
             className="pl-9"
           />
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {[
             { value: '', label: 'Все' },
             { value: 'true', label: 'Выгружается' },
@@ -501,14 +501,14 @@ export default function ProductsPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <span className="text-xs font-medium text-muted-foreground">
           {tenant?.name ? `Категория ${tenant.name}` : 'Категория каталога'}
         </span>
         <select
           value={catalogCategoryFilter}
           onChange={(event) => setCatalogCategoryFilter(event.target.value)}
-          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm sm:w-auto"
         >
           <option value="">Все категории</option>
           {catalogCategories.map((category) => (
@@ -532,7 +532,7 @@ export default function ProductsPage() {
               <p className="mt-1 text-xs text-destructive">{categoryAssignError}</p>
             )}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Button size="sm" variant="outline" onClick={() => setSelectedIds([])}>
               Снять выбор
             </Button>
@@ -643,7 +643,120 @@ export default function ProductsPage() {
       )}
 
       {/* Таблица */}
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="grid gap-3 lg:hidden">
+        {loading
+          ? Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="rounded-lg border p-3">
+                <div className="flex gap-3">
+                  <Skeleton className="h-14 w-14 shrink-0 rounded-md" />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Skeleton className="h-4 w-28" />
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-2/3" />
+                  </div>
+                </div>
+              </div>
+            ))
+          : products.length === 0
+            ? (
+              <div className="rounded-lg border px-4 py-12 text-center text-muted-foreground">
+                <Package className="mx-auto mb-3 h-10 w-10 opacity-30" />
+                {search ? 'Ничего не найдено' : 'Товаров пока нет'}
+              </div>
+            )
+            : products.map((p) => (
+              <div key={p.id} className="rounded-lg border bg-card p-3">
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    aria-label={`Выбрать товар ${p.article}`}
+                    checked={selectedIds.includes(p.id)}
+                    onChange={() => toggleProduct(p.id)}
+                    className="mt-5 h-4 w-4 shrink-0 rounded border-muted-foreground"
+                  />
+                  <Link
+                    href={`/dashboard/products/${p.id}?returnTo=${encodeURIComponent(currentListHref)}`}
+                    className="shrink-0"
+                  >
+                    <div className="relative h-14 w-14 overflow-hidden rounded-md border bg-muted">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={p.primary_thumb_url || getCategoryPlaceholder(p.category_1c ?? '', p.name)}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                      {p.images_count > 0 && (
+                        <span className="absolute bottom-0 right-0 rounded-tl bg-black/60 px-1 py-0.5 text-[10px] leading-none text-white">
+                          {p.images_count}
+                        </span>
+                      )}
+                    </div>
+                  </Link>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <Link
+                        href={`/dashboard/products/${p.id}?returnTo=${encodeURIComponent(currentListHref)}`}
+                        className="min-w-0 break-words text-sm font-medium leading-5 hover:underline"
+                      >
+                        {p.name}
+                      </Link>
+                      <Badge variant={p.export_enabled ? 'default' : 'secondary'} className="shrink-0">
+                        {p.export_enabled ? 'Да' : 'Нет'}
+                      </Badge>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                      <Link
+                        href={`/dashboard/products/${p.id}?returnTo=${encodeURIComponent(currentListHref)}`}
+                        className="font-mono font-medium text-primary hover:underline"
+                      >
+                        {p.article}
+                      </Link>
+                      {p.brand && <span className="break-words">{p.brand}</span>}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <Badge
+                        variant={p.ai_status === 'ready' ? 'default' : 'outline'}
+                        className="gap-1 whitespace-nowrap"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        AI {p.ai_status === 'ready' ? 'готов' : 'нет'}
+                      </Badge>
+                      <Badge
+                        variant={ENRICHMENT_VARIANTS[p.enrichment_status] ?? 'outline'}
+                        className="gap-1 whitespace-nowrap"
+                      >
+                        <Database className="h-3 w-3" />
+                        {ENRICHMENT_LABELS[p.enrichment_status] ?? p.enrichment_status}
+                      </Badge>
+                      <Badge
+                        variant={CATALOG_DOMAIN_VARIANTS[p.catalog_classification?.domain ?? 'unknown'] ?? 'outline'}
+                        className="whitespace-nowrap"
+                      >
+                        {catalogDomainLabel(p.catalog_classification?.domain ?? 'unknown')}
+                      </Badge>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Цена</p>
+                        <p className="font-medium">{Number(p.price).toLocaleString('ru-RU')} ₽</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Остаток</p>
+                        <p className={p.stock_qty === 0 ? 'font-medium text-destructive' : 'font-medium'}>
+                          {p.stock_qty}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                      {p.catalog_category?.name || p.category_1c || 'Без категории'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-lg border lg:block">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50 text-left text-muted-foreground">
@@ -800,7 +913,7 @@ export default function ProductsPage() {
 
       {/* Пагинация */}
       {meta && meta.total > meta.page_size && (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted-foreground">
             Страница {meta.page} из {Math.ceil(meta.total / meta.page_size)}
           </p>

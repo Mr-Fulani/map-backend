@@ -82,16 +82,16 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Фильтр дат */}
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-end">
         <div className="space-y-1">
           <label className="text-xs text-muted-foreground">С</label>
-          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-40" />
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="w-full sm:w-40" />
         </div>
         <div className="space-y-1">
           <label className="text-xs text-muted-foreground">По</label>
-          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-40" />
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-40" />
         </div>
-        <Button onClick={() => load(dateFrom, dateTo)} disabled={loading}>
+        <Button onClick={() => load(dateFrom, dateTo)} disabled={loading} className="w-full sm:w-auto">
           Применить
         </Button>
       </div>
@@ -182,7 +182,7 @@ export default function AnalyticsPage() {
             </div>
           ) : (
             <ResponsiveContainer width="100%" height={280}>
-              <LineChart data={daily} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+              <LineChart data={daily} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                 <XAxis
                   dataKey="date"
