@@ -118,7 +118,19 @@ export default function DashboardPage() {
         setLoading(false);
       }
     }
+
+    async function refreshQuota() {
+      try {
+        const res = await imageApi.getQuota();
+        setBraveQuota(res.data.data);
+      } catch {
+        // ignore
+      }
+    }
+
     load();
+    const interval = setInterval(refreshQuota, 30_000);
+    return () => clearInterval(interval);
   }, []);
 
   const planLabel = usage?.plan ? (PLAN_LABELS[usage.plan] ?? usage.plan) : null;
