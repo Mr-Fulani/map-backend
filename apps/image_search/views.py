@@ -219,19 +219,21 @@ class ImageQuotaView(APIView):
     """GET /api/v1/images/quota/ — текущая квота Brave Search API."""
 
     def get(self, request):
-        """Возвращает остаток квоты из последнего ответа Brave API.
+        """Возвращает количество вызовов Brave за текущий месяц.
 
-        Данные обновляются автоматически после каждого поиска изображений.
-        Если поисков ещё не было, поля remaining и limit будут null.
+        used — самостоятельно отслеживаемый счётчик запросов к Brave API в текущем месяце.
+        limit — лимит плана из заголовков Brave (null если Brave ещё не вызывался).
         """
+        from datetime import datetime
         from django.core.cache import cache
-        remaining = cache.get('brave:quota:remaining')
+        key = f'brave:calls:{datetime.now().strftime("%Y-%m")}'
+        used = cache.get(key) or 0
         limit = cache.get('brave:quota:limit')
         return Response({
             'status': 'ok',
             'data': {
                 'source': 'brave',
-                'remaining': remaining,
+                'used': used,
                 'limit': limit,
             },
         })

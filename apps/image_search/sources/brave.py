@@ -103,7 +103,8 @@ class BraveImageSource(BaseImageSource):
                 },
                 timeout=_TIMEOUT_SEC,
             )
-            self._log_rate_limit(resp)
+            self._increment_monthly_counter()
+            self._capture_plan_limit(resp)
 
             if resp.status_code == 401:
                 logger.error('[brave] неверный API ключ (401)')
@@ -118,22 +119,22 @@ class BraveImageSource(BaseImageSource):
             return []
 
     @staticmethod
-    def _log_rate_limit(resp) -> None:
-        """Логирует остаток квоты из заголовков ответа и сохраняет в кеш."""
-        remaining = resp.headers.get('X-RateLimit-Remaining')
-        limit = resp.headers.get('X-RateLimit-Limit')
-        if remaining is None:
-            return
-        remaining = int(remaining.split(',')[0].strip())
-        limit = int(limit.split(',')[0].strip()) if limit else None
-        if remaining == 0:
-            logger.error('[brave] КВОТА ИСЧЕРПАНА: 0/%s запросов осталось — пополните баланс', limit)
-        elif remaining <= 50:
-            logger.warning('[brave] квота заканчивается: ~%d/%s запросов осталось', remaining, limit)
-        else:
-            logger.info('[brave] квота: ~%d/%s запросов осталось', remaining, limit)
-
+    def _increment_monthly_counter() -> None:
+        """Инкрементирует счётчик вызовов Brave за текущий месяц в кеше."""
+        from datetime import datetime
         from django.core.cache import cache
-        cache.set('brave:quota:remaining', remaining, timeout=86400)
-        if limit is not None:
+        key = f'brave:calls:{datetime.now().strftime("%Y-%m")}'
+        # add создаёт ключ только если его нет; incr — атомарно увеличивает
+        cache.add(key, 0, timeout=33 * 86400)
+        cache.incr(key)
+
+    @staticmethod
+    def _capture_plan_limit(resp) -> None:
+        """Сохраняет лимит плана из заголовка X-RateLimit-Limit, если присутствует."""
+        limit_header = resp.headers.get('X-RateLimit-Limit')
+        if limit_header is None:
+            return
+        from django.core.cache import cache
+        limit = int(limit_header.split(',')[0].strip())
+        if limit:
             cache.set('brave:quota:limit', limit, timeout=86400)
