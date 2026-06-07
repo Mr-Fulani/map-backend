@@ -395,6 +395,9 @@ WEBHOOK_SIGNING_SECRET = os.environ.get('WEBHOOK_SIGNING_SECRET', '')
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 
+# --- Image Search ---
+BRAVE_SEARCH_API_KEY = os.environ.get('BRAVE_SEARCH_API_KEY', '')
+
 # --- Avito ---
 AVITO_CLIENT_ID = os.environ.get('AVITO_CLIENT_ID', '')
 AVITO_CLIENT_SECRET = os.environ.get('AVITO_CLIENT_SECRET', '')

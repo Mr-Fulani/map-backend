@@ -51,12 +51,21 @@ def run_for_product(product) -> list[ProductImage]:
         logger.debug(f'[pipeline] кеш актуален: {cache_key}')
         return []
 
+    # Учитываем фото уже добавленные парсерами — не превышаем общий лимит
+    existing_count = ProductImage.objects.filter(
+        product=product,
+    ).exclude(status=ProductImage.Status.REJECTED).count()
+    remaining_slots = max_images - existing_count
+    if remaining_slots <= 0:
+        logger.debug(f'[pipeline] товар уже имеет {existing_count} фото, image search пропущен')
+        return []
+
     saved: list[ProductImage] = []
     uploader = PhotoUploadPipeline()
     sources = get_active_sources(product)
 
     for source in sources:
-        if len(saved) >= max_images:
+        if len(saved) >= remaining_slots:
             break
 
         t0 = time.monotonic()
@@ -88,7 +97,7 @@ def run_for_product(product) -> list[ProductImage]:
 
         accepted = 0
         for candidate in good:
-            if len(saved) >= max_images:
+            if len(saved) >= remaining_slots:
                 break
 
             pi = uploader.process(candidate.url, product)

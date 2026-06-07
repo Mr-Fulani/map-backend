@@ -124,12 +124,21 @@ def download_enrichment_images(
 
 
 def _download_enrichment_images(product, image_urls: list[str], source_id: str = 'tachka') -> dict:
+    from django.conf import settings
+
     from apps.products.models import ProductImage
     from apps.products.storage import PhotoUploadPipeline
 
+    max_images = settings.IMAGE_SEARCH_SETTINGS.get('MAX_IMAGES_PER_PRODUCT', 3)
+    existing = product.images.exclude(status=ProductImage.Status.REJECTED).count()
+    remaining = max_images - existing
+    if remaining <= 0:
+        logger.info('[enrichment] %s уже имеет %d фото, пропускаем', source_id, existing)
+        return {'product_id': product.pk, 'saved': 0}
+
     saved = 0
     pipeline = PhotoUploadPipeline()
-    for url in _clean_enrichment_image_urls(image_urls)[:10]:
+    for url in _clean_enrichment_image_urls(image_urls)[:remaining]:
         image = pipeline.process(
             url,
             product,
