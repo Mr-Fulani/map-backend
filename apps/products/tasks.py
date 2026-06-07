@@ -124,14 +124,11 @@ def download_enrichment_images(
 
 
 def _download_enrichment_images(product, image_urls: list[str], source_id: str = 'tachka') -> dict:
-    from django.conf import settings
-
     from apps.products.models import ProductImage
-    from apps.products.storage import PhotoUploadPipeline
+    from apps.products.storage import MAX_PHOTOS, PhotoUploadPipeline
 
-    max_images = settings.IMAGE_SEARCH_SETTINGS.get('MAX_IMAGES_PER_PRODUCT', 3)
     existing = product.images.exclude(status=ProductImage.Status.REJECTED).count()
-    remaining = max_images - existing
+    remaining = MAX_PHOTOS - existing
     if remaining <= 0:
         logger.info('[enrichment] %s уже имеет %d фото, пропускаем', source_id, existing)
         return {'product_id': product.pk, 'saved': 0}
@@ -174,6 +171,7 @@ def _enrichment_image_identity(url: str) -> str:
         or 'brandlogos/' in path
         or path.endswith('.gif')
         or '/other/mask.' in full
+        or 'placeholder' in path
     ):
         return ''
     if 'tachka.ru' in parsed.netloc and '/brand/' in path:
