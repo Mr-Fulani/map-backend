@@ -29,6 +29,12 @@ def _patch_ddgs(results: list[dict]):
 class TestDuckDuckGoSource:
     """Тесты DuckDuckGoSource."""
 
+    def setup_method(self):
+        from django.core.cache import cache
+        from apps.image_search.sources.duckduckgo import _RATELIMIT_KEY, _SESSION_KEY
+        cache.delete(_SESSION_KEY)
+        cache.delete(_RATELIMIT_KEY)
+
     def test_search_возвращает_кандидатов(self):
         ddg_results = [
             {'image': 'https://img1.example.com/a.jpg', 'width': 800, 'height': 600, 'title': 'Фильтр'},
