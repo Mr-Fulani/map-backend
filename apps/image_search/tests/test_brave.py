@@ -2,8 +2,6 @@
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from apps.image_search.sources.brave import BraveImageSource
 
 
