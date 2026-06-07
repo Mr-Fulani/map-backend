@@ -576,6 +576,13 @@ class RosskoPartParser:
     def build_search_url(self, article: str) -> str:
         return f'{self.base_url}/single/search/?q={quote(normalize_part_code(article))}'
 
+    def fetch(self, brand: str, article: str) -> tuple[str, str]:
+        """Rossko не поддерживает прямой запрос по brand/article — только поиск.
+
+        Поднимает PartNotFound чтобы вызывающий код перешёл к fetch_search.
+        """
+        raise PartNotFound(f'Rossko does not support direct fetch for {brand} {article}')
+
     def fetch_search(self, article: str) -> tuple[str, str]:
         """Ищет артикул, затем загружает страницу первого совпавшего товара."""
         search_url = self.build_search_url(article)
@@ -591,6 +598,10 @@ class RosskoPartParser:
             raise PartNotFound(f'Rossko product page not found: {product_url}')
         product_page.raise_for_status()
         return product_page.html, product_page.url
+
+    def parse_search_html(self, html: str, brand: str, article: str, source_url: str = '') -> ParsedPart:
+        """Псевдоним parse_html — fetch_search возвращает сразу страницу товара."""
+        return self.parse_html(html, brand, article, source_url=source_url)
 
     def parse_html(self, html: str, brand: str, article: str, source_url: str = '') -> ParsedPart:
         """Извлекает enrichment-данные из HTML страницы товара rossko.ru."""
