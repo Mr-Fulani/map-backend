@@ -194,32 +194,33 @@ class ProductDetailSerializer(ProductSerializer):
     fitments = VehicleFitmentSerializer(many=True, read_only=True)
     enrichment_facts = ProductEnrichmentFactSerializer(many=True, read_only=True)
     latest_parse_job = serializers.SerializerMethodField()
+    parse_jobs_summary = serializers.SerializerMethodField()
 
     class Meta(ProductSerializer.Meta):
         fields = ProductSerializer.Meta.fields + [
-            'attributes', 'cross_codes', 'fitments', 'enrichment_facts', 'latest_parse_job',
+            'attributes', 'cross_codes', 'fitments', 'enrichment_facts',
+            'latest_parse_job', 'parse_jobs_summary',
         ]
 
-    def get_latest_parse_job(self, obj):
+    def _jobs_by_priority(self, obj):
+        """Последний job на каждый source_id, отсортированный по убыванию приоритета."""
         from apps.products.source_policy import PART_SOURCE_POLICIES
-        from django.db.models import Case, IntegerField, Value, When
-        priority_cases = [
-            When(source_id=sid, then=Value(policy.priority))
-            for sid, policy in PART_SOURCE_POLICIES.items()
-        ]
-        job = (
-            obj.parse_jobs
-            .annotate(src_priority=Case(
-                *priority_cases,
-                default=Value(0),
-                output_field=IntegerField(),
-            ))
-            .order_by('-src_priority', '-created_at')
-            .first()
+        seen: dict = {}
+        for job in obj.parse_jobs.order_by('-created_at')[:30]:
+            if job.source_id not in seen:
+                seen[job.source_id] = job
+        return sorted(
+            seen.values(),
+            key=lambda j: PART_SOURCE_POLICIES.get(j.source_id, type('_', (), {'priority': 0})()).priority,
+            reverse=True,
         )
-        if job is None:
-            return None
-        return ProductParseJobSerializer(job).data
+
+    def get_latest_parse_job(self, obj):
+        jobs = self._jobs_by_priority(obj)
+        return ProductParseJobSerializer(jobs[0]).data if jobs else None
+
+    def get_parse_jobs_summary(self, obj):
+        return [ProductParseJobSerializer(j).data for j in self._jobs_by_priority(obj)]
 
 
 class ProductBulkActionJobSerializer(serializers.ModelSerializer):
