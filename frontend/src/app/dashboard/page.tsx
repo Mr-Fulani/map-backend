@@ -180,11 +180,11 @@ export default function DashboardPage() {
         />
         <KpiCard
           title="Brave квота (фото)"
-          value={braveQuota.remaining ?? 0}
+          value={(braveQuota.limit ?? 0) - (braveQuota.remaining ?? braveQuota.limit ?? 0)}
           limit={braveQuota.limit}
           icon={<Image className="h-4 w-4" />}
           loading={loading}
-          warning={(braveQuota.remaining ?? Infinity) <= 50}
+          warning={(braveQuota.remaining ?? Infinity) <= 10}
         />
         <KpiCard
           title="Отклонено сейчас"
