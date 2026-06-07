@@ -93,14 +93,32 @@ class BraveImageSource(BaseImageSource):
                 },
                 timeout=_TIMEOUT_SEC,
             )
+            self._log_rate_limit(resp)
+
             if resp.status_code == 401:
                 logger.error('[brave] неверный API ключ (401)')
                 return []
             if resp.status_code == 429:
-                logger.warning('[brave] превышен лимит запросов (429)')
+                logger.error('[brave] ЛИМИТ ЗАПРОСОВ ИСЧЕРПАН (429) — пополните баланс на api.search.brave.com')
                 return []
             resp.raise_for_status()
             return resp.json().get('results', [])
         except Exception as exc:
             logger.warning('[brave] ошибка для %r: %s', query, exc)
             return []
+
+    @staticmethod
+    def _log_rate_limit(resp) -> None:
+        """Логирует остаток квоты из заголовков ответа."""
+        remaining = resp.headers.get('X-RateLimit-Remaining')
+        limit = resp.headers.get('X-RateLimit-Limit')
+        if remaining is None:
+            return
+        remaining = int(remaining)
+        limit = int(limit) if limit else '?'
+        if remaining == 0:
+            logger.error('[brave] КВОТА ИСЧЕРПАНА: 0/%s запросов осталось — пополните баланс', limit)
+        elif remaining <= 50:
+            logger.warning('[brave] квота заканчивается: ~%d/%s запросов осталось', remaining, limit)
+        else:
+            logger.info('[brave] квота: ~%d/%s запросов осталось', remaining, limit)
