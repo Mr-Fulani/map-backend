@@ -1793,7 +1793,7 @@ export default function SettingsPage() {
                         size="sm"
                         variant={domain.is_enabled_for_tenant ? 'default' : 'outline'}
                         onClick={() => setCatalogDomainEnabled(domain.slug, !domain.is_enabled_for_tenant)}
-                        disabled={isSaving}
+                        disabled={savingCatalogDomainSlug !== null}
                       >
                         {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                         {domainLabel(domain.slug)}
