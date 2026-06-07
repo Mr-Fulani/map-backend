@@ -5,7 +5,7 @@
 > **Оценка:** 6-8 недель на production-ready MVP с запасом на разбор верстки источника
 > **Подход:** сначала надежное enrichment-ядро без коммерческих данных, потом масштабирование и AI
 > **Multi-tenant:** фича общая для платформы, но результаты записываются в каталог конкретного tenant
-> **Статус на 01.06.2026:** enrichment MVP, первая версия platform knowledge graph, tenant-категории, source quality policy, operator review workflow, базовая нормализация марок/моделей авто и справочник брендов реализованы; следующий P0 — Vehicle Knowledge Base v2: накопление применяемости и подготовка фактов для AI-описаний
+> **Статус на 07.06.2026:** enrichment MVP, первая версия platform knowledge graph, tenant-категории, source quality policy, operator review workflow, базовая нормализация марок/моделей авто и справочник брендов реализованы; добавлен второй источник обогащения rossko.ru (`RosskoPartParser`); следующий P0 — Vehicle Knowledge Base v2: накопление применяемости и подготовка фактов для AI-описаний
 
 ---
 
@@ -53,7 +53,7 @@ Discovery    Data Model   Parser Core  Save/Celery Admin/API    Quality/AI   Sca
 Частично реализовано:
 
 - `[~]` изображения: URL из источника извлекаются и показываются, но автоматическое сохранение в `ProductImage`/S3 pipeline еще не закрыто.
-- `[~]` поддержка нескольких источников: source policy и fetcher abstraction есть, но реально подключен только `tachka`.
+- `[x]` поддержка нескольких источников: source policy, fetcher abstraction и второй источник `rossko` реализованы (`RosskoPartParser`).
 - `[~]` качество данных: source quality policy и operator review workflow добавлены; отдельная очередь проверки нужна при росте объёма спорных данных.
 - `[~]` массовые действия: batch/cooldown есть, но pause/resume/cancel еще нужно довести в API/UI.
 - `[~]` глобальный граф артикулов: модель, обучение, search fallback, source priority и конфликт-правила есть; дальше нужен review workflow.
@@ -570,10 +570,9 @@ trusted данных, а не из предположений по назван�
 
 ### 6.4 Новые источники
 
-- [ ] `ExistPartParser`.
-- [ ] `EmexPartParser`.
-- [ ] `AutodocPartParser`.
-- [ ] Catalog API parser.
+- [x] `RosskoPartParser` — rossko.ru (SSR, без авторизации, OEM + характеристики + применяемость + изображения).
+- [ ] `AutodocPartParser` — требует Playwright (Angular SPA).
+- [ ] `PartKomPartParser` — требует B2B-аккаунт (part-kom.ru, AD Russia).
 - [ ] Source priority.
 - [ ] Merge strategy между источниками.
 
