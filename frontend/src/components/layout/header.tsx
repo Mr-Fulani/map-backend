@@ -5,6 +5,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { Moon, Sun, LogOut, User, Building2, Menu } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useAuth } from '@/lib/auth-context';
@@ -29,6 +30,7 @@ import { MobileSidebar } from './mobile-sidebar';
 export function Header() {
   const { theme, setTheme } = useTheme();
   const { user, tenant, role, subscription, logout } = useAuth();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const initials = user?.email
     ? user.email.substring(0, 2).toUpperCase()
@@ -53,14 +55,14 @@ export function Header() {
       {/* Left: Mobile menu + Tenant */}
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         {/* Mobile menu */}
-        <Sheet>
+        <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
           <SheetTrigger asChild>
             <Button variant="ghost" size="icon" className="lg:hidden">
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
           <SheetContent side="left" className="w-[240px] p-0">
-            <MobileSidebar />
+            <MobileSidebar onNavigate={() => setMobileMenuOpen(false)} />
           </SheetContent>
         </Sheet>
 

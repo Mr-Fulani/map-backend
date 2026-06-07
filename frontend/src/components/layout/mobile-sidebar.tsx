@@ -32,14 +32,18 @@ const navItems = [
   { title: 'API & Webhooks', href: '/dashboard/api', icon: Webhook },
 ];
 
-export function MobileSidebar() {
+interface MobileSidebarProps {
+  onNavigate?: () => void;
+}
+
+export function MobileSidebar({ onNavigate }: MobileSidebarProps) {
   const pathname = usePathname();
 
   return (
     <div className="flex h-full flex-col">
       {/* Logo */}
       <div className="flex h-14 items-center border-b px-4">
-        <Link href="/dashboard" className="flex items-center gap-2.5">
+        <Link href="/dashboard" className="flex items-center gap-2.5" onClick={onNavigate}>
           <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary">
             <Zap className="h-4 w-4 text-primary-foreground" />
           </div>
@@ -58,6 +62,7 @@ export function MobileSidebar() {
             <Link
               key={item.href}
               href={item.href}
+              onClick={onNavigate}
               className={cn(
                 'flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                 isActive

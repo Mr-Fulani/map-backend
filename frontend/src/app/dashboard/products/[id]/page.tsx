@@ -661,7 +661,7 @@ export default function ProductDetailPage() {
                 </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 pt-4 sm:pt-5">
               <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                 {product.latest_parse_job && (
                   <span>
