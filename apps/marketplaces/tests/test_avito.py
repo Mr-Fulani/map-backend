@@ -12,8 +12,9 @@ from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
 from apps.marketplaces.adapters.avito.feed_builder import build_feed, get_ad_id
 from apps.marketplaces.models import CategoryMapping, Listing, MarketplaceAccount, MarketplacePlacementAddress
 from apps.marketplaces.services import ListingService
-from apps.products.models import ProductImage, TenantCatalogCategory
+from apps.products.models import Product, ProductImage, TenantCatalogCategory
 from apps.products.services import ProductService
+from apps.sync.models import SyncLog
 from apps.tenants.services import TenantService
 
 
@@ -42,6 +43,21 @@ def make_product(tenant):
         'category': 'Тормоза', 'condition': 'new',
     })
     return product
+
+
+def make_product_with_article(tenant, article):
+    product = make_product(tenant)
+    return Product.objects.create(
+        tenant=tenant,
+        datasource=product.datasource,
+        article=article,
+        name=f'Тестовый товар {article}',
+        brand='Bosch',
+        price='3500',
+        stock_qty=5,
+        category_1c='Тормоза',
+        condition='new',
+    )
 
 
 def make_listing(tenant, product, account, **kwargs):
@@ -537,6 +553,55 @@ class TestPublishListingTask:
         assert listing.status == Listing.STATUS_PENDING
         mock_cls.return_value.flush_feed.assert_called_once_with([listing])
 
+    def test_publish_waits_when_account_has_active_feed(self):
+        """Новый листинг остаётся QUEUED, если предыдущий feed ещё pending."""
+        from apps.marketplaces.tasks import publish_listing_task
+        tenant = make_tenant('queue-waits-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
+        queued_product = make_product_with_article(tenant, 'ART-002')
+        queued = make_listing(tenant, queued_product, account, status=Listing.STATUS_QUEUED)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.cache') as mock_cache:
+            mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
+            mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
+            mock_cls.return_value.is_autoload_active.return_value = True
+
+            publish_listing_task(queued.pk)
+
+        queued.refresh_from_db()
+        assert queued.status == Listing.STATUS_QUEUED
+        mock_cls.return_value.flush_feed.assert_not_called()
+
+    def test_publish_flushes_all_queued_listings_as_next_batch(self):
+        """Когда активного feed нет, queued-листинги аккаунта уходят одним батчем."""
+        from apps.marketplaces.tasks import publish_listing_task
+        tenant = make_tenant('queue-batch-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        first = make_listing(tenant, product, account, status=Listing.STATUS_QUEUED)
+        second_product = make_product_with_article(tenant, 'ART-002')
+        second = make_listing(tenant, second_product, account, status=Listing.STATUS_QUEUED)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks.poll_feed_results_task') as mock_poll:
+            mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
+            mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
+            mock_cls.return_value.is_autoload_active.return_value = True
+            mock_poll.apply_async = MagicMock()
+
+            publish_listing_task(first.pk)
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        assert first.status == Listing.STATUS_PENDING
+        assert second.status == Listing.STATUS_PENDING
+        flushed = mock_cls.return_value.flush_feed.call_args[0][0]
+        assert {item.pk for item in flushed} == {first.pk, second.pk}
+
     def test_publish_rejects_when_autoload_profile_is_inactive(self):
         from apps.marketplaces.tasks import publish_listing_task
 
@@ -605,6 +670,109 @@ class TestPublishListingTask:
 
 
 # ------------------------------------------------------------------ #
+#  Bulk listing actions                                               #
+# ------------------------------------------------------------------ #
+
+@pytest.mark.django_db
+class TestListingBulkActions:
+    def test_bulk_update_placement_updates_db_and_logs(self):
+        tenant = make_tenant('bulk-placement-action-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        first = make_listing(tenant, product, account)
+        second_product = make_product_with_article(tenant, 'ART-002')
+        second = make_listing(tenant, second_product, account)
+
+        result = ListingService.bulk_action(tenant, {
+            'action': 'update_placement',
+            'listing_ids': [first.pk, second.pk],
+            'address_override': 'Москва, Тверская, 1',
+            'seller_address_id_override': 'seller-1',
+            'manager_name_override': 'Иван',
+            'contact_phone_override': '+7 900 100-20-30',
+        })
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        assert result['success'] == 2
+        assert first.address_override == 'Москва, Тверская, 1'
+        assert second.seller_address_id_override == 'seller-1'
+        assert SyncLog.objects.filter(
+            tenant=tenant,
+            event_type=SyncLog.EVENT_LISTING_UPDATE,
+            listing__in=[first, second],
+        ).count() == 2
+
+    def test_bulk_publish_sets_queued_and_respects_tenant(self):
+        tenant = make_tenant('bulk-publish-action-co')
+        other_tenant = make_tenant('bulk-publish-other-co')
+        account = make_account(tenant)
+        other_account = make_account(other_tenant)
+        listing = make_listing(tenant, make_product(tenant), account)
+        other_listing = make_listing(other_tenant, make_product(other_tenant), other_account)
+
+        with patch('apps.marketplaces.services.transaction') as mock_tx:
+            mock_tx.on_commit.side_effect = lambda fn: None
+            result = ListingService.bulk_action(tenant, {
+                'action': 'publish',
+                'listing_ids': [listing.pk, other_listing.pk],
+            })
+
+        listing.refresh_from_db()
+        other_listing.refresh_from_db()
+        assert result['total'] == 1
+        assert result['success'] == 1
+        assert listing.status == Listing.STATUS_QUEUED
+        assert other_listing.status == Listing.STATUS_DRAFT
+
+    def test_bulk_archive_and_delete_update_statuses(self):
+        tenant = make_tenant('bulk-status-action-co')
+        account = make_account(tenant)
+        active = make_listing(
+            tenant,
+            make_product(tenant),
+            account,
+            status=Listing.STATUS_ACTIVE,
+            external_id='active-1',
+        )
+        second_product = make_product_with_article(tenant, 'ART-002')
+        draft = make_listing(tenant, second_product, account)
+
+        with patch('apps.marketplaces.services.transaction') as mock_tx:
+            mock_tx.on_commit.side_effect = lambda fn: None
+            archive_result = ListingService.bulk_action(tenant, {
+                'action': 'archive',
+                'listing_ids': [active.pk],
+            })
+            delete_result = ListingService.bulk_action(tenant, {
+                'action': 'delete',
+                'listing_ids': [draft.pk],
+            })
+
+        active.refresh_from_db()
+        draft.refresh_from_db()
+        assert archive_result['success'] == 1
+        assert delete_result['success'] == 1
+        assert active.status == Listing.STATUS_ARCHIVED
+        assert draft.status == Listing.STATUS_DELETED
+
+    def test_bulk_publish_skips_invalid_status(self):
+        tenant = make_tenant('bulk-skip-action-co')
+        account = make_account(tenant)
+        listing = make_listing(tenant, make_product(tenant), account, status=Listing.STATUS_ACTIVE)
+
+        result = ListingService.bulk_action(tenant, {
+            'action': 'publish',
+            'listing_ids': [listing.pk],
+        })
+
+        listing.refresh_from_db()
+        assert result['success'] == 0
+        assert result['skipped'] == 1
+        assert listing.status == Listing.STATUS_ACTIVE
+
+
+# ------------------------------------------------------------------ #
 #  poll_feed_results_task                                             #
 # ------------------------------------------------------------------ #
 
@@ -620,7 +788,8 @@ class TestPollFeedResultsTask:
 
         ad_id = get_ad_id(listing)
 
-        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls:
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks._notify_success') as mock_success:
             mock_cls.return_value.get_feed_results.return_value = [
                 {'ad_id': ad_id, 'avito_id': 987654}
             ]
@@ -629,6 +798,27 @@ class TestPollFeedResultsTask:
         listing.refresh_from_db()
         assert listing.external_id == '987654'
         assert listing.status == Listing.STATUS_ACTIVE
+        mock_success.assert_called_once()
+
+    def test_starts_next_queued_batch_after_successful_poll(self):
+        """После успешного poll запускается следующая queued-партия аккаунта."""
+        from apps.marketplaces.tasks import poll_feed_results_task
+        tenant = make_tenant('poll-next-queue-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        pending = make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
+        queued_product = make_product_with_article(tenant, 'ART-002')
+        queued = make_listing(tenant, queued_product, account, status=Listing.STATUS_QUEUED)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks._notify_success'), \
+             patch('apps.marketplaces.tasks.publish_listing_task') as mock_publish:
+            mock_cls.return_value.get_feed_results.return_value = [
+                {'ad_id': get_ad_id(pending), 'avito_id': 123}
+            ]
+            poll_feed_results_task(account.pk)
+
+        mock_publish.delay.assert_called_once_with(queued.pk)
 
     def test_retries_when_some_listings_still_pending(self):
         """Если часть листингов ещё не обработана — задача ставится на retry."""
@@ -744,6 +934,8 @@ class TestE2EFeedFlow:
                 'category': 'Кузов', 'condition': 'new',
             })
             lst = make_listing(tenant, product, account)
+            lst.status = Listing.STATUS_QUEUED
+            lst.save(update_fields=['status'])
             listings.append(lst)
 
         # Шаг 1: публикация через фид → статус PENDING
@@ -756,8 +948,7 @@ class TestE2EFeedFlow:
             mock_cls.return_value.flush_feed.return_value = True
             mock_poll.apply_async = MagicMock()
 
-            for lst in listings:
-                publish_listing_task(lst.pk)
+            publish_listing_task(listings[0].pk)
 
         pending = Listing.objects.filter(tenant=tenant, status=Listing.STATUS_PENDING).count()
         assert pending == 10
@@ -767,7 +958,8 @@ class TestE2EFeedFlow:
             {'ad_id': get_ad_id(lst), 'avito_id': 1000 + i}
             for i, lst in enumerate(listings)
         ]
-        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls:
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks._notify_success'):
             mock_cls.return_value.get_feed_results.return_value = fake_results
             poll_feed_results_task(account.pk)
 

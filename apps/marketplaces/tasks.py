@@ -15,7 +15,7 @@ from apps.marketplaces.adapters.avito.error_handler import (
 from apps.marketplaces.adapters.avito.feed_builder import get_ad_id
 from apps.marketplaces.adapters.avito.rate_limiter import RateLimitError
 from apps.marketplaces.models import Listing
-from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR
+from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR, LEVEL_SUCCESS
 
 
 def _notify_error(tenant, message: str, listing=None) -> None:
@@ -54,6 +54,21 @@ def _notify_critical(tenant, message: str) -> None:
     send_notification_task.delay(tenant.pk, LEVEL_CRITICAL, message)
 
 
+def _notify_success(tenant, message: str, listing=None) -> None:
+    """Асинхронно отправляет success-уведомление и пишет ok SyncLog."""
+    from apps.notifications.tasks import send_notification_task
+    from apps.sync.models import SyncLog
+
+    send_notification_task.delay(tenant.pk, LEVEL_SUCCESS, message)
+    SyncLog.objects.create(
+        tenant=tenant,
+        listing=listing,
+        event_type=SyncLog.EVENT_LISTING_PUBLISH,
+        status=SyncLog.STATUS_OK,
+        message=message,
+    )
+
+
 def _get_listing(listing_id: int) -> Listing:
     return Listing.objects.select_related('tenant', 'product', 'account').get(pk=listing_id)
 
@@ -64,6 +79,45 @@ def _reject_listing(listing: Listing, reason: str) -> None:
     listing.last_sync_at = now()
     listing.save(update_fields=['status', 'rejection_reason', 'last_sync_at'])
     _notify_error(listing.tenant, reason, listing=listing)
+
+
+def _queued_publish_listings(account, first_listing: Listing) -> list[Listing]:
+    """Возвращает партию queued-листингов аккаунта, начиная с текущего."""
+    queued = list(
+        Listing.objects.filter(
+            account=account,
+            status=Listing.STATUS_QUEUED,
+            external_id__isnull=True,
+        ).select_related('tenant', 'product', 'account').order_by('created_at', 'pk')
+    )
+    if first_listing.status == Listing.STATUS_QUEUED and first_listing not in queued:
+        queued.insert(0, first_listing)
+    return queued
+
+
+def _has_active_feed(account) -> bool:
+    """У аккаунта уже есть feed, который ждёт ответа Avito."""
+    return Listing.objects.filter(
+        account=account,
+        status=Listing.STATUS_PENDING,
+        external_id__isnull=True,
+    ).exists()
+
+
+def _schedule_next_queued_publish(account) -> None:
+    """Запускает следующую queued-партию аккаунта, если она есть."""
+    next_listing_id = (
+        Listing.objects.filter(
+            account=account,
+            status=Listing.STATUS_QUEUED,
+            external_id__isnull=True,
+        )
+        .order_by('created_at', 'pk')
+        .values_list('pk', flat=True)
+        .first()
+    )
+    if next_listing_id:
+        publish_listing_task.delay(next_listing_id)
 
 
 @shared_task(bind=True, max_retries=3, queue='avito_publish')
@@ -84,6 +138,11 @@ def publish_listing_task(self, listing_id: int):
         listing.refresh_from_db()
         if listing.external_id:
             return
+        if listing.status not in (Listing.STATUS_QUEUED, Listing.STATUS_DRAFT, Listing.STATUS_REJECTED):
+            return
+        if listing.status != Listing.STATUS_QUEUED:
+            listing.status = Listing.STATUS_QUEUED
+            listing.save(update_fields=['status'])
 
         can, reason = LimitChecker().can_publish(listing.tenant)
         if not can:
@@ -103,21 +162,34 @@ def publish_listing_task(self, listing_id: int):
         if not VelocityController().is_allowed(listing.account, 'publish'):
             raise self.retry(exc=RuntimeError('Velocity limit exceeded'), countdown=300)
 
+        batch = [listing]
         try:
-            adapter = AvitoAdapter(listing.account)
-            if not adapter.is_autoload_active():
-                _reject_listing(
-                    listing,
-                    'Автозагрузка Avito не подключена или профиль Autoload недоступен. '
-                    'Подключите Автозагрузку в настройках Avito и повторите публикацию.',
+            if _has_active_feed(listing.account):
+                _write_log(
+                    listing.tenant, 'listing_publish', 'ok',
+                    f'«{listing.title or listing.product.name}»'
+                    ' поставлен в очередь Avito: ждём обработки предыдущего фида',
+                    listing=listing,
                 )
                 return
-            adapter.flush_feed([listing])
-            listing.status = Listing.STATUS_PENDING
-            listing.save(update_fields=['status'])
+
+            batch = _queued_publish_listings(listing.account, listing)
+            if not batch:
+                return
+            adapter = AvitoAdapter(listing.account)
+            if not adapter.is_autoload_active():
+                for item in batch:
+                    _reject_listing(
+                        item,
+                        'Автозагрузка Avito не подключена или профиль Autoload недоступен. '
+                        'Подключите Автозагрузку в настройках Avito и повторите публикацию.',
+                    )
+                return
+            adapter.flush_feed(batch)
+            Listing.objects.filter(pk__in=[item.pk for item in batch]).update(status=Listing.STATUS_PENDING)
             _write_log(
                 listing.tenant, 'listing_publish', 'ok',
-                f'Фид загружен для «{listing.title or listing.product.name}», ожидаем Avito',
+                f'Фид загружен для {len(batch)} объявлений {listing.account.name}, ожидаем Avito',
                 listing=listing,
             )
             # Запускаем polling результатов через 10 минут
@@ -128,10 +200,12 @@ def publish_listing_task(self, listing_id: int):
         except FeedUploadError as exc:
             listing.retry_count += 1
             if self.request.retries >= self.max_retries:
-                listing.status = Listing.STATUS_REJECTED
-                listing.rejection_reason = str(exc)
-                listing.save(update_fields=['status', 'rejection_reason', 'retry_count'])
-                _notify_error(listing.tenant, str(exc), listing=listing)
+                for item in batch:
+                    item.retry_count += 1
+                    item.status = Listing.STATUS_REJECTED
+                    item.rejection_reason = str(exc)
+                    item.save(update_fields=['status', 'rejection_reason', 'retry_count'])
+                    _notify_error(item.tenant, str(exc), listing=item)
                 return
             listing.save(update_fields=['retry_count'])
             raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
@@ -285,6 +359,7 @@ def poll_feed_results_task(self, account_id: int):
         ).select_related('tenant', 'product')
     )
     if not pending:
+        _schedule_next_queued_publish(account)
         return
 
     ad_ids = [get_ad_id(lst) for lst in pending]
@@ -294,6 +369,7 @@ def poll_feed_results_task(self, account_id: int):
         reason = str(exc)
         for listing in pending:
             _reject_listing(listing, reason)
+        _schedule_next_queued_publish(account)
         _write_log(
             account.tenant, 'feed_poll', 'error',
             f'Ошибка проверки Autoload для {len(pending)} объявлений {account.name}: {reason}',
@@ -314,6 +390,17 @@ def poll_feed_results_task(self, account_id: int):
             listing.status = Listing.STATUS_ACTIVE
             listing.published_at = listing.published_at or now()
             listing.save(update_fields=['external_id', 'status', 'published_at'])
+            url = f'https://www.avito.ru/{avito_id}'
+            if listing.external_url:
+                url = listing.external_url
+            _notify_success(
+                listing.tenant,
+                (
+                    f'Объявление «{listing.title or listing.product.name}» опубликовано на Avito. '
+                    f'Аккаунт: {listing.account.name}. Ссылка: {url}'
+                ),
+                listing=listing,
+            )
             published_count += 1
         else:
             unresolved.append(listing)
@@ -335,10 +422,17 @@ def poll_feed_results_task(self, account_id: int):
         )
         for listing in unresolved:
             _reject_listing(listing, reason)
+        _schedule_next_queued_publish(account)
         _write_log(
             account.tenant, 'feed_poll', 'error',
             f'Avito не вернул ID для {still_pending}/{len(pending)} объявлений {account.name}',
         )
+    elif Listing.objects.filter(
+        account=account,
+        status=Listing.STATUS_QUEUED,
+        external_id__isnull=True,
+    ).exists():
+        _schedule_next_queued_publish(account)
 
 
 @shared_task(bind=True, max_retries=3, queue='avito_update')
@@ -391,6 +485,21 @@ def check_moderation_status():
     for account_id in pending_account_ids:
         poll_feed_results_task.delay(account_id)
 
+    queued_account_ids = list(Listing.objects.filter(
+        status=Listing.STATUS_QUEUED,
+        external_id__isnull=True,
+    ).values_list('account_id', flat=True).distinct())
+    for account_id in queued_account_ids:
+        listing_id = (
+            Listing.objects.filter(
+                account_id=account_id,
+                status=Listing.STATUS_QUEUED,
+                external_id__isnull=True,
+            ).order_by('created_at', 'pk').values_list('pk', flat=True).first()
+        )
+        if listing_id:
+            publish_listing_task.delay(listing_id)
+
     active_listing_ids = list(Listing.objects.filter(
         status=Listing.STATUS_ACTIVE,
     ).values_list('pk', flat=True))
@@ -400,6 +509,7 @@ def check_moderation_status():
 
     return {
         'pending_accounts_queued': len(pending_account_ids),
+        'queued_accounts_started': len(queued_account_ids),
         'active_listings_queued': len(active_listing_ids),
     }
 

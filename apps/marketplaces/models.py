@@ -119,6 +119,7 @@ class MarketplacePlacementAddress(TimestampedModel):
 
 class Listing(TimestampedModel):
     STATUS_DRAFT = 'draft'
+    STATUS_QUEUED = 'queued'
     STATUS_PENDING = 'pending'
     STATUS_ACTIVE = 'active'
     STATUS_REJECTED = 'rejected'
@@ -128,6 +129,7 @@ class Listing(TimestampedModel):
     STATUS_LIMIT_REACHED = 'limit_reached'
     STATUS_CHOICES = [
         (STATUS_DRAFT, 'Черновик'),
+        (STATUS_QUEUED, 'В очереди'),
         (STATUS_PENDING, 'На модерации Avito'),
         (STATUS_ACTIVE, 'Активно'),
         (STATUS_REJECTED, 'Отклонено'),

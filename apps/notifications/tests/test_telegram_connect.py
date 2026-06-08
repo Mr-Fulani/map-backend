@@ -319,9 +319,10 @@ class TestTelegramBotWebhook:
         )
 
     def _valid_secret(self):
-        """Первые 16 символов токена — как в TelegramBotWebhookView."""
+        """Секретный заголовок — как в TelegramBotWebhookView."""
         from django.conf import settings as dj_settings
-        return dj_settings.TELEGRAM_BOT_TOKEN[:16]
+        secret = dj_settings.TELEGRAM_BOT_TOKEN
+        return secret.split(':')[-1][:32] if secret else ''
 
     def test_valid_token_connects_telegram(self, client):
         """Корректный /start <token> → chat_id сохранён, бот отвечает об успехе."""
