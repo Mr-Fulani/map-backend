@@ -167,7 +167,8 @@ def publish_listing_task(self, listing_id: int):
             if _has_active_feed(listing.account):
                 _write_log(
                     listing.tenant, 'listing_publish', 'ok',
-                    f'«{listing.title or listing.product.name}» поставлен в очередь Avito: ждём обработки предыдущего фида',
+                    f'«{listing.title or listing.product.name}»'
+                    ' поставлен в очередь Avito: ждём обработки предыдущего фида',
                     listing=listing,
                 )
                 return
