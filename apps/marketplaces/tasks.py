@@ -58,6 +58,14 @@ def _get_listing(listing_id: int) -> Listing:
     return Listing.objects.select_related('tenant', 'product', 'account').get(pk=listing_id)
 
 
+def _reject_listing(listing: Listing, reason: str) -> None:
+    listing.status = Listing.STATUS_REJECTED
+    listing.rejection_reason = reason
+    listing.last_sync_at = now()
+    listing.save(update_fields=['status', 'rejection_reason', 'last_sync_at'])
+    _notify_error(listing.tenant, reason, listing=listing)
+
+
 @shared_task(bind=True, max_retries=3, queue='avito_publish')
 def publish_listing_task(self, listing_id: int):
     """
@@ -96,7 +104,15 @@ def publish_listing_task(self, listing_id: int):
             raise self.retry(exc=RuntimeError('Velocity limit exceeded'), countdown=300)
 
         try:
-            AvitoAdapter(listing.account).flush_feed([listing])
+            adapter = AvitoAdapter(listing.account)
+            if not adapter.is_autoload_active():
+                _reject_listing(
+                    listing,
+                    'Автозагрузка Avito не подключена или профиль Autoload недоступен. '
+                    'Подключите Автозагрузку в настройках Avito и повторите публикацию.',
+                )
+                return
+            adapter.flush_feed([listing])
             listing.status = Listing.STATUS_PENDING
             listing.save(update_fields=['status'])
             _write_log(
@@ -237,6 +253,11 @@ def flush_feed_task(self, account_id: int):
         )
         poll_feed_results_task.apply_async(args=[account_id], countdown=600)
     except (FeedUploadError, ServerError) as exc:
+        if self.request.retries >= self.max_retries:
+            reason = str(exc)
+            for listing in listings:
+                _reject_listing(listing, reason)
+            return
         raise self.retry(exc=exc, countdown=backoff(self.request.retries))
 
 
@@ -267,12 +288,25 @@ def poll_feed_results_task(self, account_id: int):
         return
 
     ad_ids = [get_ad_id(lst) for lst in pending]
-    results = AvitoAdapter(account).get_feed_results(ad_ids)
+    try:
+        results = AvitoAdapter(account).get_feed_results(ad_ids)
+    except FeedUploadError as exc:
+        reason = str(exc)
+        for listing in pending:
+            _reject_listing(listing, reason)
+        _write_log(
+            account.tenant, 'feed_poll', 'error',
+            f'Ошибка проверки Autoload для {len(pending)} объявлений {account.name}: {reason}',
+        )
+        return
+    except (ServerError, RateLimitError) as exc:
+        raise self.retry(exc=exc, countdown=backoff(self.request.retries))
 
     # Индекс: ad_id → avito_id
     mapping = {item['ad_id']: item.get('avito_id') for item in results}
 
     published_count = 0
+    unresolved = []
     for listing in pending:
         avito_id = mapping.get(get_ad_id(listing))
         if avito_id:
@@ -281,6 +315,8 @@ def poll_feed_results_task(self, account_id: int):
             listing.published_at = listing.published_at or now()
             listing.save(update_fields=['external_id', 'status', 'published_at'])
             published_count += 1
+        else:
+            unresolved.append(listing)
 
     _write_log(
         account.tenant, 'feed_poll', 'ok',
@@ -291,6 +327,18 @@ def poll_feed_results_task(self, account_id: int):
     still_pending = len(pending) - published_count
     if still_pending and self.request.retries < self.max_retries:
         raise self.retry(exc=RuntimeError(f'{still_pending} listing(s) still pending'), countdown=300)
+    if still_pending:
+        reason = (
+            'Avito не вернул ID объявления после обработки фида. '
+            'Проверьте, что Автозагрузка подключена, URL фида добавлен в профиль Avito '
+            'и в отчёте Avito Autoload нет ошибок обработки.'
+        )
+        for listing in unresolved:
+            _reject_listing(listing, reason)
+        _write_log(
+            account.tenant, 'feed_poll', 'error',
+            f'Avito не вернул ID для {still_pending}/{len(pending)} объявлений {account.name}',
+        )
 
 
 @shared_task(bind=True, max_retries=3, queue='avito_update')
@@ -332,18 +380,28 @@ def check_moderation_task(self, listing_id: int):
 @shared_task(queue='avito_update')
 def check_moderation_status():
     """
-    Запускает проверку статуса модерации для всех активных листингов.
+    Запускает проверку статуса модерации и результатов Autoload.
 
     Запускается каждые 30 минут через Celery Beat.
     """
-    listing_ids = list(Listing.objects.filter(
+    pending_account_ids = list(Listing.objects.filter(
+        status=Listing.STATUS_PENDING,
+        external_id__isnull=True,
+    ).values_list('account_id', flat=True).distinct())
+    for account_id in pending_account_ids:
+        poll_feed_results_task.delay(account_id)
+
+    active_listing_ids = list(Listing.objects.filter(
         status=Listing.STATUS_ACTIVE,
     ).values_list('pk', flat=True))
 
-    for listing_id in listing_ids:
+    for listing_id in active_listing_ids:
         check_moderation_task.delay(listing_id)
 
-    return {'listings_queued': len(listing_ids)}
+    return {
+        'pending_accounts_queued': len(pending_account_ids),
+        'active_listings_queued': len(active_listing_ids),
+    }
 
 
 @shared_task(queue='avito_update')

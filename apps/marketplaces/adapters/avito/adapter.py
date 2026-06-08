@@ -129,6 +129,33 @@ class AvitoAdapter(BaseMarketplaceAdapter):
                 'autoload/v1/upload вернул %s для account=%s: %s',
                 resp.status_code, self.account.pk, resp.text[:200],
             )
+            raise FeedUploadError(
+                f'Avito Autoload не принял фид: HTTP {resp.status_code}. '
+                'Проверьте, что Автозагрузка подключена в аккаунте Avito.'
+            )
+
+    def is_autoload_active(self) -> bool:
+        """Проверяет, доступен ли профиль Avito Autoload для аккаунта."""
+        token = self._auth.get_token(self.account)
+        resp = requests.get(
+            f'{AVITO_API_BASE}/autoload/v2/profile',
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=10,
+        )
+        if resp.status_code == 401:
+            self._auth.invalidate(self.account)
+            token = self._auth.get_token(self.account)
+            resp = requests.get(
+                f'{AVITO_API_BASE}/autoload/v2/profile',
+                headers={'Authorization': f'Bearer {token}'},
+                timeout=10,
+            )
+        if resp.status_code == 200:
+            return True
+        if resp.status_code in (403, 404):
+            return False
+        handle_avito_error(resp)
+        return False
 
     # ------------------------------------------------------------------ #
     #  Feed-based операции (publish / update / unpublish / delete)        #
@@ -228,7 +255,12 @@ class AvitoAdapter(BaseMarketplaceAdapter):
                 params={'query': ','.join(ad_ids)},
                 timeout=30,
             )
-        resp.raise_for_status()
+        if resp.status_code in (403, 404):
+            raise FeedUploadError(
+                'Автозагрузка Avito не подключена или профиль Autoload недоступен. '
+                'Подключите Автозагрузку в настройках Avito и повторите публикацию.'
+            )
+        handle_avito_error(resp)
         return resp.json().get('items', [])
 
     def get_stats(
