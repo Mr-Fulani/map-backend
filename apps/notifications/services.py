@@ -5,6 +5,7 @@ from apps.notifications.telegram import TelegramNotifier
 LEVEL_ERROR = 'error'
 LEVEL_CRITICAL = 'critical'
 LEVEL_BILLING = 'billing'
+LEVEL_SUCCESS = 'success'
 
 
 class NotificationService:
@@ -13,6 +14,7 @@ class NotificationService:
 
     Уровни:
     - error    → Telegram (если notify_on_error=True)
+    - success  → Telegram (если Telegram привязан)
     - critical → Telegram @mention + Email (если notify_on_critical=True)
     - billing  → только Email
 
@@ -32,6 +34,9 @@ class NotificationService:
 
         if level == LEVEL_ERROR and ns.notify_on_error:
             self._send_telegram(ns.telegram_chat_id, f'⚠️ {message}')
+
+        elif level == LEVEL_SUCCESS:
+            self._send_telegram(ns.telegram_chat_id, f'✅ {message}')
 
         elif level == LEVEL_CRITICAL and ns.notify_on_critical:
             self._send_telegram(ns.telegram_chat_id, f'🚨 КРИТИЧНО: {message}')

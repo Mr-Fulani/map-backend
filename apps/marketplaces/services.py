@@ -117,7 +117,7 @@ class ListingService:
                 f'Одобрить можно только листинг в статусе requires_review, '
                 f'текущий статус: {listing.status}'
             )
-        listing.status = Listing.STATUS_DRAFT
+        listing.status = Listing.STATUS_QUEUED
         listing.save(update_fields=['status'])
 
         lid = listing.pk
@@ -144,6 +144,8 @@ class ListingService:
                 f'Публикация доступна для draft/rejected/archived, '
                 f'текущий статус: {listing.status}'
             )
+        listing.status = Listing.STATUS_QUEUED
+        listing.save(update_fields=['status'])
         lid = listing.pk
         transaction.on_commit(lambda: _enqueue_publish_or_update(lid, is_new=True))
         return listing
@@ -154,6 +156,8 @@ class ListingService:
         listing = ListingService.get_for_tenant(listing_id, tenant)
         if listing.status in (Listing.STATUS_ARCHIVED, Listing.STATUS_DELETED):
             raise InvalidListingStatus(f'Листинг уже в статусе {listing.status}')
+        listing.status = Listing.STATUS_ARCHIVED
+        listing.save(update_fields=['status'])
         lid = listing.pk
         transaction.on_commit(lambda: _enqueue_unpublish(lid))
         return listing
@@ -164,6 +168,8 @@ class ListingService:
         listing = ListingService.get_for_tenant(listing_id, tenant)
         if listing.status == Listing.STATUS_DELETED:
             raise InvalidListingStatus('Листинг уже удалён')
+        listing.status = Listing.STATUS_DELETED
+        listing.save(update_fields=['status'])
         lid = listing.pk
         transaction.on_commit(lambda: _enqueue_delete(lid))
         return listing
@@ -337,6 +343,128 @@ class ListingService:
         if not updates:
             return 0
         return qs.update(**updates)
+
+    @staticmethod
+    def bulk_action(tenant, data: dict) -> dict:
+        """Выполняет массовое действие над tenant-scoped листингами."""
+        action = data['action']
+        listings = list(
+            ListingService._bulk_queryset(tenant, data)
+            .select_related('tenant', 'product', 'account')
+            .order_by('pk')
+        )
+        result = {
+            'total': len(listings),
+            'success': 0,
+            'skipped': 0,
+            'errors': 0,
+            'items': [],
+        }
+
+        for listing in listings:
+            try:
+                if action == 'publish':
+                    ListingService.publish(listing.pk, tenant)
+                    message = 'Публикация поставлена в очередь'
+                elif action == 'archive':
+                    ListingService.archive(listing.pk, tenant)
+                    message = 'Снятие с публикации поставлено в очередь'
+                elif action == 'delete':
+                    ListingService.delete(listing.pk, tenant)
+                    message = 'Удаление поставлено в очередь'
+                elif action == 'update_placement':
+                    ListingService.update_placement(listing.pk, tenant, data)
+                    message = 'Адрес размещения обновлён'
+                else:
+                    raise InvalidListingStatus(f'Неизвестное действие: {action}')
+            except InvalidListingStatus as exc:
+                result['skipped'] += 1
+                result['items'].append({
+                    'id': listing.pk,
+                    'status': 'skipped',
+                    'message': str(exc),
+                })
+                continue
+            except ListingNotFound as exc:
+                result['errors'] += 1
+                result['items'].append({
+                    'id': listing.pk,
+                    'status': 'error',
+                    'message': str(exc),
+                })
+                continue
+
+            result['success'] += 1
+            result['items'].append({
+                'id': listing.pk,
+                'status': 'ok',
+                'message': message,
+            })
+            ListingService._write_bulk_item_log(tenant, listing, action, message)
+
+        ListingService._write_bulk_log(tenant, action, result)
+        return result
+
+    @staticmethod
+    def _bulk_queryset(tenant, filters: dict):
+        """Возвращает queryset листингов для массового действия с tenant isolation."""
+        qs = Listing.objects.filter(tenant=tenant)
+        listing_ids = filters.get('listing_ids')
+        if listing_ids:
+            qs = qs.filter(pk__in=listing_ids)
+        if filters.get('account_id'):
+            qs = qs.filter(account_id=filters['account_id'])
+        if filters.get('status'):
+            qs = qs.filter(status=filters['status'])
+        return qs
+
+    @staticmethod
+    def _write_bulk_log(tenant, action: str, result: dict) -> None:
+        """Пишет общий SyncLog по массовому действию."""
+        try:
+            from apps.sync.models import SyncLog
+            status = SyncLog.STATUS_OK if result['errors'] == 0 else SyncLog.STATUS_WARN
+            SyncLog.objects.create(
+                tenant=tenant,
+                event_type=SyncLog.EVENT_LISTING_UPDATE,
+                status=status,
+                message=(
+                    f'Массовое действие listing.{action}: '
+                    f'ok={result["success"]}, skipped={result["skipped"]}, errors={result["errors"]}'
+                ),
+                payload={
+                    'action': action,
+                    'total': result['total'],
+                    'success': result['success'],
+                    'skipped': result['skipped'],
+                    'errors': result['errors'],
+                },
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    def _write_bulk_item_log(tenant, listing: Listing, action: str, message: str) -> None:
+        """Пишет SyncLog по конкретному листингу в массовой операции."""
+        try:
+            from apps.sync.models import SyncLog
+            event_map = {
+                'publish': SyncLog.EVENT_LISTING_PUBLISH,
+                'archive': SyncLog.EVENT_LISTING_UNPUBLISH,
+                'delete': SyncLog.EVENT_LISTING_DELETE,
+                'update_placement': SyncLog.EVENT_LISTING_UPDATE,
+            }
+            SyncLog.objects.create(
+                tenant=tenant,
+                listing=listing,
+                product=listing.product,
+                event_type=event_map.get(action, SyncLog.EVENT_LISTING_UPDATE),
+                status=SyncLog.STATUS_OK,
+                message=f'Массовое действие: {message}',
+                payload={'action': action},
+            )
+        except Exception:
+            pass
 
     @staticmethod
     def archive_product(product, tenant) -> int:

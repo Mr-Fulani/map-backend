@@ -306,6 +306,8 @@ export const listingApi = {
     api.patch(`/listings/${id}/`, data),
   bulkPlacement: (data: Record<string, unknown>) =>
     api.post('/listings/bulk-placement/', data),
+  bulkAction: (data: Record<string, unknown>) =>
+    api.post('/listings/bulk-actions/', data),
 };
 
 // Logs

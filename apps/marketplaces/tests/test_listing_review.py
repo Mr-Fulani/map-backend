@@ -73,15 +73,15 @@ def make_listing(tenant, status=Listing.STATUS_REQUIRES_REVIEW):
 
 @pytest.mark.django_db
 class TestListingServiceApprove:
-    def test_approve_changes_status_to_draft(self):
-        """Одобрение переводит листинг из requires_review в draft."""
+    def test_approve_changes_status_to_queued(self):
+        """Одобрение переводит листинг из requires_review в queued."""
         tenant = make_tenant('approve-co')
         listing = make_listing(tenant)
 
         with patch('apps.marketplaces.services._enqueue_publish_or_update'):
             result = ListingService.approve(listing.pk, tenant)
 
-        assert result.status == Listing.STATUS_DRAFT
+        assert result.status == Listing.STATUS_QUEUED
 
     def test_approve_enqueues_publish_task(self):
         """Одобрение регистрирует on_commit-хук с задачей публикации."""
@@ -282,6 +282,39 @@ class TestListingDetailAPI:
 
         assert resp.status_code == 200
         poll.assert_called_once_with(listing.account_id)
+
+    def test_bulk_actions_endpoint_publishes_only_tenant_listings(self):
+        from django.test import Client
+
+        tenant, key = TenantService.create_tenant(
+            'listing-bulk-api-co',
+            'listing-bulk-api-co',
+            'listing-bulk-api-co@test.com',
+            'pass12345',
+        )
+        other_tenant = make_tenant('listing-bulk-api-other-co')
+        listing = make_listing(tenant, status=Listing.STATUS_DRAFT)
+        other_listing = make_listing(other_tenant, status=Listing.STATUS_DRAFT)
+
+        with patch('apps.marketplaces.services.transaction') as mock_tx:
+            mock_tx.on_commit.side_effect = lambda fn: None
+            resp = Client().post(
+                '/api/v1/listings/bulk-actions/',
+                {
+                    'action': 'publish',
+                    'listing_ids': [listing.pk, other_listing.pk],
+                },
+                content_type='application/json',
+                HTTP_AUTHORIZATION=f'Bearer {key}',
+            )
+
+        listing.refresh_from_db()
+        other_listing.refresh_from_db()
+        assert resp.status_code == 200
+        assert resp.json()['data']['success'] == 1
+        assert resp.json()['data']['total'] == 1
+        assert listing.status == Listing.STATUS_QUEUED
+        assert other_listing.status == Listing.STATUS_DRAFT
 
 
 @pytest.mark.django_db

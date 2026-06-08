@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
-import { accountApi, listingApi, productApi } from '@/lib/api';
+import { accountApi, listingApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -60,13 +60,10 @@ interface PlacementAddress {
   is_default: boolean;
 }
 
-interface SourceCategory {
-  source_category: string;
-}
-
 const STATUS_FILTERS = [
   { value: '', label: 'Все' },
   { value: 'active', label: 'Активные' },
+  { value: 'queued', label: 'В очереди' },
   { value: 'pending', label: 'Модерация Avito' },
   { value: 'draft', label: 'Черновики' },
   { value: 'rejected', label: 'Отклонены' },
@@ -76,6 +73,7 @@ const STATUS_FILTERS = [
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   active: 'default',
+  queued: 'secondary',
   pending: 'secondary',
   draft: 'outline',
   rejected: 'destructive',
@@ -92,10 +90,9 @@ export default function ListingsPage() {
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [sourceCategories, setSourceCategories] = useState<SourceCategory[]>([]);
+  const [bulkAction, setBulkAction] = useState('update_placement');
   const [bulkAccountId, setBulkAccountId] = useState('');
   const [bulkStatus, setBulkStatus] = useState('');
-  const [bulkCategory, setBulkCategory] = useState('');
   const [placementAddresses, setPlacementAddresses] = useState<PlacementAddress[]>([]);
   const [bulkPlacementAddressId, setBulkPlacementAddressId] = useState('');
   const [bulkSellerAddressId, setBulkSellerAddressId] = useState('');
@@ -128,9 +125,6 @@ export default function ListingsPage() {
     accountApi.listPlacementAddresses()
       .then((res) => setPlacementAddresses(res.data.data ?? res.data))
       .catch(() => setPlacementAddresses([]));
-    productApi.catalogSourceCategories()
-      .then((res) => setSourceCategories(res.data.data ?? res.data))
-      .catch(() => setSourceCategories([]));
   }, []);
 
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
@@ -145,25 +139,42 @@ export default function ListingsPage() {
     }
   }, [bulkAccountId, bulkPlacementAddressId, placementAddresses]);
 
-  async function applyBulkPlacement() {
-    if (!bulkAccountId && !bulkStatus && !bulkCategory) return;
+  async function applyBulkAction() {
+    if (!bulkAccountId && !bulkStatus) return;
+    const actionLabel: Record<string, string> = {
+      publish: 'опубликовать',
+      archive: 'снять с публикации',
+      delete: 'удалить',
+      update_placement: 'обновить локацию',
+    };
+    if (
+      bulkAction !== 'update_placement'
+      && !window.confirm(`Массово ${actionLabel[bulkAction]} объявления по выбранным фильтрам?`)
+    ) {
+      return;
+    }
     setBulkSaving(true);
     try {
-      const res = await listingApi.bulkPlacement({
+      const payload: Record<string, unknown> = {
+        action: bulkAction,
         account_id: bulkAccountId ? Number(bulkAccountId) : undefined,
         status: bulkStatus || undefined,
-        category_source: bulkCategory || undefined,
-        placement_address: bulkPlacementAddressId ? Number(bulkPlacementAddressId) : undefined,
-        seller_address_id_override: bulkSellerAddressId,
-        address_override: bulkAddress,
-        manager_name_override: bulkManagerName,
-        contact_phone_override: bulkContactPhone,
-      });
-      const updated = res.data.data?.updated ?? 0;
+      };
+      if (bulkAction === 'update_placement') {
+        payload.placement_address = bulkPlacementAddressId ? Number(bulkPlacementAddressId) : undefined;
+        payload.seller_address_id_override = bulkSellerAddressId;
+        payload.address_override = bulkAddress;
+        payload.manager_name_override = bulkManagerName;
+        payload.contact_phone_override = bulkContactPhone;
+      }
+      const res = await listingApi.bulkAction(payload);
+      const data = res.data.data ?? {};
       await load();
-      toast.success(`Обновлено объявлений: ${updated}`);
-    } catch {
-      toast.error('Не удалось применить настройки размещения');
+      toast.success(`Готово: ${data.success ?? 0} успешно, ${data.skipped ?? 0} пропущено`);
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string; detail?: string } } })
+        ?.response?.data;
+      toast.error(message?.message || message?.detail || 'Не удалось выполнить массовое действие');
     } finally {
       setBulkSaving(false);
     }
@@ -224,9 +235,19 @@ export default function ListingsPage() {
       <div className="rounded-lg border p-3">
         <div className="mb-3 flex items-center gap-2">
           <MapPin className="h-4 w-4 text-muted-foreground" />
-          <p className="text-sm font-medium">Массовое размещение</p>
+          <p className="text-sm font-medium">Массовые действия с листингами</p>
         </div>
         <div className="grid gap-2 lg:grid-cols-3">
+          <select
+            value={bulkAction}
+            onChange={(e) => setBulkAction(e.target.value)}
+            className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm"
+          >
+            <option value="update_placement">Назначить локацию</option>
+            <option value="publish">Опубликовать</option>
+            <option value="archive">Архивировать</option>
+            <option value="delete">Удалить</option>
+          </select>
           <select
             value={bulkAccountId}
             onChange={(e) => {
@@ -250,60 +271,52 @@ export default function ListingsPage() {
               <option key={item.value} value={item.value}>{item.label}</option>
             ))}
           </select>
-          <select
-            value={bulkCategory}
-            onChange={(e) => setBulkCategory(e.target.value)}
-            className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm"
-          >
-            <option value="">Любая категория источника</option>
-            {sourceCategories.map((category) => (
-              <option key={category.source_category} value={category.source_category}>
-                {category.source_category}
-              </option>
-            ))}
-          </select>
-          <select
-            value={bulkPlacementAddressId}
-            onChange={(e) => setBulkPlacementAddressId(e.target.value)}
-            className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm lg:col-span-3"
-          >
-            <option value="">Адрес размещения из справочника</option>
-            {visiblePlacementAddresses.map((address) => (
-              <option key={address.id} value={address.id}>
-                {address.account_name} · {address.name}
-                {address.seller_address_id ? ` · ID ${address.seller_address_id}` : ''}
-                {address.address ? ` · ${address.address}` : ''}
-              </option>
-            ))}
-          </select>
-          <Input
-            value={bulkSellerAddressId}
-            onChange={(e) => setBulkSellerAddressId(e.target.value)}
-            placeholder="ID адреса Avito"
-            className="font-mono text-sm"
-          />
-          <Input
-            value={bulkAddress}
-            onChange={(e) => setBulkAddress(e.target.value)}
-            placeholder="Адрес"
-          />
-          <Input
-            value={bulkContactPhone}
-            onChange={(e) => setBulkContactPhone(e.target.value)}
-            placeholder="Контактный телефон"
-          />
-          <Input
-            value={bulkManagerName}
-            onChange={(e) => setBulkManagerName(e.target.value)}
-            placeholder="Контактное лицо"
-            className="lg:col-span-2"
-          />
+          {bulkAction === 'update_placement' && (
+            <>
+              <select
+                value={bulkPlacementAddressId}
+                onChange={(e) => setBulkPlacementAddressId(e.target.value)}
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm lg:col-span-3"
+              >
+                <option value="">Адрес размещения из справочника</option>
+                {visiblePlacementAddresses.map((address) => (
+                  <option key={address.id} value={address.id}>
+                    {address.account_name} · {address.name}
+                    {address.seller_address_id ? ` · ID ${address.seller_address_id}` : ''}
+                    {address.address ? ` · ${address.address}` : ''}
+                  </option>
+                ))}
+              </select>
+              <Input
+                value={bulkSellerAddressId}
+                onChange={(e) => setBulkSellerAddressId(e.target.value)}
+                placeholder="ID адреса Avito"
+                className="font-mono text-sm"
+              />
+              <Input
+                value={bulkAddress}
+                onChange={(e) => setBulkAddress(e.target.value)}
+                placeholder="Адрес"
+              />
+              <Input
+                value={bulkContactPhone}
+                onChange={(e) => setBulkContactPhone(e.target.value)}
+                placeholder="Контактный телефон"
+              />
+              <Input
+                value={bulkManagerName}
+                onChange={(e) => setBulkManagerName(e.target.value)}
+                placeholder="Контактное лицо"
+                className="lg:col-span-2"
+              />
+            </>
+          )}
           <Button
-            onClick={applyBulkPlacement}
-            disabled={bulkSaving || (!bulkAccountId && !bulkStatus && !bulkCategory)}
+            onClick={applyBulkAction}
+            disabled={bulkSaving || (!bulkAccountId && !bulkStatus)}
           >
             {bulkSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Применить
+            Выполнить
           </Button>
         </div>
       </div>
