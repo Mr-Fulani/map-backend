@@ -85,8 +85,9 @@ class PhotoUploadPipeline:
     def process(
         self, source_url: str, product, source_id: str = '',
         status: str | None = None,
+        check_limit: bool = False,
     ) -> ProductImage | None:
-        if product.images.exclude(status=ProductImage.Status.REJECTED).count() >= MAX_PHOTOS:
+        if check_limit and product.images.exclude(status=ProductImage.Status.REJECTED).count() >= MAX_PHOTOS:
             return None
 
         try:

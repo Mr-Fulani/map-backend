@@ -125,17 +125,11 @@ def download_enrichment_images(
 
 def _download_enrichment_images(product, image_urls: list[str], source_id: str = 'tachka') -> dict:
     from apps.products.models import ProductImage
-    from apps.products.storage import MAX_PHOTOS, PhotoUploadPipeline
-
-    existing = product.images.exclude(status=ProductImage.Status.REJECTED).count()
-    remaining = MAX_PHOTOS - existing
-    if remaining <= 0:
-        logger.info('[enrichment] %s уже имеет %d фото, пропускаем', source_id, existing)
-        return {'product_id': product.pk, 'saved': 0}
+    from apps.products.storage import PhotoUploadPipeline
 
     saved = 0
     pipeline = PhotoUploadPipeline()
-    for url in _clean_enrichment_image_urls(image_urls)[:remaining]:
+    for url in _clean_enrichment_image_urls(image_urls):
         image = pipeline.process(
             url,
             product,

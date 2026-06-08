@@ -104,7 +104,6 @@ class BraveImageSource(BaseImageSource):
                 timeout=_TIMEOUT_SEC,
             )
             self._increment_monthly_counter()
-            self._capture_plan_limit(resp)
 
             if resp.status_code == 401:
                 logger.error('[brave] неверный API ключ (401)')
@@ -128,13 +127,3 @@ class BraveImageSource(BaseImageSource):
         cache.add(key, 0, timeout=33 * 86400)
         cache.incr(key)
 
-    @staticmethod
-    def _capture_plan_limit(resp) -> None:
-        """Сохраняет лимит плана из заголовка X-RateLimit-Limit, если присутствует."""
-        limit_header = resp.headers.get('X-RateLimit-Limit')
-        if limit_header is None:
-            return
-        from django.core.cache import cache
-        limit = int(limit_header.split(',')[0].strip())
-        if limit:
-            cache.set('brave:quota:limit', limit, timeout=86400)

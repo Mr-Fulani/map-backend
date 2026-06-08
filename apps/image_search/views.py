@@ -228,12 +228,11 @@ class ImageQuotaView(APIView):
         from django.core.cache import cache
         key = f'brave:calls:{datetime.now().strftime("%Y-%m")}'
         used = cache.get(key) or 0
-        limit = cache.get('brave:quota:limit')
         return Response({
             'status': 'ok',
             'data': {
                 'source': 'brave',
                 'used': used,
-                'limit': limit,
+                'limit': None,
             },
         })
