@@ -193,10 +193,9 @@ export default function DashboardPage() {
         <KpiCard
           title="Brave запросов (месяц)"
           value={braveQuota.used ?? 0}
-          limit={braveQuota.limit}
+          limit={null}
           icon={<Image className="h-4 w-4" />}
           loading={loading}
-          warning={(braveQuota.used ?? 0) >= (braveQuota.limit ?? Infinity) * 0.8}
         />
         <KpiCard
           title="Отклонено сейчас"
