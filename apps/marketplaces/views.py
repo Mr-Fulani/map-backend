@@ -310,6 +310,7 @@ class ListingListView(APIView):
         """Возвращает страницу листингов текущего тенанта."""
         qs = (
             Listing.objects.filter(tenant=request.tenant, account__is_active=True)
+            .exclude(status=Listing.STATUS_DELETED)
             .select_related('product', 'account')
             .order_by('-created_at')
         )

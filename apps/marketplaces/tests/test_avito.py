@@ -37,7 +37,7 @@ def make_product(tenant):
         tenant=tenant, name='S', type='1c_http',
         credentials=encrypt({'url': 'http://x.com', 'user': 'u', 'password': 'p'}),
     )
-    product, _ = ProductService.upsert_from_source(tenant, ds, {
+    product, _, _ = ProductService.upsert_from_source(tenant, ds, {
         'uuid': None, 'article': 'ART-001', 'name': 'Тормозной диск',
         'brand': 'Bosch', 'price': '3500', 'stock_qty': 5,
         'category': 'Тормоза', 'condition': 'new',
@@ -192,7 +192,7 @@ class TestFeedBuilder:
         )
         listings = []
         for i in range(3):
-            product, _ = ProductService.upsert_from_source(tenant, ds, {
+            product, _, _ = ProductService.upsert_from_source(tenant, ds, {
                 'uuid': None, 'article': f'M{i}', 'name': f'Товар {i}',
                 'brand': 'B', 'price': '100', 'stock_qty': 1,
                 'category': 'Кузов', 'condition': 'new',
@@ -928,7 +928,7 @@ class TestE2EFeedFlow:
 
         listings = []
         for i in range(10):
-            product, _ = ProductService.upsert_from_source(tenant, ds, {
+            product, _, _ = ProductService.upsert_from_source(tenant, ds, {
                 'uuid': None, 'article': f'E2E{i:03d}', 'name': f'Товар {i}',
                 'brand': 'B', 'price': '100', 'stock_qty': 1,
                 'category': 'Кузов', 'condition': 'new',

@@ -35,7 +35,7 @@ def make_product(tenant):
         tenant=tenant, name='S', type='1c_http',
         credentials=encrypt({'url': 'http://x.com', 'user': 'u', 'password': 'p'}),
     )
-    product, _ = ProductService.upsert_from_source(tenant, ds, {
+    product, _, _ = ProductService.upsert_from_source(tenant, ds, {
         'uuid': None, 'article': 'ART-001', 'name': 'Тормозной диск передний',
         'brand': 'Bosch', 'price': '3500', 'stock_qty': 5,
         'category': 'Тормозная система', 'condition': 'new',

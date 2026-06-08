@@ -70,7 +70,7 @@ class ConnectionService:
 
         counts = {'created': 0, 'updated': 0, 'unchanged': 0}
         for item in items:
-            _, status_res = ProductService.upsert_from_source(tenant, connection, item)
+            _, status_res, _ = ProductService.upsert_from_source(tenant, connection, item)
             counts[status_res] += 1
 
         connection.last_sync_at = now()

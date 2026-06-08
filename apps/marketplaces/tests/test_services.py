@@ -28,7 +28,7 @@ def make_product(tenant, ds, article, category):
         'uuid': None, 'article': article, 'name': 'Test', 'brand': 'B',
         'price': '100', 'stock_qty': 1, 'category': category, 'condition': 'new',
     }
-    product, _ = ProductService.upsert_from_source(tenant, ds, data)
+    product, _, _ = ProductService.upsert_from_source(tenant, ds, data)
     return product
 
 
