@@ -126,4 +126,3 @@ class BraveImageSource(BaseImageSource):
         # add создаёт ключ только если его нет; incr — атомарно увеличивает
         cache.add(key, 0, timeout=33 * 86400)
         cache.incr(key)
-
