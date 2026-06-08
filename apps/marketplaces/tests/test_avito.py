@@ -462,6 +462,36 @@ class TestAvitoAdapterFeedStorage:
 
         assert key == f'dev/feeds/feed-path-co/avito/test-account-{account.pk}/feed.xml'
 
+    def test_trigger_autoload_raises_when_avito_rejects_upload(self):
+        from apps.marketplaces.adapters.avito.adapter import FeedUploadError
+
+        tenant = make_tenant('autoload-upload-fail-co')
+        account = make_account(tenant)
+
+        with patch('apps.marketplaces.adapters.avito.adapter.requests.post') as mock_post:
+            adapter = AvitoAdapter(account)
+            adapter._auth.get_token = MagicMock(return_value='tok')
+            mock_post.return_value.status_code = 403
+            mock_post.return_value.text = 'autoload is not connected'
+
+            with pytest.raises(FeedUploadError, match='Autoload не принял фид'):
+                adapter._trigger_autoload()
+
+    def test_get_feed_results_raises_when_autoload_profile_is_unavailable(self):
+        from apps.marketplaces.adapters.avito.adapter import FeedUploadError
+
+        tenant = make_tenant('feed-results-no-autoload-co')
+        account = make_account(tenant)
+
+        with patch('apps.marketplaces.adapters.avito.adapter.requests.get') as mock_get:
+            adapter = AvitoAdapter(account)
+            adapter._auth.get_token = MagicMock(return_value='tok')
+            mock_get.return_value.status_code = 403
+            mock_get.return_value.text = 'autoload profile is unavailable'
+
+            with pytest.raises(FeedUploadError, match='Автозагрузка Avito не подключена'):
+                adapter.get_feed_results(['ad-1'])
+
 
 # ------------------------------------------------------------------ #
 #  publish_listing_task                                               #
@@ -506,6 +536,29 @@ class TestPublishListingTask:
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_PENDING
         mock_cls.return_value.flush_feed.assert_called_once_with([listing])
+
+    def test_publish_rejects_when_autoload_profile_is_inactive(self):
+        from apps.marketplaces.tasks import publish_listing_task
+
+        tenant = make_tenant('autoload-inactive-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks._notify_error') as mock_notify:
+            mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
+            mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
+            mock_cls.return_value.is_autoload_active.return_value = False
+
+            publish_listing_task(listing.pk)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_REJECTED
+        assert 'Автозагрузка Avito не подключена' in listing.rejection_reason
+        mock_cls.return_value.flush_feed.assert_not_called()
+        mock_notify.assert_called_once()
 
     def test_401_triggers_token_refresh(self):
         """После TokenExpiredError задача ставится на retry."""
@@ -594,6 +647,47 @@ class TestPollFeedResultsTask:
             # При вызове напрямую Celery retry поднимает либо Retry, либо оригинальное исключение
             with pytest.raises((Retry, RuntimeError)):
                 poll_feed_results_task(listing.account.pk)
+
+    def test_rejects_after_polling_retries_are_exhausted(self):
+        from apps.marketplaces.tasks import poll_feed_results_task
+
+        tenant = make_tenant('poll-final-fail-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks._notify_error') as mock_notify:
+            mock_cls.return_value.get_feed_results.return_value = [
+                {'ad_id': get_ad_id(listing), 'avito_id': None}
+            ]
+            poll_feed_results_task.apply(args=[account.pk], throw=True, retries=10)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_REJECTED
+        assert 'Avito не вернул ID объявления' in listing.rejection_reason
+        mock_notify.assert_called_once()
+
+    def test_rejects_pending_listings_when_feed_results_autoload_error(self):
+        from apps.marketplaces.adapters.avito.adapter import FeedUploadError
+        from apps.marketplaces.tasks import poll_feed_results_task
+
+        tenant = make_tenant('poll-autoload-error-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks._notify_error') as mock_notify:
+            mock_cls.return_value.get_feed_results.side_effect = FeedUploadError(
+                'Автозагрузка Avito не подключена'
+            )
+            poll_feed_results_task(account.pk)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_REJECTED
+        assert 'Автозагрузка Avito не подключена' in listing.rejection_reason
+        mock_notify.assert_called_once()
 
     def test_no_pending_listings_does_nothing(self):
         """Нет PENDING листингов — задача завершается без вызова API."""
