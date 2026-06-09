@@ -270,6 +270,9 @@ class ProductService:
             existing = None
             old_hash = None
 
+        if existing and existing.sync_excluded:
+            return existing, 'unchanged', None
+
         product, created = Product.objects.update_or_create(**lookup, defaults=defaults)
         if created:
             return product, 'created', None

@@ -230,6 +230,8 @@ export const productApi = {
   deleteCatalogCategory: (id: number) => api.delete(`/products/catalog-categories/${id}/`),
   assignCatalogCategory: (data: { product_ids: number[]; catalog_category: number | null }) =>
     api.post('/products/catalog-categories/assign/', data),
+  excludeFromSync: (product_ids: number[], exclude: boolean) =>
+    api.post('/products/exclude/', { product_ids, exclude }),
   reviewCatalogClassification: (productId: number, action: 'approve' | 'reject') =>
     api.post(`/products/${productId}/catalog-classification/${action}/`),
   reviewFitment: (productId: number, fitmentId: number, action: 'approve' | 'reject') =>

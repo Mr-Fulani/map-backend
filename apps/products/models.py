@@ -220,6 +220,7 @@ class Product(TimestampedModel):
     stock_qty = models.PositiveIntegerField(default=0, verbose_name='Остаток на складе')
     warehouse = models.CharField(max_length=200, blank=True, verbose_name='Склад')
     export_enabled = models.BooleanField(default=False, verbose_name='Экспорт на Avito')
+    sync_excluded = models.BooleanField(default=False, verbose_name='Исключён из синхронизации')
     sync_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата синхронизации')
     hash_1c = models.CharField(max_length=64, blank=True, verbose_name='Хэш данных из 1С')
     image_status = models.CharField(

@@ -50,6 +50,7 @@ interface Product {
   price: string;
   stock_qty: number;
   export_enabled: boolean;
+  sync_excluded: boolean;
   listing_status: string | null;
   sync_at: string | null;
   images_count: number;
@@ -261,6 +262,7 @@ export default function ProductsPage() {
   const [categoryAssignValue, setCategoryAssignValue] = useState<string>('');
   const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
   const [categoryAssignError, setCategoryAssignError] = useState('');
+  const [excludeLoading, setExcludeLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -494,6 +496,18 @@ export default function ProductsPage() {
     }
   };
 
+  const excludeFromSync = async (exclude: boolean) => {
+    if (selectedIds.length === 0) return;
+    setExcludeLoading(true);
+    try {
+      await productApi.excludeFromSync(selectedIds, exclude);
+      setSelectedIds([]);
+      await load();
+    } finally {
+      setExcludeLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!bulkJob?.id || ['success', 'failed', 'cancelled'].includes(bulkJob.status)) {
       return;
@@ -715,6 +729,20 @@ export default function ProductsPage() {
                 </div>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
+                  onClick={() => excludeFromSync(true)}
+                  disabled={excludeLoading}
+                  className="text-destructive focus:text-destructive"
+                >
+                  Исключить из синхронизации
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => excludeFromSync(false)}
+                  disabled={excludeLoading}
+                >
+                  Восстановить синхронизацию
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
                   onClick={() => runBulkEnrichment('classify_catalog_domain')}
                   disabled={bulkLoading}
                 >
@@ -833,9 +861,16 @@ export default function ProductsPage() {
                       >
                         {p.name}
                       </Link>
-                      <Badge variant={listingBadgeVariant(p.listing_status)} className="shrink-0">
-                        {p.listing_status ? LISTING_STATUS_LABEL[p.listing_status] ?? p.listing_status : 'Не залистен'}
-                      </Badge>
+                      <div className="flex shrink-0 gap-1">
+                        {p.sync_excluded && (
+                          <Badge variant="outline" className="border-destructive/50 text-destructive">
+                            Исключён
+                          </Badge>
+                        )}
+                        <Badge variant={listingBadgeVariant(p.listing_status)}>
+                          {p.listing_status ? LISTING_STATUS_LABEL[p.listing_status] ?? p.listing_status : 'Не залистен'}
+                        </Badge>
+                      </div>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                       <Link
@@ -936,7 +971,7 @@ export default function ProductsPage() {
                 : products.map((p) => (
                   <tr
                     key={p.id}
-                    className="border-b transition-colors hover:bg-muted/30"
+                    className={`border-b transition-colors hover:bg-muted/30 ${p.sync_excluded ? 'opacity-60' : ''}`}
                   >
                     <td className="px-4 py-3">
                       <input
@@ -974,6 +1009,13 @@ export default function ProductsPage() {
                       >
                         {p.article}
                       </Link>
+                      {p.sync_excluded && (
+                        <div className="mt-0.5">
+                          <Badge variant="outline" className="border-destructive/50 text-xs text-destructive">
+                            Исключён
+                          </Badge>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <Link

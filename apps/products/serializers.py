@@ -84,7 +84,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'id', 'uuid_1c', 'article', 'name', 'brand', 'brand_ref',
             'brand_ref_name', 'category_1c', 'catalog_category',
             'condition', 'price', 'stock_qty', 'warehouse',
-            'export_enabled', 'sync_at', 'images', 'images_count', 'primary_thumb_url',
+            'export_enabled', 'sync_excluded', 'sync_at', 'images', 'images_count', 'primary_thumb_url',
             'title_ai', 'description_ai', 'ai_status', 'enrichment_status',
             'enrichment_summary', 'catalog_classification',
             'listing_status',

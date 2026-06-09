@@ -477,6 +477,25 @@ class ProductCatalogCategoryAssignView(APIView):
 
 
 @extend_schema(tags=['Products'])
+class ProductExcludeView(APIView):
+    """POST /api/v1/products/exclude/ — исключить или восстановить товары из синхронизации."""
+
+    def post(self, request):
+        """Исключает товары из синхронизации с источником (1С/CSV)."""
+        product_ids = request.data.get('product_ids') or []
+        exclude = request.data.get('exclude', True)
+        if not isinstance(product_ids, list) or not product_ids:
+            return Response(
+                {'status': 'error', 'code': 'validation_error', 'message': 'Выберите товары'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        updated = Product.objects.filter(
+            tenant=request.tenant, pk__in=product_ids,
+        ).update(sync_excluded=bool(exclude))
+        return Response({'status': 'ok', 'data': {'updated_count': updated}})
+
+
+@extend_schema(tags=['Products'])
 class ProductSearchView(APIView):
     """GET /api/v1/products/search/?brand=&article= — поиск товара tenant-а."""
 
