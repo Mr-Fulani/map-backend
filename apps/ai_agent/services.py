@@ -102,7 +102,7 @@ class DescriptionAgent:
         client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
         response = client.messages.create(
             model='claude-3-5-sonnet-latest' if plan_slug == 'pro' else 'claude-3-5-haiku-latest',
-            max_tokens=1000,
+            max_tokens=2048,
             system=SYSTEM_PROMPT,
             messages=[{'role': 'user', 'content': self._build_message(product, variation_index)}],
         )
@@ -114,7 +114,7 @@ class DescriptionAgent:
         client = OpenAI(api_key=settings.OPENAI_API_KEY)
         response = client.chat.completions.create(
             model='gpt-4o' if plan_slug == 'pro' else 'gpt-4o-mini',
-            max_tokens=1000,
+            max_tokens=2048,
             messages=[
                 {'role': 'system', 'content': SYSTEM_PROMPT},
                 {'role': 'user', 'content': self._build_message(product, variation_index)},
