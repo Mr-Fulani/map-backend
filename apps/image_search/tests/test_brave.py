@@ -1,8 +1,11 @@
-"""Тесты BraveImageSource — все HTTP-запросы замоканы."""
+"""Тесты BraveImageSource — все HTTP-запросы и DB-счётчики замоканы."""
 
 from unittest.mock import MagicMock, patch
 
 from apps.image_search.sources.brave import BraveImageSource
+
+# Патч _track_quota для всех тестов, которые не проверяют квоту напрямую
+_patch_quota = patch('apps.image_search.sources.brave.BraveImageSource._track_quota')
 
 
 class FakeProduct:
@@ -34,9 +37,18 @@ class TestBraveImageSource:
             assert _make_source().is_available() is False
 
     def test_is_available_с_ключом(self):
-        with patch('apps.image_search.sources.brave.settings') as s:
+        with patch('apps.image_search.sources.brave.settings') as s, \
+             patch('apps.image_search.sources.brave.BraveQuota') as mock_quota:
             s.BRAVE_SEARCH_API_KEY = 'test-key'
+            mock_quota.is_soft_cap_reached.return_value = False
             assert _make_source().is_available() is True
+
+    def test_is_available_при_достижении_soft_cap(self):
+        with patch('apps.image_search.sources.brave.settings') as s, \
+             patch('apps.image_search.sources.brave.BraveQuota') as mock_quota:
+            s.BRAVE_SEARCH_API_KEY = 'test-key'
+            mock_quota.is_soft_cap_reached.return_value = True
+            assert _make_source().is_available() is False
 
     def test_search_возвращает_кандидатов(self):
         mock_resp = MagicMock()
@@ -44,7 +56,8 @@ class TestBraveImageSource:
         mock_resp.json.return_value = {'results': [_brave_result(), _brave_result('https://img2.example.com/b.jpg')]}
 
         with patch('apps.image_search.sources.brave.settings') as s, \
-             patch('apps.image_search.sources.brave.requests.get', return_value=mock_resp):
+             patch('apps.image_search.sources.brave.requests.get', return_value=mock_resp), \
+             _patch_quota:
             s.BRAVE_SEARCH_API_KEY = 'test-key'
             results = _make_source().search()
 
@@ -62,7 +75,8 @@ class TestBraveImageSource:
         mock_resp.json.return_value = {'results': [_brave_result(dup_url), _brave_result(dup_url)]}
 
         with patch('apps.image_search.sources.brave.settings') as s, \
-             patch('apps.image_search.sources.brave.requests.get', return_value=mock_resp):
+             patch('apps.image_search.sources.brave.requests.get', return_value=mock_resp), \
+             _patch_quota:
             s.BRAVE_SEARCH_API_KEY = 'test-key'
             results = _make_source().search()
 
@@ -76,7 +90,8 @@ class TestBraveImageSource:
         mock_resp.json.return_value = {'results': [no_url, _brave_result()]}
 
         with patch('apps.image_search.sources.brave.settings') as s, \
-             patch('apps.image_search.sources.brave.requests.get', return_value=mock_resp):
+             patch('apps.image_search.sources.brave.requests.get', return_value=mock_resp), \
+             _patch_quota:
             s.BRAVE_SEARCH_API_KEY = 'test-key'
             results = _make_source().search()
 

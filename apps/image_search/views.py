@@ -219,20 +219,24 @@ class ImageQuotaView(APIView):
     """GET /api/v1/images/quota/ — текущая квота Brave Search API."""
 
     def get(self, request):
-        """Возвращает количество вызовов Brave за текущий месяц.
+        """Возвращает персистентный счётчик запросов Brave за текущий месяц.
 
-        used — самостоятельно отслеживаемый счётчик запросов к Brave API в текущем месяце.
-        limit — лимит плана из заголовков Brave (null если Brave ещё не вызывался).
+        used      — использовано запросов (хранится в БД, не сбрасывается при рестарте)
+        limit     — лимит плана (обновляется из заголовков Brave, default 1000)
+        soft_cap  — порог отключения (800)
+        period    — расчётный месяц YYYY-MM
+        is_paused — True если soft cap достигнут и Brave временно отключён
         """
-        from datetime import datetime
-        from django.core.cache import cache
-        key = f'brave:calls:{datetime.now().strftime("%Y-%m")}'
-        used = cache.get(key) or 0
+        from apps.image_search.models import BraveQuota
+        quota = BraveQuota.current()
         return Response({
             'status': 'ok',
             'data': {
                 'source': 'brave',
-                'used': used,
-                'limit': None,
+                'period': quota.period,
+                'used': quota.requests_used,
+                'limit': quota.limit,
+                'soft_cap': BraveQuota.SOFT_CAP,
+                'is_paused': quota.requests_used >= BraveQuota.SOFT_CAP,
             },
         })

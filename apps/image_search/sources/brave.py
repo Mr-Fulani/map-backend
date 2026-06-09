@@ -2,6 +2,7 @@
 
 Официальный REST API — не подвержен IP-банам как DDG.
 Документация: https://api.search.brave.com/app/documentation/image-search/query
+Квота: 1000 запросов/месяц бесплатно, затем $5/мес. Soft cap = 800.
 """
 
 import logging
@@ -9,6 +10,7 @@ import logging
 import requests
 from django.conf import settings
 
+from apps.image_search.models import BraveQuota
 from apps.image_search.sources.base import BaseImageSource, ImageCandidate
 from apps.image_search.sources.registry import register
 
@@ -25,6 +27,7 @@ class BraveImageSource(BaseImageSource):
     """Источник изображений через Brave Search API.
 
     Tier 3 — надёжнее DDG, официальный API с ключом.
+    Автоматически отключается при достижении soft cap (800 запросов/месяц).
     """
 
     source_id = 'brave'
@@ -33,11 +36,21 @@ class BraveImageSource(BaseImageSource):
     requires_key = True
 
     def is_available(self) -> bool:
-        """True если BRAVE_SEARCH_API_KEY задан в настройках."""
-        return bool(settings.BRAVE_SEARCH_API_KEY)
+        """True если API-ключ задан и месячный soft cap (800) не достигнут."""
+        if not settings.BRAVE_SEARCH_API_KEY:
+            return False
+        if BraveQuota.is_soft_cap_reached():
+            logger.warning(
+                '[brave] soft cap %d достигнут — источник отключён до конца месяца. '
+                'Для продолжения пополните баланс на api.search.brave.com ($5) '
+                'и обратитесь в поддержку dodugir.com.',
+                BraveQuota.SOFT_CAP,
+            )
+            return False
+        return True
 
     def build_queries(self) -> list[tuple[str, str]]:
-        """Добавляет «автозапчасть» к каждому запросу — Brave без контекста возвращает нерелевантные результаты."""
+        """Добавляет «автозапчасть» к запросам без категории — Brave без контекста нерелевантен."""
         base = super().build_queries()
         result = []
         for query, confidence in base:
@@ -85,7 +98,7 @@ class BraveImageSource(BaseImageSource):
         return candidates
 
     def _fetch(self, api_key: str, query: str) -> list[dict]:
-        """Выполняет один запрос к Brave Image Search API."""
+        """Выполняет один HTTP-запрос к Brave Image Search API."""
         try:
             resp = requests.get(
                 _API_URL,
@@ -103,26 +116,70 @@ class BraveImageSource(BaseImageSource):
                 },
                 timeout=_TIMEOUT_SEC,
             )
-            self._increment_monthly_counter()
 
             if resp.status_code == 401:
                 logger.error('[brave] неверный API ключ (401)')
                 return []
             if resp.status_code == 429:
-                logger.error('[brave] ЛИМИТ ЗАПРОСОВ ИСЧЕРПАН (429) — пополните баланс на api.search.brave.com')
+                logger.error(
+                    '[brave] ЛИМИТ ЗАПРОСОВ ИСЧЕРПАН (429) — пополните баланс на api.search.brave.com',
+                )
                 return []
+
             resp.raise_for_status()
+
+            # Инкрементируем персистентный счётчик только при успешном ответе
+            self._track_quota(resp)
+
             return resp.json().get('results', [])
         except Exception as exc:
             logger.warning('[brave] ошибка для %r: %s', query, exc)
             return []
 
     @staticmethod
-    def _increment_monthly_counter() -> None:
-        """Инкрементирует счётчик вызовов Brave за текущий месяц в кеше."""
-        from datetime import datetime
-        from django.core.cache import cache
-        key = f'brave:calls:{datetime.now().strftime("%Y-%m")}'
-        # add создаёт ключ только если его нет; incr — атомарно увеличивает
-        cache.add(key, 0, timeout=33 * 86400)
-        cache.incr(key)
+    def _track_quota(resp) -> None:
+        """Атомарно инкрементирует DB-счётчик и логирует прогресс квоты.
+
+        Лимит обновляется из заголовка X-RateLimit-Limit (Brave возвращает в каждом ответе).
+        При достижении soft cap логирует критическую ошибку и ставит флаг cap_notified.
+        """
+        quota = BraveQuota.increment()
+
+        # Обновляем лимит из заголовка если он пришёл и отличается
+        limit_hdr = resp.headers.get('X-RateLimit-Limit')
+        if limit_hdr:
+            try:
+                limit_val = int(limit_hdr)
+                if quota.limit != limit_val:
+                    BraveQuota.objects.filter(pk=quota.pk).update(limit=limit_val)
+                    quota.limit = limit_val
+            except (ValueError, TypeError):
+                pass
+
+        used = quota.requests_used
+
+        if used >= BraveQuota.SOFT_CAP and not quota.cap_notified:
+            BraveQuota.objects.filter(pk=quota.pk).update(cap_notified=True)
+            logger.critical(
+                '[brave] SOFT CAP ДОСТИГНУТ: %d/%d запросов в %s. '
+                'Brave отключён до конца месяца. '
+                'Пополните баланс на api.search.brave.com ($5) и обратитесь в поддержку dodugir.com.',
+                used, quota.limit, quota.period,
+            )
+            return
+
+        remaining_hdr = resp.headers.get('X-RateLimit-Remaining')
+        if remaining_hdr is None:
+            logger.info('[brave] %d запросов использовано в %s', used, quota.period)
+            return
+
+        try:
+            remaining = int(remaining_hdr)
+            if remaining <= 200:
+                logger.error('[brave] квота заканчивается: осталось ~%d/%d', remaining, quota.limit)
+            elif remaining <= 400:
+                logger.warning('[brave] квота: осталось ~%d/%d', remaining, quota.limit)
+            else:
+                logger.info('[brave] %d исп., осталось ~%d/%d', used, remaining, quota.limit)
+        except (ValueError, TypeError):
+            pass
