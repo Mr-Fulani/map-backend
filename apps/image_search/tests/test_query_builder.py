@@ -2,18 +2,29 @@
 
 from apps.image_search.services.query_builder import (
     _extract_keywords,
+    _get_category_context,
     _is_unreliable_article,
     build_queries,
 )
 
 
+class FakeCategory:
+    """Заглушка TenantCatalogCategory для тестирования."""
+
+    def __init__(self, name, parent=None):
+        self.name = name
+        self.parent = parent
+
+
 class FakeProduct:
     """Заглушка Product для тестирования query_builder без БД."""
 
-    def __init__(self, article='', brand='', name=''):
+    def __init__(self, article='', brand='', name='', category_1c='', catalog_category=None):
         self.article = article
         self.brand = brand
         self.name = name
+        self.category_1c = category_1c
+        self.catalog_category = catalog_category
 
 
 class TestBuildQueries:
@@ -48,6 +59,81 @@ class TestBuildQueries:
         queries = build_queries(product)
         medium_queries = [q for q, c in queries if c == 'MEDIUM']
         assert len(medium_queries) == 0
+
+    def test_категория_из_category_1c_добавляется_в_q1b(self):
+        product = FakeProduct(
+            article='A123', brand='BOSCH',
+            category_1c='Тормозные системы / Диски тормозные',
+        )
+        queries = build_queries(product)
+        high_queries = [q for q, c in queries if c == 'HIGH']
+        assert any('Диски тормозные' in q for q in high_queries)
+
+    def test_категория_из_catalog_category_добавляется_в_q1b(self):
+        subcat = FakeCategory('Масляные фильтры', parent=FakeCategory('Фильтры'))
+        product = FakeProduct(article='B456', brand='MANN', catalog_category=subcat)
+        queries = build_queries(product)
+        high_queries = [q for q, c in queries if c == 'HIGH']
+        assert any('Масляные фильтры' in q for q in high_queries)
+
+    def test_без_категории_q1b_использует_автозапчасть(self):
+        product = FakeProduct(article='C789', brand='NGK')
+        queries = build_queries(product)
+        high_queries = [q for q, c in queries if c == 'HIGH']
+        assert any('автозапчасть' in q for q in high_queries)
+
+    def test_категория_добавляется_в_low_запросы(self):
+        product = FakeProduct(
+            article='', brand='BOSCH', name='Фильтр масляный',
+            category_1c='Фильтры',
+        )
+        queries = build_queries(product)
+        low_queries = [q for q, c in queries if c == 'LOW']
+        assert any('Фильтры' in q for q in low_queries)
+
+
+class TestGetCategoryContext:
+    """Тесты функции _get_category_context."""
+
+    def test_catalog_category_без_родителя(self):
+        product = FakeProduct(catalog_category=FakeCategory('Фильтры'))
+        category, subcategory = _get_category_context(product)
+        assert category == 'Фильтры'
+        assert subcategory == ''
+
+    def test_catalog_category_с_родителем(self):
+        parent = FakeCategory('Тормозная система')
+        child = FakeCategory('Тормозные диски', parent=parent)
+        product = FakeProduct(catalog_category=child)
+        category, subcategory = _get_category_context(product)
+        assert category == 'Тормозная система'
+        assert subcategory == 'Тормозные диски'
+
+    def test_category_1c_с_разделителем_слэш(self):
+        product = FakeProduct(category_1c='Тормозные системы / Диски тормозные')
+        category, subcategory = _get_category_context(product)
+        assert category == 'Тормозные системы'
+        assert subcategory == 'Диски тормозные'
+
+    def test_category_1c_без_разделителя(self):
+        product = FakeProduct(category_1c='Фильтры')
+        category, subcategory = _get_category_context(product)
+        assert category == 'Фильтры'
+        assert subcategory == ''
+
+    def test_без_категории_возвращает_пустые_строки(self):
+        product = FakeProduct()
+        category, subcategory = _get_category_context(product)
+        assert category == ''
+        assert subcategory == ''
+
+    def test_catalog_category_имеет_приоритет_над_category_1c(self):
+        product = FakeProduct(
+            catalog_category=FakeCategory('Свечи зажигания'),
+            category_1c='Другая категория',
+        )
+        category, _ = _get_category_context(product)
+        assert category == 'Свечи зажигания'
 
 
 class TestIsUnreliableArticle:
