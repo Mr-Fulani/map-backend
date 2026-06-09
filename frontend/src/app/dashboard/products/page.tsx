@@ -260,6 +260,7 @@ export default function ProductsPage() {
   const [ordering, setOrdering] = useState('');
   const [listingFilter, setListingFilter] = useState<string>('');
   const [needsReviewFilter, setNeedsReviewFilter] = useState(false);
+  const [excludedFilter, setExcludedFilter] = useState(false);
   const [catalogDomainFilter, setCatalogDomainFilter] = useState<string>('');
   const [catalogCategoryFilter, setCatalogCategoryFilter] = useState<string>('');
   const [catalogCategories, setCatalogCategories] = useState<TenantCatalogCategory[]>([]);
@@ -313,6 +314,7 @@ export default function ProductsPage() {
       if (ordering) params.ordering = ordering;
       if (listingFilter) params.listing_filter = listingFilter;
       if (needsReviewFilter) params.needs_review = 'true';
+      if (excludedFilter) params.sync_excluded = 'true';
       if (catalogDomainFilter) params.catalog_domain = catalogDomainFilter;
       if (catalogCategoryFilter) params.catalog_category = catalogCategoryFilter;
 
@@ -324,7 +326,7 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedSearch, ordering, listingFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [page, debouncedSearch, ordering, listingFilter, needsReviewFilter, excludedFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   const loadCatalogCategories = useCallback(async () => {
     try {
@@ -356,7 +358,7 @@ export default function ProductsPage() {
 
     updatePage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, ordering, listingFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [debouncedSearch, ordering, listingFilter, needsReviewFilter, excludedFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   useEffect(() => {
     load();
@@ -369,7 +371,7 @@ export default function ProductsPage() {
 
   useEffect(() => {
     setSelectedIds([]);
-  }, [page, debouncedSearch, ordering, listingFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [page, debouncedSearch, ordering, listingFilter, needsReviewFilter, excludedFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -596,6 +598,13 @@ export default function ProductsPage() {
             onClick={() => setNeedsReviewFilter((value) => !value)}
           >
             На проверке
+          </Button>
+          <Button
+            size="sm"
+            variant={excludedFilter ? 'default' : 'outline'}
+            onClick={() => setExcludedFilter((value) => !value)}
+          >
+            Исключён
           </Button>
         </div>
       </div>

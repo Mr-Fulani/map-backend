@@ -141,6 +141,9 @@ class ProductListView(APIView):
                 | Q(enrichment_facts__needs_review=True)
             ).distinct()
 
+        if request.query_params.get('sync_excluded') == 'true':
+            qs = qs.filter(sync_excluded=True)
+
         domain_counts_qs = qs
         domain_counts = {'all': domain_counts_qs.count()}
         active_domain_slugs = CatalogDomain.objects.filter(is_active=True).values_list('slug', flat=True)
