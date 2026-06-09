@@ -10,6 +10,7 @@ import logging
 import requests
 from django.conf import settings
 
+from apps.image_search.models import BraveQuota
 from apps.image_search.sources.base import BaseImageSource, ImageCandidate
 from apps.image_search.sources.registry import register
 
@@ -38,7 +39,6 @@ class BraveImageSource(BaseImageSource):
         """True если API-ключ задан и месячный soft cap (800) не достигнут."""
         if not settings.BRAVE_SEARCH_API_KEY:
             return False
-        from apps.image_search.models import BraveQuota
         if BraveQuota.is_soft_cap_reached():
             logger.warning(
                 '[brave] soft cap %d достигнут — источник отключён до конца месяца. '
@@ -143,8 +143,6 @@ class BraveImageSource(BaseImageSource):
         Лимит обновляется из заголовка X-RateLimit-Limit (Brave возвращает в каждом ответе).
         При достижении soft cap логирует критическую ошибку и ставит флаг cap_notified.
         """
-        from apps.image_search.models import BraveQuota
-
         quota = BraveQuota.increment()
 
         # Обновляем лимит из заголовка если он пришёл и отличается
