@@ -496,6 +496,24 @@ class ProductExcludeView(APIView):
 
 
 @extend_schema(tags=['Products'])
+class ProductBulkDeleteView(APIView):
+    """DELETE /api/v1/products/bulk-delete/ — безвозвратное удаление товаров из БД."""
+
+    def delete(self, request):
+        """Физически удаляет товары. Если товар есть в источнике — вернётся при синхронизации."""
+        product_ids = request.data.get('product_ids') or []
+        if not isinstance(product_ids, list) or not product_ids:
+            return Response(
+                {'status': 'error', 'code': 'validation_error', 'message': 'Выберите товары'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        deleted_count, _ = Product.objects.filter(
+            tenant=request.tenant, pk__in=product_ids,
+        ).delete()
+        return Response({'status': 'ok', 'data': {'deleted_count': deleted_count}})
+
+
+@extend_schema(tags=['Products'])
 class ProductSearchView(APIView):
     """GET /api/v1/products/search/?brand=&article= — поиск товара tenant-а."""
 

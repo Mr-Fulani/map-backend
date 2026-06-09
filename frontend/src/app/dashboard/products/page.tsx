@@ -11,6 +11,14 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -263,6 +271,8 @@ export default function ProductsPage() {
   const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
   const [categoryAssignError, setCategoryAssignError] = useState('');
   const [excludeLoading, setExcludeLoading] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -496,6 +506,18 @@ export default function ProductsPage() {
     }
   };
 
+  const confirmBulkDelete = async () => {
+    setDeleteLoading(true);
+    try {
+      await productApi.bulkDelete(selectedIds);
+      setDeleteDialogOpen(false);
+      setSelectedIds([]);
+      await load();
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
   const excludeFromSync = async (exclude: boolean) => {
     if (selectedIds.length === 0) return;
     setExcludeLoading(true);
@@ -532,6 +554,7 @@ export default function ProductsPage() {
   }, [bulkJob, load]);
 
   return (
+    <>
     <div className="space-y-4">
       <div className="min-w-0">
         <h1 className="text-2xl font-bold tracking-tight">Каталог товаров</h1>
@@ -740,6 +763,12 @@ export default function ProductsPage() {
                   disabled={excludeLoading}
                 >
                   Восстановить синхронизацию
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setDeleteDialogOpen(true)}
+                  className="text-destructive focus:text-destructive"
+                >
+                  Удалить безвозвратно
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
@@ -1115,5 +1144,34 @@ export default function ProductsPage() {
         </div>
       )}
     </div>
+    <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Удалить товары безвозвратно?</DialogTitle>
+          <DialogDescription>
+            Будет удалено товаров: <strong>{selectedIds.length}</strong>.
+            {selectedIds.some((id) => !products.find((p) => p.id === id)?.sync_excluded) && (
+              <span className="mt-2 block rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+                Часть выбранных товаров не исключена из синхронизации — они могут вернуться при следующем обновлении из 1С/CSV.
+              </span>
+            )}
+            {products.filter((p) => selectedIds.includes(p.id)).every((p) => p.sync_excluded) && (
+              <span className="mt-2 block rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+                Товары исключены из синхронизации, но если они есть в 1С/CSV — вернутся при следующем обновлении.
+              </span>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={deleteLoading}>
+            Отмена
+          </Button>
+          <Button variant="destructive" onClick={confirmBulkDelete} disabled={deleteLoading}>
+            {deleteLoading ? 'Удаляем...' : 'Удалить'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }
