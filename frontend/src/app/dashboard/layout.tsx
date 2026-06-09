@@ -48,11 +48,11 @@ export default function DashboardLayout({
     <TooltipProvider delayDuration={0}>
       <DashboardNavigationHistory />
       <NavigationProgress />
-      <div className="flex h-screen overflow-hidden">
+      <div className="flex h-dvh min-w-0 overflow-hidden">
         <Sidebar />
-        <div className="flex flex-1 flex-col overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <Header />
-          <main className="flex-1 overflow-y-auto p-4 lg:p-6">
+          <main className="min-w-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4 lg:p-6">
             {children}
           </main>
         </div>

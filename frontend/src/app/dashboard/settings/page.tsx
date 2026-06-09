@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store } from 'lucide-react';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store, Search } from 'lucide-react';
 import { profileApi, datasourceApi } from '@/lib/api';
 
 interface ApiKey {
@@ -161,6 +161,7 @@ export default function SettingsPage() {
   const [newCatalogCategoryDomain, setNewCatalogCategoryDomain] = useState('unknown');
   const [editCatalogCategoryName, setEditCatalogCategoryName] = useState('');
   const [editCatalogCategoryDomain, setEditCatalogCategoryDomain] = useState('unknown');
+  const [categorySearch, setCategorySearch] = useState('');
   const [savingMappingSource, setSavingMappingSource] = useState<string | null>(null);
   
   // File upload state
@@ -300,7 +301,9 @@ export default function SettingsPage() {
         productApi.catalogSourceCategories(),
         productApi.catalogCategoryMappings(),
       ]);
-      setCatalogCategories(categoriesRes.data.data ?? categoriesRes.data);
+      const cats: CatalogCategory[] = categoriesRes.data.data ?? categoriesRes.data;
+      cats.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      setCatalogCategories(cats);
       setSourceCategories(sourceRes.data.data ?? sourceRes.data);
       setCatalogMappings(mappingsRes.data.data ?? mappingsRes.data);
     } catch {
@@ -800,8 +803,10 @@ export default function SettingsPage() {
     try {
       const res = await notificationApi.telegramConnect();
       const botUrl = res.data.data?.bot_url as string;
-      window.open(botUrl, '_blank');
-      toast.info('Откройте бота в Telegram и нажмите START. После привязки обновите страницу.');
+      // window.open блокируется мобильными браузерами после await — используем location.href.
+      // На мобильном iOS/Android это триггерит Universal Link и открывает приложение Telegram.
+      window.location.href = botUrl;
+      toast.info('Переходим в Telegram — нажмите START в чате с ботом. Вернитесь сюда и обновите страницу.');
     } catch {
       toast.error('Не удалось создать ссылку. Проверьте настройки бота на сервере.');
     } finally {
@@ -870,13 +875,13 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
+      <div className="min-w-0">
         <h1 className="text-2xl font-bold tracking-tight">Настройки</h1>
         <p className="text-muted-foreground">Управление организацией и интеграциями</p>
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SettingsTab)}>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto pb-1">
           <TabsList className="w-full sm:w-auto">
             <TabsTrigger value="profile">Профиль</TabsTrigger>
             <TabsTrigger value="organization">Организация</TabsTrigger>
@@ -904,7 +909,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Телефон</Label>
-                  <div className="flex gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
                     <Input
                       placeholder="+7 999 000-00-00"
                       value={phone}
@@ -944,7 +949,7 @@ export default function SettingsPage() {
                   </Button>
                 </div>
               ) : (
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     type="email"
                     placeholder="new@example.com"
@@ -1064,7 +1069,7 @@ export default function SettingsPage() {
                   <p className="mb-2 text-sm font-medium text-green-600">
                     Новый ключ создан — скопируйте сейчас, он больше не будет показан:
                   </p>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                     <code className="flex-1 rounded bg-muted px-3 py-2 font-mono text-xs break-all">
                       {newKeyValue}
                     </code>
@@ -1076,7 +1081,7 @@ export default function SettingsPage() {
               )}
 
               {/* Форма создания */}
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <Input
                   placeholder="Название ключа (например: CI/CD)"
                   value={newKeyName}
@@ -1100,12 +1105,12 @@ export default function SettingsPage() {
               ) : (
                 <div className="space-y-2">
                   {apiKeys.map((key) => (
-                    <div key={key.id} className="flex items-center justify-between rounded-lg border p-3 gap-3">
+                    <div key={key.id} className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="flex items-start gap-3 min-w-0">
                         <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
                         <div className="min-w-0">
-                          <p className="text-sm font-medium">{key.name}</p>
-                          <code className="text-xs font-mono text-muted-foreground bg-muted rounded px-1.5 py-0.5 mt-0.5 inline-block">
+                          <p className="break-words text-sm font-medium">{key.name}</p>
+                          <code className="mt-0.5 inline-block max-w-full break-all rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">
                             {key.prefix}••••••••••••••••••••
                           </code>
                           <p className="text-xs text-muted-foreground mt-1">
@@ -1202,7 +1207,7 @@ export default function SettingsPage() {
                       className="font-mono"
                     />
                   </div>
-                  <div className="flex justify-end gap-2">
+                  <div className="flex flex-col justify-end gap-2 sm:flex-row">
                     <Button type="button" variant="outline" onClick={() => setShowAddAccount(false)}>
                       Отмена
                     </Button>
@@ -1217,8 +1222,8 @@ export default function SettingsPage() {
           )}
 
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <CardTitle>Avito</CardTitle>
                   <Badge variant="default">Доступно</Badge>
@@ -1226,7 +1231,7 @@ export default function SettingsPage() {
                 <CardDescription>Аккаунты, Автозагрузка и публикация объявлений на Avito</CardDescription>
               </div>
               {!showAddAccount && (
-                <Button onClick={() => setShowAddAccount(true)} size="sm">
+                <Button onClick={() => setShowAddAccount(true)} size="sm" className="w-full sm:w-auto">
                   <Plus className="mr-2 h-4 w-4" />
                   Добавить
                 </Button>
@@ -1254,12 +1259,12 @@ export default function SettingsPage() {
                       contact_phone: '',
                     };
                     return (
-                    <div key={acc.id} className="rounded-lg border p-4 space-y-3">
+                    <div key={acc.id} className="rounded-lg border p-3 space-y-3 sm:p-4">
                       {/* Название + переключатель */}
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex-1 min-w-0">
                           {editingAccountId === acc.id ? (
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                               <Input
                                 value={editAccountName}
                                 onChange={(e) => setEditAccountName(e.target.value)}
@@ -1280,17 +1285,17 @@ export default function SettingsPage() {
                           ) : (
                             <button
                               type="button"
-                              className="font-medium text-left hover:underline"
+                              className="break-words text-left font-medium hover:underline"
                               onClick={() => { setEditingAccountId(acc.id); setEditAccountName(acc.name); }}
                             >
                               {acc.name}
                             </button>
                           )}
-                          <p className="mt-1 font-mono text-xs text-muted-foreground">
+                          <p className="mt-1 break-all font-mono text-xs text-muted-foreground">
                             {acc.marketplace} · ID: {acc.external_id}
                           </p>
                         </div>
-                        <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex shrink-0 flex-wrap items-center gap-2">
                           <div className="flex items-center gap-2">
                             <Switch
                               checked={acc.is_active}
@@ -1337,7 +1342,7 @@ export default function SettingsPage() {
                               </p>
                             </div>
                           </div>
-                          <div className="space-y-1.5 pl-6">
+                          <div className="space-y-1.5 sm:pl-6">
                             <p className="text-xs text-muted-foreground">
                               1.{' '}
                               <a
@@ -1351,9 +1356,9 @@ export default function SettingsPage() {
                               </a>
                             </p>
                             {al?.feed_url && (
-                              <div className="flex items-center gap-2">
+                              <div className="flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
                                 <p className="text-xs text-muted-foreground shrink-0">2. URL фида:</p>
-                                <code className="flex-1 truncate rounded bg-muted px-2 py-0.5 text-xs">
+                                <code className="min-w-0 flex-1 break-all rounded bg-muted px-2 py-0.5 text-xs sm:truncate">
                                   {al.feed_url}
                                 </code>
                                 <button
@@ -1369,7 +1374,7 @@ export default function SettingsPage() {
                               </div>
                             )}
                           </div>
-                          <div className="flex gap-2 pl-6">
+                          <div className="flex gap-2 sm:pl-6">
                             <Button
                               size="sm"
                               variant="outline"
@@ -1387,8 +1392,8 @@ export default function SettingsPage() {
                       )}
 
                       <div className="rounded-md border bg-muted/20 p-3">
-                        <div className="mb-3 flex items-center justify-between gap-3">
-                          <div>
+                        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="min-w-0">
                             <p className="text-sm font-medium">Размещение по умолчанию</p>
                             <p className="text-xs text-muted-foreground">
                               Эти поля попадут в feed, если у объявления или категории нет своего адреса.
@@ -1397,6 +1402,7 @@ export default function SettingsPage() {
                           <Button
                             size="sm"
                             variant="outline"
+                            className="w-full sm:w-auto"
                             onClick={() => saveAccountPlacement(acc)}
                             disabled={savingPlacementAccountId === acc.id}
                           >
@@ -1467,7 +1473,7 @@ export default function SettingsPage() {
                               )}
                               {address.address && <span className="text-muted-foreground">{address.address}</span>}
                               {address.contact_phone && <span className="text-muted-foreground">{address.contact_phone}</span>}
-                              <div className="ml-auto flex items-center gap-1">
+                              <div className="flex w-full items-center gap-1 sm:ml-auto sm:w-auto">
                                 {!address.is_default && (
                                   <Button
                                     size="sm"
@@ -1543,15 +1549,15 @@ export default function SettingsPage() {
           </Card>
 
           <Card>
-            <CardHeader className="flex flex-row items-center justify-between">
-              <div>
+            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <CardTitle>Дром</CardTitle>
                   <Badge variant="secondary">Скоро</Badge>
                 </div>
                 <CardDescription>Заглушка для будущего подключения объявлений на Дром</CardDescription>
               </div>
-              <Button size="sm" variant="outline" disabled>
+              <Button size="sm" variant="outline" disabled className="w-full sm:w-auto">
                 <Store className="mr-2 h-4 w-4" />
                 Недоступно
               </Button>
@@ -1634,6 +1640,7 @@ export default function SettingsPage() {
                 <div className="flex justify-end">
                   <Button
                     type="submit"
+                    className="w-full sm:w-auto"
                     disabled={
                       creatingDatasource ||
                       !newDatasourceName ||
@@ -1690,7 +1697,7 @@ export default function SettingsPage() {
                   </label>
                 </div>
                 <div className="flex justify-end">
-                  <Button type="submit" disabled={!csvFile || uploadingCsv}>
+                  <Button type="submit" disabled={!csvFile || uploadingCsv} className="w-full sm:w-auto">
                     {uploadingCsv ? (
                       <>
                         <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1722,8 +1729,8 @@ export default function SettingsPage() {
               ) : (
                 <div className="space-y-3">
                   {datasources.map((ds) => (
-                    <div key={ds.id} className="flex items-center justify-between rounded-lg border p-4">
-                      <div className="flex items-start gap-3">
+                    <div key={ds.id} className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between sm:p-4">
+                      <div className="flex min-w-0 items-start gap-3">
                         <div className="mt-1">
                           {ds.type === 'csv' ? (
                             <FileSpreadsheet className="h-5 w-5 text-muted-foreground" />
@@ -1733,16 +1740,16 @@ export default function SettingsPage() {
                             <FileCode2 className="h-5 w-5 text-muted-foreground" />
                           )}
                         </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">{ds.name}</span>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="break-words font-medium">{ds.name}</span>
                             {ds.is_active !== undefined && (
                               <Badge variant={ds.is_active ? 'default' : 'secondary'}>
                                 {ds.is_active ? 'Активен' : 'Неактивен'}
                               </Badge>
                             )}
                           </div>
-                          <p className="mt-1 text-xs text-muted-foreground uppercase">
+                          <p className="mt-1 break-all text-xs uppercase text-muted-foreground">
                             {ds.type} {ds.url ? `· ${ds.url}` : ''}
                           </p>
                         </div>
@@ -1789,7 +1796,7 @@ export default function SettingsPage() {
                         size="sm"
                         variant={domain.is_enabled_for_tenant ? 'default' : 'outline'}
                         onClick={() => setCatalogDomainEnabled(domain.slug, !domain.is_enabled_for_tenant)}
-                        disabled={isSaving}
+                        disabled={savingCatalogDomainSlug !== null}
                       >
                         {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                         {domainLabel(domain.slug)}
@@ -1822,6 +1829,18 @@ export default function SettingsPage() {
                 </Button>
               </form>
 
+              {!loadingCatalogCategories && catalogCategories.length > 0 && (
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="pl-9"
+                    placeholder="Поиск по категориям..."
+                    value={categorySearch}
+                    onChange={(e) => setCategorySearch(e.target.value)}
+                  />
+                </div>
+              )}
+
               {loadingCatalogCategories ? (
                 <div className="space-y-2">
                   <Skeleton className="h-12 w-full" />
@@ -1836,7 +1855,18 @@ export default function SettingsPage() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {catalogCategories.map((category) => {
+                  {categorySearch && !catalogCategories.some((c) =>
+                    c.name.toLowerCase().includes(categorySearch.toLowerCase())
+                  ) && (
+                    <p className="py-4 text-center text-sm text-muted-foreground">
+                      Ничего не найдено
+                    </p>
+                  )}
+                  {catalogCategories
+                    .filter((category) =>
+                      !categorySearch || category.name.toLowerCase().includes(categorySearch.toLowerCase())
+                    )
+                    .map((category) => {
                     const isEditing = editingCatalogCategoryId === category.id;
                     const isSaving = savingCatalogCategoryId === category.id;
                     return (
@@ -1844,8 +1874,8 @@ export default function SettingsPage() {
                         key={category.id}
                         className="flex flex-col gap-3 rounded-lg border p-3 md:flex-row md:items-center md:justify-between"
                       >
-                        <div className="flex items-center gap-3">
-                          <div className="h-14 w-14 overflow-hidden rounded-md border bg-muted">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md border bg-muted">
                             {category.default_image_url ? (
                               // eslint-disable-next-line @next/next/no-img-element
                               <img
@@ -1880,8 +1910,8 @@ export default function SettingsPage() {
                               </select>
                             </div>
                           ) : (
-                            <div>
-                              <p className="font-medium">{category.name}</p>
+                            <div className="min-w-0">
+                              <p className="break-words font-medium">{category.name}</p>
                               <p className="text-xs text-muted-foreground">
                                 Корень: {category.root_domain_name || domainLabel(category.domain)}
                               </p>
@@ -2048,9 +2078,9 @@ export default function SettingsPage() {
                 </div>
               ) : notifSettings?.telegram_connected ? (
                 <div className="space-y-4">
-                  <div className="flex items-center gap-3 rounded-lg border border-green-500/30 bg-green-500/5 p-4">
+                  <div className="flex flex-col gap-3 rounded-lg border border-green-500/30 bg-green-500/5 p-4 sm:flex-row sm:items-center">
                     <Bell className="h-5 w-5 shrink-0 text-green-600" />
-                    <div className="flex-1">
+                    <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium text-green-700">Telegram подключён</p>
                       {notifSettings.telegram_username && (
                         <p className="text-xs text-muted-foreground">@{notifSettings.telegram_username}</p>
@@ -2088,7 +2118,7 @@ export default function SettingsPage() {
                     <p className="mb-4 text-xs text-muted-foreground">
                       Нажмите кнопку, откройте бота и нажмите START — привязка займёт 10 секунд.
                     </p>
-                    <Button onClick={connectTelegram} disabled={connectingTg}>
+                    <Button onClick={connectTelegram} disabled={connectingTg} className="w-full sm:w-auto">
                       {connectingTg
                         ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                         : <ExternalLink className="mr-2 h-4 w-4" />
@@ -2131,8 +2161,8 @@ export default function SettingsPage() {
                   <Separator />
 
                   <div className="space-y-4">
-                    <div className="flex items-center justify-between">
-                      <div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
                         <p className="text-sm font-medium">Ошибки</p>
                         <p className="text-xs text-muted-foreground">
                           Telegram-уведомления при ошибках публикации
@@ -2144,8 +2174,8 @@ export default function SettingsPage() {
                         onCheckedChange={toggleOnError}
                       />
                     </div>
-                    <div className="flex items-center justify-between">
-                      <div>
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
                         <p className="text-sm font-medium">Критические события</p>
                         <p className="text-xs text-muted-foreground">
                           Telegram + Email при блокировке аккаунта, исчерпании лимитов
@@ -2159,7 +2189,7 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  <Button onClick={() => saveNotifSettings()} disabled={savingNotif}>
+                  <Button onClick={() => saveNotifSettings()} disabled={savingNotif} className="w-full sm:w-auto">
                     {savingNotif && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                     Сохранить email
                   </Button>

@@ -168,7 +168,7 @@ export default function ReviewQueuePage() {
             Спорные данные из источников, которые ждут решения оператора.
           </p>
         </div>
-        <Button variant="outline" onClick={load} disabled={loading}>
+        <Button variant="outline" onClick={load} disabled={loading} className="w-full sm:w-auto">
           <RefreshCw className="mr-2 h-4 w-4" />
           Обновить
         </Button>
@@ -185,7 +185,7 @@ export default function ReviewQueuePage() {
           />
         </div>
         <Select value={type} onValueChange={(value) => setType(value as ReviewType)}>
-          <SelectTrigger className="md:w-56">
+          <SelectTrigger className="w-full md:w-56">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -296,11 +296,11 @@ export default function ReviewQueuePage() {
       </div>
 
       {meta && meta.total > 0 && (
-        <div className="flex items-center justify-between text-sm text-muted-foreground">
+        <div className="flex flex-col gap-3 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
           <span>
             Всего: {meta.total}
           </span>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="outline"
               size="sm"

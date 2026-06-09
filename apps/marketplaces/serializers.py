@@ -211,3 +211,40 @@ class ListingBulkPlacementSerializer(ListingPlacementSerializer):
         if not has_filter:
             raise serializers.ValidationError('Укажите хотя бы один фильтр для массового обновления.')
         return attrs
+
+
+class ListingBulkActionSerializer(ListingPlacementSerializer):
+    ACTION_PUBLISH = 'publish'
+    ACTION_ARCHIVE = 'archive'
+    ACTION_DELETE = 'delete'
+    ACTION_UPDATE_PLACEMENT = 'update_placement'
+    ACTION_CHOICES = (
+        ACTION_PUBLISH,
+        ACTION_ARCHIVE,
+        ACTION_DELETE,
+        ACTION_UPDATE_PLACEMENT,
+    )
+
+    action = serializers.ChoiceField(choices=ACTION_CHOICES)
+    listing_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), required=False, allow_empty=False,
+    )
+    account_id = serializers.IntegerField(required=False)
+    status = serializers.CharField(max_length=20, required=False, allow_blank=True)
+
+    def validate(self, attrs):
+        has_filter = any(attrs.get(field) for field in ('listing_ids', 'account_id', 'status'))
+        if not has_filter:
+            raise serializers.ValidationError('Укажите хотя бы один фильтр для массового действия.')
+
+        placement_fields = (
+            'placement_address',
+            'address_override',
+            'seller_address_id_override',
+            'manager_name_override',
+            'contact_phone_override',
+        )
+        if attrs.get('action') == self.ACTION_UPDATE_PLACEMENT:
+            if not any(field in attrs for field in placement_fields):
+                raise serializers.ValidationError('Укажите поля размещения для массового обновления.')
+        return attrs

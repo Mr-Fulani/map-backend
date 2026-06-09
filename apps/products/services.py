@@ -230,11 +230,14 @@ class ProductService:
     """Сервис управления товарами: создание/обновление из источников данных."""
 
     @staticmethod
-    def upsert_from_source(tenant, datasource, data: dict) -> tuple[Product, str]:
+    def upsert_from_source(tenant, datasource, data: dict) -> tuple[Product, str, str | None]:
         """
         Создаёт или обновляет товар из данных адаптера.
 
-        Возвращает (product, status) где status: 'created' | 'updated' | 'unchanged'.
+        Возвращает (product, status, change_type) где:
+        - status: 'created' | 'updated' | 'unchanged'
+        - change_type: 'price_only' | 'stock_only' | 'content' | 'category' | None
+
         Unchanged означает что данные не изменились — задача в Celery не нужна.
         """
         hash_new = _compute_hash(data)
@@ -267,12 +270,32 @@ class ProductService:
             existing = None
             old_hash = None
 
+        if existing and existing.sync_excluded:
+            return existing, 'unchanged', None
+
         product, created = Product.objects.update_or_create(**lookup, defaults=defaults)
         if created:
-            return product, 'created'
+            return product, 'created', None
         if old_hash != hash_new:
-            return product, 'updated'
-        return product, 'unchanged'
+            old_data = {
+                'price': str(existing.price),
+                'stock_qty': existing.stock_qty,
+                'name': existing.name,
+                'brand': existing.brand,
+                'condition': existing.condition,
+                'category': existing.category_1c,
+            }
+            new_data = {
+                'price': data.get('price', '0'),
+                'stock_qty': data.get('stock_qty', 0),
+                'name': data.get('name', ''),
+                'brand': data.get('brand', ''),
+                'condition': data.get('condition', 'new'),
+                'category': data.get('category', ''),
+            }
+            change_type = ProductService.detect_change_type(old_data, new_data)
+            return product, 'updated', change_type
+        return product, 'unchanged', None
 
     @staticmethod
     def schedule_ai_generation(

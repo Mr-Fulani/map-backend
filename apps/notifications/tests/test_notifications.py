@@ -7,7 +7,13 @@ from django.utils.timezone import now
 from apps.datasources.encryption import encrypt
 from apps.marketplaces.models import MarketplaceAccount
 from apps.notifications.models import TenantNotificationSettings
-from apps.notifications.services import LEVEL_BILLING, LEVEL_CRITICAL, LEVEL_ERROR, NotificationService
+from apps.notifications.services import (
+    LEVEL_BILLING,
+    LEVEL_CRITICAL,
+    LEVEL_ERROR,
+    LEVEL_SUCCESS,
+    NotificationService,
+)
 from apps.notifications.tasks import cleanup_old_logs
 from apps.sync.models import SyncLog
 from apps.tenants.services import TenantService
@@ -67,8 +73,30 @@ class TestNotificationService:
             mock_email.return_value.send.return_value = True
             NotificationService().notify(tenant, LEVEL_CRITICAL, 'Критично')
 
-        mock_tg.return_value.send.assert_called_once()
-        mock_email.return_value.send.assert_called_once()
+            mock_tg.return_value.send.assert_called_once()
+            mock_email.return_value.send.assert_called_once()
+
+    def test_success_sends_telegram_when_connected(self):
+        """При level=success отправляется Telegram, если он привязан."""
+        tenant = make_tenant('notify-success-co')
+        make_notification_settings(tenant, telegram_chat_id='123456')
+
+        with patch('apps.notifications.services.TelegramNotifier') as mock_tg, \
+             patch('apps.notifications.services.EmailNotifier') as mock_email:
+            NotificationService().notify(tenant, LEVEL_SUCCESS, 'Объявление опубликовано')
+
+            mock_tg.return_value.send.assert_called_once()
+            mock_email.return_value.send.assert_not_called()
+
+    def test_success_skips_telegram_when_not_connected(self):
+        """При level=success без Telegram ничего не отправляется."""
+        tenant = make_tenant('notify-success-skip-co')
+        make_notification_settings(tenant, telegram_chat_id='')
+
+        with patch('apps.notifications.services.TelegramNotifier') as mock_tg:
+            NotificationService().notify(tenant, LEVEL_SUCCESS, 'Объявление опубликовано')
+
+            mock_tg.return_value.send.assert_not_called()
 
     def test_billing_sends_only_email(self):
         """При level=billing отправляется только Email, Telegram не вызывается."""

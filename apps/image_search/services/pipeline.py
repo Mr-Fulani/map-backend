@@ -41,7 +41,6 @@ def run_for_product(product) -> list[ProductImage]:
     cfg = settings.IMAGE_SEARCH_SETTINGS
     max_images = cfg['MAX_IMAGES_PER_PRODUCT']
     min_score = cfg['MIN_QUALITY_SCORE']
-    auto_approve_thresh = cfg['AUTO_APPROVE_THRESHOLD']
     cache_ttl_days = cfg['CACHE_TTL_DAYS']
 
     cache_key = f'img_search:{product.article}:{product.brand}'
@@ -51,12 +50,29 @@ def run_for_product(product) -> list[ProductImage]:
         logger.debug(f'[pipeline] кеш актуален: {cache_key}')
         return []
 
+    # Учитываем фото уже добавленные парсерами — не превышаем общий лимит
+    existing_count = ProductImage.objects.filter(
+        product=product,
+    ).exclude(status=ProductImage.Status.REJECTED).count()
+    remaining_slots = max_images - existing_count
+    if remaining_slots <= 0:
+        logger.debug(f'[pipeline] товар уже имеет {existing_count} фото, image search пропущен')
+        return []
+
     saved: list[ProductImage] = []
     uploader = PhotoUploadPipeline()
     sources = get_active_sources(product)
 
+    # URL-уровень: не скачивать то, что уже было отклонено для этого товара
+    rejected_urls: set[str] = set(
+        product.images
+        .filter(status=ProductImage.Status.REJECTED)
+        .exclude(url_source='')
+        .values_list('url_source', flat=True)
+    )
+
     for source in sources:
-        if len(saved) >= max_images:
+        if len(saved) >= remaining_slots:
             break
 
         t0 = time.monotonic()
@@ -88,19 +104,22 @@ def run_for_product(product) -> list[ProductImage]:
 
         accepted = 0
         for candidate in good:
-            if len(saved) >= max_images:
+            if len(saved) >= remaining_slots:
                 break
+
+            if candidate.url in rejected_urls:
+                continue
 
             pi = uploader.process(candidate.url, product)
             if pi is None:
                 continue
 
-            # Статус зависит от скора: выше порога = авто-одобрено
-            status = (
-                ProductImage.Status.AUTO_APPROVED
-                if candidate.quality_score >= auto_approve_thresh
-                else ProductImage.Status.NEEDS_REVIEW
-            )
+            # SHA256-уровень: пропустить если контент совпал с ранее отклонённым
+            if pi.status == ProductImage.Status.REJECTED:
+                rejected_urls.add(candidate.url)
+                continue
+
+            status = ProductImage.Status.NEEDS_REVIEW
 
             pi.source_id = candidate.source_id
             pi.tier = candidate.tier
@@ -133,7 +152,8 @@ def run_for_product(product) -> list[ProductImage]:
             error=error,
         )
 
-    # Обновляем кеш
+    # Обновляем кеш. Пустой результат кешируем на 1 час чтобы не блокировать повторные попытки.
+    cache_ttl = timedelta(days=cache_ttl_days) if saved else timedelta(hours=1)
     ImageSearchCache.objects.update_or_create(
         cache_key=cache_key,
         defaults={
@@ -141,7 +161,7 @@ def run_for_product(product) -> list[ProductImage]:
                 'product_image_ids': [pi.pk for pi in saved],
                 'count': len(saved),
             },
-            'expires_at': now() + timedelta(days=cache_ttl_days),
+            'expires_at': now() + cache_ttl,
         },
     )
 

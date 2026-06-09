@@ -43,7 +43,7 @@ class TestProductService:
     def test_upsert_creates_new_product(self):
         tenant = make_tenant('create-co')
         ds = make_datasource(tenant)
-        product, status = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        product, status, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
         assert status == 'created'
         assert product.article == 'A100'
         assert product.brand == 'BrandX'
@@ -63,7 +63,7 @@ class TestProductService:
         tenant = make_tenant('unchanged-co')
         ds = make_datasource(tenant)
         ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
-        _, status2 = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        _, status2, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
         assert status2 == 'unchanged'
 
     def test_upsert_detects_price_change(self):
@@ -71,7 +71,7 @@ class TestProductService:
         ds = make_datasource(tenant)
         ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
         updated_data = {**SAMPLE_DATA, 'price': '2000.00'}
-        _, status = ProductService.upsert_from_source(tenant, ds, updated_data)
+        _, status, _ = ProductService.upsert_from_source(tenant, ds, updated_data)
         assert status == 'updated'
 
     def test_detect_change_type_price_only(self):
@@ -113,7 +113,7 @@ class TestPhotoUploadPipeline:
 
         tenant = make_tenant('photo-co')
         ds = make_datasource(tenant)
-        product, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
 
         jpeg = self._make_jpeg_bytes()
         mock_storage = MagicMock()
@@ -136,7 +136,7 @@ class TestPhotoUploadPipeline:
 
         tenant = make_tenant('photo-enrichment-co')
         ds = make_datasource(tenant)
-        product, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
 
         jpeg = self._make_jpeg_bytes()
         mock_storage = MagicMock()
@@ -163,7 +163,7 @@ class TestPhotoUploadPipeline:
 
         tenant = make_tenant('turk-pharma')
         ds = make_datasource(tenant)
-        product, _ = ProductService.upsert_from_source(tenant, ds, {
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, {
             **SAMPLE_DATA,
             'article': 'P50136',
             'brand': 'BREMBO',
@@ -203,7 +203,7 @@ class TestPhotoUploadPipeline:
 
         tenant = make_tenant('legacy-media-co')
         ds = make_datasource(tenant)
-        product, _ = ProductService.upsert_from_source(tenant, ds, {
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, {
             **SAMPLE_DATA,
             'article': 'P50136',
             'brand': 'BREMBO',
@@ -253,7 +253,7 @@ class TestPhotoUploadPipeline:
 
         tenant = make_tenant('limit-co')
         ds = make_datasource(tenant)
-        product, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
 
         mock_storage = MagicMock()
         pipeline = PhotoUploadPipeline(storage=mock_storage)
@@ -266,7 +266,7 @@ class TestPhotoUploadPipeline:
         with patch('apps.products.storage.requests.get') as mock_get:
             mock_get.return_value.content = self._make_jpeg_bytes()
             mock_get.return_value.raise_for_status = MagicMock()
-            result = pipeline.process('http://example.com/extra.jpg', product)
+            result = pipeline.process('http://example.com/extra.jpg', product, check_limit=True)
 
         assert result is None
         assert ProductImage.objects.filter(product=product).count() == 10
@@ -276,7 +276,7 @@ class TestPhotoUploadPipeline:
 
         tenant = make_tenant('limit-rejected-co')
         ds = make_datasource(tenant)
-        product, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
 
         for i in range(10):
             ProductImage.objects.create(

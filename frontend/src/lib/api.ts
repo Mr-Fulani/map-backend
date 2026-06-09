@@ -211,8 +211,8 @@ export const productApi = {
   publish: (id: number) => api.post(`/products/${id}/publish/`),
   archive: (id: number) => api.post(`/products/${id}/archive/`),
   regenerate: (id: number) => api.post(`/products/${id}/regenerate/`),
-  parse: (id: number, source = 'tachka', generateAfter = false) =>
-    api.post('/products/parse/', { product_id: id, source, generate_after: generateAfter }),
+  parse: (id: number, source = '', generateAfter = false) =>
+    api.post('/products/parse/', { product_id: id, source: source || undefined, generate_after: generateAfter }),
   parseJobStatus: (id: number) => api.get(`/products/parse-jobs/${id}/`),
   bulkAction: (data: {
     action: string;
@@ -230,6 +230,10 @@ export const productApi = {
   deleteCatalogCategory: (id: number) => api.delete(`/products/catalog-categories/${id}/`),
   assignCatalogCategory: (data: { product_ids: number[]; catalog_category: number | null }) =>
     api.post('/products/catalog-categories/assign/', data),
+  excludeFromSync: (product_ids: number[], exclude: boolean) =>
+    api.post('/products/exclude/', { product_ids, exclude }),
+  bulkDelete: (product_ids: number[]) =>
+    api.delete('/products/bulk-delete/', { data: { product_ids } }),
   reviewCatalogClassification: (productId: number, action: 'approve' | 'reject') =>
     api.post(`/products/${productId}/catalog-classification/${action}/`),
   reviewFitment: (productId: number, fitmentId: number, action: 'approve' | 'reject') =>
@@ -306,6 +310,8 @@ export const listingApi = {
     api.patch(`/listings/${id}/`, data),
   bulkPlacement: (data: Record<string, unknown>) =>
     api.post('/listings/bulk-placement/', data),
+  bulkAction: (data: Record<string, unknown>) =>
+    api.post('/listings/bulk-actions/', data),
 };
 
 // Logs
@@ -352,6 +358,7 @@ export const imageApi = {
   },
   bulkSearch: (productIds: number[]) =>
     api.post('/images/bulk-search/', { product_ids: productIds }),
+  getQuota: () => api.get('/images/quota/'),
 };
 
 // Webhooks

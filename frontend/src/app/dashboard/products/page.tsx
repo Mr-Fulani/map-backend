@@ -11,6 +11,14 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/button';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -28,6 +36,9 @@ import {
   Sparkles,
   Database,
   Settings,
+  ArrowUp,
+  ArrowDown,
+  ChevronsUpDown,
 } from 'lucide-react';
 import { getCategoryPlaceholder } from '@/lib/category-placeholder';
 import { useDebounce } from '@/lib/hooks';
@@ -47,6 +58,8 @@ interface Product {
   price: string;
   stock_qty: number;
   export_enabled: boolean;
+  sync_excluded: boolean;
+  listing_status: string | null;
   sync_at: string | null;
   images_count: number;
   primary_thumb_url: string;
@@ -174,6 +187,64 @@ function bulkStatusText(job: BulkActionJob) {
   return 'Постановка задач выполняется';
 }
 
+const LISTING_STATUS_LABEL: Record<string, string> = {
+  active: 'Активен',
+  pending: 'Модерация',
+  queued: 'В очереди',
+  requires_review: 'На проверке',
+  limit_reached: 'Лимит',
+  rejected: 'Отклонён',
+  draft: 'Черновик',
+  archived: 'Архив',
+  deleted: 'Удалён',
+};
+
+type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
+
+function listingBadgeVariant(status: string | null): BadgeVariant {
+  if (!status) return 'secondary';
+  if (status === 'active') return 'default';
+  if (status === 'rejected' || status === 'deleted') return 'destructive';
+  return 'outline';
+}
+
+function SortHeader({
+  field,
+  ordering,
+  onSort,
+  className,
+  children,
+}: {
+  field: string;
+  ordering: string;
+  onSort: (next: string) => void;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const isAsc = ordering === field;
+  const isDesc = ordering === `-${field}`;
+  const icon = isAsc ? <ArrowUp className="h-3 w-3" /> : isDesc ? <ArrowDown className="h-3 w-3" /> : <ChevronsUpDown className="h-3 w-3 opacity-40" />;
+
+  function handleClick() {
+    if (!isAsc && !isDesc) onSort(field);
+    else if (isAsc) onSort(`-${field}`);
+    else onSort('');
+  }
+
+  return (
+    <th className={className}>
+      <button
+        type="button"
+        onClick={handleClick}
+        className="inline-flex items-center gap-1 hover:text-foreground"
+      >
+        {children}
+        {icon}
+      </button>
+    </th>
+  );
+}
+
 function pageFromSearchParams(searchParams: { get: (name: string) => string | null }) {
   const pageParam = Number(searchParams.get('page'));
   return Number.isInteger(pageParam) && pageParam > 0 ? pageParam : 1;
@@ -186,15 +257,23 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [search, setSearch] = useState('');
-  const [exportFilter, setExportFilter] = useState<string>('');
+  const [ordering, setOrdering] = useState('');
+  const [listingFilter, setListingFilter] = useState<string>('');
   const [needsReviewFilter, setNeedsReviewFilter] = useState(false);
+  const [excludedFilter, setExcludedFilter] = useState(false);
   const [catalogDomainFilter, setCatalogDomainFilter] = useState<string>('');
   const [catalogCategoryFilter, setCatalogCategoryFilter] = useState<string>('');
   const [catalogCategories, setCatalogCategories] = useState<TenantCatalogCategory[]>([]);
+  const [categorySearch, setCategorySearch] = useState('');
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const categorySearchRef = useRef<HTMLDivElement>(null);
   const [catalogDomains, setCatalogDomains] = useState<CatalogDomain[]>([]);
   const [categoryAssignValue, setCategoryAssignValue] = useState<string>('');
   const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
   const [categoryAssignError, setCategoryAssignError] = useState('');
+  const [excludeLoading, setExcludeLoading] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteLoading, setDeleteLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [bulkLoading, setBulkLoading] = useState(false);
@@ -232,8 +311,10 @@ export default function ProductsPage() {
     try {
       const params: Record<string, unknown> = { page };
       if (debouncedSearch) params.search = debouncedSearch;
-      if (exportFilter) params.export_enabled = exportFilter;
+      if (ordering) params.ordering = ordering;
+      if (listingFilter) params.listing_filter = listingFilter;
       if (needsReviewFilter) params.needs_review = 'true';
+      if (excludedFilter) params.sync_excluded = 'true';
       if (catalogDomainFilter) params.catalog_domain = catalogDomainFilter;
       if (catalogCategoryFilter) params.catalog_category = catalogCategoryFilter;
 
@@ -245,13 +326,15 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedSearch, exportFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [page, debouncedSearch, ordering, listingFilter, needsReviewFilter, excludedFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   const loadCatalogCategories = useCallback(async () => {
     try {
       const res = await productApi.catalogCategories();
       const categories = (res.data.data ?? []) as TenantCatalogCategory[];
-      setCatalogCategories(categories.filter((category) => category.is_active));
+      const active = categories.filter((category) => category.is_active);
+      active.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      setCatalogCategories(active);
     } catch {
       setCatalogCategories([]);
     }
@@ -275,7 +358,7 @@ export default function ProductsPage() {
 
     updatePage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, exportFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [debouncedSearch, ordering, listingFilter, needsReviewFilter, excludedFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   useEffect(() => {
     load();
@@ -288,7 +371,32 @@ export default function ProductsPage() {
 
   useEffect(() => {
     setSelectedIds([]);
-  }, [page, debouncedSearch, exportFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [page, debouncedSearch, ordering, listingFilter, needsReviewFilter, excludedFilter, catalogDomainFilter, catalogCategoryFilter]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (categorySearchRef.current && !categorySearchRef.current.contains(e.target as Node)) {
+        setCategoryDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const matchingCategories = categorySearch.trim()
+    ? catalogCategories
+        .filter((c) => c.name.toLowerCase().includes(categorySearch.toLowerCase()))
+        .sort((a, b) => {
+          const q = categorySearch.toLowerCase();
+          const aExact = a.name.toLowerCase() === q;
+          const bExact = b.name.toLowerCase() === q;
+          if (aExact !== bExact) return aExact ? -1 : 1;
+          const aStarts = a.name.toLowerCase().startsWith(q);
+          const bStarts = b.name.toLowerCase().startsWith(q);
+          if (aStarts !== bStarts) return aStarts ? -1 : 1;
+          return 0;
+        })
+    : [];
 
   const selectedOnPage = products.filter((product) => selectedIds.includes(product.id));
   const allOnPageSelected = products.length > 0 && selectedOnPage.length === products.length;
@@ -400,6 +508,30 @@ export default function ProductsPage() {
     }
   };
 
+  const confirmBulkDelete = async () => {
+    setDeleteLoading(true);
+    try {
+      await productApi.bulkDelete(selectedIds);
+      setDeleteDialogOpen(false);
+      setSelectedIds([]);
+      await load();
+    } finally {
+      setDeleteLoading(false);
+    }
+  };
+
+  const excludeFromSync = async (exclude: boolean) => {
+    if (selectedIds.length === 0) return;
+    setExcludeLoading(true);
+    try {
+      await productApi.excludeFromSync(selectedIds, exclude);
+      setSelectedIds([]);
+      await load();
+    } finally {
+      setExcludeLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (!bulkJob?.id || ['success', 'failed', 'cancelled'].includes(bulkJob.status)) {
       return;
@@ -424,8 +556,9 @@ export default function ProductsPage() {
   }, [bulkJob, load]);
 
   return (
+    <>
     <div className="space-y-4">
-      <div>
+      <div className="min-w-0">
         <h1 className="text-2xl font-bold tracking-tight">Каталог товаров</h1>
         <p className="text-muted-foreground">
           {meta ? `${meta.total.toLocaleString('ru-RU')} товаров` : 'Загрузка...'}
@@ -433,7 +566,7 @@ export default function ProductsPage() {
       </div>
 
       {/* Фильтры */}
-      <div className="flex flex-col gap-3 sm:flex-row">
+      <div className="flex flex-col gap-3 xl:flex-row">
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -443,17 +576,18 @@ export default function ProductsPage() {
             className="pl-9"
           />
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           {[
             { value: '', label: 'Все' },
-            { value: 'true', label: 'Выгружается' },
-            { value: 'false', label: 'Не выгружается' },
+            { value: 'listed', label: 'Залистен' },
+            { value: 'not_listed', label: 'Не залистен' },
+            { value: 'active', label: 'Активен' },
           ].map((f) => (
             <Button
               key={f.value}
               size="sm"
-              variant={exportFilter === f.value ? 'default' : 'outline'}
-              onClick={() => setExportFilter(f.value)}
+              variant={listingFilter === f.value ? 'default' : 'outline'}
+              onClick={() => setListingFilter(listingFilter === f.value && f.value !== '' ? '' : f.value)}
             >
               {f.label}
             </Button>
@@ -464,6 +598,13 @@ export default function ProductsPage() {
             onClick={() => setNeedsReviewFilter((value) => !value)}
           >
             На проверке
+          </Button>
+          <Button
+            size="sm"
+            variant={excludedFilter ? 'default' : 'outline'}
+            onClick={() => setExcludedFilter((value) => !value)}
+          >
+            Исключён
           </Button>
         </div>
       </div>
@@ -501,22 +642,60 @@ export default function ProductsPage() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <span className="text-xs font-medium text-muted-foreground">
           {tenant?.name ? `Категория ${tenant.name}` : 'Категория каталога'}
         </span>
-        <select
-          value={catalogCategoryFilter}
-          onChange={(event) => setCatalogCategoryFilter(event.target.value)}
-          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-        >
-          <option value="">Все категории</option>
-          {catalogCategories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-        </select>
+        <div className="flex w-full min-w-0 gap-1 sm:w-auto">
+          <div className="relative min-w-0 flex-1 sm:flex-none" ref={categorySearchRef}>
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="h-9 w-full pl-7 text-sm sm:w-44"
+              placeholder="Поиск категории..."
+              value={categorySearch}
+              onChange={(e) => {
+                setCategorySearch(e.target.value);
+                setCategoryDropdownOpen(true);
+                if (!e.target.value.trim()) setCatalogCategoryFilter('');
+              }}
+              onFocus={() => categorySearch && setCategoryDropdownOpen(true)}
+            />
+            {categoryDropdownOpen && matchingCategories.length > 0 && (
+              <div className="absolute left-0 top-full z-20 mt-1 max-h-52 w-full min-w-[200px] overflow-y-auto rounded-md border bg-background shadow-md">
+                {matchingCategories.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-accent"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setCatalogCategoryFilter(String(c.id));
+                      setCategorySearch(c.name);
+                      setCategoryDropdownOpen(false);
+                    }}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <select
+            value={catalogCategoryFilter}
+            onChange={(event) => {
+              setCatalogCategoryFilter(event.target.value);
+              setCategorySearch('');
+            }}
+            className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Все категории</option>
+            {catalogCategories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {selectedIds.length > 0 && (
@@ -532,7 +711,7 @@ export default function ProductsPage() {
               <p className="mt-1 text-xs text-destructive">{categoryAssignError}</p>
             )}
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             <Button size="sm" variant="outline" onClick={() => setSelectedIds([])}>
               Снять выбор
             </Button>
@@ -580,6 +759,26 @@ export default function ProductsPage() {
                     Снять категорию
                   </Button>
                 </div>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  onClick={() => excludeFromSync(true)}
+                  disabled={excludeLoading}
+                  className="text-destructive focus:text-destructive"
+                >
+                  Исключить из синхронизации
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => excludeFromSync(false)}
+                  disabled={excludeLoading}
+                >
+                  Восстановить синхронизацию
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => setDeleteDialogOpen(true)}
+                  className="text-destructive focus:text-destructive"
+                >
+                  Удалить безвозвратно
+                </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem
                   onClick={() => runBulkEnrichment('classify_catalog_domain')}
@@ -643,7 +842,127 @@ export default function ProductsPage() {
       )}
 
       {/* Таблица */}
-      <div className="overflow-x-auto rounded-lg border">
+      <div className="grid gap-3 lg:hidden">
+        {loading
+          ? Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="rounded-lg border p-3">
+                <div className="flex gap-3">
+                  <Skeleton className="h-14 w-14 shrink-0 rounded-md" />
+                  <div className="min-w-0 flex-1 space-y-2">
+                    <Skeleton className="h-4 w-28" />
+                    <Skeleton className="h-4 w-full" />
+                    <Skeleton className="h-4 w-2/3" />
+                  </div>
+                </div>
+              </div>
+            ))
+          : products.length === 0
+            ? (
+              <div className="rounded-lg border px-4 py-12 text-center text-muted-foreground">
+                <Package className="mx-auto mb-3 h-10 w-10 opacity-30" />
+                {search ? 'Ничего не найдено' : 'Товаров пока нет'}
+              </div>
+            )
+            : products.map((p) => (
+              <div key={p.id} className="rounded-lg border bg-card p-3">
+                <div className="flex items-start gap-3">
+                  <input
+                    type="checkbox"
+                    aria-label={`Выбрать товар ${p.article}`}
+                    checked={selectedIds.includes(p.id)}
+                    onChange={() => toggleProduct(p.id)}
+                    className="mt-5 h-4 w-4 shrink-0 rounded border-muted-foreground"
+                  />
+                  <Link
+                    href={`/dashboard/products/${p.id}?returnTo=${encodeURIComponent(currentListHref)}`}
+                    className="shrink-0"
+                  >
+                    <div className="relative h-14 w-14 overflow-hidden rounded-md border bg-muted">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={p.primary_thumb_url || getCategoryPlaceholder(p.category_1c ?? '', p.name)}
+                        alt=""
+                        className="h-full w-full object-cover"
+                      />
+                      {p.images_count > 0 && (
+                        <span className="absolute bottom-0 right-0 rounded-tl bg-black/60 px-1 py-0.5 text-[10px] leading-none text-white">
+                          {p.images_count}
+                        </span>
+                      )}
+                    </div>
+                  </Link>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <Link
+                        href={`/dashboard/products/${p.id}?returnTo=${encodeURIComponent(currentListHref)}`}
+                        className="min-w-0 break-words text-sm font-medium leading-5 hover:underline"
+                      >
+                        {p.name}
+                      </Link>
+                      <div className="flex shrink-0 gap-1">
+                        {p.sync_excluded && (
+                          <Badge variant="outline" className="border-destructive/50 text-destructive">
+                            Исключён
+                          </Badge>
+                        )}
+                        <Badge variant={listingBadgeVariant(p.listing_status)}>
+                          {p.listing_status ? LISTING_STATUS_LABEL[p.listing_status] ?? p.listing_status : 'Не залистен'}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+                      <Link
+                        href={`/dashboard/products/${p.id}?returnTo=${encodeURIComponent(currentListHref)}`}
+                        className="font-mono font-medium text-primary hover:underline"
+                      >
+                        {p.article}
+                      </Link>
+                      {p.brand && <span className="break-words">{p.brand}</span>}
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      <Badge
+                        variant={p.ai_status === 'ready' ? 'default' : 'outline'}
+                        className="gap-1 whitespace-nowrap"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        AI {p.ai_status === 'ready' ? 'готов' : 'нет'}
+                      </Badge>
+                      <Badge
+                        variant={ENRICHMENT_VARIANTS[p.enrichment_status] ?? 'outline'}
+                        className="gap-1 whitespace-nowrap"
+                      >
+                        <Database className="h-3 w-3" />
+                        {ENRICHMENT_LABELS[p.enrichment_status] ?? p.enrichment_status}
+                      </Badge>
+                      <Badge
+                        variant={CATALOG_DOMAIN_VARIANTS[p.catalog_classification?.domain ?? 'unknown'] ?? 'outline'}
+                        className="whitespace-nowrap"
+                      >
+                        {catalogDomainLabel(p.catalog_classification?.domain ?? 'unknown')}
+                      </Badge>
+                    </div>
+                    <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <p className="text-xs text-muted-foreground">Цена</p>
+                        <p className="font-medium">{Number(p.price).toLocaleString('ru-RU')} ₽</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-muted-foreground">Остаток</p>
+                        <p className={p.stock_qty === 0 ? 'font-medium text-destructive' : 'font-medium'}>
+                          {p.stock_qty}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                      {p.catalog_category?.name || p.category_1c || 'Без категории'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-lg border lg:block">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b bg-muted/50 text-left text-muted-foreground">
@@ -661,10 +980,10 @@ export default function ProductsPage() {
               <th className="px-4 py-3 font-medium">Название</th>
               <th className="hidden px-4 py-3 font-medium md:table-cell">Бренд</th>
               <th className="hidden px-4 py-3 font-medium lg:table-cell">Категория</th>
-              <th className="px-4 py-3 font-medium text-center">Готовность</th>
-              <th className="px-4 py-3 font-medium text-right">Цена</th>
-              <th className="px-4 py-3 font-medium text-right">Остаток</th>
-              <th className="px-4 py-3 font-medium text-center">Выгрузка</th>
+              <SortHeader field="ai_status" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-center">Готовность</SortHeader>
+              <SortHeader field="price" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-right">Цена</SortHeader>
+              <SortHeader field="stock_qty" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-right">Остаток</SortHeader>
+              <SortHeader field="listing_status" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-center">Листинг</SortHeader>
             </tr>
           </thead>
           <tbody>
@@ -690,7 +1009,7 @@ export default function ProductsPage() {
                 : products.map((p) => (
                   <tr
                     key={p.id}
-                    className="border-b transition-colors hover:bg-muted/30"
+                    className={`border-b transition-colors hover:bg-muted/30 ${p.sync_excluded ? 'opacity-60' : ''}`}
                   >
                     <td className="px-4 py-3">
                       <input
@@ -728,6 +1047,13 @@ export default function ProductsPage() {
                       >
                         {p.article}
                       </Link>
+                      {p.sync_excluded && (
+                        <div className="mt-0.5">
+                          <Badge variant="outline" className="border-destructive/50 text-xs text-destructive">
+                            Исключён
+                          </Badge>
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <Link
@@ -788,8 +1114,8 @@ export default function ProductsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <Badge variant={p.export_enabled ? 'default' : 'secondary'}>
-                        {p.export_enabled ? 'Да' : 'Нет'}
+                      <Badge variant={listingBadgeVariant(p.listing_status)}>
+                        {p.listing_status ? LISTING_STATUS_LABEL[p.listing_status] ?? p.listing_status : 'Не залистен'}
                       </Badge>
                     </td>
                   </tr>
@@ -800,7 +1126,7 @@ export default function ProductsPage() {
 
       {/* Пагинация */}
       {meta && meta.total > meta.page_size && (
-        <div className="flex items-center justify-between">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-sm text-muted-foreground">
             Страница {meta.page} из {Math.ceil(meta.total / meta.page_size)}
           </p>
@@ -827,5 +1153,34 @@ export default function ProductsPage() {
         </div>
       )}
     </div>
+    <Dialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Удалить товары безвозвратно?</DialogTitle>
+          <DialogDescription>
+            Будет удалено товаров: <strong>{selectedIds.length}</strong>.
+            {selectedIds.some((id) => !products.find((p) => p.id === id)?.sync_excluded) && (
+              <span className="mt-2 block rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+                Часть выбранных товаров не исключена из синхронизации — они могут вернуться при следующем обновлении из 1С/CSV.
+              </span>
+            )}
+            {products.filter((p) => selectedIds.includes(p.id)).every((p) => p.sync_excluded) && (
+              <span className="mt-2 block rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800">
+                Товары исключены из синхронизации, но если они есть в 1С/CSV — вернутся при следующем обновлении.
+              </span>
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setDeleteDialogOpen(false)} disabled={deleteLoading}>
+            Отмена
+          </Button>
+          <Button variant="destructive" onClick={confirmBulkDelete} disabled={deleteLoading}>
+            {deleteLoading ? 'Удаляем...' : 'Удалить'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

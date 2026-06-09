@@ -7,6 +7,7 @@ from django.utils.timezone import now
 
 from apps.datasources.models import DataSourceConnection
 from apps.datasources.registry import get_adapter
+from apps.products.models import Product
 from apps.products.services import (
     ProductBulkActionService, ProductEnrichmentService, ProductService,
 )
@@ -46,8 +47,12 @@ def import_from_datasource(self, connection_id: int):
             if not items:
                 break
             for item in items:
-                _, status = ProductService.upsert_from_source(tenant, connection, item)
+                product, status, change_type = ProductService.upsert_from_source(
+                    tenant, connection, item,
+                )
                 counts[status] += 1
+                if status == 'updated' and change_type:
+                    sync_product_listings_task.delay(product.pk, change_type)
             offset += len(items)
             if len(items) < limit:
                 break
@@ -70,6 +75,76 @@ def import_from_datasource(self, connection_id: int):
         connection.save(update_fields=['last_sync_status', 'last_error'])
         _write_sync_log(tenant, 'datasource_import', 'error', str(exc))
         raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='sync_import')
+def sync_product_listings_task(self, product_id: int, change_type: str):
+    """
+    Распространяет изменение товара из источника данных на активные листинги.
+
+    Стратегия по типу изменения:
+    - price_only  → обновить price_on_listing во всех активных листингах, вызвать
+                    update_price_task (REST, без фида), уведомить админа в Telegram.
+    - stock_only  → если stock_qty == 0: снять с публикации все активные листинги
+                    и уведомить; если > 0: уведомить о возврате товара в наличие.
+    - content     → обновить фид через update_listing_task для каждого листинга.
+    - category    → то же, что content.
+    """
+    from apps.marketplaces.models import Listing
+    from apps.marketplaces.tasks import update_listing_task, update_price_task, unpublish_listing_task
+    from apps.notifications.services import LEVEL_ERROR, LEVEL_SUCCESS
+    from apps.notifications.tasks import send_notification_task
+
+    try:
+        product = Product.objects.select_related('tenant').get(pk=product_id)
+    except Product.DoesNotExist:
+        return
+
+    tenant = product.tenant
+    listings = list(
+        Listing.objects.filter(
+            product=product,
+            tenant=tenant,
+            status=Listing.STATUS_ACTIVE,
+        ).select_related('account')
+    )
+
+    if change_type == 'price_only':
+        for listing in listings:
+            listing.price_on_listing = product.price
+            listing.save(update_fields=['price_on_listing'])
+            update_price_task.delay(listing.pk)
+        if listings:
+            msg = (
+                f'Цена изменена: «{product.name}» ({product.brand}) → {product.price} ₽. '
+                f'Листингов обновлено: {len(listings)}.'
+            )
+            send_notification_task.delay(tenant.pk, LEVEL_ERROR, msg)
+
+    elif change_type == 'stock_only':
+        if product.stock_qty == 0:
+            for listing in listings:
+                listing.status = Listing.STATUS_ARCHIVED
+                listing.save(update_fields=['status'])
+                unpublish_listing_task.delay(listing.pk)
+            if listings:
+                msg = (
+                    f'Товар закончился: «{product.name}» ({product.brand}) — 0 шт. '
+                    f'Снято листингов: {len(listings)}.'
+                )
+                send_notification_task.delay(tenant.pk, LEVEL_ERROR, msg)
+        else:
+            msg = (
+                f'Товар вернулся в наличие: «{product.name}» ({product.brand}) — '
+                f'{product.stock_qty} шт. При необходимости создайте листинг.'
+            )
+            send_notification_task.delay(tenant.pk, LEVEL_SUCCESS, msg)
+
+    elif change_type in ('content', 'category'):
+        for listing in listings:
+            listing.price_on_listing = product.price
+            listing.save(update_fields=['price_on_listing'])
+            update_listing_task.delay(listing.pk)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60,
@@ -129,7 +204,7 @@ def _download_enrichment_images(product, image_urls: list[str], source_id: str =
 
     saved = 0
     pipeline = PhotoUploadPipeline()
-    for url in _clean_enrichment_image_urls(image_urls)[:10]:
+    for url in _clean_enrichment_image_urls(image_urls):
         image = pipeline.process(
             url,
             product,
@@ -165,6 +240,7 @@ def _enrichment_image_identity(url: str) -> str:
         or 'brandlogos/' in path
         or path.endswith('.gif')
         or '/other/mask.' in full
+        or 'placeholder' in path
     ):
         return ''
     if 'tachka.ru' in parsed.netloc and '/brand/' in path:

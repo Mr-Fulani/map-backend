@@ -5,6 +5,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useState } from 'react';
 import { Moon, Sun, LogOut, User, Building2, Menu } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { useAuth } from '@/lib/auth-context';
@@ -29,6 +30,7 @@ import { MobileSidebar } from './mobile-sidebar';
 export function Header() {
   const { theme, setTheme } = useTheme();
   const { user, tenant, role, subscription, logout } = useAuth();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const initials = user?.email
     ? user.email.substring(0, 2).toUpperCase()
@@ -49,28 +51,28 @@ export function Header() {
         : '';
 
   return (
-    <header className="flex h-14 items-center justify-between border-b bg-card px-4 lg:px-6">
+    <header className="flex h-14 min-w-0 items-center justify-between gap-2 border-b bg-card px-3 sm:px-4 lg:px-6">
       {/* Left: Mobile menu + Tenant */}
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         {/* Mobile menu */}
-        <Sheet>
+        <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
           <SheetTrigger asChild>
             <Button variant="ghost" size="icon" className="lg:hidden">
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
           <SheetContent side="left" className="w-[240px] p-0">
-            <MobileSidebar />
+            <MobileSidebar onNavigate={() => setMobileMenuOpen(false)} />
           </SheetContent>
         </Sheet>
 
         {/* Tenant info */}
         {tenant && (
-          <div className="flex items-center gap-2">
-            <Building2 className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">{tenant.name}</span>
+          <div className="flex min-w-0 items-center gap-2">
+            <Building2 className="hidden h-4 w-4 shrink-0 text-muted-foreground sm:block" />
+            <span className="min-w-0 truncate text-sm font-medium">{tenant.name}</span>
             {subscription && (
-              <Badge variant={planBadgeVariant} className="text-xs">
+              <Badge variant={planBadgeVariant} className="hidden shrink-0 text-xs sm:inline-flex">
                 {subscription.plan_name}{planStatusLabel}
               </Badge>
             )}
@@ -79,7 +81,7 @@ export function Header() {
       </div>
 
       {/* Right: Theme + User */}
-      <div className="flex items-center gap-2">
+      <div className="flex shrink-0 items-center gap-1 sm:gap-2">
         {/* Theme toggle */}
         <Button
           variant="ghost"

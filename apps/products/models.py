@@ -220,6 +220,7 @@ class Product(TimestampedModel):
     stock_qty = models.PositiveIntegerField(default=0, verbose_name='Остаток на складе')
     warehouse = models.CharField(max_length=200, blank=True, verbose_name='Склад')
     export_enabled = models.BooleanField(default=False, verbose_name='Экспорт на Avito')
+    sync_excluded = models.BooleanField(default=False, verbose_name='Исключён из синхронизации')
     sync_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата синхронизации')
     hash_1c = models.CharField(max_length=64, blank=True, verbose_name='Хэш данных из 1С')
     image_status = models.CharField(
@@ -348,7 +349,7 @@ class ProductImage(models.Model):
     )
     s3_key = models.CharField(max_length=500, verbose_name='Ключ S3')
     s3_key_thumb = models.CharField(max_length=500, blank=True, verbose_name='Ключ S3 (миниатюра)')
-    url_source = models.URLField(blank=True, verbose_name='Исходный URL изображения')
+    url_source = models.URLField(blank=True, max_length=2000, verbose_name='Исходный URL изображения')
     sha256 = models.CharField(max_length=64, blank=True, verbose_name='SHA256')
     position = models.PositiveSmallIntegerField(default=0, verbose_name='Позиция')
     uploaded_at = models.DateTimeField(auto_now_add=True, verbose_name='Загружено')

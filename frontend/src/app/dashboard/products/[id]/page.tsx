@@ -63,6 +63,7 @@ interface ProductDetail {
   fitments: VehicleFitment[];
   enrichment_facts: ProductEnrichmentFact[];
   latest_parse_job: ProductParseJob | null;
+  parse_jobs_summary: ProductParseJob[];
   catalog_category: TenantCatalogCategory | null;
   catalog_classification: ProductCatalogClassification | null;
 }
@@ -295,7 +296,7 @@ export default function ProductDetailPage() {
             if (saved_count > 0) {
               toast.success(`Найдено фото: ${saved_count}`);
             } else {
-              toast.warning('Фото не найдены — попробуйте загрузить вручную');
+              toast.warning('Фото не найдены — сервис поиска ограничил запросы. Попробуйте через минуту или загрузите вручную.');
             }
             loadImages();
           } else {
@@ -381,7 +382,7 @@ export default function ProductDetailPage() {
   async function startEnrichment(generateAfter = false) {
     setActionLoading(generateAfter ? 'enrich-generate' : 'enrich');
     try {
-      const res = await productApi.parse(Number(id), 'tachka', generateAfter);
+      const res = await productApi.parse(Number(id), '', generateAfter);
       setParseJobId(res.data.data.job_id);
       setParseThenGenerate(generateAfter);
       toast.info(generateAfter ? 'Запущено: обогащение, затем генерация описания' : 'Обогащение запущено');
@@ -644,23 +645,32 @@ export default function ProductDetailPage() {
                     Достоверные факты из внешних каталогов для описания, OEM и применяемости.
                   </p>
                 </div>
-                <Badge variant={product.latest_parse_job?.status === 'not_found' ? 'outline' : 'secondary'}>
-                  {product.latest_parse_job
-                    ? ENRICHMENT_STATUS_LABELS[product.latest_parse_job.status] ?? product.latest_parse_job.status
-                    : 'Не запускалось'}
-                </Badge>
+                <div className="flex flex-wrap gap-1">
+                  {(product.parse_jobs_summary ?? (product.latest_parse_job ? [product.latest_parse_job] : [])).map((job) => {
+                    const ok = job.status === 'success' || job.status === 'need_review';
+                    return (
+                      <Badge key={job.source_id} variant={ok ? 'secondary' : 'outline'} className="text-xs">
+                        {job.source_id.charAt(0).toUpperCase() + job.source_id.slice(1)}:{' '}
+                        {ENRICHMENT_STATUS_LABELS[job.status] ?? job.status}
+                      </Badge>
+                    );
+                  })}
+                  {!product.latest_parse_job && (
+                    <Badge variant="outline">Не запускалось</Badge>
+                  )}
+                </div>
               </div>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent className="space-y-4 pt-4 sm:pt-5">
               <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                 {product.latest_parse_job && (
                   <span>
                     Последний запуск: {new Date(product.latest_parse_job.created_at).toLocaleString('ru-RU')}
                   </span>
                 )}
-                {product.latest_parse_job?.source_url && (
+                {(product.parse_jobs_summary ?? []).find((j) => j.source_url) && (
                   <a
-                    href={product.latest_parse_job.source_url}
+                    href={(product.parse_jobs_summary ?? []).find((j) => j.source_url)!.source_url}
                     target="_blank"
                     rel="noreferrer"
                     className="text-primary hover:underline"
@@ -670,11 +680,13 @@ export default function ProductDetailPage() {
                 )}
               </div>
 
-              {product.latest_parse_job?.error_message && (
-                <p className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">
-                  {product.latest_parse_job.error_message}
-                </p>
-              )}
+              {(product.parse_jobs_summary ?? (product.latest_parse_job ? [product.latest_parse_job] : []))
+                .filter((j) => j.error_message)
+                .map((job) => (
+                  <p key={job.source_id} className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">
+                    <span className="font-medium capitalize">{job.source_id}:</span> {job.error_message}
+                  </p>
+                ))}
 
               {product.attributes.length === 0
                 && product.cross_codes.length === 0
@@ -869,6 +881,17 @@ export default function ProductDetailPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
+              {searching && (
+                <div className="mb-4 flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+                  <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
+                  <div>
+                    <p className="font-medium">Идёт поиск фотографий...</p>
+                    <p className="mt-0.5 text-xs opacity-80">
+                      Поиск может занять до 30 секунд — сервисы иногда ограничивают запросы, задача делает повторные попытки автоматически. Не нажимайте кнопку повторно.
+                    </p>
+                  </div>
+                </div>
+              )}
               {imagesLoading ? (
                 <div className="grid grid-cols-3 gap-2 sm:grid-cols-4">
                   {Array.from({ length: 4 }).map((_, i) => (
@@ -879,12 +902,6 @@ export default function ProductDetailPage() {
                 <div className="flex flex-col items-center gap-2 py-8 text-center text-muted-foreground">
                   <ImageOff className="h-8 w-8 opacity-30" />
                   <p className="text-sm">Фотографии не загружены</p>
-                  {searching && (
-                    <p className="text-xs flex items-center gap-1">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Идёт поиск...
-                    </p>
-                  )}
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">

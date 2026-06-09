@@ -3,6 +3,7 @@ from django.urls import path
 from apps.marketplaces.views import (
     ListingApproveView,
     ListingArchiveView,
+    ListingBulkActionView,
     ListingBulkPlacementView,
     ListingCheckStatusView,
     ListingDeleteView,
@@ -14,6 +15,7 @@ from apps.marketplaces.views import (
 
 urlpatterns = [
     path('', ListingListView.as_view(), name='listing-list'),
+    path('bulk-actions/', ListingBulkActionView.as_view(), name='listing-bulk-actions'),
     path('bulk-placement/', ListingBulkPlacementView.as_view(), name='listing-bulk-placement'),
     path('<int:pk>/', ListingDetailView.as_view(), name='listing-detail'),
     path('<int:pk>/approve/', ListingApproveView.as_view(), name='listing-approve'),

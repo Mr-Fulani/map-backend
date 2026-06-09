@@ -168,9 +168,10 @@ class TelegramBotWebhookView(APIView):
         # Верификация через секрет, который мы указываем при регистрации webhook в Telegram
         secret = settings.TELEGRAM_BOT_TOKEN
         header_secret = request.headers.get('X-Telegram-Bot-Api-Secret-Token', '')
-        # Telegram отправляет в этом заголовке значение из setWebhook(secret_token=...)
-        # Используем первые 16 символов токена как secret_token
-        expected = secret[:16] if secret else ''
+        # Токен бота имеет вид "12345:ABCdef..." — берём часть после ":",
+        # она всегда состоит только из допустимых символов.
+        # Должно совпадать со значением из setup_telegram_webhook.
+        expected = secret.split(':')[-1][:32] if secret else ''
         if expected and header_secret != expected:
             return Response(status=status.HTTP_403_FORBIDDEN)
 

@@ -76,6 +76,7 @@ class ProductSerializer(serializers.ModelSerializer):
     catalog_classification = ProductCatalogClassificationSerializer(read_only=True)
     catalog_category = TenantCatalogCategorySerializer(read_only=True)
     brand_ref_name = serializers.CharField(source='brand_ref.name', read_only=True)
+    listing_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -83,9 +84,10 @@ class ProductSerializer(serializers.ModelSerializer):
             'id', 'uuid_1c', 'article', 'name', 'brand', 'brand_ref',
             'brand_ref_name', 'category_1c', 'catalog_category',
             'condition', 'price', 'stock_qty', 'warehouse',
-            'export_enabled', 'sync_at', 'images', 'images_count', 'primary_thumb_url',
+            'export_enabled', 'sync_excluded', 'sync_at', 'images', 'images_count', 'primary_thumb_url',
             'title_ai', 'description_ai', 'ai_status', 'enrichment_status',
             'enrichment_summary', 'catalog_classification',
+            'listing_status',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['uuid_1c', 'brand_ref', 'brand_ref_name', 'sync_at', 'created_at', 'updated_at']
@@ -142,6 +144,18 @@ class ProductSerializer(serializers.ModelSerializer):
             'latest_parse_at': latest_job.created_at if latest_job else None,
         }
 
+    def get_listing_status(self, obj) -> str | None:
+        """Возвращает статус листинга товара (наиболее приоритетный из всех листингов)."""
+        listings = list(getattr(obj, '_prefetched_objects_cache', {}).get('listings', []))
+        if not listings:
+            return None
+        priority = ['active', 'pending', 'queued', 'requires_review', 'limit_reached', 'rejected', 'draft', 'archived', 'deleted']
+        for status_val in priority:
+            for listing in listings:
+                if listing.status == status_val:
+                    return status_val
+        return listings[0].status
+
 
 class ProductAttributeSerializer(serializers.ModelSerializer):
     class Meta:
@@ -194,17 +208,33 @@ class ProductDetailSerializer(ProductSerializer):
     fitments = VehicleFitmentSerializer(many=True, read_only=True)
     enrichment_facts = ProductEnrichmentFactSerializer(many=True, read_only=True)
     latest_parse_job = serializers.SerializerMethodField()
+    parse_jobs_summary = serializers.SerializerMethodField()
 
     class Meta(ProductSerializer.Meta):
         fields = ProductSerializer.Meta.fields + [
-            'attributes', 'cross_codes', 'fitments', 'enrichment_facts', 'latest_parse_job',
+            'attributes', 'cross_codes', 'fitments', 'enrichment_facts',
+            'latest_parse_job', 'parse_jobs_summary',
         ]
 
+    def _jobs_by_priority(self, obj):
+        """Последний job на каждый source_id, отсортированный по убыванию приоритета."""
+        from apps.products.source_policy import PART_SOURCE_POLICIES
+        seen: dict = {}
+        for job in obj.parse_jobs.order_by('-created_at')[:30]:
+            if job.source_id not in seen:
+                seen[job.source_id] = job
+        return sorted(
+            seen.values(),
+            key=lambda j: PART_SOURCE_POLICIES.get(j.source_id, type('_', (), {'priority': 0})()).priority,
+            reverse=True,
+        )
+
     def get_latest_parse_job(self, obj):
-        job = obj.parse_jobs.order_by('-created_at').first()
-        if job is None:
-            return None
-        return ProductParseJobSerializer(job).data
+        jobs = self._jobs_by_priority(obj)
+        return ProductParseJobSerializer(jobs[0]).data if jobs else None
+
+    def get_parse_jobs_summary(self, obj):
+        return [ProductParseJobSerializer(j).data for j in self._jobs_by_priority(obj)]
 
 
 class ProductBulkActionJobSerializer(serializers.ModelSerializer):

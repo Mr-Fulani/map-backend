@@ -66,6 +66,16 @@
   body {
     @apply bg-background text-foreground;
   }
+
+  html,
+  body {
+    @apply min-w-0 overflow-x-hidden;
+  }
+
+  code,
+  pre {
+    @apply max-w-full;
+  }
 }
 
 @layer utilities {

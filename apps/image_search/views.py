@@ -34,7 +34,7 @@ class ImageListView(APIView):
     def get(self, request, product_pk: int):
         """Возвращает все изображения товара, упорядоченные по позиции."""
         product = _get_product(product_pk, request.tenant)
-        images = product.images.order_by('position')
+        images = product.images.exclude(status='rejected').order_by('position')
         return Response({
             'status': 'ok',
             'data': ProductImageSerializer(images, many=True, context={'request': request}).data,
@@ -52,10 +52,11 @@ class ImageDetailView(APIView):
         return Response({'status': 'ok', 'data': ProductImageSerializer(image, context={'request': request}).data})
 
     def delete(self, request, product_pk: int, image_pk: int):
-        """Удаляет изображение и все его S3-файлы (через post_delete сигнал)."""
+        """Помечает изображение как отклонённое (сохраняет sha256/url для дедупликации)."""
         product = _get_product(product_pk, request.tenant)
         image = _get_image(product, image_pk)
-        image.delete()
+        image.status = ProductImage.Status.REJECTED
+        image.save(update_fields=['status'])
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -65,8 +66,11 @@ class ImageSearchView(APIView):
 
     def post(self, request, product_pk: int):
         """Запускает Celery-задачу поиска изображений. Возвращает task_id для опроса статуса."""
+        from apps.image_search.models import ImageSearchCache
         from apps.image_search.tasks import search_images_for_product
         product = get_object_or_404(Product, pk=product_pk, tenant=request.tenant)
+        cache_key = f'img_search:{product.article}:{product.brand}'
+        ImageSearchCache.objects.filter(cache_key=cache_key).delete()
         task = search_images_for_product.delay(product.pk)
         return Response({'status': 'ok', 'data': {'task_id': task.id}})
 
@@ -207,4 +211,32 @@ class BulkSearchView(APIView):
         return Response({
             'status': 'ok',
             'data': {'task_ids': task_ids, 'count': len(task_ids)},
+        })
+
+
+@extend_schema(tags=['Images'])
+class ImageQuotaView(APIView):
+    """GET /api/v1/images/quota/ — текущая квота Brave Search API."""
+
+    def get(self, request):
+        """Возвращает персистентный счётчик запросов Brave за текущий месяц.
+
+        used      — использовано запросов (хранится в БД, не сбрасывается при рестарте)
+        limit     — лимит плана (обновляется из заголовков Brave, default 1000)
+        soft_cap  — порог отключения (800)
+        period    — расчётный месяц YYYY-MM
+        is_paused — True если soft cap достигнут и Brave временно отключён
+        """
+        from apps.image_search.models import BraveQuota
+        quota = BraveQuota.current()
+        return Response({
+            'status': 'ok',
+            'data': {
+                'source': 'brave',
+                'period': quota.period,
+                'used': quota.requests_used,
+                'limit': quota.limit,
+                'soft_cap': BraveQuota.SOFT_CAP,
+                'is_paused': quota.requests_used >= BraveQuota.SOFT_CAP,
+            },
         })

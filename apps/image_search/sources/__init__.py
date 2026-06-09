@@ -5,3 +5,4 @@
 """
 
 from apps.image_search.sources.registry import get_active_sources, register  # noqa: F401
+from apps.image_search.sources import autodoc, brave, duckduckgo, emex, exist  # noqa: F401

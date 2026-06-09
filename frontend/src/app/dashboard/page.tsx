@@ -1,11 +1,11 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { billingApi, logApi } from '@/lib/api';
+import { billingApi, imageApi, logApi } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ListOrdered, Package, Sparkles, AlertTriangle, TrendingUp, XCircle } from 'lucide-react';
+import { ListOrdered, Package, Sparkles, AlertTriangle, TrendingUp, XCircle, Image } from 'lucide-react';
 
 interface UsageData {
   listings: { used: number; limit: number | null };
@@ -89,28 +89,48 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: 'Отменена',
 };
 
+interface BraveQuota {
+  used: number | null;
+  limit: number | null;
+}
+
 export default function DashboardPage() {
   const [usage, setUsage] = useState<UsageData | null>(null);
   const [errorsCount, setErrorsCount] = useState(0);
+  const [braveQuota, setBraveQuota] = useState<BraveQuota>({ used: null, limit: null });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
         const today = new Date().toISOString().slice(0, 10);
-        const [usageRes, logsRes] = await Promise.all([
+        const [usageRes, logsRes, quotaRes] = await Promise.all([
           billingApi.getUsage(),
           logApi.list({ status: 'error', date: today }),
+          imageApi.getQuota(),
         ]);
         setUsage(usageRes.data.data);
         setErrorsCount(logsRes.data.meta?.total ?? 0);
+        setBraveQuota(quotaRes.data.data);
       } catch {
         // показываем нули вместо крэша
       } finally {
         setLoading(false);
       }
     }
+
+    async function refreshQuota() {
+      try {
+        const res = await imageApi.getQuota();
+        setBraveQuota(res.data.data);
+      } catch {
+        // ignore
+      }
+    }
+
     load();
+    const interval = setInterval(refreshQuota, 30_000);
+    return () => clearInterval(interval);
   }, []);
 
   const planLabel = usage?.plan ? (PLAN_LABELS[usage.plan] ?? usage.plan) : null;
@@ -118,13 +138,13 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold tracking-tight">Дашборд</h1>
           <p className="text-muted-foreground">Обзор платформы автоматизации маркетплейсов</p>
         </div>
         {planLabel && subStatus && (
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">{planLabel}</span>
             <Badge variant={STATUS_VARIANTS[subStatus] ?? 'secondary'}>
               {STATUS_LABELS[subStatus] ?? subStatus}
@@ -135,8 +155,8 @@ export default function DashboardPage() {
 
       {/* Баннер grace period */}
       {!loading && subStatus === 'past_due' && (
-        <div className="rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive flex items-center justify-between gap-4">
-          <div>
+        <div className="flex flex-col gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <span className="font-semibold">Триал истёк.</span>{' '}
             {usage?.grace_days_left != null && usage.grace_days_left > 0
               ? `Публикация и AI заблокированы. До полного отключения осталось ${usage.grace_days_left} дн. — оплатите подписку.`
@@ -148,7 +168,7 @@ export default function DashboardPage() {
         </div>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <KpiCard
           title="Активные объявления"
           value={usage?.listings.used ?? 0}
@@ -168,6 +188,13 @@ export default function DashboardPage() {
           value={usage?.ai_credits.used ?? 0}
           limit={usage?.ai_credits.limit}
           icon={<Sparkles className="h-4 w-4" />}
+          loading={loading}
+        />
+        <KpiCard
+          title="Brave запросов (месяц)"
+          value={braveQuota.used ?? 0}
+          limit={null}
+          icon={<Image className="h-4 w-4" />}
           loading={loading}
         />
         <KpiCard

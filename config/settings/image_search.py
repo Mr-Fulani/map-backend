@@ -5,12 +5,12 @@
 
 # Список активных источников (в порядке tier)
 IMAGE_SOURCES_ENABLED = [
-    'duckduckgo',   # Tier 4 — единственный активный источник MVP
+    'brave',        # Tier 3 — Brave Search API, официальный, не банит по IP
+    # 'duckduckgo', # Tier 4 — IP сервера забанен DuckDuckGo
     # 'autodoc',    # Tier 1 — изображения с вотермарком autodoc.ru, непригодны для объявлений
     # 'exist',      # Tier 2 — не проверен (возможно SPA)
     # 'emex',       # Tier 3 — не проверен (возможно SPA)
     # 'tecdoc',     # ← добавить когда будет API-ключ
-    # 'google_cse', # ← добавить когда будет бюджет
 ]
 
 IMAGE_SEARCH_SETTINGS = {

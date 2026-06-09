@@ -19,6 +19,7 @@ from apps.marketplaces.serializers import (
     ListingDetailSerializer,
     ListingFieldsSerializer,
     ListingBulkPlacementSerializer,
+    ListingBulkActionSerializer,
     ListingPlacementSerializer,
     ListingSerializer,
     MarketplaceAccountPlacementSerializer,
@@ -309,6 +310,7 @@ class ListingListView(APIView):
         """Возвращает страницу листингов текущего тенанта."""
         qs = (
             Listing.objects.filter(tenant=request.tenant, account__is_active=True)
+            .exclude(status=Listing.STATUS_DELETED)
             .select_related('product', 'account')
             .order_by('-created_at')
         )
@@ -382,6 +384,17 @@ class ListingBulkPlacementView(APIView):
         }
         updated = ListingService.bulk_update_placement(request.tenant, filters, data)
         return Response({'status': 'ok', 'data': {'updated': updated}})
+
+
+@extend_schema(tags=['Listings'])
+class ListingBulkActionView(APIView):
+    """POST /api/v1/listings/bulk-actions/ — массовые действия с листингами."""
+
+    def post(self, request):
+        serializer = ListingBulkActionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        result = ListingService.bulk_action(request.tenant, serializer.validated_data)
+        return Response({'status': 'ok', 'data': result})
 
 
 @extend_schema(tags=['Listings'])
