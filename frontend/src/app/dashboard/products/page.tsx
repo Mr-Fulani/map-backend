@@ -28,6 +28,9 @@ import {
   Sparkles,
   Database,
   Settings,
+  ArrowUp,
+  ArrowDown,
+  ChevronsUpDown,
 } from 'lucide-react';
 import { getCategoryPlaceholder } from '@/lib/category-placeholder';
 import { useDebounce } from '@/lib/hooks';
@@ -47,6 +50,7 @@ interface Product {
   price: string;
   stock_qty: number;
   export_enabled: boolean;
+  listing_status: string | null;
   sync_at: string | null;
   images_count: number;
   primary_thumb_url: string;
@@ -174,6 +178,64 @@ function bulkStatusText(job: BulkActionJob) {
   return 'Постановка задач выполняется';
 }
 
+const LISTING_STATUS_LABEL: Record<string, string> = {
+  active: 'Активен',
+  pending: 'Модерация',
+  queued: 'В очереди',
+  requires_review: 'На проверке',
+  limit_reached: 'Лимит',
+  rejected: 'Отклонён',
+  draft: 'Черновик',
+  archived: 'Архив',
+  deleted: 'Удалён',
+};
+
+type BadgeVariant = 'default' | 'secondary' | 'destructive' | 'outline';
+
+function listingBadgeVariant(status: string | null): BadgeVariant {
+  if (!status) return 'secondary';
+  if (status === 'active') return 'default';
+  if (status === 'rejected' || status === 'deleted') return 'destructive';
+  return 'outline';
+}
+
+function SortHeader({
+  field,
+  ordering,
+  onSort,
+  className,
+  children,
+}: {
+  field: string;
+  ordering: string;
+  onSort: (next: string) => void;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const isAsc = ordering === field;
+  const isDesc = ordering === `-${field}`;
+  const icon = isAsc ? <ArrowUp className="h-3 w-3" /> : isDesc ? <ArrowDown className="h-3 w-3" /> : <ChevronsUpDown className="h-3 w-3 opacity-40" />;
+
+  function handleClick() {
+    if (!isAsc && !isDesc) onSort(field);
+    else if (isAsc) onSort(`-${field}`);
+    else onSort('');
+  }
+
+  return (
+    <th className={className}>
+      <button
+        type="button"
+        onClick={handleClick}
+        className="inline-flex items-center gap-1 hover:text-foreground"
+      >
+        {children}
+        {icon}
+      </button>
+    </th>
+  );
+}
+
 function pageFromSearchParams(searchParams: { get: (name: string) => string | null }) {
   const pageParam = Number(searchParams.get('page'));
   return Number.isInteger(pageParam) && pageParam > 0 ? pageParam : 1;
@@ -186,11 +248,15 @@ export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [search, setSearch] = useState('');
-  const [exportFilter, setExportFilter] = useState<string>('');
+  const [ordering, setOrdering] = useState('');
+  const [listingFilter, setListingFilter] = useState<string>('');
   const [needsReviewFilter, setNeedsReviewFilter] = useState(false);
   const [catalogDomainFilter, setCatalogDomainFilter] = useState<string>('');
   const [catalogCategoryFilter, setCatalogCategoryFilter] = useState<string>('');
   const [catalogCategories, setCatalogCategories] = useState<TenantCatalogCategory[]>([]);
+  const [categorySearch, setCategorySearch] = useState('');
+  const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
+  const categorySearchRef = useRef<HTMLDivElement>(null);
   const [catalogDomains, setCatalogDomains] = useState<CatalogDomain[]>([]);
   const [categoryAssignValue, setCategoryAssignValue] = useState<string>('');
   const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
@@ -232,7 +298,8 @@ export default function ProductsPage() {
     try {
       const params: Record<string, unknown> = { page };
       if (debouncedSearch) params.search = debouncedSearch;
-      if (exportFilter) params.export_enabled = exportFilter;
+      if (ordering) params.ordering = ordering;
+      if (listingFilter) params.listing_filter = listingFilter;
       if (needsReviewFilter) params.needs_review = 'true';
       if (catalogDomainFilter) params.catalog_domain = catalogDomainFilter;
       if (catalogCategoryFilter) params.catalog_category = catalogCategoryFilter;
@@ -245,13 +312,15 @@ export default function ProductsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, debouncedSearch, exportFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [page, debouncedSearch, ordering, listingFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   const loadCatalogCategories = useCallback(async () => {
     try {
       const res = await productApi.catalogCategories();
       const categories = (res.data.data ?? []) as TenantCatalogCategory[];
-      setCatalogCategories(categories.filter((category) => category.is_active));
+      const active = categories.filter((category) => category.is_active);
+      active.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      setCatalogCategories(active);
     } catch {
       setCatalogCategories([]);
     }
@@ -275,7 +344,7 @@ export default function ProductsPage() {
 
     updatePage(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, exportFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [debouncedSearch, ordering, listingFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   useEffect(() => {
     load();
@@ -288,7 +357,32 @@ export default function ProductsPage() {
 
   useEffect(() => {
     setSelectedIds([]);
-  }, [page, debouncedSearch, exportFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
+  }, [page, debouncedSearch, ordering, listingFilter, needsReviewFilter, catalogDomainFilter, catalogCategoryFilter]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (categorySearchRef.current && !categorySearchRef.current.contains(e.target as Node)) {
+        setCategoryDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const matchingCategories = categorySearch.trim()
+    ? catalogCategories
+        .filter((c) => c.name.toLowerCase().includes(categorySearch.toLowerCase()))
+        .sort((a, b) => {
+          const q = categorySearch.toLowerCase();
+          const aExact = a.name.toLowerCase() === q;
+          const bExact = b.name.toLowerCase() === q;
+          if (aExact !== bExact) return aExact ? -1 : 1;
+          const aStarts = a.name.toLowerCase().startsWith(q);
+          const bStarts = b.name.toLowerCase().startsWith(q);
+          if (aStarts !== bStarts) return aStarts ? -1 : 1;
+          return 0;
+        })
+    : [];
 
   const selectedOnPage = products.filter((product) => selectedIds.includes(product.id));
   const allOnPageSelected = products.length > 0 && selectedOnPage.length === products.length;
@@ -446,14 +540,15 @@ export default function ProductsPage() {
         <div className="flex flex-wrap gap-2">
           {[
             { value: '', label: 'Все' },
-            { value: 'true', label: 'Выгружается' },
-            { value: 'false', label: 'Не выгружается' },
+            { value: 'listed', label: 'Залистен' },
+            { value: 'not_listed', label: 'Не залистен' },
+            { value: 'active', label: 'Активен' },
           ].map((f) => (
             <Button
               key={f.value}
               size="sm"
-              variant={exportFilter === f.value ? 'default' : 'outline'}
-              onClick={() => setExportFilter(f.value)}
+              variant={listingFilter === f.value ? 'default' : 'outline'}
+              onClick={() => setListingFilter(listingFilter === f.value && f.value !== '' ? '' : f.value)}
             >
               {f.label}
             </Button>
@@ -505,18 +600,56 @@ export default function ProductsPage() {
         <span className="text-xs font-medium text-muted-foreground">
           {tenant?.name ? `Категория ${tenant.name}` : 'Категория каталога'}
         </span>
-        <select
-          value={catalogCategoryFilter}
-          onChange={(event) => setCatalogCategoryFilter(event.target.value)}
-          className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm sm:w-auto"
-        >
-          <option value="">Все категории</option>
-          {catalogCategories.map((category) => (
-            <option key={category.id} value={category.id}>
-              {category.name}
-            </option>
-          ))}
-        </select>
+        <div className="flex w-full min-w-0 gap-1 sm:w-auto">
+          <div className="relative min-w-0 flex-1 sm:flex-none" ref={categorySearchRef}>
+            <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="h-9 w-full pl-7 text-sm sm:w-44"
+              placeholder="Поиск категории..."
+              value={categorySearch}
+              onChange={(e) => {
+                setCategorySearch(e.target.value);
+                setCategoryDropdownOpen(true);
+                if (!e.target.value.trim()) setCatalogCategoryFilter('');
+              }}
+              onFocus={() => categorySearch && setCategoryDropdownOpen(true)}
+            />
+            {categoryDropdownOpen && matchingCategories.length > 0 && (
+              <div className="absolute left-0 top-full z-20 mt-1 max-h-52 w-full min-w-[200px] overflow-y-auto rounded-md border bg-background shadow-md">
+                {matchingCategories.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className="w-full px-3 py-2 text-left text-sm hover:bg-accent"
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      setCatalogCategoryFilter(String(c.id));
+                      setCategorySearch(c.name);
+                      setCategoryDropdownOpen(false);
+                    }}
+                  >
+                    {c.name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+          <select
+            value={catalogCategoryFilter}
+            onChange={(event) => {
+              setCatalogCategoryFilter(event.target.value);
+              setCategorySearch('');
+            }}
+            className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm"
+          >
+            <option value="">Все категории</option>
+            {catalogCategories.map((category) => (
+              <option key={category.id} value={category.id}>
+                {category.name}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {selectedIds.length > 0 && (
@@ -700,8 +833,8 @@ export default function ProductsPage() {
                       >
                         {p.name}
                       </Link>
-                      <Badge variant={p.export_enabled ? 'default' : 'secondary'} className="shrink-0">
-                        {p.export_enabled ? 'Да' : 'Нет'}
+                      <Badge variant={listingBadgeVariant(p.listing_status)} className="shrink-0">
+                        {p.listing_status ? LISTING_STATUS_LABEL[p.listing_status] ?? p.listing_status : 'Не залистен'}
                       </Badge>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
@@ -774,10 +907,10 @@ export default function ProductsPage() {
               <th className="px-4 py-3 font-medium">Название</th>
               <th className="hidden px-4 py-3 font-medium md:table-cell">Бренд</th>
               <th className="hidden px-4 py-3 font-medium lg:table-cell">Категория</th>
-              <th className="px-4 py-3 font-medium text-center">Готовность</th>
-              <th className="px-4 py-3 font-medium text-right">Цена</th>
-              <th className="px-4 py-3 font-medium text-right">Остаток</th>
-              <th className="px-4 py-3 font-medium text-center">Выгрузка</th>
+              <SortHeader field="ai_status" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-center">Готовность</SortHeader>
+              <SortHeader field="price" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-right">Цена</SortHeader>
+              <SortHeader field="stock_qty" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-right">Остаток</SortHeader>
+              <SortHeader field="listing_status" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-center">Листинг</SortHeader>
             </tr>
           </thead>
           <tbody>
@@ -901,8 +1034,8 @@ export default function ProductsPage() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-center">
-                      <Badge variant={p.export_enabled ? 'default' : 'secondary'}>
-                        {p.export_enabled ? 'Да' : 'Нет'}
+                      <Badge variant={listingBadgeVariant(p.listing_status)}>
+                        {p.listing_status ? LISTING_STATUS_LABEL[p.listing_status] ?? p.listing_status : 'Не залистен'}
                       </Badge>
                     </td>
                   </tr>

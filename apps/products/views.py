@@ -1,7 +1,7 @@
 import uuid
 
 from django.core.files.storage import default_storage
-from django.db.models import Count, Prefetch, Q
+from django.db.models import Case, Count, F, IntegerField, Prefetch, Q, Subquery, OuterRef, Value, When
 from django.db import transaction
 from drf_spectacular.utils import extend_schema
 from django.shortcuts import get_object_or_404
@@ -30,6 +30,7 @@ from apps.products.services import (
     AutoPartsEnrichmentDisabled, ProductBulkActionService, ProductEnrichmentService,
     ProductIsNotAutoPart, ProductService,
 )
+from apps.marketplaces.models import Listing
 from apps.products.tasks import import_from_datasource
 from apps.products.source_policy import DEFAULT_PART_SOURCE, get_part_source_config, get_part_source_policies
 from apps.tenants.models import CatalogDomain, TenantCatalogDomain
@@ -101,7 +102,7 @@ class ProductListView(APIView):
             Product.objects
             .filter(tenant=request.tenant)
             .select_related('catalog_category', 'catalog_classification')
-            .prefetch_related('images', Prefetch('parse_jobs', queryset=latest_jobs))
+            .prefetch_related('images', Prefetch('parse_jobs', queryset=latest_jobs), 'listings')
             .annotate(
                 attributes_count=Count('attributes', distinct=True),
                 cross_codes_count=Count('cross_codes', distinct=True),
@@ -117,9 +118,13 @@ class ProductListView(APIView):
                 | Q(brand__icontains=search)
             )
 
-        export_enabled = request.query_params.get('export_enabled')
-        if export_enabled is not None:
-            qs = qs.filter(export_enabled=export_enabled.lower() == 'true')
+        listing_filter = request.query_params.get('listing_filter', '').strip()
+        if listing_filter == 'listed':
+            qs = qs.filter(listings__isnull=False).distinct()
+        elif listing_filter == 'not_listed':
+            qs = qs.filter(listings__isnull=True)
+        elif listing_filter in ('active', 'pending', 'queued', 'requires_review', 'limit_reached', 'rejected', 'draft', 'archived', 'deleted'):
+            qs = qs.filter(listings__status=listing_filter).distinct()
 
         category = request.query_params.get('category_1c', '').strip()
         if category:
@@ -155,7 +160,45 @@ class ProductListView(APIView):
         elif catalog_domain:
             qs = qs.filter(catalog_classification__domain=catalog_domain)
 
-        qs = qs.order_by('-sync_at', '-created_at')
+        ordering = request.query_params.get('ordering', '').strip()
+        if ordering in ('price', '-price', 'stock_qty', '-stock_qty'):
+            qs = qs.order_by(ordering, '-sync_at', '-created_at')
+        elif ordering in ('ai_status', '-ai_status'):
+            ai_order = Case(
+                When(title_ai__isnull=False, description_ai__isnull=False, then=Value(1)),
+                default=Value(0),
+                output_field=IntegerField(),
+            )
+            qs = qs.annotate(ai_order=ai_order)
+            direction = '' if ordering == 'ai_status' else '-'
+            qs = qs.order_by(f'{direction}ai_order', '-sync_at', '-created_at')
+        elif ordering in ('listing_status', '-listing_status'):
+            listing_priority = Subquery(
+                Listing.objects.filter(product=OuterRef('pk'))
+                .annotate(priority=Case(
+                    When(status='active', then=Value(1)),
+                    When(status='pending', then=Value(2)),
+                    When(status='queued', then=Value(3)),
+                    When(status='requires_review', then=Value(4)),
+                    When(status='limit_reached', then=Value(5)),
+                    When(status='rejected', then=Value(6)),
+                    When(status='draft', then=Value(7)),
+                    When(status='archived', then=Value(8)),
+                    When(status='deleted', then=Value(9)),
+                    output_field=IntegerField(),
+                ))
+                .order_by('priority')
+                .values('priority')[:1]
+            )
+            qs = qs.annotate(listing_priority=listing_priority)
+            if ordering == '-listing_status':
+                # активные (priority=1) первые, незалистенные (null) последние
+                qs = qs.order_by(F('listing_priority').asc(nulls_last=True), '-sync_at', '-created_at')
+            else:
+                # незалистенные (null) первые, активные последние
+                qs = qs.order_by(F('listing_priority').asc(nulls_first=True), '-sync_at', '-created_at')
+        else:
+            qs = qs.order_by('-sync_at', '-created_at')
 
         paginator = MapPagination()
         page = paginator.paginate_queryset(qs, request)

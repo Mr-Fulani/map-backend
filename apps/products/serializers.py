@@ -76,6 +76,7 @@ class ProductSerializer(serializers.ModelSerializer):
     catalog_classification = ProductCatalogClassificationSerializer(read_only=True)
     catalog_category = TenantCatalogCategorySerializer(read_only=True)
     brand_ref_name = serializers.CharField(source='brand_ref.name', read_only=True)
+    listing_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
@@ -86,6 +87,7 @@ class ProductSerializer(serializers.ModelSerializer):
             'export_enabled', 'sync_at', 'images', 'images_count', 'primary_thumb_url',
             'title_ai', 'description_ai', 'ai_status', 'enrichment_status',
             'enrichment_summary', 'catalog_classification',
+            'listing_status',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['uuid_1c', 'brand_ref', 'brand_ref_name', 'sync_at', 'created_at', 'updated_at']
@@ -141,6 +143,18 @@ class ProductSerializer(serializers.ModelSerializer):
             'latest_parse_status': latest_job.status if latest_job else '',
             'latest_parse_at': latest_job.created_at if latest_job else None,
         }
+
+    def get_listing_status(self, obj) -> str | None:
+        """Возвращает статус листинга товара (наиболее приоритетный из всех листингов)."""
+        listings = list(getattr(obj, '_prefetched_objects_cache', {}).get('listings', []))
+        if not listings:
+            return None
+        priority = ['active', 'pending', 'queued', 'requires_review', 'limit_reached', 'rejected', 'draft', 'archived', 'deleted']
+        for status_val in priority:
+            for listing in listings:
+                if listing.status == status_val:
+                    return status_val
+        return listings[0].status
 
 
 class ProductAttributeSerializer(serializers.ModelSerializer):

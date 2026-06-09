@@ -13,7 +13,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store } from 'lucide-react';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store, Search } from 'lucide-react';
 import { profileApi, datasourceApi } from '@/lib/api';
 
 interface ApiKey {
@@ -161,6 +161,7 @@ export default function SettingsPage() {
   const [newCatalogCategoryDomain, setNewCatalogCategoryDomain] = useState('unknown');
   const [editCatalogCategoryName, setEditCatalogCategoryName] = useState('');
   const [editCatalogCategoryDomain, setEditCatalogCategoryDomain] = useState('unknown');
+  const [categorySearch, setCategorySearch] = useState('');
   const [savingMappingSource, setSavingMappingSource] = useState<string | null>(null);
   
   // File upload state
@@ -300,7 +301,9 @@ export default function SettingsPage() {
         productApi.catalogSourceCategories(),
         productApi.catalogCategoryMappings(),
       ]);
-      setCatalogCategories(categoriesRes.data.data ?? categoriesRes.data);
+      const cats: CatalogCategory[] = categoriesRes.data.data ?? categoriesRes.data;
+      cats.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+      setCatalogCategories(cats);
       setSourceCategories(sourceRes.data.data ?? sourceRes.data);
       setCatalogMappings(mappingsRes.data.data ?? mappingsRes.data);
     } catch {
@@ -1826,6 +1829,18 @@ export default function SettingsPage() {
                 </Button>
               </form>
 
+              {!loadingCatalogCategories && catalogCategories.length > 0 && (
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    className="pl-9"
+                    placeholder="Поиск по категориям..."
+                    value={categorySearch}
+                    onChange={(e) => setCategorySearch(e.target.value)}
+                  />
+                </div>
+              )}
+
               {loadingCatalogCategories ? (
                 <div className="space-y-2">
                   <Skeleton className="h-12 w-full" />
@@ -1840,7 +1855,18 @@ export default function SettingsPage() {
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {catalogCategories.map((category) => {
+                  {categorySearch && !catalogCategories.some((c) =>
+                    c.name.toLowerCase().includes(categorySearch.toLowerCase())
+                  ) && (
+                    <p className="py-4 text-center text-sm text-muted-foreground">
+                      Ничего не найдено
+                    </p>
+                  )}
+                  {catalogCategories
+                    .filter((category) =>
+                      !categorySearch || category.name.toLowerCase().includes(categorySearch.toLowerCase())
+                    )
+                    .map((category) => {
                     const isEditing = editingCatalogCategoryId === category.id;
                     const isSaving = savingCatalogCategoryId === category.id;
                     return (
