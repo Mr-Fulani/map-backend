@@ -50,10 +50,10 @@ class VagueFitmentError(ValidationError):
 
 
 def validate_title(title: str) -> str:
-    """Проверяет длину заголовка (20–100 символов)."""
+    """Проверяет длину заголовка (50–200 символов)."""
     title = title.strip()
-    if not (20 <= len(title) <= 100):
-        raise ValidationError(f'Заголовок должен быть от 20 до 100 символов, получено {len(title)}')
+    if not (50 <= len(title) <= 200):
+        raise ValidationError(f'Заголовок должен быть от 50 до 200 символов, получено {len(title)}')
     return title
 
 

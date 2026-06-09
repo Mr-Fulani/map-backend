@@ -44,7 +44,7 @@ def make_product(tenant):
 
 
 VALID_RESPONSE = json.dumps({
-    'title': 'Тормозной диск Bosch передний для Toyota Camry',
+    'title': 'Тормозной диск передний Bosch ART-001 для Toyota Camry V40 2006-2011',
     'description': 'Тормозной диск производства Bosch. Подходит для Toyota Camry V40 2006-2011. '
                    'Диаметр 296 мм, вентилируемый. Состояние: новый, оригинальная упаковка.',
     'confidence': 0.87,
@@ -59,15 +59,16 @@ def _mock_claude_response(text: str):
 
 class TestValidators:
     def test_validate_title_ok(self):
-        assert validate_title('Тормозной диск Bosch для Toyota') == 'Тормозной диск Bosch для Toyota'
+        title = 'Тормозной диск Bosch ART-001 передний для Toyota Camry V40 2006-2011'
+        assert validate_title(title) == title
 
     def test_validate_title_too_short(self):
         with pytest.raises(ValidationError):
-            validate_title('Диск')
+            validate_title('Диск Bosch')
 
     def test_validate_title_too_long(self):
         with pytest.raises(ValidationError):
-            validate_title('А' * 101)
+            validate_title('А' * 201)
 
     def test_validate_description_truncates_at_7500(self):
         long_text = 'Слово ' * 2000
@@ -128,7 +129,7 @@ class TestDescriptionAgent:
         assert 'title' in result
         assert 'description' in result
         assert 'confidence' in result
-        assert 20 <= len(result['title']) <= 100
+        assert 50 <= len(result['title']) <= 200
         assert len(result['description']) <= 7500
 
     def test_ai_credits_incremented_atomically(self):
@@ -148,7 +149,7 @@ class TestDescriptionAgent:
         product = make_product(tenant)
 
         banned_response = json.dumps({
-            'title': 'Тормозной диск — лучший выбор для вашего авто',
+            'title': 'Тормозной диск передний Bosch ART-001 для Toyota Camry V40 2006-2011',
             'description': 'Это лучший тормозной диск на рынке.',
             'confidence': 0.9,
         })
@@ -167,7 +168,7 @@ class TestDescriptionAgent:
         product = make_product(tenant)
 
         vague_response = json.dumps({
-            'title': 'Тормозной диск Bosch передний ART-001',
+            'title': 'Тормозной диск передний Bosch ART-001 для Toyota Camry V40 2006-2011',
             'description': 'Подходит для различных моделей автомобилей. Состояние: новый.',
             'confidence': 0.7,
         })
