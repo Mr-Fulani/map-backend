@@ -1,6 +1,6 @@
 """Формирование поисковых запросов для товара.
 
-Использует реальные поля Product: brand, article, name.
+Использует реальные поля Product: brand, article, name, category_1c, catalog_category.
 Учитывает ненадёжные артикулы (OEM-префиксы, aftermarket).
 """
 
@@ -14,7 +14,7 @@ def build_queries(product) -> list[tuple[str, str]]:
     confidence_level: 'HIGH', 'MEDIUM', 'LOW', 'VERY_LOW'.
 
     Args:
-        product: экземпляр Product с полями brand, article, name.
+        product: экземпляр Product с полями brand, article, name, category_1c, catalog_category.
 
     Returns:
         Список кортежей (запрос, уверенность).
@@ -24,23 +24,61 @@ def build_queries(product) -> list[tuple[str, str]]:
     mfr = product.brand.strip() if product.brand else ''
     nom = product.name.strip() if product.name else ''
 
+    category, subcategory = _get_category_context(product)
+    # Наиболее конкретный доступный уровень категории для уточнения запросов
+    cat_hint = subcategory or category
+
     # Q1: Артикул + производитель — самый точный
     if pn and not _is_unreliable_article(pn, mfr):
-        queries.append((f'{pn} {mfr}', 'HIGH'))
-        queries.append((f'{pn} автозапчасть', 'HIGH'))
+        queries.append((f'{pn} {mfr}'.strip(), 'HIGH'))
+        # Q1b: артикул + конкретная категория вместо generic "автозапчасть"
+        hint = cat_hint or 'автозапчасть'
+        queries.append((f'{pn} {hint}', 'HIGH'))
 
     # Q2: Очищенный артикул (без спецсимволов)
     clean_pn = re.sub(r'[^A-Za-z0-9]', '', pn)
     if clean_pn and clean_pn != pn:
-        queries.append((f'{clean_pn} {mfr}', 'MEDIUM'))
+        queries.append((f'{clean_pn} {mfr}'.strip(), 'MEDIUM'))
 
-    # Q3: Описание (5 значимых слов) — когда артикул ненадёжен
+    # Q3: Производитель + ключевые слова названия + категория
     desc_words = _extract_keywords(nom, max_words=5)
     if desc_words:
-        queries.append((f'{mfr} {desc_words}', 'LOW'))
-        queries.append((desc_words, 'LOW'))
+        ctx = ' '.join(filter(None, [mfr, desc_words, cat_hint]))
+        queries.append((ctx, 'LOW'))
+        hint2 = cat_hint or ''
+        queries.append((f'{desc_words} {hint2}'.strip() if hint2 else desc_words, 'LOW'))
 
-    return queries or [(nom, 'LOW')]
+    fallback = f'{nom} {cat_hint}'.strip() if cat_hint else nom
+    return queries or [(fallback, 'LOW')]
+
+
+def _get_category_context(product) -> tuple[str, str]:
+    """Возвращает (категория, подкатегория) из данных товара.
+
+    Приоритет: catalog_category FK → category_1c строка.
+    Из FK: parent.name → category, name → subcategory.
+    Из строки: разбивает по / \\ | на части.
+
+    Args:
+        product: экземпляр Product.
+
+    Returns:
+        Кортеж (категория, подкатегория), пустые строки если данных нет.
+    """
+    cat = getattr(product, 'catalog_category', None)
+    if cat is not None:
+        parent = getattr(cat, 'parent', None)
+        if parent:
+            return parent.name, cat.name
+        return cat.name, ''
+
+    raw = (getattr(product, 'category_1c', '') or '').strip()
+    if not raw:
+        return '', ''
+
+    # "Тормозные системы / Диски тормозные" → ("Тормозные системы", "Диски тормозные")
+    parts = [p.strip() for p in re.split(r'[/\\|]', raw) if p.strip()]
+    return parts[0], parts[1] if len(parts) > 1 else ''
 
 
 def _is_unreliable_article(article: str, brand: str) -> bool:
