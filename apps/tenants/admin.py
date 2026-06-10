@@ -1,11 +1,9 @@
 from datetime import timedelta
 
-from django import forms
 from django.contrib import admin
 from django.utils import timezone
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin
-from unfold.widgets import UnfoldAdminSelectWidget
 
 from apps.tenants.models import (
     APIKey, CatalogDomain, Tenant, TenantCatalogDomain, TenantUser, WebhookEndpoint,
@@ -80,13 +78,13 @@ class TenantAdmin(ModelAdmin):
     """
 
     list_display = [
-        'name', 'slug', 'catalog_domain', 'is_active', 'get_plan',
+        'name', 'slug', 'get_enabled_domains', 'is_active', 'get_plan',
         'get_trial_status', 'active_listings_count', 'sku_count', 'created_at',
     ]
-    list_filter = ['is_active', 'catalog_domain']
+    list_filter = ['is_active']
     search_fields = ['name', 'slug']
     readonly_fields = [
-        'get_owner_phone', 'get_subscription_info',
+        'get_owner_phone', 'get_subscription_info', 'get_enabled_domains',
         'active_listings_count', 'sku_count', 'ai_credits_used',
         'created_at', 'updated_at',
     ]
@@ -94,7 +92,7 @@ class TenantAdmin(ModelAdmin):
     inlines = [TenantCatalogDomainInline, TenantUserInline]
     fieldsets = [
         ('Основное', {
-            'fields': ['name', 'slug', 'catalog_domain', 'is_active'],
+            'fields': ['name', 'slug', 'get_enabled_domains', 'is_active'],
         }),
         ('Владелец', {
             'fields': ['get_owner_phone'],
@@ -115,20 +113,17 @@ class TenantAdmin(ModelAdmin):
         }),
     ]
 
-    def get_form(self, request, obj=None, **kwargs):
-        form = super().get_form(request, obj, **kwargs)
-        choices = [
-            (domain.slug, domain.name)
-            for domain in CatalogDomain.objects.filter(is_active=True).order_by('sort_order', 'name')
-        ]
-        if choices:
-            form.base_fields['catalog_domain'] = forms.ChoiceField(
-                choices=choices,
-                label='Домен каталога',
-                help_text='Список доменов управляется суперюзером в разделе “Домены каталога”.',
-                widget=UnfoldAdminSelectWidget(),
-            )
-        return form
+    @admin.display(description='Домены каталога')
+    def get_enabled_domains(self, obj):
+        “””Возвращает список включённых доменов каталога из TenantCatalogDomain.”””
+        names = list(
+            obj.enabled_catalog_domains
+            .filter(is_enabled=True)
+            .select_related('domain')
+            .values_list('domain__name', flat=True)
+            .order_by('domain__sort_order', 'domain__name')
+        )
+        return ', '.join(names) if names else '—'
 
     @admin.display(description='Тариф')
     def get_plan(self, obj):
