@@ -85,10 +85,10 @@ class TenantAdmin(ModelAdmin):
     search_fields = ['name', 'slug']
     readonly_fields = [
         'get_owner_phone', 'get_subscription_info', 'get_enabled_domains',
-        'active_listings_count', 'sku_count', 'ai_credits_used',
+        'get_sku_count', 'get_active_listings_count', 'ai_credits_used',
         'created_at', 'updated_at',
     ]
-    actions = ['extend_trial_14_days', 'refresh_counters']
+    actions = ['extend_trial_14_days']
     inlines = [TenantCatalogDomainInline, TenantUserInline]
     fieldsets = [
         ('Основное', {
@@ -102,16 +102,26 @@ class TenantAdmin(ModelAdmin):
             'fields': ['get_subscription_info'],
             'description': 'Управление подпиской — в разделе Биллинг → Подписки.',
         }),
-        ('Счётчики (кэш)', {
-            'fields': ['active_listings_count', 'sku_count', 'ai_credits_used'],
+        ('Счётчики', {
+            'fields': ['get_sku_count', 'get_active_listings_count', 'ai_credits_used'],
             'classes': ['collapse'],
-            'description': 'Обновляются фоновой задачей. Не редактировать вручную.',
         }),
         ('Служебное', {
             'fields': ['created_at', 'updated_at'],
             'classes': ['collapse'],
         }),
     ]
+
+    @admin.display(description='SKU (товаров)')
+    def get_sku_count(self, obj):
+        """Считает количество товаров тенанта напрямую из БД."""
+        return obj.products.count()
+
+    @admin.display(description='Активных листингов')
+    def get_active_listings_count(self, obj):
+        """Считает активные листинги тенанта напрямую из БД."""
+        from apps.marketplaces.models import Listing
+        return Listing.objects.filter(tenant=obj, status=Listing.STATUS_ACTIVE).count()
 
     @admin.display(description='Домены каталога')
     def get_enabled_domains(self, obj):
@@ -186,24 +196,6 @@ class TenantAdmin(ModelAdmin):
             return f'{sub.plan.name} / {sub.get_status_display()} / до {end_str}'
         except Exception:
             return '—'
-
-    @admin.action(description='Обновить счётчики (SKU, листинги)')
-    def refresh_counters(self, request, queryset):
-        """Пересчитывает sku_count и active_listings_count для выбранных тенантов."""
-        from apps.marketplaces.models import Listing
-
-        updated = 0
-        for tenant in queryset:
-            active_listings = Listing.objects.filter(
-                tenant=tenant, status=Listing.STATUS_ACTIVE,
-            ).count()
-            sku_count = tenant.products.count()
-            Tenant.objects.filter(pk=tenant.pk).update(
-                active_listings_count=active_listings,
-                sku_count=sku_count,
-            )
-            updated += 1
-        self.message_user(request, f'Счётчики обновлены для {updated} тенант(ов).')
 
     @admin.action(description='Продлить триал на 14 дней')
     def extend_trial_14_days(self, request, queryset):
