@@ -88,7 +88,7 @@ class TenantAdmin(ModelAdmin):
         'active_listings_count', 'sku_count', 'ai_credits_used',
         'created_at', 'updated_at',
     ]
-    actions = ['extend_trial_14_days']
+    actions = ['extend_trial_14_days', 'refresh_counters']
     inlines = [TenantCatalogDomainInline, TenantUserInline]
     fieldsets = [
         ('Основное', {
@@ -115,7 +115,7 @@ class TenantAdmin(ModelAdmin):
 
     @admin.display(description='Домены каталога')
     def get_enabled_domains(self, obj):
-        “””Возвращает список включённых доменов каталога из TenantCatalogDomain.”””
+        """Возвращает список включённых доменов каталога из TenantCatalogDomain."""
         names = list(
             obj.enabled_catalog_domains
             .filter(is_enabled=True)
@@ -186,6 +186,24 @@ class TenantAdmin(ModelAdmin):
             return f'{sub.plan.name} / {sub.get_status_display()} / до {end_str}'
         except Exception:
             return '—'
+
+    @admin.action(description='Обновить счётчики (SKU, листинги)')
+    def refresh_counters(self, request, queryset):
+        """Пересчитывает sku_count и active_listings_count для выбранных тенантов."""
+        from apps.marketplaces.models import Listing
+
+        updated = 0
+        for tenant in queryset:
+            active_listings = Listing.objects.filter(
+                tenant=tenant, status=Listing.STATUS_ACTIVE,
+            ).count()
+            sku_count = tenant.products.count()
+            Tenant.objects.filter(pk=tenant.pk).update(
+                active_listings_count=active_listings,
+                sku_count=sku_count,
+            )
+            updated += 1
+        self.message_user(request, f'Счётчики обновлены для {updated} тенант(ов).')
 
     @admin.action(description='Продлить триал на 14 дней')
     def extend_trial_14_days(self, request, queryset):
