@@ -84,8 +84,8 @@ class TenantAdmin(ModelAdmin):
     list_filter = ['is_active']
     search_fields = ['name', 'slug']
     readonly_fields = [
-        'get_owner_phone', 'get_subscription_info', 'get_enabled_domains',
-        'get_sku_count', 'get_active_listings_count', 'ai_credits_used',
+        'get_owner_phone', 'get_telegram', 'get_subscription_info', 'get_enabled_domains',
+        'get_sku_count', 'get_active_listings_count', 'ai_credits_used', 'get_brave_quota',
         'created_at', 'updated_at',
     ]
     actions = ['extend_trial_14_days']
@@ -95,7 +95,7 @@ class TenantAdmin(ModelAdmin):
             'fields': ['name', 'slug', 'get_enabled_domains', 'is_active'],
         }),
         ('Владелец', {
-            'fields': ['get_owner_phone'],
+            'fields': ['get_owner_phone', 'get_telegram'],
             'description': 'Email владельца — в инлайне пользователей ниже.',
         }),
         ('Подписка', {
@@ -103,7 +103,7 @@ class TenantAdmin(ModelAdmin):
             'description': 'Управление подпиской — в разделе Биллинг → Подписки.',
         }),
         ('Счётчики', {
-            'fields': ['get_sku_count', 'get_active_listings_count', 'ai_credits_used'],
+            'fields': ['get_sku_count', 'get_active_listings_count', 'ai_credits_used', 'get_brave_quota'],
             'classes': ['collapse'],
         }),
         ('Служебное', {
@@ -111,6 +111,15 @@ class TenantAdmin(ModelAdmin):
             'classes': ['collapse'],
         }),
     ]
+
+    @admin.display(description='Brave запросов (месяц, платформа)')
+    def get_brave_quota(self, obj):
+        """Показывает использование Brave Search API за текущий месяц (платформенный лимит)."""
+        from apps.image_search.models import BraveQuota
+        quota = BraveQuota.objects.filter(period=BraveQuota.current().period).first()
+        if not quota:
+            return '0 / 800'
+        return f'{quota.requests_used} / {BraveQuota.SOFT_CAP}'
 
     @admin.display(description='SKU (товаров)')
     def get_sku_count(self, obj):
@@ -184,6 +193,18 @@ class TenantAdmin(ModelAdmin):
         membership = obj.members.filter(role='owner').select_related('user').first()
         if membership:
             return membership.user.phone or '—'
+        return '—'
+
+    @admin.display(description='Telegram')
+    def get_telegram(self, obj):
+        """Возвращает Telegram username привязанный тенантом для уведомлений."""
+        try:
+            settings = obj.notification_settings
+            if settings.telegram_chat_id:
+                username = settings.telegram_username
+                return f'@{username}' if username else f'chat_id: {settings.telegram_chat_id}'
+        except Exception:
+            pass
         return '—'
 
     @admin.display(description='Подписка')

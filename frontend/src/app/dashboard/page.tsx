@@ -91,13 +91,14 @@ const STATUS_LABELS: Record<string, string> = {
 
 interface BraveQuota {
   used: number | null;
-  limit: number | null;
+  soft_cap: number | null;
+  is_paused: boolean | null;
 }
 
 export default function DashboardPage() {
   const [usage, setUsage] = useState<UsageData | null>(null);
   const [errorsCount, setErrorsCount] = useState(0);
-  const [braveQuota, setBraveQuota] = useState<BraveQuota>({ used: null, limit: null });
+  const [braveQuota, setBraveQuota] = useState<BraveQuota>({ used: null, soft_cap: null, is_paused: null });
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -193,9 +194,10 @@ export default function DashboardPage() {
         <KpiCard
           title="Brave запросов (месяц)"
           value={braveQuota.used ?? 0}
-          limit={null}
+          limit={braveQuota.soft_cap ?? 800}
           icon={<Image className="h-4 w-4" />}
           loading={loading}
+          warning={braveQuota.is_paused ?? false}
         />
         <KpiCard
           title="Отклонено сейчас"
