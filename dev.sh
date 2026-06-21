@@ -27,6 +27,7 @@ esac
 
 LOG_TAIL="${DEV_LOG_TAIL:-200}"
 COMPOSE_LOG_SERVICES=(db redis django celery_worker celery_beat celery_worker_images)
+BACKEND_BUILD_SERVICES=(django celery_worker celery_beat celery_worker_images)
 
 stop_port_process() {
   local port="$1"
@@ -68,6 +69,10 @@ else
   docker builder prune -f --filter "until=24h" > /dev/null
   rm -rf "$ROOT_DIR/frontend/.next/static"
 fi
+
+# BuildKit переиспользует кэш, но пересобирает образы при изменении Dockerfile или requirements.
+echo "==> Проверка backend-образов..."
+docker compose build "${BACKEND_BUILD_SERVICES[@]}"
 
 # ── 3. БД и Redis — сначала ───────────────────────────────────────────────────
 echo "==> Запуск db, redis..."

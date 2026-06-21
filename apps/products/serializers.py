@@ -149,7 +149,10 @@ class ProductSerializer(serializers.ModelSerializer):
         listings = list(getattr(obj, '_prefetched_objects_cache', {}).get('listings', []))
         if not listings:
             return None
-        priority = ['active', 'pending', 'queued', 'requires_review', 'limit_reached', 'rejected', 'draft', 'archived', 'deleted']
+        priority = [
+            'active', 'pending', 'queued', 'requires_review', 'limit_reached',
+            'rejected', 'draft', 'archived', 'deleted',
+        ]
         for status_val in priority:
             for listing in listings:
                 if listing.status == status_val:
