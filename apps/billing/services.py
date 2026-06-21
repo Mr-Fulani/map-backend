@@ -83,6 +83,7 @@ class LimitChecker:
     def get_usage_summary(self, tenant: Tenant) -> dict:
         """Возвращает текущее использование лимитов тенантом."""
         from apps.marketplaces.models import Listing
+        from apps.products.models import Product
         from django.utils import timezone
 
         sub = self._get_subscription(tenant)
@@ -102,6 +103,7 @@ class LimitChecker:
         rejected_count = Listing.objects.filter(
             tenant=tenant, status=Listing.STATUS_REJECTED,
         ).count()
+        sku_count = Product.objects.filter(tenant=tenant).count()
 
         # Дней до принудительной отмены в grace period
         grace_days_left = None
@@ -109,13 +111,23 @@ class LimitChecker:
             elapsed = (timezone.now().date() - sub.current_period_end).days
             grace_days_left = max(0, GRACE_PERIOD_DAYS - elapsed)
 
+        current_period_days_left = None
+        if (
+            effective_status in (Subscription.STATUS_TRIAL, Subscription.STATUS_ACTIVE)
+            and sub
+            and sub.current_period_end
+        ):
+            current_period_days_left = max(
+                0, (sub.current_period_end - timezone.now().date()).days,
+            )
+
         return {
             'listings': {
                 'used': tenant.active_listings_count,
                 'limit': plan.limit_listings if plan else None,
             },
             'sku': {
-                'used': tenant.sku_count,
+                'used': sku_count,
                 'limit': plan.limit_sku if plan else None,
             },
             'ai_credits': {
@@ -124,6 +136,7 @@ class LimitChecker:
             },
             'rejected_listings': rejected_count,
             'subscription_status': effective_status,
+            'current_period_days_left': current_period_days_left,
             'grace_days_left': grace_days_left,
             'plan': plan.slug if plan else None,
         }

@@ -13,6 +13,7 @@ interface UsageData {
   ai_credits: { used: number; limit: number | null };
   rejected_listings: number;
   subscription_status: string | null;
+  current_period_days_left: number | null;
   grace_days_left: number | null;
   plan: string | null;
 }
@@ -89,6 +90,20 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: 'Отменена',
 };
 
+function formatTrialDays(days: number) {
+  const lastTwoDigits = days % 100;
+  const lastDigit = days % 10;
+  const unit = lastTwoDigits >= 11 && lastTwoDigits <= 14
+    ? 'дней'
+    : lastDigit === 1
+      ? 'день'
+      : lastDigit >= 2 && lastDigit <= 4
+        ? 'дня'
+        : 'дней';
+
+  return `${days} ${unit}`;
+}
+
 interface BraveQuota {
   used: number | null;
   soft_cap: number | null;
@@ -149,6 +164,10 @@ export default function DashboardPage() {
             <span className="text-sm text-muted-foreground">{planLabel}</span>
             <Badge variant={STATUS_VARIANTS[subStatus] ?? 'secondary'}>
               {STATUS_LABELS[subStatus] ?? subStatus}
+              {(subStatus === 'trial' || subStatus === 'active')
+                && usage?.current_period_days_left != null
+                ? ` · осталось ${formatTrialDays(usage.current_period_days_left)}`
+                : ''}
             </Badge>
           </div>
         )}
