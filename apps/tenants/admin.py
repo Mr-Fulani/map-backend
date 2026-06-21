@@ -1,11 +1,9 @@
 from datetime import timedelta
 
-from django import forms
 from django.contrib import admin
 from django.utils import timezone
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin
-from unfold.widgets import UnfoldAdminSelectWidget
 
 from apps.tenants.models import (
     APIKey, CatalogDomain, Tenant, TenantCatalogDomain, TenantUser, WebhookEndpoint,
@@ -80,34 +78,33 @@ class TenantAdmin(ModelAdmin):
     """
 
     list_display = [
-        'name', 'slug', 'catalog_domain', 'is_active', 'get_plan',
+        'name', 'slug', 'get_enabled_domains', 'is_active', 'get_plan',
         'get_trial_status', 'active_listings_count', 'sku_count', 'created_at',
     ]
-    list_filter = ['is_active', 'catalog_domain']
+    list_filter = ['is_active']
     search_fields = ['name', 'slug']
     readonly_fields = [
-        'get_owner_phone', 'get_subscription_info',
-        'active_listings_count', 'sku_count', 'ai_credits_used',
+        'get_owner_phone', 'get_telegram', 'get_subscription_info', 'get_enabled_domains',
+        'get_sku_count', 'get_active_listings_count', 'ai_credits_used', 'get_brave_quota',
         'created_at', 'updated_at',
     ]
     actions = ['extend_trial_14_days']
     inlines = [TenantCatalogDomainInline, TenantUserInline]
     fieldsets = [
         ('Основное', {
-            'fields': ['name', 'slug', 'catalog_domain', 'is_active'],
+            'fields': ['name', 'slug', 'get_enabled_domains', 'is_active'],
         }),
         ('Владелец', {
-            'fields': ['get_owner_phone'],
+            'fields': ['get_owner_phone', 'get_telegram'],
             'description': 'Email владельца — в инлайне пользователей ниже.',
         }),
         ('Подписка', {
             'fields': ['get_subscription_info'],
             'description': 'Управление подпиской — в разделе Биллинг → Подписки.',
         }),
-        ('Счётчики (кэш)', {
-            'fields': ['active_listings_count', 'sku_count', 'ai_credits_used'],
+        ('Счётчики', {
+            'fields': ['get_sku_count', 'get_active_listings_count', 'ai_credits_used', 'get_brave_quota'],
             'classes': ['collapse'],
-            'description': 'Обновляются фоновой задачей. Не редактировать вручную.',
         }),
         ('Служебное', {
             'fields': ['created_at', 'updated_at'],
@@ -115,20 +112,37 @@ class TenantAdmin(ModelAdmin):
         }),
     ]
 
-    def get_form(self, request, obj=None, **kwargs):
-        form = super().get_form(request, obj, **kwargs)
-        choices = [
-            (domain.slug, domain.name)
-            for domain in CatalogDomain.objects.filter(is_active=True).order_by('sort_order', 'name')
-        ]
-        if choices:
-            form.base_fields['catalog_domain'] = forms.ChoiceField(
-                choices=choices,
-                label='Домен каталога',
-                help_text='Список доменов управляется суперюзером в разделе “Домены каталога”.',
-                widget=UnfoldAdminSelectWidget(),
-            )
-        return form
+    @admin.display(description='Brave запросов (месяц, платформа)')
+    def get_brave_quota(self, obj):
+        """Показывает использование Brave Search API за текущий месяц (платформенный лимит)."""
+        from apps.image_search.models import BraveQuota
+        quota = BraveQuota.objects.filter(period=BraveQuota.current().period).first()
+        if not quota:
+            return '0 / 800'
+        return f'{quota.requests_used} / {BraveQuota.SOFT_CAP}'
+
+    @admin.display(description='SKU (товаров)')
+    def get_sku_count(self, obj):
+        """Считает количество товаров тенанта напрямую из БД."""
+        return obj.products.count()
+
+    @admin.display(description='Активных листингов')
+    def get_active_listings_count(self, obj):
+        """Считает активные листинги тенанта напрямую из БД."""
+        from apps.marketplaces.models import Listing
+        return Listing.objects.filter(tenant=obj, status=Listing.STATUS_ACTIVE).count()
+
+    @admin.display(description='Домены каталога')
+    def get_enabled_domains(self, obj):
+        """Возвращает список включённых доменов каталога из TenantCatalogDomain."""
+        names = list(
+            obj.enabled_catalog_domains
+            .filter(is_enabled=True)
+            .select_related('domain')
+            .values_list('domain__name', flat=True)
+            .order_by('domain__sort_order', 'domain__name')
+        )
+        return ', '.join(names) if names else '—'
 
     @admin.display(description='Тариф')
     def get_plan(self, obj):
@@ -179,6 +193,18 @@ class TenantAdmin(ModelAdmin):
         membership = obj.members.filter(role='owner').select_related('user').first()
         if membership:
             return membership.user.phone or '—'
+        return '—'
+
+    @admin.display(description='Telegram')
+    def get_telegram(self, obj):
+        """Возвращает Telegram username привязанный тенантом для уведомлений."""
+        try:
+            settings = obj.notification_settings
+            if settings.telegram_chat_id:
+                username = settings.telegram_username
+                return f'@{username}' if username else f'chat_id: {settings.telegram_chat_id}'
+        except Exception:
+            pass
         return '—'
 
     @admin.display(description='Подписка')

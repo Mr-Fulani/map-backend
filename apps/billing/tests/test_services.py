@@ -4,6 +4,7 @@ import pytest
 
 from apps.billing.models import Plan, Subscription
 from apps.billing.services import BillingService, LimitChecker, add_billing_month
+from apps.products.models import Product
 from apps.tenants.services import TenantService
 
 
@@ -126,9 +127,37 @@ class TestLimitChecker:
     def test_get_usage_summary_returns_correct_data(self):
         """get_usage_summary возвращает корректную структуру данных."""
         tenant = make_tenant('usage-co', 'usage@test.com')
+        tenant.subscription.current_period_end = date.today() + timedelta(days=3)
+        tenant.subscription.save(update_fields=['current_period_end'])
+        other_tenant = make_tenant('other-usage-co', 'other-usage@test.com')
+        Product.objects.create(
+            tenant=tenant, article='SKU-001', name='Товар 1', price='100.00',
+        )
+        Product.objects.create(
+            tenant=tenant, article='SKU-002', name='Товар 2', price='200.00',
+        )
+        Product.objects.create(
+            tenant=other_tenant, article='SKU-OTHER', name='Чужой товар', price='300.00',
+        )
         summary = LimitChecker().get_usage_summary(tenant)
 
         assert 'listings' in summary
         assert 'sku' in summary
         assert 'ai_credits' in summary
+        assert tenant.sku_count == 0
+        assert summary['sku']['used'] == 2
+        assert summary['current_period_days_left'] == 3
         assert summary['plan'] == Plan.SLUG_BUSINESS
+
+    def test_get_usage_summary_returns_days_left_for_active_subscription(self):
+        """Остаток оплаченного периода доступен для active-подписки."""
+        tenant = make_tenant('active-usage-co', 'active-usage@test.com')
+        sub = tenant.subscription
+        sub.status = Subscription.STATUS_ACTIVE
+        sub.current_period_end = date.today() + timedelta(days=6)
+        sub.save(update_fields=['status', 'current_period_end'])
+
+        summary = LimitChecker().get_usage_summary(tenant)
+
+        assert summary['subscription_status'] == Subscription.STATUS_ACTIVE
+        assert summary['current_period_days_left'] == 6

@@ -222,6 +222,15 @@ export default function SettingsPage() {
   const [notifEmail, setNotifEmail] = useState('');
   const [notifOnError, setNotifOnError] = useState(true);
   const [notifOnCritical, setNotifOnCritical] = useState(true);
+  const telegramPopupRef = useRef<Window | null>(null);
+  const telegramPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (telegramPollTimerRef.current) clearTimeout(telegramPollTimerRef.current);
+      telegramPopupRef.current?.close();
+    };
+  }, []);
 
   const domainLabel = (slug: string) => {
     const domain = catalogDomains.find((item) => item.slug === slug);
@@ -799,18 +808,75 @@ export default function SettingsPage() {
   }
 
   async function connectTelegram() {
+    if (telegramPollTimerRef.current) clearTimeout(telegramPollTimerRef.current);
+    telegramPopupRef.current?.close();
+
+    const width = 520;
+    const height = 720;
+    const left = Math.max(0, window.screenX + (window.outerWidth - width) / 2);
+    const top = Math.max(0, window.screenY + (window.outerHeight - height) / 2);
+    const popup = window.open(
+      'about:blank',
+      'map-telegram-connect',
+      `popup=yes,width=${width},height=${height},left=${left},top=${top}`,
+    );
+
+    if (!popup) {
+      toast.error('Браузер заблокировал окно Telegram. Разрешите всплывающие окна для этого сайта.');
+      return;
+    }
+
+    telegramPopupRef.current = popup;
+    popup.document.title = 'Подключение Telegram';
+    popup.document.body.textContent = 'Открываем Telegram…';
     setConnectingTg(true);
     try {
       const res = await notificationApi.telegramConnect();
       const botUrl = res.data.data?.bot_url as string;
-      // window.open блокируется мобильными браузерами после await — используем location.href.
-      // На мобильном iOS/Android это триггерит Universal Link и открывает приложение Telegram.
-      window.location.href = botUrl;
-      toast.info('Переходим в Telegram — нажмите START в чате с ботом. Вернитесь сюда и обновите страницу.');
+      popup.location.replace(botUrl);
+      toast.info('В открывшемся окне нажмите START. После привязки оно закроется автоматически.');
+
+      let attemptsLeft = 450;
+      const pollConnection = async () => {
+        if (popup.closed) {
+          telegramPopupRef.current = null;
+          setConnectingTg(false);
+          return;
+        }
+
+        try {
+          const settingsRes = await notificationApi.getSettings();
+          const data = settingsRes.data.data as NotificationSettings;
+          if (data.telegram_connected) {
+            setNotifSettings(data);
+            popup.close();
+            telegramPopupRef.current = null;
+            setConnectingTg(false);
+            toast.success('Telegram успешно подключён');
+            return;
+          }
+        } catch {
+          // Временная ошибка API не должна прерывать ожидание привязки.
+        }
+
+        attemptsLeft -= 1;
+        if (attemptsLeft <= 0) {
+          popup.close();
+          telegramPopupRef.current = null;
+          setConnectingTg(false);
+          toast.error('Время привязки Telegram истекло. Повторите попытку.');
+          return;
+        }
+
+        telegramPollTimerRef.current = setTimeout(pollConnection, 2000);
+      };
+
+      telegramPollTimerRef.current = setTimeout(pollConnection, 2000);
     } catch {
-      toast.error('Не удалось создать ссылку. Проверьте настройки бота на сервере.');
-    } finally {
+      popup.close();
+      telegramPopupRef.current = null;
       setConnectingTg(false);
+      toast.error('Не удалось создать ссылку. Проверьте настройки бота на сервере.');
     }
   }
 

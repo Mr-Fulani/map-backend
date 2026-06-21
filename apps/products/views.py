@@ -123,7 +123,10 @@ class ProductListView(APIView):
             qs = qs.filter(listings__isnull=False).distinct()
         elif listing_filter == 'not_listed':
             qs = qs.filter(listings__isnull=True)
-        elif listing_filter in ('active', 'pending', 'queued', 'requires_review', 'limit_reached', 'rejected', 'draft', 'archived', 'deleted'):
+        elif listing_filter in (
+            'active', 'pending', 'queued', 'requires_review', 'limit_reached',
+            'rejected', 'draft', 'archived', 'deleted',
+        ):
             qs = qs.filter(listings__status=listing_filter).distinct()
 
         category = request.query_params.get('category_1c', '').strip()
