@@ -294,12 +294,14 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         try:
             resp = requests.get(
                 f'{AVITO_API_BASE}/autoload/v2/reports',
-                headers=headers, params={'per_page': 1, 'page': 1}, timeout=30,
+                headers=headers, params={'per_page': 10, 'page': 1}, timeout=30,
             )
             reports = resp.json().get('reports', []) if resp.ok else []
             if not reports:
                 return {}
-            report_id = reports[0]['id']
+            # Список отчётов приходит без гарантии порядка — берём самый свежий
+            # по id (id монотонно растёт), а не reports[0].
+            report_id = max(reports, key=lambda r: r.get('id', 0))['id']
             resp = requests.get(
                 f'{AVITO_API_BASE}/autoload/v2/reports/{report_id}/items',
                 headers=headers, params={'per_page': 100, 'page': 1}, timeout=30,
