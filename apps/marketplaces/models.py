@@ -78,6 +78,10 @@ class MarketplaceAccount(TimestampedModel):
     )
     default_manager_name = models.CharField(max_length=100, blank=True, verbose_name='Контактное лицо')
     default_contact_phone = models.CharField(max_length=50, blank=True, verbose_name='Контактный телефон')
+    # Последний известный статус Avito Автозагрузки. null — ещё не проверяли.
+    # При сбое связи статус не понижаем (показываем последнее известное).
+    autoload_active = models.BooleanField(null=True, blank=True, verbose_name='Автозагрузка Avito активна')
+    autoload_checked_at = models.DateTimeField(null=True, blank=True, verbose_name='Статус Автозагрузки проверен')
 
     class Meta:
         verbose_name = 'Avito-аккаунт'
