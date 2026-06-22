@@ -29,6 +29,8 @@ def make_account(tenant):
         name='Test Account',
         external_id='12345',
         credentials_enc=encrypt({'client_id': 'cid', 'client_secret': 'csec'}),
+        default_manager_name='Менеджер',
+        default_contact_phone='+79990000000',
     )
 
 
@@ -154,6 +156,42 @@ class TestFeedBuilder:
         assert '<Title>' in xml_str
         assert '<Price>3500</Price>' in xml_str
         assert '<Condition>Новое</Condition>' in xml_str
+
+    def test_build_feed_includes_ad_type_and_goods_type(self):
+        """Фид содержит обязательные для категории теги AdType и GoodsType."""
+        tenant = make_tenant('feed-adtype-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account, ad_type=Listing.AD_TYPE_RESALE)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+        assert '<AdType>Товар приобретен на продажу</AdType>' in xml_str
+        assert '<GoodsType>Запчасти</GoodsType>' in xml_str
+
+    def test_build_feed_ad_type_defaults_to_own(self):
+        """Без явного выбора AdType по умолчанию «Продаю своё»."""
+        tenant = make_tenant('feed-adtype-def-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+        assert '<AdType>Продаю своё</AdType>' in xml_str
+
+    def test_build_feed_ignores_account_id_used_as_seller_address(self):
+        """external_id аккаунта в SellerAddressID игнорируется — шлём текстовый адрес."""
+        tenant = make_tenant('feed-bad-sid-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(
+            tenant, product, account,
+            seller_address_id_override=account.external_id,
+            address_override='Москва, Тверская, 1',
+        )
+
+        xml_str = build_feed([listing]).decode('utf-8')
+        assert '<SellerAddressID>' not in xml_str
+        assert '<Address>Москва, Тверская, 1</Address>' in xml_str
 
     def test_build_feed_archived_has_remove_status(self):
         """Листинг в статусе ARCHIVED получает тег <Status>Remove</Status>."""
@@ -553,6 +591,31 @@ class TestPublishListingTask:
         assert listing.status == Listing.STATUS_PENDING
         mock_cls.return_value.flush_feed.assert_called_once_with([listing])
 
+    def test_publish_rejects_listing_without_contacts(self):
+        """Без контактного лица/телефона объявление отклоняется и не уходит в feed."""
+        from apps.marketplaces.tasks import publish_listing_task
+        tenant = make_tenant('no-contacts-co')
+        account = make_account(tenant)
+        account.default_manager_name = ''
+        account.default_contact_phone = ''
+        account.save(update_fields=['default_manager_name', 'default_contact_phone'])
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks._notify_error'):
+            mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
+            mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
+            mock_cache.get.return_value = None
+
+            publish_listing_task(listing.pk)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_REJECTED
+        assert 'контактное лицо' in listing.rejection_reason.lower()
+        mock_cls.return_value.flush_feed.assert_not_called()
+
     def test_publish_waits_when_account_has_active_feed(self):
         """Новый листинг остаётся QUEUED, если предыдущий feed ещё pending."""
         from apps.marketplaces.tasks import publish_listing_task
@@ -702,6 +765,22 @@ class TestListingBulkActions:
             event_type=SyncLog.EVENT_LISTING_UPDATE,
             listing__in=[first, second],
         ).count() == 2
+
+    def test_update_placement_rejects_account_id_as_address(self):
+        """В поле «ID адреса Avito» нельзя сохранить external_id аккаунта."""
+        from apps.marketplaces.services import InvalidListingStatus
+        tenant = make_tenant('addr-guard-co')
+        account = make_account(tenant)
+        listing = make_listing(tenant, make_product(tenant), account)
+
+        with pytest.raises(InvalidListingStatus):
+            ListingService.update_placement(
+                listing.pk, tenant,
+                {'seller_address_id_override': account.external_id},
+            )
+
+        listing.refresh_from_db()
+        assert listing.seller_address_id_override == ''
 
     def test_bulk_publish_sets_queued_and_respects_tenant(self):
         tenant = make_tenant('bulk-publish-action-co')
@@ -857,6 +936,30 @@ class TestPollFeedResultsTask:
         assert listing.status == Listing.STATUS_REJECTED
         assert 'Avito не вернул ID объявления' in listing.rejection_reason
         mock_notify.assert_called_once()
+
+    def test_rejection_uses_real_avito_report_messages(self):
+        """Если отчёт Avito содержит ошибки — тенант видит их текст, а не общий шаблон."""
+        from apps.marketplaces.tasks import poll_feed_results_task
+
+        tenant = make_tenant('poll-real-errors-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
+        avito_message = '• Неправильно заполнен обязательный параметр — Вид товара.'
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks._notify_error'):
+            mock_cls.return_value.get_feed_results.return_value = [
+                {'ad_id': get_ad_id(listing), 'avito_id': None}
+            ]
+            mock_cls.return_value.get_feed_item_errors.return_value = {
+                get_ad_id(listing): avito_message,
+            }
+            poll_feed_results_task.apply(args=[account.pk], throw=True, retries=10)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_REJECTED
+        assert listing.rejection_reason == avito_message
 
     def test_rejects_pending_listings_when_feed_results_autoload_error(self):
         from apps.marketplaces.adapters.avito.adapter import FeedUploadError

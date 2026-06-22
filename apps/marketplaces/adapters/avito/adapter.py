@@ -1,4 +1,5 @@
 import datetime
+import html
 import logging
 import re
 
@@ -17,6 +18,20 @@ logger = logging.getLogger(__name__)
 
 AVITO_API_BASE = 'https://api.avito.ru'
 _STATS_CHUNK = 200  # максимум item_ids за один запрос к Stats API
+
+
+def _strip_html(text: str) -> str:
+    """Убирает HTML-теги и спецсимволы из текста сообщения отчёта Avito."""
+    no_tags = re.sub(r'<[^>]+>', ' ', text or '')
+    return re.sub(r'\s+', ' ', html.unescape(no_tags)).strip()
+
+
+def _format_avito_message(message: dict) -> str:
+    """Превращает сообщение отчёта Autoload в одну читаемую строку без HTML."""
+    title = (message.get('title') or '').strip()
+    description = _strip_html(message.get('description') or '')
+    text = f'{title} {description}'.strip()
+    return f'• {text}'
 
 
 class FeedUploadError(Exception):
@@ -262,6 +277,51 @@ class AvitoAdapter(BaseMarketplaceAdapter):
             )
         handle_avito_error(resp)
         return resp.json().get('items', [])
+
+    def get_feed_item_errors(self, ad_ids: list[str]) -> dict[str, str]:
+        """
+        Возвращает {ad_id: человекочитаемый текст ошибок} из последнего отчёта Autoload.
+
+        Берёт последний отчёт (GET /autoload/v2/reports), затем его позиции
+        (GET /autoload/v2/reports/{id}/items) и собирает сообщения Avito с типом
+        error/alarm по каждому ad_id. Сетевые сбои не пробрасывает — возвращает {},
+        чтобы вызывающий код мог откатиться на общий текст ошибки.
+        """
+        if not ad_ids:
+            return {}
+        token = self._auth.get_token(self.account)
+        headers = {'Authorization': f'Bearer {token}'}
+        try:
+            resp = requests.get(
+                f'{AVITO_API_BASE}/autoload/v2/reports',
+                headers=headers, params={'per_page': 1, 'page': 1}, timeout=30,
+            )
+            reports = resp.json().get('reports', []) if resp.ok else []
+            if not reports:
+                return {}
+            report_id = reports[0]['id']
+            resp = requests.get(
+                f'{AVITO_API_BASE}/autoload/v2/reports/{report_id}/items',
+                headers=headers, params={'per_page': 100, 'page': 1}, timeout=30,
+            )
+            items = resp.json().get('items', []) if resp.ok else []
+        except (requests.RequestException, ValueError, KeyError):
+            return {}
+
+        wanted = set(ad_ids)
+        result: dict[str, str] = {}
+        for item in items or []:
+            ad_id = item.get('ad_id')
+            if ad_id not in wanted:
+                continue
+            messages = [
+                _format_avito_message(m)
+                for m in item.get('messages', [])
+                if m.get('type') in ('error', 'alarm')
+            ]
+            if messages:
+                result[ad_id] = '\n'.join(messages)
+        return result
 
     def get_stats(
         self,

@@ -174,6 +174,22 @@ def publish_listing_task(self, listing_id: int):
                 return
 
             batch = _queued_publish_listings(listing.account, listing)
+            # Avito требует контактное лицо и телефон. Не отправляем фид с пустыми
+            # контактами — отклоняем такие объявления с понятным пояснением.
+            from apps.marketplaces.adapters.avito.feed_builder import get_contact_fields
+            valid_batch = []
+            for item in batch:
+                manager_name, contact_phone = get_contact_fields(item)
+                if not manager_name or not contact_phone:
+                    _reject_listing(
+                        item,
+                        'Не указано контактное лицо и/или телефон. Заполните их в '
+                        'профиле аккаунта Avito (Настройки → Маркетплейсы) или в самом '
+                        'листинге — Avito не публикует объявления без контактов.',
+                    )
+                else:
+                    valid_batch.append(item)
+            batch = valid_batch
             if not batch:
                 return
             adapter = AvitoAdapter(listing.account)
@@ -415,12 +431,22 @@ def poll_feed_results_task(self, account_id: int):
     if still_pending and self.request.retries < self.max_retries:
         raise self.retry(exc=RuntimeError(f'{still_pending} listing(s) still pending'), countdown=300)
     if still_pending:
-        reason = (
+        generic_reason = (
             'Avito не вернул ID объявления после обработки фида. '
             'Проверьте, что Автозагрузка подключена, URL фида добавлен в профиль Avito '
             'и в отчёте Avito Autoload нет ошибок обработки.'
         )
+        # Пытаемся достать из отчёта Avito конкретные ошибки по каждому объявлению,
+        # чтобы тенант понимал, что именно нужно исправить.
+        try:
+            raw_errors = AvitoAdapter(account).get_feed_item_errors(
+                [get_ad_id(lst) for lst in unresolved]
+            )
+            item_errors = raw_errors if isinstance(raw_errors, dict) else {}
+        except Exception:
+            item_errors = {}
         for listing in unresolved:
+            reason = item_errors.get(get_ad_id(listing)) or generic_reason
             _reject_listing(listing, reason)
         _schedule_next_queued_publish(account)
         _write_log(
