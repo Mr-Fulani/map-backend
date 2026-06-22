@@ -103,6 +103,11 @@ class LimitChecker:
         rejected_count = Listing.objects.filter(
             tenant=tenant, status=Listing.STATUS_REJECTED,
         ).count()
+        # Считаем активные листинги вживую, как rejected/sku — денормализованный
+        # tenant.active_listings_count обновляется задачей и может отставать.
+        active_listings_count = Listing.objects.filter(
+            tenant=tenant, status=Listing.STATUS_ACTIVE,
+        ).count()
         sku_count = Product.objects.filter(tenant=tenant).count()
 
         # Дней до принудительной отмены в grace period
@@ -123,7 +128,7 @@ class LimitChecker:
 
         return {
             'listings': {
-                'used': tenant.active_listings_count,
+                'used': active_listings_count,
                 'limit': plan.limit_listings if plan else None,
             },
             'sku': {
