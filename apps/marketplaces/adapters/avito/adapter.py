@@ -11,7 +11,7 @@ from django.conf import settings
 from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 from apps.marketplaces.adapters.avito.error_handler import handle_avito_error
 from apps.marketplaces.adapters.avito.feed_builder import build_feed
-from apps.marketplaces.adapters.avito.rate_limiter import AvitoRateLimiter
+from apps.marketplaces.adapters.avito.rate_limiter import AvitoRateLimiter, RateLimitError
 from apps.marketplaces.base import BaseMarketplaceAdapter
 
 logger = logging.getLogger(__name__)
@@ -139,15 +139,23 @@ class AvitoAdapter(BaseMarketplaceAdapter):
             headers={'Authorization': f'Bearer {token}'},
             timeout=30,
         )
-        if resp.status_code not in (200, 204):
-            logger.warning(
-                'autoload/v1/upload вернул %s для account=%s: %s',
-                resp.status_code, self.account.pk, resp.text[:200],
+        if resp.status_code in (200, 204):
+            return
+        logger.warning(
+            'autoload/v1/upload вернул %s для account=%s: %s',
+            resp.status_code, self.account.pk, resp.text[:200],
+        )
+        # 429 — лимит «1 автозагрузка в час». Это не ошибка конфигурации,
+        # а частотный лимит: пробрасываем RateLimitError, чтобы задача
+        # повторила попытку после открытия окна.
+        if resp.status_code == 429:
+            raise RateLimitError(
+                'Avito: автозагрузку можно запускать не чаще 1 раза в час. '
+                'Повтор произойдёт автоматически через ~10 минут.'
             )
-            raise FeedUploadError(
-                f'Avito Autoload не принял фид: HTTP {resp.status_code}. '
-                'Проверьте, что Автозагрузка подключена в аккаунте Avito.'
-            )
+        raise FeedUploadError(
+            f'Avito Autoload не принял фид: HTTP {resp.status_code}.'
+        )
 
     def is_autoload_active(self) -> bool:
         """Проверяет, доступен ли профиль Avito Autoload для аккаунта."""
