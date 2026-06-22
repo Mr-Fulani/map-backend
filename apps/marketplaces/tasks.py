@@ -176,7 +176,9 @@ def publish_listing_task(self, listing_id: int):
             batch = _queued_publish_listings(listing.account, listing)
             # Avito требует контактное лицо и телефон. Не отправляем фид с пустыми
             # контактами — отклоняем такие объявления с понятным пояснением.
-            from apps.marketplaces.adapters.avito.feed_builder import get_contact_fields
+            from apps.marketplaces.adapters.avito.feed_builder import (
+                get_contact_fields, product_has_oem,
+            )
             valid_batch = []
             for item in batch:
                 manager_name, contact_phone = get_contact_fields(item)
@@ -187,8 +189,17 @@ def publish_listing_task(self, listing_id: int):
                         'профиле аккаунта Avito (Настройки → Маркетплейсы) или в самом '
                         'листинге — Avito не публикует объявления без контактов.',
                     )
-                else:
-                    valid_batch.append(item)
+                    continue
+                # Нет настоящего OEM — публикуем с артикулом, но предупреждаем тенанта.
+                if not product_has_oem(item):
+                    _write_log(
+                        item.tenant, 'listing_publish', 'warn',
+                        f'У «{item.title or item.product.name}» нет OEM-номера — '
+                        f'в объявление подставлен артикул {item.product.article}. '
+                        f'Укажите OEM вручную при необходимости.',
+                        listing=item,
+                    )
+                valid_batch.append(item)
             batch = valid_batch
             if not batch:
                 return

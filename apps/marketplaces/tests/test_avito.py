@@ -207,6 +207,42 @@ class TestFeedBuilder:
         xml_str = build_feed([listing]).decode('utf-8')
         assert '<ProductType>' not in xml_str
 
+    def test_build_feed_includes_brand_and_oem_fallback_to_article(self):
+        """Brand берётся из товара; без OEM в <OEM> подставляется артикул."""
+        tenant = make_tenant('feed-brand-oem-co')
+        account = make_account(tenant)
+        product = make_product(tenant)  # brand=Bosch, article=ART-001, без oem
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+        assert '<Brand>Bosch</Brand>' in xml_str
+        assert '<OEM>ART-001</OEM>' in xml_str
+
+    def test_build_feed_oem_uses_oem_numbers_when_present(self):
+        """При наличии oem_numbers в <OEM> идут они, а не артикул."""
+        tenant = make_tenant('feed-oem-real-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        product.oem_numbers = ['92101-1234', '92102-5678']
+        product.save(update_fields=['oem_numbers'])
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+        assert '92101-1234' in xml_str and '92102-5678' in xml_str
+        assert 'ART-001' not in xml_str.split('<OEM>')[1].split('</OEM>')[0]
+
+    def test_build_feed_brand_falls_back_to_tenant_name(self):
+        """Без бренда у товара Brand = название организации тенанта."""
+        tenant = make_tenant('feed-brand-fallback-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        product.brand = ''
+        product.save(update_fields=['brand'])
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+        assert '<Brand>feed-brand-fallback-co</Brand>' in xml_str
+
     def test_build_feed_ignores_account_id_used_as_seller_address(self):
         """external_id аккаунта в SellerAddressID игнорируется — шлём текстовый адрес."""
         tenant = make_tenant('feed-bad-sid-co')

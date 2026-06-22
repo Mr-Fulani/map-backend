@@ -40,9 +40,10 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
             'id', 'name', 'marketplace', 'external_id', 'is_active',
             'default_address', 'default_seller_address_id',
             'default_manager_name', 'default_contact_phone',
+            'autoload_active', 'autoload_checked_at',
             'created_at',
         ]
-        read_only_fields = ['created_at']
+        read_only_fields = ['created_at', 'autoload_active', 'autoload_checked_at']
 
 
 class MarketplacePlacementAddressSerializer(serializers.ModelSerializer):

@@ -1,6 +1,7 @@
 import datetime
 
 from django.db.models import Sum
+from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.response import Response
@@ -157,6 +158,7 @@ class AutoloadStatusView(APIView):
         adapter = AvitoAdapter(account)
         feed_url = adapter._feed_public_url()
 
+        status_code = None
         try:
             token = AvitoAuthManager().get_token(account)
             resp = req.get(
@@ -164,11 +166,29 @@ class AutoloadStatusView(APIView):
                 headers={'Authorization': f'Bearer {token}'},
                 timeout=10,
             )
-            activated = resp.status_code == 200
+            status_code = resp.status_code
         except Exception:
-            activated = False
+            status_code = None
 
-        payload = {'activated': activated, 'feed_url': feed_url}
+        # Определённый ответ: 200 → активна, 403/404 → не активна.
+        # Всё остальное (таймаут, троттлинг, 5xx) — не понижаем статус,
+        # отдаём последнее известное значение со stale=True.
+        if status_code == 200:
+            activated = True
+        elif status_code in (403, 404):
+            activated = False
+        else:
+            activated = None
+
+        stale = activated is None
+        if not stale:
+            account.autoload_active = activated
+            account.autoload_checked_at = timezone.now()
+            account.save(update_fields=['autoload_active', 'autoload_checked_at'])
+        else:
+            activated = account.autoload_active  # последнее известное (может быть None)
+
+        payload = {'activated': bool(activated), 'feed_url': feed_url, 'stale': stale}
         if not activated:
             payload['activate_url'] = 'https://www.avito.ru/autoload/settings'
         return Response(payload)
