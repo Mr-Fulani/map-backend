@@ -83,7 +83,6 @@ interface Props {
 const AD_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'Товар приобретен на продажу', label: 'Товар приобретён на продажу — перепродажа (B2B)' },
   { value: 'Товар от производителя', label: 'Товар от производителя' },
-  { value: 'Продаю своё', label: 'Продаю своё — для частников / б/у' },
 ];
 const DEFAULT_AD_TYPE = 'Товар приобретен на продажу';
 
@@ -190,6 +189,13 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   ));
   const selectedPlacementAddress = placementAddresses.find((address) => (
     address.id === Number(editPlacementAddressId)
+  ));
+  // Контакты из сохранённых адресов аккаунта (Настройки → Маркетплейсы) для выпадающих списков.
+  const managerOptions = Array.from(new Set(
+    visiblePlacementAddresses.map((a) => a.manager_name).filter(Boolean),
+  ));
+  const phoneOptions = Array.from(new Set(
+    visiblePlacementAddresses.map((a) => a.contact_phone).filter(Boolean),
   ));
 
   useEffect(() => {
@@ -673,6 +679,49 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                       </p>
                     )}
                 </div>
+              </div>
+
+              {/* Контакты объявления — из сохранённых адресов аккаунта (Настройки → Маркетплейсы) */}
+              <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Имя менеджера</p>
+                  <select
+                    value={editManagerName}
+                    onChange={(e) => setEditManagerName(e.target.value)}
+                    disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                    className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
+                  >
+                    <option value="">— из адреса / профиля —</option>
+                    {editManagerName && !managerOptions.includes(editManagerName) && (
+                      <option value={editManagerName}>{editManagerName}</option>
+                    )}
+                    {managerOptions.map((name) => (
+                      <option key={name} value={name}>{name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Телефон</p>
+                  <select
+                    value={editContactPhone}
+                    onChange={(e) => setEditContactPhone(e.target.value)}
+                    disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                    className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
+                  >
+                    <option value="">— из адреса / профиля —</option>
+                    {editContactPhone && !phoneOptions.includes(editContactPhone) && (
+                      <option value={editContactPhone}>{editContactPhone}</option>
+                    )}
+                    {phoneOptions.map((phone) => (
+                      <option key={phone} value={phone}>{phone}</option>
+                    ))}
+                  </select>
+                </div>
+                {managerOptions.length === 0 && phoneOptions.length === 0 && (
+                  <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground sm:col-span-2">
+                    Контакты ещё не сохранены. Добавьте их в Настройки → Маркетплейсы → Avito (адреса и контакты).
+                  </p>
+                )}
               </div>
 
               {/* Причина отклонения — только для реально отклонённых, иначе висит старый текст */}

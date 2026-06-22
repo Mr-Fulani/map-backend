@@ -140,14 +140,13 @@ class Listing(TimestampedModel):
     ]
 
     # Вид объявления Avito (тег <AdType> в фиде Autoload). Значения — точные
-    # строки, которые принимает Avito; в БД храним их же.
+    # строки, которые принимает Avito; в БД храним их же. «Продаю своё» Avito
+    # не принимает для категории «Запчасти и аксессуары», поэтому его нет.
     AD_TYPE_RESALE = 'Товар приобретен на продажу'
     AD_TYPE_MANUFACTURER = 'Товар от производителя'
-    AD_TYPE_OWN = 'Продаю своё'
     AD_TYPE_CHOICES = [
         (AD_TYPE_RESALE, 'Товар приобретён на продажу — перепродажа (B2B)'),
         (AD_TYPE_MANUFACTURER, 'Товар от производителя'),
-        (AD_TYPE_OWN, 'Продаю своё — для частников / б/у'),
     ]
 
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='listings', verbose_name='Тенант')
