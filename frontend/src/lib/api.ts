@@ -306,6 +306,7 @@ export const listingApi = {
     placement_address?: number | null;
     account_id?: number;
     price_on_listing?: string;
+    ad_type?: string;
   }) =>
     api.patch(`/listings/${id}/`, data),
   bulkPlacement: (data: Record<string, unknown>) =>

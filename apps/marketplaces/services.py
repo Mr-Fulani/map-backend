@@ -273,6 +273,10 @@ class ListingService:
             listing.price_on_listing = data['price_on_listing']
             update_fields.append('price_on_listing')
 
+        if 'ad_type' in data:
+            listing.ad_type = data['ad_type']
+            update_fields.append('ad_type')
+
         if update_fields:
             listing.save(update_fields=update_fields)
         return listing
@@ -281,6 +285,15 @@ class ListingService:
     def update_placement(listing_id: int, tenant, data: dict) -> Listing:
         """Обновляет адресные override-поля листинга."""
         listing = ListingService.get_for_tenant(listing_id, tenant)
+        # Частая ошибка: в поле «ID адреса Avito» вводят external_id аккаунта
+        # (он же виден в UI как «ID аккаунта»). Avito такой адрес не находит —
+        # отклоняем сразу с понятным пояснением, а не после провала публикации.
+        seller_address_id = str(data.get('seller_address_id_override') or '').strip()
+        if seller_address_id and seller_address_id == (listing.account.external_id or ''):
+            raise InvalidListingStatus(
+                'В поле «ID адреса Avito» указан ID аккаунта, а не ID адреса размещения. '
+                'Выберите адрес из справочника или укажите корректный ID адреса из профиля Avito.'
+            )
         update_fields = []
         for field in (
             'address_override',

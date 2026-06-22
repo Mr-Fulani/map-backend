@@ -37,6 +37,12 @@ def build_feed(listings: list) -> bytes:
         )
         ET.SubElement(ad, 'Price').text = str(int(listing.price_on_listing))
         ET.SubElement(ad, 'Category').text = _get_avito_category(listing)
+        # AdType / GoodsType — обязательные параметры категории «Запчасти и аксессуары».
+        # Без них Avito отклоняет объявление при обработке фида (коды 1073/1123).
+        ET.SubElement(ad, 'AdType').text = (
+            getattr(listing, 'ad_type', '') or 'Продаю своё'
+        )
+        ET.SubElement(ad, 'GoodsType').text = _get_goods_type(listing)
         _add_placement(ad, listing)
         ET.SubElement(ad, 'Condition').text = _CONDITION_MAP.get(
             getattr(product, 'condition', ''), 'Новое'
@@ -64,6 +70,58 @@ def _get_avito_category(listing) -> str:
     if mapping:
         return mapping.category_target
     return _DEFAULT_CATEGORY
+
+
+def _get_goods_type(listing) -> str:
+    """
+    Возвращает «Вид товара» (GoodsType) для категории «Запчасти и аксессуары».
+
+    Берёт значение из attributes_map маппинга категории, иначе — дефолт «Запчасти».
+    """
+    mapping = _get_category_mapping(listing)
+    attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
+    return _first_value(
+        attributes.get('GoodsType'),
+        attributes.get('goods_type'),
+        'Запчасти',
+    )
+
+
+def get_contact_fields(listing) -> tuple[str, str]:
+    """
+    Возвращает (контактное лицо, телефон) по тем же приоритетам, что и фид.
+
+    Используется фидом и валидацией публикации, чтобы не отправлять в Avito
+    объявления с пустыми контактами.
+    """
+    mapping = _get_category_mapping(listing)
+    attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
+    account = listing.account
+    manual_address = getattr(listing, 'placement_address', None)
+    bulk_address = getattr(listing, 'bulk_placement_address', None)
+    account_address = _get_account_default_address(account)
+
+    manager_name = _first_value(
+        getattr(manual_address, 'manager_name', ''),
+        getattr(listing, 'manager_name_override', ''),
+        getattr(bulk_address, 'manager_name', ''),
+        getattr(listing, 'bulk_manager_name', ''),
+        attributes.get('manager_name'),
+        attributes.get('ManagerName'),
+        getattr(account_address, 'manager_name', ''),
+        getattr(account, 'default_manager_name', ''),
+    )
+    contact_phone = _first_value(
+        getattr(manual_address, 'contact_phone', ''),
+        getattr(listing, 'contact_phone_override', ''),
+        getattr(bulk_address, 'contact_phone', ''),
+        getattr(listing, 'bulk_contact_phone', ''),
+        attributes.get('contact_phone'),
+        attributes.get('ContactPhone'),
+        getattr(account_address, 'contact_phone', ''),
+        getattr(account, 'default_contact_phone', ''),
+    )
+    return manager_name, contact_phone
 
 
 def _get_category_mapping(listing):
@@ -107,26 +165,12 @@ def _add_placement(ad, listing) -> None:
         getattr(account_address, 'address', ''),
         getattr(account, 'default_address', ''),
     )
-    manager_name = _first_value(
-        getattr(manual_address, 'manager_name', ''),
-        getattr(listing, 'manager_name_override', ''),
-        getattr(bulk_address, 'manager_name', ''),
-        getattr(listing, 'bulk_manager_name', ''),
-        attributes.get('manager_name'),
-        attributes.get('ManagerName'),
-        getattr(account_address, 'manager_name', ''),
-        getattr(account, 'default_manager_name', ''),
-    )
-    contact_phone = _first_value(
-        getattr(manual_address, 'contact_phone', ''),
-        getattr(listing, 'contact_phone_override', ''),
-        getattr(bulk_address, 'contact_phone', ''),
-        getattr(listing, 'bulk_contact_phone', ''),
-        attributes.get('contact_phone'),
-        attributes.get('ContactPhone'),
-        getattr(account_address, 'contact_phone', ''),
-        getattr(account, 'default_contact_phone', ''),
-    )
+    manager_name, contact_phone = get_contact_fields(listing)
+
+    # Защита от мусорного значения: external_id аккаунта — это не ID адреса.
+    # Avito такой SellerAddressID не находит, поэтому игнорируем и шлём текстовый адрес.
+    if seller_address_id and seller_address_id == str(getattr(account, 'external_id', '') or ''):
+        seller_address_id = ''
 
     if seller_address_id:
         ET.SubElement(ad, 'SellerAddressID').text = seller_address_id
