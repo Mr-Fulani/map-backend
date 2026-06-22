@@ -168,15 +168,44 @@ class TestFeedBuilder:
         assert '<AdType>Товар приобретен на продажу</AdType>' in xml_str
         assert '<GoodsType>Запчасти</GoodsType>' in xml_str
 
-    def test_build_feed_ad_type_defaults_to_own(self):
-        """Без явного выбора AdType по умолчанию «Продаю своё»."""
+    def test_build_feed_ad_type_defaults_to_resale(self):
+        """Без явного выбора AdType по умолчанию «Товар приобретен на продажу»."""
         tenant = make_tenant('feed-adtype-def-co')
         account = make_account(tenant)
         product = make_product(tenant)
         listing = make_listing(tenant, product, account)
 
         xml_str = build_feed([listing]).decode('utf-8')
-        assert '<AdType>Продаю своё</AdType>' in xml_str
+        assert '<AdType>Товар приобретен на продажу</AdType>' in xml_str
+
+    def test_build_feed_product_type_from_category_mapping(self):
+        """ProductType («Тип товара») берётся из attributes_map маппинга категории."""
+        tenant = make_tenant('feed-producttype-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        CategoryMapping.objects.create(
+            tenant=tenant,
+            marketplace='avito',
+            category_source=product.category_1c,
+            category_target='Запчасти и аксессуары',
+            category_id=1,
+            attributes_map={'GoodsType': 'Запчасти', 'ProductType': 'Для автомобилей'},
+        )
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+        assert '<GoodsType>Запчасти</GoodsType>' in xml_str
+        assert '<ProductType>Для автомобилей</ProductType>' in xml_str
+
+    def test_build_feed_omits_product_type_when_not_configured(self):
+        """Без маппинга ProductType в фид не попадает (нет дефолта)."""
+        tenant = make_tenant('feed-no-producttype-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+        assert '<ProductType>' not in xml_str
 
     def test_build_feed_ignores_account_id_used_as_seller_address(self):
         """external_id аккаунта в SellerAddressID игнорируется — шлём текстовый адрес."""

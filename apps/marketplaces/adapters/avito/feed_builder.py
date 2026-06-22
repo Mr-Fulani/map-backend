@@ -40,9 +40,14 @@ def build_feed(listings: list) -> bytes:
         # AdType / GoodsType — обязательные параметры категории «Запчасти и аксессуары».
         # Без них Avito отклоняет объявление при обработке фида (коды 1073/1123).
         ET.SubElement(ad, 'AdType').text = (
-            getattr(listing, 'ad_type', '') or 'Продаю своё'
+            getattr(listing, 'ad_type', '') or 'Товар приобретен на продажу'
         )
         ET.SubElement(ad, 'GoodsType').text = _get_goods_type(listing)
+        # ProductType («Тип товара») — обязателен для запчастей, но зависит от
+        # конкретной детали, поэтому отдаём только если задан в маппинге категории.
+        product_type = _get_product_type(listing)
+        if product_type:
+            ET.SubElement(ad, 'ProductType').text = product_type
         _add_placement(ad, listing)
         ET.SubElement(ad, 'Condition').text = _CONDITION_MAP.get(
             getattr(product, 'condition', ''), 'Новое'
@@ -84,6 +89,21 @@ def _get_goods_type(listing) -> str:
         attributes.get('GoodsType'),
         attributes.get('goods_type'),
         'Запчасти',
+    )
+
+
+def _get_product_type(listing) -> str:
+    """
+    Возвращает «Тип товара» (ProductType) из attributes_map маппинга категории.
+
+    Дефолта нет — значение зависит от конкретной запчасти; если не задано,
+    тег в фид не попадёт.
+    """
+    mapping = _get_category_mapping(listing)
+    attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
+    return _first_value(
+        attributes.get('ProductType'),
+        attributes.get('product_type'),
     )
 
 
