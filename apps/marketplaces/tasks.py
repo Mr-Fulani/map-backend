@@ -222,7 +222,7 @@ def publish_listing_task(self, listing_id: int):
             # Запускаем polling результатов через 10 минут
             poll_feed_results_task.apply_async(
                 args=[listing.account.pk],
-                countdown=600,
+                countdown=300,
             )
         except FeedUploadError as exc:
             listing.retry_count += 1
@@ -352,7 +352,7 @@ def flush_feed_task(self, account_id: int):
             account.tenant, 'feed_flush', 'ok',
             f'Фид загружен: {len(listings)} объявлений для {account.name}',
         )
-        poll_feed_results_task.apply_async(args=[account_id], countdown=600)
+        poll_feed_results_task.apply_async(args=[account_id], countdown=300)
     except (FeedUploadError, ServerError) as exc:
         if self.request.retries >= self.max_retries:
             reason = str(exc)
@@ -438,39 +438,47 @@ def poll_feed_results_task(self, account_id: int):
         f'Получены ID Avito: {published_count}/{len(pending)} объявлений для {account.name}',
     )
 
-    # Если часть листингов ещё не обработана — повторяем через 5 мин
-    still_pending = len(pending) - published_count
-    if still_pending and self.request.retries < self.max_retries:
-        raise self.retry(exc=RuntimeError(f'{still_pending} listing(s) still pending'), countdown=300)
-    if still_pending:
-        generic_reason = (
-            'Avito не вернул ID объявления после обработки фида. '
-            'Проверьте, что Автозагрузка подключена, URL фида добавлен в профиль Avito '
-            'и в отчёте Avito Autoload нет ошибок обработки.'
+    # Среди необработанных сразу отклоняем те, у кого Avito уже вернул
+    # блокирующие ошибки (с реальным текстом) — не ждём 50 минут ретраев.
+    try:
+        raw_errors = AvitoAdapter(account).get_feed_item_errors(
+            [get_ad_id(lst) for lst in unresolved]
         )
-        # Пытаемся достать из отчёта Avito конкретные ошибки по каждому объявлению,
-        # чтобы тенант понимал, что именно нужно исправить.
-        try:
-            raw_errors = AvitoAdapter(account).get_feed_item_errors(
-                [get_ad_id(lst) for lst in unresolved]
-            )
-            item_errors = raw_errors if isinstance(raw_errors, dict) else {}
-        except Exception:
-            item_errors = {}
-        for listing in unresolved:
-            reason = item_errors.get(get_ad_id(listing)) or generic_reason
+        item_errors = raw_errors if isinstance(raw_errors, dict) else {}
+    except Exception:
+        item_errors = {}
+
+    truly_pending = []
+    rejected_count = 0
+    for listing in unresolved:
+        reason = item_errors.get(get_ad_id(listing))
+        if reason:
             _reject_listing(listing, reason)
-        _schedule_next_queued_publish(account)
+            rejected_count += 1
+        else:
+            truly_pending.append(listing)
+
+    # Остались те, по кому Avito пока не дал ни ID, ни ошибок — ещё обрабатывается.
+    if truly_pending and self.request.retries < self.max_retries:
+        raise self.retry(
+            exc=RuntimeError(f'{len(truly_pending)} listing(s) still pending'),
+            countdown=300,
+        )
+    if truly_pending:
+        generic_reason = (
+            'Avito обработал фид, но не вернул ни ID объявления, ни ошибок. '
+            'Проверьте статус позже или в личном кабинете Avito Autoload.'
+        )
+        for listing in truly_pending:
+            _reject_listing(listing, generic_reason)
+
+    if rejected_count or truly_pending:
         _write_log(
             account.tenant, 'feed_poll', 'error',
-            f'Avito не вернул ID для {still_pending}/{len(pending)} объявлений {account.name}',
+            f'Не опубликовано {rejected_count + len(truly_pending)}/{len(pending)} '
+            f'объявлений {account.name}',
         )
-    elif Listing.objects.filter(
-        account=account,
-        status=Listing.STATUS_QUEUED,
-        external_id__isnull=True,
-    ).exists():
-        _schedule_next_queued_publish(account)
+    _schedule_next_queued_publish(account)
 
 
 @shared_task(bind=True, max_retries=3, queue='avito_update')
