@@ -34,6 +34,8 @@ interface Account {
   default_seller_address_id: string;
   default_manager_name: string;
   default_contact_phone: string;
+  autoload_active: boolean | null;
+  autoload_checked_at: string | null;
   created_at: string;
 }
 
@@ -274,7 +276,21 @@ export default function SettingsPage() {
       .finally(() => setLoadingKeys(false));
 
     accountApi.list()
-      .then((r) => setAccounts(r.data.data ?? r.data))
+      .then((r) => {
+        const list: Account[] = r.data.data ?? r.data;
+        setAccounts(list);
+        // Подставляем последний известный статус Автозагрузки, чтобы плашка
+        // не сбрасывалась в «неизвестно» при каждой перезагрузке страницы.
+        setAutoloadStatus((prev) => {
+          const seeded = { ...prev };
+          for (const acc of list) {
+            if (acc.autoload_active !== null && acc.autoload_active !== undefined) {
+              seeded[acc.id] = { activated: acc.autoload_active, feed_url: '' };
+            }
+          }
+          return seeded;
+        });
+      })
       .catch(() => {})
       .finally(() => setLoadingAccounts(false));
 

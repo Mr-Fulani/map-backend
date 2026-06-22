@@ -1,4 +1,5 @@
 import io
+import uuid
 from xml.etree import ElementTree as ET
 
 from django.conf import settings
@@ -48,6 +49,9 @@ def build_feed(listings: list) -> bytes:
         product_type = _get_product_type(listing)
         if product_type:
             ET.SubElement(ad, 'ProductType').text = product_type
+        # Brand (Производитель) и OEM (Номер детали) — обязательны для запчастей.
+        ET.SubElement(ad, 'Brand').text = _get_brand(listing)
+        ET.SubElement(ad, 'OEM').text = _get_oem(listing)
         _add_placement(ad, listing)
         ET.SubElement(ad, 'Condition').text = _CONDITION_MAP.get(
             getattr(product, 'condition', ''), 'Новое'
@@ -90,6 +94,41 @@ def _get_goods_type(listing) -> str:
         attributes.get('goods_type'),
         'Запчасти',
     )
+
+
+def _get_brand(listing) -> str:
+    """
+    Производитель (Brand) запчасти.
+
+    Бренд товара; если пуст — fallback на название организации тенанта.
+    """
+    brand = str(getattr(listing.product, 'brand', '') or '').strip()
+    if brand:
+        return brand
+    return str(getattr(getattr(listing, 'tenant', None), 'name', '') or '').strip()
+
+
+def _get_oem(listing) -> str:
+    """
+    Номер детали OEM.
+
+    Приоритет: oem_numbers товара → артикул → сгенерированное значение
+    OEM-формата (когда нет ни OEM, ни артикула). При отсутствии настоящего
+    OEM тенант предупреждается отдельно в publish_listing_task.
+    """
+    product = listing.product
+    oem = [str(x).strip() for x in (getattr(product, 'oem_numbers', None) or []) if str(x).strip()]
+    if oem:
+        return ', '.join(oem)
+    article = str(getattr(product, 'article', '') or '').strip()
+    if article:
+        return article
+    return f'NA{uuid.uuid4().hex[:10].upper()}'
+
+
+def product_has_oem(listing) -> bool:
+    """True, если у товара есть настоящие OEM-номера (а не подставленный артикул)."""
+    return bool([x for x in (getattr(listing.product, 'oem_numbers', None) or []) if str(x).strip()])
 
 
 def _get_product_type(listing) -> str:
