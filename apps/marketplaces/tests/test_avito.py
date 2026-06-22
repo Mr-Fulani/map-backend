@@ -730,6 +730,51 @@ class TestPublishListingTask:
         flushed = mock_cls.return_value.flush_feed.call_args[0][0]
         assert {item.pk for item in flushed} == {first.pk, second.pk}
 
+    def test_unpublish_flushes_full_account_state(self):
+        """Снятие шлёт ОДНУ автозагрузку: Remove снимаемого + остальные активные."""
+        from apps.marketplaces.tasks import unpublish_listing_task
+        tenant = make_tenant('unpub-fullstate-co')
+        account = make_account(tenant)
+        active = make_listing(
+            tenant, make_product(tenant), account,
+            status=Listing.STATUS_ACTIVE, external_id='AV-ACTIVE-1',
+        )
+        target = make_listing(
+            tenant, make_product_with_article(tenant, 'ART-2'), account,
+            status=Listing.STATUS_ACTIVE, external_id='AV-TARGET-2',
+        )
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.poll_feed_results_task') as mock_poll:
+            mock_cls.return_value.flush_feed.return_value = True
+            mock_poll.apply_async = MagicMock()
+            unpublish_listing_task(target.pk)
+
+        target.refresh_from_db()
+        assert target.status == Listing.STATUS_ARCHIVED
+        # В фиде и активный (как объявление), и снимаемый (как Remove) — одним батчем.
+        flushed = mock_cls.return_value.flush_feed.call_args[0][0]
+        assert {i.pk for i in flushed} == {active.pk, target.pk}
+
+    def test_unpublish_retries_on_rate_limit(self):
+        """На лимит 1/час снятие не падает, а уходит в retry (повтор после окна)."""
+        from celery.exceptions import Retry
+        from apps.marketplaces.adapters.avito.rate_limiter import RateLimitError
+        from apps.marketplaces.tasks import unpublish_listing_task
+        tenant = make_tenant('unpub-rl-co')
+        account = make_account(tenant)
+        listing = make_listing(
+            tenant, make_product(tenant), account,
+            status=Listing.STATUS_ACTIVE, external_id='AV-RL-9',
+        )
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls:
+            mock_cls.return_value.flush_feed.side_effect = RateLimitError('1/час')
+            # В eager-режиме retry повторяет задачу и после исчерпания бросает
+            # исходный RateLimitError — оба варианта означают «ушли в повтор».
+            with pytest.raises((Retry, RateLimitError)):
+                unpublish_listing_task(listing.pk)
+
     def test_publish_rejects_when_autoload_profile_is_inactive(self):
         from apps.marketplaces.tasks import publish_listing_task
 

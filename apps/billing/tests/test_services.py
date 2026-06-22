@@ -149,6 +149,29 @@ class TestLimitChecker:
         assert summary['current_period_days_left'] == 3
         assert summary['plan'] == Plan.SLUG_BUSINESS
 
+    def test_get_usage_summary_counts_active_listings_live(self):
+        """listings.used считается вживую по статусу, без денормализованного поля."""
+        from apps.datasources.encryption import encrypt
+        from apps.marketplaces.models import Listing, MarketplaceAccount
+        tenant = make_tenant('active-count-co', 'active-count@test.com')
+        account = MarketplaceAccount.objects.create(
+            tenant=tenant, name='Acc', external_id='999',
+            credentials_enc=encrypt({'client_id': 'c', 'client_secret': 's'}),
+        )
+        product = Product.objects.create(
+            tenant=tenant, article='A1', name='T', price='100.00',
+        )
+        Listing.objects.create(
+            tenant=tenant, product=product, account=account,
+            price_on_listing='100.00', status=Listing.STATUS_ACTIVE,
+        )
+
+        summary = LimitChecker().get_usage_summary(tenant)
+
+        # денормализованное поле не трогали — оно 0, но в сводке живой подсчёт = 1
+        assert tenant.active_listings_count == 0
+        assert summary['listings']['used'] == 1
+
     def test_get_usage_summary_returns_days_left_for_active_subscription(self):
         """Остаток оплаченного периода доступен для active-подписки."""
         tenant = make_tenant('active-usage-co', 'active-usage@test.com')
