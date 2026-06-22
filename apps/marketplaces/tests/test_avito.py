@@ -999,11 +999,12 @@ class TestPollFeedResultsTask:
 
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_REJECTED
-        assert 'Avito не вернул ID объявления' in listing.rejection_reason
+        assert 'не вернул ни ID объявления, ни ошибок' in listing.rejection_reason
         mock_notify.assert_called_once()
 
-    def test_rejection_uses_real_avito_report_messages(self):
-        """Если отчёт Avito содержит ошибки — тенант видит их текст, а не общий шаблон."""
+    def test_rejection_uses_real_avito_report_messages_immediately(self):
+        """Если в отчёте Avito есть ошибки — отклоняем сразу (retries=0) с их текстом, без ожидания ретраев."""
+        from celery.exceptions import Retry
         from apps.marketplaces.tasks import poll_feed_results_task
 
         tenant = make_tenant('poll-real-errors-co')
@@ -1020,7 +1021,11 @@ class TestPollFeedResultsTask:
             mock_cls.return_value.get_feed_item_errors.return_value = {
                 get_ad_id(listing): avito_message,
             }
-            poll_feed_results_task.apply(args=[account.pk], throw=True, retries=10)
+            # retries=0: при наличии ошибок задача НЕ должна уходить в retry
+            try:
+                poll_feed_results_task.apply(args=[account.pk], throw=True, retries=0)
+            except Retry:
+                pytest.fail('Должны были отклонить сразу, а не уходить в retry')
 
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_REJECTED

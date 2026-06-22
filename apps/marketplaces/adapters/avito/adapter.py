@@ -316,9 +316,15 @@ class AvitoAdapter(BaseMarketplaceAdapter):
             ad_id = item.get('ad_id')
             if ad_id not in wanted:
                 continue
+            item_messages = item.get('messages', [])
+            # Возвращаем ad_id только при наличии блокирующей ошибки (type=error),
+            # иначе объявление ещё обрабатывается или это лишь предупреждения —
+            # отклонять его нельзя.
+            if not any(m.get('type') == 'error' for m in item_messages):
+                continue
             messages = [
                 _format_avito_message(m)
-                for m in item.get('messages', [])
+                for m in item_messages
                 if m.get('type') in ('error', 'alarm')
             ]
             if messages:
