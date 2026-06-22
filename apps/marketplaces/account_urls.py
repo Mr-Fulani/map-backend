@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import include, path
 
 from apps.marketplaces.views import (
     AutoloadStatusView,
@@ -18,4 +18,5 @@ urlpatterns = [
     ),
     path('<int:pk>/', MarketplaceAccountDetailView.as_view(), name='account-detail'),
     path('<int:pk>/autoload-status/', AutoloadStatusView.as_view(), name='account-autoload-status'),
+    path('<int:pk>/', include('apps.browser_sessions.urls')),
 ]

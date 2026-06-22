@@ -41,6 +41,7 @@ interface ListingDetail {
   ai_confidence: number | null;
   ai_confidence_display: string;
   price_on_listing: string;
+  ad_type: string;
   placement_address: number | null;
   address_override: string;
   seller_address_id_override: string;
@@ -77,6 +78,14 @@ interface Props {
   onClose: () => void;
   onActionDone: () => void;
 }
+
+// Вид объявления Avito (AdType). value — точная строка, которую принимает Avito.
+const AD_TYPE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'Продаю своё', label: 'Продаю своё — для частников / б/у' },
+  { value: 'Товар приобретен на продажу', label: 'Товар приобретён на продажу — перепродажа (B2B)' },
+  { value: 'Товар от производителя', label: 'Товар от производителя' },
+];
+const DEFAULT_AD_TYPE = 'Продаю своё';
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   active: 'default',
@@ -119,6 +128,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [editPlacementAddressId, setEditPlacementAddressId] = useState('');
   const [editAccountId, setEditAccountId] = useState('');
   const [editPrice, setEditPrice] = useState('');
+  const [editAdType, setEditAdType] = useState(DEFAULT_AD_TYPE);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [placementAddresses, setPlacementAddresses] = useState<PlacementAddress[]>([]);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
@@ -141,6 +151,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     setEditPlacementAddressId(data.placement_address ? String(data.placement_address) : '');
     setEditAccountId(String(data.account_id));
     setEditPrice(data.price_on_listing);
+    setEditAdType(data.ad_type || DEFAULT_AD_TYPE);
   };
 
   useEffect(() => {
@@ -290,6 +301,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
         description_ai: editDesc,
         account_id: editAccountId ? Number(editAccountId) : undefined,
         price_on_listing: editPrice,
+        ad_type: editAdType,
         placement_address: editPlacementAddressId ? Number(editPlacementAddressId) : null,
         address_override: editAddress,
         seller_address_id_override: editSellerAddressId,
@@ -581,6 +593,22 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                 </div>
               </div>
 
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Вид объявления (Avito)</p>
+                <select
+                  value={editAdType}
+                  onChange={(e) => setEditAdType(e.target.value)}
+                  disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                  className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
+                >
+                  {AD_TYPE_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div className="space-y-2 rounded-md border p-3">
                 <div className="flex items-center justify-between gap-2">
                   <div>
@@ -649,7 +677,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
 
               {/* Причина отклонения */}
               {listing.rejection_reason && (
-                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive whitespace-pre-line">
                   <span className="font-medium">Причина отклонения: </span>
                   {listing.rejection_reason}
                 </div>
@@ -670,6 +698,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                         setEditDesc(listing.description_ai);
                         setEditAccountId(String(listing.account_id));
                         setEditPrice(listing.price_on_listing);
+                        setEditAdType(listing.ad_type || DEFAULT_AD_TYPE);
                         setEditAddress(listing.address_override || '');
                         setEditSellerAddressId(listing.seller_address_id_override || '');
                         setEditManagerName(listing.manager_name_override || '');

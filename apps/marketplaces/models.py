@@ -57,6 +57,13 @@ class MarketplaceAccount(TimestampedModel):
     MARKETPLACE_AVITO = 'avito'
     MARKETPLACE_CHOICES = [(MARKETPLACE_AVITO, 'Avito')]
 
+    PUBLISH_AUTOLOAD = 'autoload'
+    PUBLISH_WEB = 'web'
+    PUBLISH_METHOD_CHOICES = [
+        (PUBLISH_AUTOLOAD, 'Autoload API'),
+        (PUBLISH_WEB, 'Веб-режим (Playwright)'),
+    ]
+
     tenant = models.ForeignKey(
         Tenant, on_delete=models.CASCADE,
         related_name='marketplace_accounts', verbose_name='Тенант',
@@ -78,6 +85,16 @@ class MarketplaceAccount(TimestampedModel):
     )
     default_manager_name = models.CharField(max_length=100, blank=True, verbose_name='Контактное лицо')
     default_contact_phone = models.CharField(max_length=50, blank=True, verbose_name='Контактный телефон')
+    publish_method = models.CharField(
+        max_length=20, choices=PUBLISH_METHOD_CHOICES, default=PUBLISH_AUTOLOAD,
+        verbose_name='Метод публикации',
+    )
+    web_login_enc = models.BinaryField(
+        null=True, blank=True, verbose_name='Логин Avito для веб-режима (зашифровано)',
+    )
+    web_password_enc = models.BinaryField(
+        null=True, blank=True, verbose_name='Пароль Avito для веб-режима (зашифровано)',
+    )
 
     class Meta:
         verbose_name = 'Avito-аккаунт'
@@ -139,6 +156,17 @@ class Listing(TimestampedModel):
         (STATUS_LIMIT_REACHED, 'Лимит достигнут'),
     ]
 
+    # Вид объявления Avito (тег <AdType> в фиде Autoload). Значения — точные
+    # строки, которые принимает Avito; в БД храним их же.
+    AD_TYPE_RESALE = 'Товар приобретен на продажу'
+    AD_TYPE_MANUFACTURER = 'Товар от производителя'
+    AD_TYPE_OWN = 'Продаю своё'
+    AD_TYPE_CHOICES = [
+        (AD_TYPE_RESALE, 'Товар приобретён на продажу — перепродажа (B2B)'),
+        (AD_TYPE_MANUFACTURER, 'Товар от производителя'),
+        (AD_TYPE_OWN, 'Продаю своё — для частников / б/у'),
+    ]
+
     tenant = models.ForeignKey(Tenant, on_delete=models.CASCADE, related_name='listings', verbose_name='Тенант')
     product = models.ForeignKey(
         'products.Product', on_delete=models.CASCADE,
@@ -159,6 +187,10 @@ class Listing(TimestampedModel):
     ai_confidence = models.FloatField(null=True, blank=True, verbose_name='Уверенность AI (0–1)')
     price_on_listing = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Цена на объявлении, ₽')
     publish_idempotency_key = models.UUIDField(default=uuid.uuid4, unique=True, verbose_name='Ключ идемпотентности')
+    ad_type = models.CharField(
+        max_length=50, choices=AD_TYPE_CHOICES, default=AD_TYPE_OWN,
+        verbose_name='Вид объявления Avito',
+    )
     placement_address = models.ForeignKey(
         MarketplacePlacementAddress, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='manual_listings', verbose_name='Адрес размещения',

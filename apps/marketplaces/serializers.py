@@ -34,15 +34,27 @@ class CategoryMappingWriteSerializer(serializers.ModelSerializer):
 class MarketplaceAccountSerializer(serializers.ModelSerializer):
     """Чтение: credentials не возвращаются никогда."""
 
+    web_session_valid = serializers.SerializerMethodField()
+
     class Meta:
         model = MarketplaceAccount
         fields = [
             'id', 'name', 'marketplace', 'external_id', 'is_active',
             'default_address', 'default_seller_address_id',
             'default_manager_name', 'default_contact_phone',
+            'publish_method', 'web_session_valid',
             'created_at',
         ]
-        read_only_fields = ['created_at']
+        read_only_fields = ['created_at', 'web_session_valid']
+
+    def get_web_session_valid(self, obj) -> bool | None:
+        """Возвращает статус web-сессии, None если аккаунт в autoload-режиме."""
+        if obj.publish_method != obj.PUBLISH_WEB:
+            return None
+        try:
+            return obj.browser_session.session_valid
+        except Exception:
+            return False
 
 
 class MarketplacePlacementAddressSerializer(serializers.ModelSerializer):
@@ -74,6 +86,7 @@ class ListingSerializer(serializers.ModelSerializer):
             'id', 'status', 'status_display',
             'product_id', 'product_article', 'product_name', 'account_id', 'account_name',
             'title', 'price_on_listing', 'external_id', 'external_url',
+            'ad_type',
             'placement_address',
             'address_override', 'seller_address_id_override',
             'manager_name_override', 'contact_phone_override',
@@ -192,6 +205,7 @@ class ListingPlacementSerializer(serializers.Serializer):
 class ListingFieldsSerializer(serializers.Serializer):
     account_id = serializers.IntegerField(required=False)
     price_on_listing = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, min_value=0)
+    ad_type = serializers.ChoiceField(choices=Listing.AD_TYPE_CHOICES, required=False)
 
 
 class ListingBulkPlacementSerializer(ListingPlacementSerializer):

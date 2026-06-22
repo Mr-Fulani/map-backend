@@ -47,6 +47,7 @@ LOCAL_APPS = [
     'apps.api',
     'apps.analytics',
     'apps.image_search',
+    'apps.browser_sessions',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -260,6 +261,11 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.billing.tasks.reset_monthly_ai_credits',
         'schedule': 60 * 60 * 24,
         'options': {'queue': 'billing'},
+    },
+    'refresh-browser-sessions-every-6h': {
+        'task': 'apps.browser_sessions.tasks.refresh_browser_sessions_task',
+        'schedule': 60 * 60 * 6,
+        'options': {'queue': 'avito_publish'},
     },
 }
 CELERY_TASK_TRACK_STARTED = True

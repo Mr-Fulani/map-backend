@@ -1,5 +1,5 @@
 from django.contrib import admin
-from unfold.admin import ModelAdmin
+from unfold.admin import ModelAdmin, TabularInline
 
 from apps.marketplaces.models import AvitoCategory, CategoryMapping, Listing, MarketplaceAccount
 
@@ -34,14 +34,39 @@ class ListingAdmin(ModelAdmin):
         return '—'
 
 
+class BrowserSessionInline(TabularInline):
+    """Инлайн браузерной сессии в карточке аккаунта."""
+
+    model = None  # устанавливается ниже после импорта
+    extra = 0
+    max_num = 1
+    can_delete = False
+    readonly_fields = [
+        'browser_type', 'profile_dir', 'fingerprint',
+        'session_valid', 'sms_pending', 'last_login_at', 'updated_at',
+    ]
+    fields = readonly_fields
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(MarketplaceAccount)
 class MarketplaceAccountAdmin(ModelAdmin):
     """Администрирование аккаунтов Avito тенантов."""
 
-    list_display = ['name', 'tenant', 'marketplace', 'is_active', 'external_id']
-    list_filter = ['tenant', 'marketplace', 'is_active']
+    list_display = ['name', 'tenant', 'marketplace', 'publish_method', 'is_active', 'external_id']
+    list_filter = ['tenant', 'marketplace', 'publish_method', 'is_active']
     search_fields = ['name', 'tenant__slug']
-    readonly_fields = ['credentials_enc', 'created_at', 'updated_at']
+    readonly_fields = ['credentials_enc', 'web_login_enc', 'web_password_enc', 'created_at', 'updated_at']
+
+    def get_inlines(self, request, obj=None):
+        """Показываем BrowserSession инлайн только для web-аккаунтов."""
+        from apps.browser_sessions.models import BrowserSession
+        if obj and obj.publish_method == MarketplaceAccount.PUBLISH_WEB:
+            BrowserSessionInline.model = BrowserSession
+            return [BrowserSessionInline]
+        return []
 
 
 @admin.register(AvitoCategory)

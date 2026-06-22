@@ -60,6 +60,10 @@ django-cors-headers==4.4.0
 # Utilities
 python-dotenv==1.0.1
 
+# Browser automation (web-mode Avito posting)
+playwright>=1.60.0
+playwright-stealth>=2.0.3
+
 # Image Search (scraping, hashing, transliteration)
 httpx==0.27.0
 selectolax==0.3.21
