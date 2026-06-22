@@ -81,11 +81,11 @@ interface Props {
 
 // Вид объявления Avito (AdType). value — точная строка, которую принимает Avito.
 const AD_TYPE_OPTIONS: { value: string; label: string }[] = [
-  { value: 'Продаю своё', label: 'Продаю своё — для частников / б/у' },
   { value: 'Товар приобретен на продажу', label: 'Товар приобретён на продажу — перепродажа (B2B)' },
   { value: 'Товар от производителя', label: 'Товар от производителя' },
+  { value: 'Продаю своё', label: 'Продаю своё — для частников / б/у' },
 ];
-const DEFAULT_AD_TYPE = 'Продаю своё';
+const DEFAULT_AD_TYPE = 'Товар приобретен на продажу';
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   active: 'default',
@@ -675,8 +675,8 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                 </div>
               </div>
 
-              {/* Причина отклонения */}
-              {listing.rejection_reason && (
+              {/* Причина отклонения — только для реально отклонённых, иначе висит старый текст */}
+              {listing.status === 'rejected' && listing.rejection_reason && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive whitespace-pre-line">
                   <span className="font-medium">Причина отклонения: </span>
                   {listing.rejection_reason}

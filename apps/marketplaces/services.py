@@ -145,7 +145,10 @@ class ListingService:
                 f'текущий статус: {listing.status}'
             )
         listing.status = Listing.STATUS_QUEUED
-        listing.save(update_fields=['status'])
+        # Сбрасываем причину прошлого отклонения, чтобы старый текст не висел
+        # на карточке, пока идёт новая публикация.
+        listing.rejection_reason = ''
+        listing.save(update_fields=['status', 'rejection_reason'])
         lid = listing.pk
         transaction.on_commit(lambda: _enqueue_publish_or_update(lid, is_new=True))
         return listing

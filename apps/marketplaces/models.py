@@ -171,7 +171,7 @@ class Listing(TimestampedModel):
     price_on_listing = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Цена на объявлении, ₽')
     publish_idempotency_key = models.UUIDField(default=uuid.uuid4, unique=True, verbose_name='Ключ идемпотентности')
     ad_type = models.CharField(
-        max_length=50, choices=AD_TYPE_CHOICES, default=AD_TYPE_OWN,
+        max_length=50, choices=AD_TYPE_CHOICES, default=AD_TYPE_RESALE,
         verbose_name='Вид объявления Avito',
     )
     placement_address = models.ForeignKey(

@@ -405,7 +405,8 @@ def poll_feed_results_task(self, account_id: int):
             listing.external_id = str(avito_id)
             listing.status = Listing.STATUS_ACTIVE
             listing.published_at = listing.published_at or now()
-            listing.save(update_fields=['external_id', 'status', 'published_at'])
+            listing.rejection_reason = ''
+            listing.save(update_fields=['external_id', 'status', 'published_at', 'rejection_reason'])
             url = f'https://www.avito.ru/{avito_id}'
             if listing.external_url:
                 url = listing.external_url
