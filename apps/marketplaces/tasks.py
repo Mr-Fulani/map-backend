@@ -95,6 +95,32 @@ def _queued_publish_listings(account, first_listing: Listing) -> list[Listing]:
     return queued
 
 
+# Пауза перед повтором при лимите Avito «1 автозагрузка/час» (~11 минут).
+RATE_LIMIT_RETRY_COUNTDOWN = 660
+
+
+def _account_feed_listings(account) -> list:
+    """
+    Полное состояние фида аккаунта в одной автозагрузке (фид-координатор):
+    активные/ожидающие/в очереди — как объявления, снимаемые (с external_id) — как Remove.
+
+    Avito тянет один URL фида на аккаунт, поэтому отдаём всё разом, чтобы
+    операции (публикация/снятие) не затирали друг друга и не гонялись за лимитом.
+    """
+    ads = Listing.objects.filter(
+        account=account,
+        status__in=[Listing.STATUS_ACTIVE, Listing.STATUS_PENDING, Listing.STATUS_QUEUED],
+    )
+    removes = Listing.objects.filter(
+        account=account,
+        status__in=[Listing.STATUS_ARCHIVED, Listing.STATUS_DELETED],
+        external_id__isnull=False,
+    )
+    return list(
+        (ads | removes).select_related('tenant', 'product', 'account').order_by('created_at', 'pk')
+    )
+
+
 def _has_active_feed(account) -> bool:
     """У аккаунта уже есть feed, который ждёт ответа Avito."""
     return Listing.objects.filter(
@@ -120,7 +146,7 @@ def _schedule_next_queued_publish(account) -> None:
         publish_listing_task.delay(next_listing_id)
 
 
-@shared_task(bind=True, max_retries=3, queue='avito_publish')
+@shared_task(bind=True, max_retries=6, queue='avito_publish')
 def publish_listing_task(self, listing_id: int):
     """
     Проверяет лимиты и загружает листинг в Avito через Autoload-фид.
@@ -212,18 +238,23 @@ def publish_listing_task(self, listing_id: int):
                         'Подключите Автозагрузку в настройках Avito и повторите публикацию.',
                     )
                 return
-            adapter.flush_feed(batch)
+            # Одна автозагрузка = полное состояние аккаунта (активные + Remove),
+            # чтобы не затирать другие объявления и не гоняться за лимитом.
+            adapter.flush_feed(_account_feed_listings(listing.account))
             Listing.objects.filter(pk__in=[item.pk for item in batch]).update(status=Listing.STATUS_PENDING)
             _write_log(
                 listing.tenant, 'listing_publish', 'ok',
                 f'Фид загружен для {len(batch)} объявлений {listing.account.name}, ожидаем Avito',
                 listing=listing,
             )
-            # Запускаем polling результатов через 10 минут
+            # Запускаем polling результатов
             poll_feed_results_task.apply_async(
                 args=[listing.account.pk],
                 countdown=300,
             )
+        except RateLimitError as exc:
+            # Лимит 1/час — повторим после открытия окна, листинги остаются QUEUED.
+            raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
         except FeedUploadError as exc:
             listing.retry_count += 1
             if self.request.retries >= self.max_retries:
@@ -236,13 +267,13 @@ def publish_listing_task(self, listing_id: int):
                 return
             listing.save(update_fields=['retry_count'])
             raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
-        except (ServerError, RateLimitError) as exc:
+        except ServerError as exc:
             listing.retry_count += 1
             listing.save(update_fields=['retry_count'])
             raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
 
 
-@shared_task(bind=True, max_retries=3, queue='avito_update')
+@shared_task(bind=True, max_retries=6, queue='avito_update')
 def update_listing_task(self, listing_id: int):
     """Обновляет содержимое объявления через перезагрузку фида."""
     listing = _get_listing(listing_id)
@@ -250,7 +281,7 @@ def update_listing_task(self, listing_id: int):
         publish_listing_task.delay(listing_id)
         return
     try:
-        AvitoAdapter(listing.account).flush_feed([listing])
+        AvitoAdapter(listing.account).flush_feed(_account_feed_listings(listing.account))
         listing.last_sync_at = now()
         listing.save(update_fields=['last_sync_at'])
         _write_log(
@@ -258,7 +289,9 @@ def update_listing_task(self, listing_id: int):
             f'Фид обновлён для «{listing.title or listing.product.name}»',
             listing=listing,
         )
-    except (FeedUploadError, ServerError, RateLimitError) as exc:
+    except RateLimitError as exc:
+        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
+    except (FeedUploadError, ServerError) as exc:
         raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
 
 
@@ -285,7 +318,7 @@ def update_price_task(self, listing_id: int):
         raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
 
 
-@shared_task(bind=True, max_retries=3, queue='avito_delete')
+@shared_task(bind=True, max_retries=6, queue='avito_delete')
 def unpublish_listing_task(self, listing_id: int):
     """Снимает объявление с публикации через фид (статус Remove)."""
     listing = _get_listing(listing_id)
@@ -294,17 +327,21 @@ def unpublish_listing_task(self, listing_id: int):
     if not listing.external_id:
         return
     try:
-        AvitoAdapter(listing.account).flush_feed([listing])
+        # Полный фид аккаунта: Remove этого объявления + остальные активные.
+        AvitoAdapter(listing.account).flush_feed(_account_feed_listings(listing.account))
         _write_log(
             listing.tenant, 'listing_unpublish', 'ok',
             f'Запрос на снятие «{listing.title or listing.product.name}» отправлен в Avito',
             listing=listing,
         )
-    except (FeedUploadError, ServerError, RateLimitError) as exc:
+        poll_feed_results_task.apply_async(args=[listing.account.pk], countdown=300)
+    except RateLimitError as exc:
+        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
+    except (FeedUploadError, ServerError) as exc:
         raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
 
 
-@shared_task(bind=True, max_retries=3, queue='avito_delete')
+@shared_task(bind=True, max_retries=6, queue='avito_delete')
 def delete_listing_task(self, listing_id: int):
     """Удаляет объявление через фид (статус Remove)."""
     listing = _get_listing(listing_id)
@@ -313,13 +350,17 @@ def delete_listing_task(self, listing_id: int):
     if not listing.external_id:
         return
     try:
-        AvitoAdapter(listing.account).flush_feed([listing])
+        # Полный фид аккаунта: Remove этого объявления + остальные активные.
+        AvitoAdapter(listing.account).flush_feed(_account_feed_listings(listing.account))
         _write_log(
             listing.tenant, 'listing_delete', 'ok',
             f'Запрос на удаление «{listing.title or listing.product.name}» отправлен в Avito',
             listing=listing,
         )
-    except (FeedUploadError, ServerError, RateLimitError) as exc:
+        poll_feed_results_task.apply_async(args=[listing.account.pk], countdown=300)
+    except RateLimitError as exc:
+        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
+    except (FeedUploadError, ServerError) as exc:
         raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
 
 
@@ -347,12 +388,14 @@ def flush_feed_task(self, account_id: int):
         return
 
     try:
-        AvitoAdapter(account).flush_feed(listings)
+        AvitoAdapter(account).flush_feed(_account_feed_listings(account))
         _write_log(
             account.tenant, 'feed_flush', 'ok',
             f'Фид загружен: {len(listings)} объявлений для {account.name}',
         )
         poll_feed_results_task.apply_async(args=[account_id], countdown=300)
+    except RateLimitError as exc:
+        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
     except (FeedUploadError, ServerError) as exc:
         if self.request.retries >= self.max_retries:
             reason = str(exc)

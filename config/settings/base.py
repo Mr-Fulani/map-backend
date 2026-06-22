@@ -261,6 +261,11 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 60 * 60 * 24,
         'options': {'queue': 'billing'},
     },
+    'update-tenant-counters-15min': {
+        'task': 'apps.tenants.tasks.update_tenant_counters',
+        'schedule': 60 * 15,
+        'options': {'queue': 'sync_import'},
+    },
 }
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 3600
