@@ -74,6 +74,7 @@ class ListingSerializer(serializers.ModelSerializer):
             'id', 'status', 'status_display',
             'product_id', 'product_article', 'product_name', 'account_id', 'account_name',
             'title', 'price_on_listing', 'external_id', 'external_url',
+            'ad_type',
             'placement_address',
             'address_override', 'seller_address_id_override',
             'manager_name_override', 'contact_phone_override',
@@ -192,6 +193,7 @@ class ListingPlacementSerializer(serializers.Serializer):
 class ListingFieldsSerializer(serializers.Serializer):
     account_id = serializers.IntegerField(required=False)
     price_on_listing = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, min_value=0)
+    ad_type = serializers.ChoiceField(choices=Listing.AD_TYPE_CHOICES, required=False)
 
 
 class ListingBulkPlacementSerializer(ListingPlacementSerializer):
