@@ -791,13 +791,13 @@ class TestPublishListingTask:
         )
 
         with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.poll_feed_results_task') as mock_poll:
+             patch('apps.marketplaces.tasks.confirm_removal_task') as mock_confirm:
             mock_cls.return_value.flush_feed.return_value = True
-            mock_poll.apply_async = MagicMock()
+            mock_confirm.apply_async = MagicMock()
             unpublish_listing_task(target.pk)
 
         target.refresh_from_db()
-        assert target.status == Listing.STATUS_ARCHIVED
+        assert target.status == Listing.STATUS_ARCHIVING
         # В фиде только активный; снимаемый исключён (его Avito уберёт по отсутствию).
         flushed = mock_cls.return_value.flush_feed.call_args[0][0]
         assert {i.pk for i in flushed} == {active.pk}
@@ -813,12 +813,12 @@ class TestPublishListingTask:
         )
 
         with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.poll_feed_results_task') as mock_poll:
-            mock_poll.apply_async = MagicMock()
+             patch('apps.marketplaces.tasks.confirm_removal_task') as mock_confirm:
+            mock_confirm.apply_async = MagicMock()
             unpublish_listing_task(only.pk)
 
         only.refresh_from_db()
-        assert only.status == Listing.STATUS_ARCHIVED
+        assert only.status == Listing.STATUS_ARCHIVING
         mock_cls.return_value.flush_stop.assert_called_once()
         mock_cls.return_value.flush_feed.assert_not_called()
 
@@ -845,6 +845,53 @@ class TestPublishListingTask:
             # исходный RateLimitError — оба варианта означают «ушли в повтор».
             with pytest.raises((Retry, RateLimitError)):
                 unpublish_listing_task(listing.pk)
+
+    def test_unpublish_sets_archiving_not_archived(self):
+        """Снятие переводит в «Снимается», а не сразу «В архиве» (ждём подтверждения)."""
+        from apps.marketplaces.tasks import unpublish_listing_task
+        tenant = make_tenant('unpub-archiving-co')
+        account = make_account(tenant)
+        listing = make_listing(
+            tenant, make_product(tenant), account,
+            status=Listing.STATUS_ACTIVE, external_id='AV-ARCHN-1',
+        )
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.confirm_removal_task') as mock_confirm:
+            mock_cls.return_value.flush_stop.return_value = True
+            mock_confirm.apply_async = MagicMock()
+            unpublish_listing_task(listing.pk)
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_ARCHIVING
+
+    def test_confirm_removal_archived_when_avito_removed(self):
+        """confirm_removal_task: Avito больше не активно → «В архиве»."""
+        from apps.marketplaces.tasks import confirm_removal_task
+        tenant = make_tenant('confirm-rm-co')
+        account = make_account(tenant)
+        listing = make_listing(
+            tenant, make_product(tenant), account,
+            status=Listing.STATUS_ARCHIVING, external_id='AV-RM-1',
+        )
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls:
+            mock_cls.return_value.get_status.return_value = {'status': 'old'}
+            confirm_removal_task(listing.pk)
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_ARCHIVED
+
+    def test_confirm_removal_keeps_archiving_when_still_active(self):
+        """confirm_removal_task: Avito ещё активно → остаётся «Снимается»."""
+        from apps.marketplaces.tasks import confirm_removal_task
+        tenant = make_tenant('confirm-rm2-co')
+        account = make_account(tenant)
+        listing = make_listing(
+            tenant, make_product(tenant), account,
+            status=Listing.STATUS_ARCHIVING, external_id='AV-RM-2',
+        )
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls:
+            mock_cls.return_value.get_status.return_value = {'status': 'active'}
+            confirm_removal_task(listing.pk)
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_ARCHIVING
 
     def test_publish_rejects_when_autoload_profile_is_inactive(self):
         from apps.marketplaces.tasks import publish_listing_task
@@ -1013,7 +1060,7 @@ class TestListingBulkActions:
         draft.refresh_from_db()
         assert archive_result['success'] == 1
         assert delete_result['success'] == 1
-        assert active.status == Listing.STATUS_ARCHIVED
+        assert active.status == Listing.STATUS_ARCHIVING
         assert draft.status == Listing.STATUS_DELETED
 
     def test_bulk_publish_skips_invalid_status(self):
