@@ -57,6 +57,8 @@ interface PlacementAddress {
   name: string;
   seller_address_id: string;
   address: string;
+  manager_name: string;
+  contact_phone: string;
   is_default: boolean;
 }
 
@@ -130,6 +132,13 @@ export default function ListingsPage() {
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     !bulkAccountId || address.account === Number(bulkAccountId)
   ));
+  // Контакты из сохранённых адресов (Настройки → Маркетплейсы) для выпадающих списков.
+  const bulkManagerOptions = Array.from(new Set(
+    visiblePlacementAddresses.map((a) => a.manager_name).filter(Boolean),
+  ));
+  const bulkPhoneOptions = Array.from(new Set(
+    visiblePlacementAddresses.map((a) => a.contact_phone).filter(Boolean),
+  ));
 
   useEffect(() => {
     if (!bulkPlacementAddressId) return;
@@ -161,11 +170,13 @@ export default function ListingsPage() {
         status: bulkStatus || undefined,
       };
       if (bulkAction === 'update_placement') {
-        payload.placement_address = bulkPlacementAddressId ? Number(bulkPlacementAddressId) : undefined;
-        payload.seller_address_id_override = bulkSellerAddressId;
-        payload.address_override = bulkAddress;
-        payload.manager_name_override = bulkManagerName;
-        payload.contact_phone_override = bulkContactPhone;
+        // Отправляем только заполненные поля — пустое значение означает «не менять»,
+        // а не «очистить у всех листингов».
+        if (bulkPlacementAddressId) payload.placement_address = Number(bulkPlacementAddressId);
+        if (bulkSellerAddressId) payload.seller_address_id_override = bulkSellerAddressId;
+        if (bulkAddress) payload.address_override = bulkAddress;
+        if (bulkManagerName) payload.manager_name_override = bulkManagerName;
+        if (bulkContactPhone) payload.contact_phone_override = bulkContactPhone;
       }
       const res = await listingApi.bulkAction(payload);
       const data = res.data.data ?? {};
@@ -298,17 +309,32 @@ export default function ListingsPage() {
                 onChange={(e) => setBulkAddress(e.target.value)}
                 placeholder="Адрес"
               />
-              <Input
+              <select
                 value={bulkContactPhone}
                 onChange={(e) => setBulkContactPhone(e.target.value)}
-                placeholder="Контактный телефон"
-              />
-              <Input
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm"
+              >
+                <option value="">Телефон — не менять</option>
+                {bulkContactPhone && !bulkPhoneOptions.includes(bulkContactPhone) && (
+                  <option value={bulkContactPhone}>{bulkContactPhone}</option>
+                )}
+                {bulkPhoneOptions.map((phone) => (
+                  <option key={phone} value={phone}>{phone}</option>
+                ))}
+              </select>
+              <select
                 value={bulkManagerName}
                 onChange={(e) => setBulkManagerName(e.target.value)}
-                placeholder="Контактное лицо"
-                className="lg:col-span-2"
-              />
+                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm lg:col-span-2"
+              >
+                <option value="">Контактное лицо — не менять</option>
+                {bulkManagerName && !bulkManagerOptions.includes(bulkManagerName) && (
+                  <option value={bulkManagerName}>{bulkManagerName}</option>
+                )}
+                {bulkManagerOptions.map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
+              </select>
             </>
           )}
           <Button

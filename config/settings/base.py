@@ -266,6 +266,14 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 60 * 15,
         'options': {'queue': 'sync_import'},
     },
+    # Самосверка статусов с Avito: застрявшие pending → опрос, queued → публикация,
+    # active → сверка модерации. Без неё статус в БД держался только на разовом
+    # опросе при публикации и отставал от реального состояния на Avito.
+    'check-moderation-status-10min': {
+        'task': 'apps.marketplaces.tasks.check_moderation_status',
+        'schedule': 60 * 10,
+        'options': {'queue': 'avito_update'},
+    },
 }
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 3600

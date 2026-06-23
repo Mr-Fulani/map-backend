@@ -167,16 +167,19 @@ def publish_listing_task(self, listing_id: int):
     """
     listing = _get_listing(listing_id)
 
-    if listing.external_id:
-        return
-
     lock_key = f'avito:publish_lock:{listing.publish_idempotency_key}'
     with cache.lock(lock_key, timeout=60):
         listing.refresh_from_db()
-        if listing.external_id:
-            return
+        # Публикуем только из публикуемых статусов; активные/ожидающие отсекаются
+        # здесь же (это и есть защита от повторной публикации живого объявления).
         if listing.status not in (Listing.STATUS_QUEUED, Listing.STATUS_DRAFT, Listing.STATUS_REJECTED):
             return
+        # Повторная публикация из архива: старый external_id неактуален (объявление
+        # было снято). Сбрасываем его — иначе раньше задача молча выходила по
+        # `if listing.external_id: return`, и листинг навсегда висел «в очереди».
+        if listing.external_id:
+            listing.external_id = None
+            listing.save(update_fields=['external_id'])
         if listing.status != Listing.STATUS_QUEUED:
             listing.status = Listing.STATUS_QUEUED
             listing.save(update_fields=['status'])
