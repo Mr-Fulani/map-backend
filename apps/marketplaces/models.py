@@ -127,6 +127,7 @@ class Listing(TimestampedModel):
     STATUS_PENDING = 'pending'
     STATUS_ACTIVE = 'active'
     STATUS_REJECTED = 'rejected'
+    STATUS_ARCHIVING = 'archiving'
     STATUS_ARCHIVED = 'archived'
     STATUS_DELETED = 'deleted'
     STATUS_REQUIRES_REVIEW = 'requires_review'
@@ -137,6 +138,7 @@ class Listing(TimestampedModel):
         (STATUS_PENDING, 'На модерации Avito'),
         (STATUS_ACTIVE, 'Активно'),
         (STATUS_REJECTED, 'Отклонено'),
+        (STATUS_ARCHIVING, 'Снимается (ждёт Avito)'),
         (STATUS_ARCHIVED, 'В архиве'),
         (STATUS_DELETED, 'Удалено'),
         (STATUS_REQUIRES_REVIEW, 'Требует проверки'),
