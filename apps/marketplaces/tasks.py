@@ -334,25 +334,60 @@ def update_price_task(self, listing_id: int):
 
 @shared_task(bind=True, max_retries=6, queue='avito_delete')
 def unpublish_listing_task(self, listing_id: int):
-    """Снимает объявление с публикации через фид (статус Remove)."""
+    """Снимает объявление с публикации (удаление из фида Avito)."""
     listing = _get_listing(listing_id)
-    listing.status = Listing.STATUS_ARCHIVED
-    listing.save(update_fields=['status'])
     if not listing.external_id:
+        # Никогда не публиковалось на Avito — снимать нечего, сразу в архив.
+        listing.status = Listing.STATUS_ARCHIVED
+        listing.save(update_fields=['status'])
         return
+    # Промежуточный статус «Снимается» — в «В архиве» переведём после подтверждения.
+    listing.status = Listing.STATUS_ARCHIVING
+    listing.save(update_fields=['status'])
     try:
-        # Полный фид аккаунта: Remove этого объявления + остальные активные.
+        # Полный фид аккаунта без этого объявления → Avito его архивирует.
         _flush_account_or_stop(listing.account)
         _write_log(
             listing.tenant, 'listing_unpublish', 'ok',
             f'Запрос на снятие «{listing.title or listing.product.name}» отправлен в Avito',
             listing=listing,
         )
-        poll_feed_results_task.apply_async(args=[listing.account.pk], countdown=300)
+        # Подтверждение снятия опросом статуса (Avito обрабатывает пакетно).
+        confirm_removal_task.apply_async(args=[listing.pk], countdown=300)
     except RateLimitError as exc:
         raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
     except (FeedUploadError, ServerError) as exc:
         raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
+
+
+@shared_task(bind=True, max_retries=3, queue='avito_update')
+def confirm_removal_task(self, listing_id: int):
+    """
+    Подтверждает снятие: переводит «Снимается» → «В архиве», когда Avito
+    перестал показывать объявление активным (autoload обрабатывает пакетно).
+    """
+    listing = _get_listing(listing_id)
+    if listing.status != Listing.STATUS_ARCHIVING:
+        return
+    if not listing.external_id:
+        listing.status = Listing.STATUS_ARCHIVED
+        listing.save(update_fields=['status'])
+        return
+    try:
+        data = AvitoAdapter(listing.account).get_status(listing)
+    except (ServerError, RateLimitError) as exc:
+        raise self.retry(exc=exc, countdown=backoff(self.request.retries))
+    avito_status = (data or {}).get('status', '')
+    if avito_status and avito_status != 'active':
+        listing.status = Listing.STATUS_ARCHIVED
+        listing.last_sync_at = now()
+        listing.save(update_fields=['status', 'last_sync_at'])
+        _write_log(
+            listing.tenant, 'listing_unpublish', 'ok',
+            f'«{listing.title or listing.product.name}» снято с публикации (в архиве)',
+            listing=listing,
+        )
+    # Ещё active — оставляем «Снимается»; периодическая сверка дожмёт.
 
 
 @shared_task(bind=True, max_retries=6, queue='avito_delete')
@@ -610,10 +645,19 @@ def check_moderation_status():
     for listing_id in active_listing_ids:
         check_moderation_task.delay(listing_id)
 
+    # «Снимается» → подтверждаем снятие (Avito обрабатывает пакетно).
+    archiving_ids = list(Listing.objects.filter(
+        status=Listing.STATUS_ARCHIVING,
+        external_id__isnull=False,
+    ).values_list('pk', flat=True))
+    for listing_id in archiving_ids:
+        confirm_removal_task.delay(listing_id)
+
     return {
         'pending_accounts_queued': len(pending_account_ids),
         'queued_accounts_started': len(queued_account_ids),
         'active_listings_queued': len(active_listing_ids),
+        'archiving_confirmed': len(archiving_ids),
     }
 
 

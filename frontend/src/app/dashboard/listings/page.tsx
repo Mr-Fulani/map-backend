@@ -80,6 +80,7 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | '
   draft: 'outline',
   rejected: 'destructive',
   requires_review: 'destructive',
+  archiving: 'secondary',
   archived: 'secondary',
   limit_reached: 'destructive',
 };

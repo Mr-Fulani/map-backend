@@ -155,11 +155,13 @@ class ListingService:
 
     @staticmethod
     def archive(listing_id: int, tenant) -> Listing:
-        """Снимает листинг с публикации через feed Remove."""
+        """Снимает листинг с публикации через удаление из фида Avito."""
         listing = ListingService.get_for_tenant(listing_id, tenant)
-        if listing.status in (Listing.STATUS_ARCHIVED, Listing.STATUS_DELETED):
+        if listing.status in (Listing.STATUS_ARCHIVING, Listing.STATUS_ARCHIVED, Listing.STATUS_DELETED):
             raise InvalidListingStatus(f'Листинг уже в статусе {listing.status}')
-        listing.status = Listing.STATUS_ARCHIVED
+        # Честный статус: «Снимается» — переключим в «В архиве» только после
+        # подтверждения снятия от Avito (autoload пакетный, не мгновенный).
+        listing.status = Listing.STATUS_ARCHIVING
         listing.save(update_fields=['status'])
         lid = listing.pk
         transaction.on_commit(lambda: _enqueue_unpublish(lid))

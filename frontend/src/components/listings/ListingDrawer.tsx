@@ -85,9 +85,9 @@ const AD_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'Товар от производителя', label: 'Товар от производителя' },
 ];
 const DEFAULT_AD_TYPE = 'Товар приобретен на продажу';
-// Лимит заголовка в Avito Autoload — 50 символов (у ручной загрузки больше,
-// но через автозагрузку Avito режет/отклоняет длиннее 50).
-const AVITO_TITLE_MAX = 50;
+// Лимит заголовка в Avito Autoload — 100 символов (отличается от лимита
+// ручной загрузки).
+const AVITO_TITLE_MAX = 100;
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   active: 'default',
@@ -95,6 +95,7 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | '
   draft: 'outline',
   rejected: 'destructive',
   requires_review: 'destructive',
+  archiving: 'secondary',
   archived: 'secondary',
   limit_reached: 'destructive',
 };
