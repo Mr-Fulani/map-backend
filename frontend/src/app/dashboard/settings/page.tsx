@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
@@ -13,7 +14,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Eye, EyeOff, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store, Search } from 'lucide-react';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store, Search } from 'lucide-react';
 import { profileApi, datasourceApi } from '@/lib/api';
 
 interface ApiKey {
@@ -208,7 +209,6 @@ export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPasswords, setShowPasswords] = useState(false);
   const [changingPassword, setChangingPassword] = useState(false);
   const [newEmail, setNewEmail] = useState('');
   const [requestingEmail, setRequestingEmail] = useState(false);
@@ -1059,26 +1059,14 @@ export default function SettingsPage() {
               <div className="space-y-3">
                 <div className="space-y-2">
                   <Label>Текущий пароль</Label>
-                  <div className="relative">
-                    <Input
-                      type={showPasswords ? 'text' : 'password'}
-                      value={currentPassword}
-                      onChange={(e) => setCurrentPassword(e.target.value)}
-                      className="pr-10"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPasswords((v) => !v)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                    >
-                      {showPasswords ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                    </button>
-                  </div>
+                  <PasswordInput
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                  />
                 </div>
                 <div className="space-y-2">
                   <Label>Новый пароль</Label>
-                  <Input
-                    type={showPasswords ? 'text' : 'password'}
+                  <PasswordInput
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
                     placeholder="Минимум 8 символов"
@@ -1086,8 +1074,7 @@ export default function SettingsPage() {
                 </div>
                 <div className="space-y-2">
                   <Label>Подтвердите новый пароль</Label>
-                  <Input
-                    type={showPasswords ? 'text' : 'password'}
+                  <PasswordInput
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
                   />
@@ -1280,8 +1267,7 @@ export default function SettingsPage() {
                   </div>
                   <div className="space-y-2">
                     <Label>Client Secret</Label>
-                    <Input 
-                      type="password"
+                    <PasswordInput
                       placeholder="Client Secret" 
                       value={newClientSecret}
                       onChange={(e) => setNewClientSecret(e.target.value)}
@@ -1710,9 +1696,8 @@ export default function SettingsPage() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="datasource-password">Пароль</Label>
-                    <Input
+                    <PasswordInput
                       id="datasource-password"
-                      type="password"
                       value={newDatasourcePassword}
                       onChange={(event) => setNewDatasourcePassword(event.target.value)}
                       required

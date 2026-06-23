@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { accountApi } from '@/lib/api';
 import { ArrowRight, Loader2, ExternalLink, ShieldCheck } from 'lucide-react';
@@ -122,9 +123,8 @@ export function StepAvito({ data, onNext }: StepAvitoProps) {
         </div>
         <div className="space-y-2">
           <Label htmlFor="client-secret">Client Secret</Label>
-          <Input
+          <PasswordInput
             id="client-secret"
-            type="password"
             placeholder="Вставьте Client Secret из Avito"
             value={clientSecret}
             onChange={(e) => setClientSecret(e.target.value)}
