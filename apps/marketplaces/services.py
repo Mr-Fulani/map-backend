@@ -515,17 +515,21 @@ class ListingService:
             raise NoActiveAccounts('Нет подключённых активных аккаунтов')
         listing_ids = []
         for account in accounts:
-            listing = ListingService.create_or_update(product, account)
+            # Со страницы товаров создаём ЧЕРНОВИК, а не публикуем сразу —
+            # тенант сначала редактирует цену/контакты и публикует вручную.
+            listing = ListingService.create_or_update(product, account, auto_publish=False)
             listing_ids.append(listing.pk)
         return listing_ids
 
     @staticmethod
-    def create_or_update(product, account, change_type: str = 'content') -> Listing:
+    def create_or_update(product, account, change_type: str = 'content', auto_publish: bool = True) -> Listing:
         """
         Создаёт листинг или обновляет существующий в зависимости от change_type.
 
         price_only → только обновить цену (минимальный запрос к Avito).
         Иначе → полное обновление или первичная публикация.
+        auto_publish=False → только создать/обновить черновик, без отправки в Avito
+        (тенант публикует вручную из вкладки «Листинги»).
         Задача в Celery ставится через transaction.on_commit — не раньше коммита.
         """
         listing, created = Listing.objects.get_or_create(
@@ -544,13 +548,15 @@ class ListingService:
             if change_type == 'price_only':
                 listing.price_on_listing = product.price
                 listing.save(update_fields=['price_on_listing'])
-                transaction.on_commit(lambda: _enqueue_price_update(listing.pk))
+                if auto_publish:
+                    transaction.on_commit(lambda: _enqueue_price_update(listing.pk))
                 return listing
 
             listing.price_on_listing = product.price
             listing.save(update_fields=['price_on_listing'])
 
-        transaction.on_commit(lambda: _enqueue_publish_or_update(listing.pk, created))
+        if auto_publish:
+            transaction.on_commit(lambda: _enqueue_publish_or_update(listing.pk, created))
         return listing
 
 

@@ -625,8 +625,47 @@ class TestAvitoAdapterFeedStorage:
 
 @pytest.mark.django_db
 class TestPublishListingTask:
+    def test_publish_product_creates_draft_without_autopublish(self):
+        """Со страницы товаров создаётся ЧЕРНОВИК — без авто-отправки в Avito."""
+        from apps.marketplaces.services import ListingService
+        tenant = make_tenant('prod-draft-co')
+        make_account(tenant)
+        product = make_product(tenant)
+
+        with patch('apps.marketplaces.services.transaction') as mock_tx:
+            ids = ListingService.publish_product(product, tenant)
+
+        listing = Listing.objects.get(pk=ids[0])
+        assert listing.status == Listing.STATUS_DRAFT
+        # auto_publish=False → никаких on_commit (ни публикации, ни апдейта)
+        mock_tx.on_commit.assert_not_called()
+
+    def test_republish_from_archive_clears_external_id_and_publishes(self):
+        """Перепубликация из архива: stale external_id сбрасывается, фид уходит (не висит в очереди)."""
+        from apps.marketplaces.tasks import publish_listing_task
+        tenant = make_tenant('republish-arch-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(
+            tenant, product, account,
+            status=Listing.STATUS_QUEUED, external_id='OLD-AVITO-ID',
+        )
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks.poll_feed_results_task') as mock_poll:
+            mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
+            mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
+            mock_cls.return_value.is_autoload_active.return_value = True
+            mock_poll.apply_async = MagicMock()
+            publish_listing_task(listing.pk)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_PENDING
+        mock_cls.return_value.flush_feed.assert_called_once()
+
     def test_publish_idempotency(self):
-        """Второй вызов задачи не вызывает flush_feed если уже есть external_id."""
+        """Активное объявление (external_id + status=active) повторно не публикуется."""
         from apps.marketplaces.tasks import publish_listing_task
         tenant = make_tenant('idemp-co')
         account = make_account(tenant)
