@@ -38,6 +38,7 @@ const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
     ref
   ) => {
     const inputRef = React.useRef<HTMLInputElement>(null)
+    const buttonRef = React.useRef<HTMLButtonElement>(null)
     const [visible, setVisible] = React.useState(false)
     const [animating, setAnimating] = React.useState(false)
     const [displayValue, setDisplayValue] = React.useState("")
@@ -87,6 +88,37 @@ const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
       }
     }, [animating, visible])
 
+    React.useEffect(() => {
+      if (disabled || readOnly) {
+        setEyeOffset({ x: 0, y: 0 })
+        return
+      }
+
+      let frame = 0
+
+      function handleDocumentPointerMove(event: PointerEvent) {
+        window.cancelAnimationFrame(frame)
+        frame = window.requestAnimationFrame(() => {
+          const bounds = buttonRef.current?.getBoundingClientRect()
+          if (!bounds) return
+
+          const centerX = bounds.left + bounds.width / 2
+          const centerY = bounds.top + bounds.height / 2
+          const x = Math.max(-5, Math.min(5, ((event.clientX - centerX) / 90) * 5))
+          const y = Math.max(-4, Math.min(4, ((event.clientY - centerY) / 80) * 4))
+
+          setEyeOffset({ x, y })
+        })
+      }
+
+      document.addEventListener("pointermove", handleDocumentPointerMove, true)
+
+      return () => {
+        window.cancelAnimationFrame(frame)
+        document.removeEventListener("pointermove", handleDocumentPointerMove, true)
+      }
+    }, [disabled, readOnly])
+
     function animateToggle(nextVisible: boolean) {
       const realValue = currentValue
 
@@ -132,13 +164,6 @@ const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
       }, ANIMATION_MS / STEPS)
     }
 
-    function handlePointerMove(event: React.PointerEvent<HTMLButtonElement>) {
-      const bounds = event.currentTarget.getBoundingClientRect()
-      const x = ((event.clientX - bounds.left) / bounds.width - 0.5) * 6
-      const y = ((event.clientY - bounds.top) / bounds.height - 0.5) * 5
-      setEyeOffset({ x, y })
-    }
-
     function handleChange(event: React.ChangeEvent<HTMLInputElement>) {
       if (!animating) setDisplayValue(event.target.value)
       onChange?.(event)
@@ -161,14 +186,13 @@ const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
           )}
         />
         <button
+          ref={buttonRef}
           type="button"
           aria-label={visible ? hideLabel : revealLabel}
           aria-pressed={visible}
           title={visible ? hideLabel : revealLabel}
           disabled={disabled || readOnly}
           onClick={() => !animating && animateToggle(!visible)}
-          onPointerMove={handlePointerMove}
-          onPointerLeave={() => setEyeOffset({ x: 0, y: 0 })}
           className="absolute right-0 top-0 grid h-9 w-10 place-items-center rounded-r-md text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
         >
           <svg
@@ -206,9 +230,7 @@ const PasswordInput = React.forwardRef<HTMLInputElement, PasswordInputProps>(
               <g
                 className="transition-transform duration-150"
                 style={{
-                  transform: `translate(${visible && !blink ? eyeOffset.x : 0}px, ${
-                    visible && !blink ? eyeOffset.y : 0
-                  }px)`,
+                  transform: `translate(${!blink ? eyeOffset.x : 0}px, ${!blink ? eyeOffset.y : 0}px)`,
                 }}
               >
                 <circle cx="12" cy="12" r="4" fill="currentColor" />
