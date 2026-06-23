@@ -10,7 +10,7 @@ from django.conf import settings
 
 from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 from apps.marketplaces.adapters.avito.error_handler import handle_avito_error
-from apps.marketplaces.adapters.avito.feed_builder import build_feed
+from apps.marketplaces.adapters.avito.feed_builder import build_feed, build_stop_feed
 from apps.marketplaces.adapters.avito.rate_limiter import AvitoRateLimiter, RateLimitError
 from apps.marketplaces.base import BaseMarketplaceAdapter
 
@@ -217,6 +217,17 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         """
         feed_bytes = build_feed(listings)
         self._upload_to_s3(feed_bytes)
+        self._trigger_autoload()
+        return True
+
+    def flush_stop(self) -> bool:
+        """
+        Загружает спец-фид STOP — снимает ВСЕ объявления аккаунта с публикации.
+
+        Используется, когда активных объявлений не осталось (пустой фид Avito
+        снятием не считает, нужна команда STOP).
+        """
+        self._upload_to_s3(build_stop_feed())
         self._trigger_autoload()
         return True
 
