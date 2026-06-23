@@ -8,6 +8,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { datasourceApi } from '@/lib/api';
 import {
@@ -183,9 +184,8 @@ export function StepDatasource({ data, onNext, onBack }: StepDatasourceProps) {
             </div>
             <div className="space-y-2">
               <Label htmlFor="ds-password">Пароль</Label>
-              <Input
+              <PasswordInput
                 id="ds-password"
-                type="password"
                 placeholder="••••••••"
                 value={connectionData.password}
                 onChange={(e) =>

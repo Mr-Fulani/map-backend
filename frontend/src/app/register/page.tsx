@@ -12,6 +12,7 @@ import { authApi, setAccessToken, setRefreshToken } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { PasswordInput } from '@/components/ui/password-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Zap, Loader2 } from 'lucide-react';
@@ -152,9 +153,8 @@ export default function RegisterPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="reg-password">Пароль</Label>
-              <Input
+              <PasswordInput
                 id="reg-password"
-                type="password"
                 placeholder="Минимум 8 символов"
                 value={form.password}
                 onChange={(e) => handleChange('password', e.target.value)}
