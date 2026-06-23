@@ -19,11 +19,11 @@ def build_feed(listings: list) -> bytes:
     """
     Генерирует XML-фид в формате Avito Autoload (formatVersion=3) для списка листингов.
 
-    Листинги со статусом ARCHIVED или DELETED включаются с тегом <Status>Remove</Status>.
+    В фид попадают только активные объявления. Снятие с публикации в Avito
+    делается ОТСУТСТВИЕМ объявления в файле (Avito архивирует то, чего нет),
+    а не тегом — поэтому archived/deleted сюда передавать не нужно.
     Возвращает bytes в UTF-8 с XML-декларацией.
     """
-    from apps.marketplaces.models import Listing
-
     root = ET.Element('Ads', formatVersion='3', target='Avito.ru')
 
     for listing in listings:
@@ -49,6 +49,11 @@ def build_feed(listings: list) -> bytes:
         product_type = _get_product_type(listing)
         if product_type:
             ET.SubElement(ad, 'ProductType').text = product_type
+        # SparePartType («Вид запчасти», напр. «Автосвет») — обязателен, но Avito
+        # умеет определить его сам по названию; отдаём, если задан в маппинге.
+        spare_part_type = _get_spare_part_type(listing)
+        if spare_part_type:
+            ET.SubElement(ad, 'SparePartType').text = spare_part_type
         # Brand (Производитель) и OEM (Номер детали) — обязательны для запчастей.
         ET.SubElement(ad, 'Brand').text = _get_brand(listing)
         ET.SubElement(ad, 'OEM').text = _get_oem(listing)
@@ -59,9 +64,6 @@ def build_feed(listings: list) -> bytes:
         ET.SubElement(ad, 'AllowEmail').text = 'Нет'
         _add_images(ad, product)
 
-        if listing.status in (Listing.STATUS_ARCHIVED, Listing.STATUS_DELETED):
-            ET.SubElement(ad, 'Status').text = 'Remove'
-
     ET.indent(root, space='  ')
     buf = io.BytesIO()
     ET.ElementTree(root).write(buf, encoding='UTF-8', xml_declaration=True)
@@ -71,6 +73,31 @@ def build_feed(listings: list) -> bytes:
 def get_ad_id(listing) -> str:
     """Возвращает Id объявления в фиде — используется как ключ при сопоставлении с Avito."""
     return str(listing.publish_idempotency_key)
+
+
+def build_stop_feed() -> bytes:
+    """
+    Возвращает спец-фид «STOP» — документированная команда Avito снять ВСЕ
+    объявления аккаунта с публикации (когда активных не осталось).
+
+    Формат: <Ads target="Avito.ru" formatVersion="3"><Ad><Id>STOP</Id></Ad></Ads>
+    """
+    root = ET.Element('Ads', formatVersion='3', target='Avito.ru')
+    ET.SubElement(ET.SubElement(root, 'Ad'), 'Id').text = 'STOP'
+    ET.indent(root, space='  ')
+    buf = io.BytesIO()
+    ET.ElementTree(root).write(buf, encoding='UTF-8', xml_declaration=True)
+    return buf.getvalue()
+
+
+def _get_spare_part_type(listing) -> str:
+    """«Вид запчасти» (SparePartType) из attributes_map маппинга категории; иначе пусто."""
+    mapping = _get_category_mapping(listing)
+    attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
+    return _first_value(
+        attributes.get('SparePartType'),
+        attributes.get('spare_part_type'),
+    )
 
 
 def _get_avito_category(listing) -> str:

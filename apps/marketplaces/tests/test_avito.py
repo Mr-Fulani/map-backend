@@ -258,15 +258,22 @@ class TestFeedBuilder:
         assert '<SellerAddressID>' not in xml_str
         assert '<Address>Москва, Тверская, 1</Address>' in xml_str
 
-    def test_build_feed_archived_has_remove_status(self):
-        """Листинг в статусе ARCHIVED получает тег <Status>Remove</Status>."""
+    def test_build_feed_never_emits_status_remove(self):
+        """build_feed не использует выдуманный <Status>Remove</Status> (его в формате Avito нет)."""
         tenant = make_tenant('feed-rm-co')
         account = make_account(tenant)
         product = make_product(tenant)
         listing = make_listing(tenant, product, account, status=Listing.STATUS_ARCHIVED)
 
         xml_str = build_feed([listing]).decode('utf-8')
-        assert '<Status>Remove</Status>' in xml_str
+        assert '<Status>' not in xml_str
+
+    def test_build_stop_feed_is_stop_command(self):
+        """build_stop_feed возвращает документированную команду снятия всех объявлений."""
+        from apps.marketplaces.adapters.avito.feed_builder import build_stop_feed
+        xml_str = build_stop_feed().decode('utf-8')
+        assert '<Id>STOP</Id>' in xml_str
+        assert 'formatVersion="3"' in xml_str
 
     def test_build_feed_draft_has_no_remove_status(self):
         """Активный/черновой листинг не содержит тег Remove."""
@@ -730,8 +737,8 @@ class TestPublishListingTask:
         flushed = mock_cls.return_value.flush_feed.call_args[0][0]
         assert {item.pk for item in flushed} == {first.pk, second.pk}
 
-    def test_unpublish_flushes_full_account_state(self):
-        """Снятие шлёт ОДНУ автозагрузку: Remove снимаемого + остальные активные."""
+    def test_unpublish_omits_target_keeps_others_active(self):
+        """Снятие: фид содержит только оставшиеся активные; снимаемое исключается (Avito архивирует)."""
         from apps.marketplaces.tasks import unpublish_listing_task
         tenant = make_tenant('unpub-fullstate-co')
         account = make_account(tenant)
@@ -752,9 +759,29 @@ class TestPublishListingTask:
 
         target.refresh_from_db()
         assert target.status == Listing.STATUS_ARCHIVED
-        # В фиде и активный (как объявление), и снимаемый (как Remove) — одним батчем.
+        # В фиде только активный; снимаемый исключён (его Avito уберёт по отсутствию).
         flushed = mock_cls.return_value.flush_feed.call_args[0][0]
-        assert {i.pk for i in flushed} == {active.pk, target.pk}
+        assert {i.pk for i in flushed} == {active.pk}
+
+    def test_unpublish_last_active_sends_stop(self):
+        """Если активных не осталось — снятие отправляет команду STOP, а не пустой фид."""
+        from apps.marketplaces.tasks import unpublish_listing_task
+        tenant = make_tenant('unpub-stop-co')
+        account = make_account(tenant)
+        only = make_listing(
+            tenant, make_product(tenant), account,
+            status=Listing.STATUS_ACTIVE, external_id='AV-ONLY-1',
+        )
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.poll_feed_results_task') as mock_poll:
+            mock_poll.apply_async = MagicMock()
+            unpublish_listing_task(only.pk)
+
+        only.refresh_from_db()
+        assert only.status == Listing.STATUS_ARCHIVED
+        mock_cls.return_value.flush_stop.assert_called_once()
+        mock_cls.return_value.flush_feed.assert_not_called()
 
     def test_unpublish_retries_on_rate_limit(self):
         """На лимит 1/час снятие не падает, а уходит в retry (повтор после окна)."""
@@ -766,6 +793,11 @@ class TestPublishListingTask:
         listing = make_listing(
             tenant, make_product(tenant), account,
             status=Listing.STATUS_ACTIVE, external_id='AV-RL-9',
+        )
+        # ещё один активный — чтобы после снятия фид был непустым (flush_feed, не STOP)
+        make_listing(
+            tenant, make_product_with_article(tenant, 'ART-RL2'), account,
+            status=Listing.STATUS_ACTIVE, external_id='AV-RL-10',
         )
 
         with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls:

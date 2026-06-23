@@ -102,23 +102,34 @@ RATE_LIMIT_RETRY_COUNTDOWN = 660
 def _account_feed_listings(account) -> list:
     """
     Полное состояние фида аккаунта в одной автозагрузке (фид-координатор):
-    активные/ожидающие/в очереди — как объявления, снимаемые (с external_id) — как Remove.
+    ВСЕ объявления, которые должны быть активны (active/pending/queued).
 
-    Avito тянет один URL фида на аккаунт, поэтому отдаём всё разом, чтобы
-    операции (публикация/снятие) не затирали друг друга и не гонялись за лимитом.
+    Avito тянет один URL фида на аккаунт. Снятие делается ОТСУТСТВИЕМ объявления
+    в файле (Avito архивирует то, чего нет), поэтому archived/deleted сюда НЕ
+    включаем — они уйдут в архив на стороне Avito.
     """
-    ads = Listing.objects.filter(
-        account=account,
-        status__in=[Listing.STATUS_ACTIVE, Listing.STATUS_PENDING, Listing.STATUS_QUEUED],
-    )
-    removes = Listing.objects.filter(
-        account=account,
-        status__in=[Listing.STATUS_ARCHIVED, Listing.STATUS_DELETED],
-        external_id__isnull=False,
-    )
     return list(
-        (ads | removes).select_related('tenant', 'product', 'account').order_by('created_at', 'pk')
+        Listing.objects.filter(
+            account=account,
+            status__in=[Listing.STATUS_ACTIVE, Listing.STATUS_PENDING, Listing.STATUS_QUEUED],
+        ).select_related('tenant', 'product', 'account').order_by('created_at', 'pk')
     )
+
+
+def _flush_account_or_stop(account) -> None:
+    """
+    Загружает в Avito актуальное состояние аккаунта одной автозагрузкой.
+
+    Есть активные объявления — отдаём их фид (отсутствующие Avito архивирует).
+    Активных не осталось — отдаём команду STOP (снять все), т.к. пустой фид
+    Avito снятием не считает.
+    """
+    listings = _account_feed_listings(account)
+    adapter = AvitoAdapter(account)
+    if listings:
+        adapter.flush_feed(listings)
+    else:
+        adapter.flush_stop()
 
 
 def _has_active_feed(account) -> bool:
@@ -281,7 +292,7 @@ def update_listing_task(self, listing_id: int):
         publish_listing_task.delay(listing_id)
         return
     try:
-        AvitoAdapter(listing.account).flush_feed(_account_feed_listings(listing.account))
+        _flush_account_or_stop(listing.account)
         listing.last_sync_at = now()
         listing.save(update_fields=['last_sync_at'])
         _write_log(
@@ -328,7 +339,7 @@ def unpublish_listing_task(self, listing_id: int):
         return
     try:
         # Полный фид аккаунта: Remove этого объявления + остальные активные.
-        AvitoAdapter(listing.account).flush_feed(_account_feed_listings(listing.account))
+        _flush_account_or_stop(listing.account)
         _write_log(
             listing.tenant, 'listing_unpublish', 'ok',
             f'Запрос на снятие «{listing.title or listing.product.name}» отправлен в Avito',
@@ -351,7 +362,7 @@ def delete_listing_task(self, listing_id: int):
         return
     try:
         # Полный фид аккаунта: Remove этого объявления + остальные активные.
-        AvitoAdapter(listing.account).flush_feed(_account_feed_listings(listing.account))
+        _flush_account_or_stop(listing.account)
         _write_log(
             listing.tenant, 'listing_delete', 'ok',
             f'Запрос на удаление «{listing.title or listing.product.name}» отправлен в Avito',
@@ -388,7 +399,7 @@ def flush_feed_task(self, account_id: int):
         return
 
     try:
-        AvitoAdapter(account).flush_feed(_account_feed_listings(account))
+        _flush_account_or_stop(account)
         _write_log(
             account.tenant, 'feed_flush', 'ok',
             f'Фид загружен: {len(listings)} объявлений для {account.name}',
