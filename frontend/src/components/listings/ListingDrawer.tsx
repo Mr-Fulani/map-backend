@@ -85,6 +85,9 @@ const AD_TYPE_OPTIONS: { value: string; label: string }[] = [
   { value: 'Товар от производителя', label: 'Товар от производителя' },
 ];
 const DEFAULT_AD_TYPE = 'Товар приобретен на продажу';
+// Лимит заголовка в Avito Autoload — 50 символов (у ручной загрузки больше,
+// но через автозагрузку Avito режет/отклоняет длиннее 50).
+const AVITO_TITLE_MAX = 50;
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   active: 'default',
@@ -241,10 +244,29 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const handleApprove = () =>
     callAction('approve', () => listingApi.approve(listing!.id), 'Одобрено, задача публикации поставлена');
 
+  // Текущие правки полей листинга — общий пейлоад для «Сохранить» и «Опубликовать».
+  const buildEditPayload = () => ({
+    title: editTitle,
+    description_ai: editDesc,
+    account_id: editAccountId ? Number(editAccountId) : undefined,
+    price_on_listing: editPrice,
+    ad_type: editAdType,
+    placement_address: editPlacementAddressId ? Number(editPlacementAddressId) : null,
+    address_override: editAddress,
+    seller_address_id_override: editSellerAddressId,
+    manager_name_override: editManagerName,
+    contact_phone_override: editContactPhone,
+  });
+
   const handlePublish = async () => {
     if (!listing) return;
     setActionLoading('publish');
     try {
+      // «Опубликовать» = сначала сохранить текущие правки, потом публиковать,
+      // чтобы изменения цены/описания/контактов не терялись.
+      const saved = await listingApi.updateContent(listing.id, buildEditPayload());
+      applyListingState(saved.data.data);
+      setEditing(false);
       await listingApi.publish(listing.id);
     } catch (err: unknown) {
       const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
@@ -302,18 +324,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     if (!listing) return;
     setActionLoading('save');
     try {
-      const res = await listingApi.updateContent(listing.id, {
-        title: editTitle,
-        description_ai: editDesc,
-        account_id: editAccountId ? Number(editAccountId) : undefined,
-        price_on_listing: editPrice,
-        ad_type: editAdType,
-        placement_address: editPlacementAddressId ? Number(editPlacementAddressId) : null,
-        address_override: editAddress,
-        seller_address_id_override: editSellerAddressId,
-        manager_name_override: editManagerName,
-        contact_phone_override: editContactPhone,
-      });
+      const res = await listingApi.updateContent(listing.id, buildEditPayload());
       applyListingState(res.data.data);
       setEditing(false);
       onActionDone();
@@ -538,13 +549,25 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
 
               {/* Заголовок */}
               <div className="space-y-1">
-                <p className="text-sm text-muted-foreground">Заголовок</p>
+                <div className="flex items-center justify-between">
+                  <p className="text-sm text-muted-foreground">Заголовок</p>
+                  {editing && (
+                    <span className="text-xs text-muted-foreground">
+                      {editTitle.length}/{AVITO_TITLE_MAX}
+                    </span>
+                  )}
+                </div>
                 {editing ? (
-                  <Input
-                    value={editTitle}
-                    maxLength={300}
-                    onChange={(e) => setEditTitle(e.target.value)}
-                  />
+                  <>
+                    <Input
+                      value={editTitle}
+                      maxLength={AVITO_TITLE_MAX}
+                      onChange={(e) => setEditTitle(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Лимит автозагрузки Avito — {AVITO_TITLE_MAX} символов
+                    </p>
+                  </>
                 ) : (
                   <p className="font-medium">{listing.title || '—'}</p>
                 )}
