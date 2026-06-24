@@ -199,7 +199,12 @@ class MarketplacePlacementAddressListView(APIView):
     """GET/POST /api/v1/accounts/placement-addresses/ — справочник адресов размещения."""
 
     def get(self, request):
-        qs = MarketplacePlacementAddress.objects.filter(tenant=request.tenant).select_related('account')
+        # Только активные адреса: удалённые (soft-delete, is_active=False) не должны
+        # попадать в выпадающий список, иначе их можно выбрать, но сохранение листинга
+        # их отвергнет (см. _get_placement_address) — расхождение давало 404 при правке.
+        qs = MarketplacePlacementAddress.objects.filter(
+            tenant=request.tenant, is_active=True
+        ).select_related('account')
         account_id = request.query_params.get('account', '').strip()
         if account_id:
             qs = qs.filter(account_id=account_id)

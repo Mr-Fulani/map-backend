@@ -217,7 +217,7 @@ def publish_listing_task(self, listing_id: int):
             # Avito требует контактное лицо и телефон. Не отправляем фид с пустыми
             # контактами — отклоняем такие объявления с понятным пояснением.
             from apps.marketplaces.adapters.avito.feed_builder import (
-                get_contact_fields, product_has_oem,
+                get_contact_fields, missing_required_avito_fields, product_has_oem,
             )
             valid_batch = []
             for item in batch:
@@ -237,6 +237,17 @@ def publish_listing_task(self, listing_id: int):
                         f'У «{item.title or item.product.name}» нет OEM-номера — '
                         f'в объявление подставлен артикул {item.product.article}. '
                         f'Укажите OEM вручную при необходимости.',
+                        listing=item,
+                    )
+                # Не заполнены обязательные поля категории Avito (напр. размеры шин,
+                # вязкость масла) — публикуем, но предупреждаем: Avito может отклонить.
+                missing_fields = missing_required_avito_fields(item)
+                if missing_fields:
+                    _write_log(
+                        item.tenant, 'listing_publish', 'warn',
+                        f'У «{item.title or item.product.name}» не заполнены поля Avito '
+                        f'для его категории: {", ".join(missing_fields)}. '
+                        f'Объявление может быть отклонено Avito — заполните их у товара.',
                         listing=item,
                     )
                 valid_batch.append(item)

@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback } from 'react';
 import { accountApi, listingApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   Archive,
@@ -98,8 +97,6 @@ export default function ListingsPage() {
   const [bulkStatus, setBulkStatus] = useState('');
   const [placementAddresses, setPlacementAddresses] = useState<PlacementAddress[]>([]);
   const [bulkPlacementAddressId, setBulkPlacementAddressId] = useState('');
-  const [bulkSellerAddressId, setBulkSellerAddressId] = useState('');
-  const [bulkAddress, setBulkAddress] = useState('');
   const [bulkManagerName, setBulkManagerName] = useState('');
   const [bulkContactPhone, setBulkContactPhone] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
@@ -174,8 +171,6 @@ export default function ListingsPage() {
         // Отправляем только заполненные поля — пустое значение означает «не менять»,
         // а не «очистить у всех листингов».
         if (bulkPlacementAddressId) payload.placement_address = Number(bulkPlacementAddressId);
-        if (bulkSellerAddressId) payload.seller_address_id_override = bulkSellerAddressId;
-        if (bulkAddress) payload.address_override = bulkAddress;
         if (bulkManagerName) payload.manager_name_override = bulkManagerName;
         if (bulkContactPhone) payload.contact_phone_override = bulkContactPhone;
       }
@@ -299,17 +294,6 @@ export default function ListingsPage() {
                   </option>
                 ))}
               </select>
-              <Input
-                value={bulkSellerAddressId}
-                onChange={(e) => setBulkSellerAddressId(e.target.value)}
-                placeholder="ID адреса Avito"
-                className="font-mono text-sm"
-              />
-              <Input
-                value={bulkAddress}
-                onChange={(e) => setBulkAddress(e.target.value)}
-                placeholder="Адрес"
-              />
               <select
                 value={bulkContactPhone}
                 onChange={(e) => setBulkContactPhone(e.target.value)}

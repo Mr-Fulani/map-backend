@@ -1,0 +1,5913 @@
+{
+  "root": "zapchasti_i_aksessuary",
+  "leaf_count": 192,
+  "leaves": [
+    {
+      "slug": "motornye_masla",
+      "name": "Моторные масла",
+      "path": [
+        "Запчасти и аксессуары",
+        "Масла и автохимия",
+        "Моторные масла"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Brand",
+        "SAE",
+        "Volume",
+        "ACEA",
+        "API",
+        "OEMOil",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Масла и автохимия",
+        "ProductType": "Моторные масла"
+      },
+      "http": 200
+    },
+    {
+      "slug": "transmissionnye_masla",
+      "name": "Трансмиссионные масла",
+      "path": [
+        "Запчасти и аксессуары",
+        "Масла и автохимия",
+        "Трансмиссионные масла"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Brand",
+        "SAE",
+        "Volume",
+        "ATF",
+        "API",
+        "OEMOil",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Масла и автохимия",
+        "ProductType": "Трансмиссионные масла"
+      },
+      "http": 200
+    },
+    {
+      "slug": "oxlazdaiushhie_zidkosti",
+      "name": "Охлаждающие жидкости",
+      "path": [
+        "Запчасти и аксессуары",
+        "Масла и автохимия",
+        "Охлаждающие жидкости"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Brand",
+        "Color",
+        "Volume",
+        "ASTM",
+        "OEMOil",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Масла и автохимия",
+        "ProductType": "Охлаждающие жидкости"
+      },
+      "http": 200
+    },
+    {
+      "slug": "tormoznye_zidkosti",
+      "name": "Тормозные жидкости",
+      "path": [
+        "Запчасти и аксессуары",
+        "Масла и автохимия",
+        "Тормозные жидкости"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Brand",
+        "Volume",
+        "DOT",
+        "OEMOil",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Масла и автохимия",
+        "ProductType": "Тормозные жидкости"
+      },
+      "http": 200
+    },
+    {
+      "slug": "gidravliceskie_zidkosti",
+      "name": "Гидравлические жидкости",
+      "path": [
+        "Запчасти и аксессуары",
+        "Масла и автохимия",
+        "Гидравлические жидкости"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Brand",
+        "Volume",
+        "OEMOil",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Масла и автохимия",
+        "ProductType": "Гидравлические жидкости"
+      },
+      "http": 200
+    },
+    {
+      "slug": "zidkosti_dlia_omyvatelia_stekla",
+      "name": "Жидкости для омывателя стекла",
+      "path": [
+        "Запчасти и аксессуары",
+        "Масла и автохимия",
+        "Жидкости для омывателя стекла"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Масла и автохимия",
+        "ProductType": "Жидкости для омывателя стекла"
+      },
+      "http": 200
+    },
+    {
+      "slug": "promyvocnye_zidkosti_prisadki_i_smazki",
+      "name": "Промывочные жидкости, присадки и смазки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Масла и автохимия",
+        "Промывочные жидкости, присадки и смазки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Масла и автохимия",
+        "ProductType": "Промывочные жидкости, присадки и смазки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "drugie_masla",
+      "name": "Другие масла",
+      "path": [
+        "Запчасти и аксессуары",
+        "Масла и автохимия",
+        "Другие масла"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Масла и автохимия",
+        "ProductType": "Другие масла"
+      },
+      "http": 200
+    },
+    {
+      "slug": "avtokosmetika_i_aksessuary",
+      "name": "Автокосметика и аксессуары",
+      "path": [
+        "Запчасти и аксессуары",
+        "Масла и автохимия",
+        "Автокосметика и аксессуары"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Масла и автохимия",
+        "ProductType": "Автокосметика и аксессуары"
+      },
+      "http": 200
+    },
+    {
+      "slug": "toplivo",
+      "name": "Топливо",
+      "path": [
+        "Запчасти и аксессуары",
+        "Масла и автохимия",
+        "Топливо"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Масла и автохимия",
+        "ProductType": "Топливо"
+      },
+      "http": 200
+    },
+    {
+      "slug": "gps_navigatory",
+      "name": "GPS-навигаторы",
+      "path": [
+        "Запчасти и аксессуары",
+        "GPS-навигаторы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "GPS-навигаторы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "bortovye",
+      "name": "Бортовые",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Бортовые"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "Brand",
+        "Axles",
+        "GrossVehicleWeight",
+        "DumpTruckFunction"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Бортовые"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dlya_vodnogo_transporta",
+      "name": "Для водного транспорта",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Для водного транспорта"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "Brand",
+        "VehicleType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Для водного транспорта"
+      },
+      "http": 200
+    },
+    {
+      "slug": "evakuatory",
+      "name": "Эвакуаторы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Эвакуаторы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Эвакуаторы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "scepnoe_ustroistvo",
+      "name": "Сцепное устройство",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Запчасти и комплектующие",
+        "Сцепное устройство"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "PartsHindcarriageType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Запчасти и комплектующие",
+        "PartsHindcarriageType": "Сцепное устройство"
+      },
+      "http": 200
+    },
+    {
+      "slug": "detali_podveski",
+      "name": "Детали подвески",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Запчасти и комплектующие",
+        "Детали подвески"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "PartsHindcarriageType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Запчасти и комплектующие",
+        "PartsHindcarriageType": "Детали подвески"
+      },
+      "http": 200
+    },
+    {
+      "slug": "borta",
+      "name": "Борта",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Запчасти и комплектующие",
+        "Борта"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "PartsHindcarriageType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Запчасти и комплектующие",
+        "PartsHindcarriageType": "Борта"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kuzovnye_zapchasti",
+      "name": "Кузовные запчасти",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Запчасти и комплектующие",
+        "Кузовные запчасти"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "PartsHindcarriageType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Запчасти и комплектующие",
+        "PartsHindcarriageType": "Кузовные запчасти"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kreplenie",
+      "name": "Крепление",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Запчасти и комплектующие",
+        "Крепление"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "PartsHindcarriageType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Запчасти и комплектующие",
+        "PartsHindcarriageType": "Крепление"
+      },
+      "http": 200
+    },
+    {
+      "slug": "opornye_kolesa_i_stoiki",
+      "name": "Опорные колеса и стойки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Запчасти и комплектующие",
+        "Опорные колеса и стойки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "PartsHindcarriageType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Запчасти и комплектующие",
+        "PartsHindcarriageType": "Опорные колеса и стойки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "elektronika_i_svet_parts",
+      "name": "Электроника и свет",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Запчасти и комплектующие",
+        "Электроника и свет"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "PartsHindcarriageType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Запчасти и комплектующие",
+        "PartsHindcarriageType": "Электроника и свет"
+      },
+      "http": 200
+    },
+    {
+      "slug": "tenty_i_kryshki",
+      "name": "Тенты и крышки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Запчасти и комплектующие",
+        "Тенты и крышки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "PartsHindcarriageType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Запчасти и комплектующие",
+        "PartsHindcarriageType": "Тенты и крышки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "zapchasti_pritsepy_drugoe",
+      "name": "Другое",
+      "path": [
+        "Запчасти и аксессуары",
+        "Прицепы",
+        "Другое"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Прицепы",
+        "ProductType": "Другое"
+      },
+      "http": 200
+    },
+    {
+      "slug": "ochki_maski",
+      "name": "Очки, маски",
+      "path": [
+        "Запчасти и аксессуары",
+        "Экипировка",
+        "Очки, маски"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductSubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Экипировка",
+        "ProductSubType": "Очки, маски"
+      },
+      "http": 200
+    },
+    {
+      "slug": "aksessuary_ekipirovka",
+      "name": "Аксессуары",
+      "path": [
+        "Запчасти и аксессуары",
+        "Экипировка",
+        "Аксессуары"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductSubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Экипировка",
+        "ProductSubType": "Аксессуары"
+      },
+      "http": 200
+    },
+    {
+      "slug": "ryukzaki_i_sumki",
+      "name": "Рюкзаки и сумки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Экипировка",
+        "Рюкзаки и сумки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductSubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Экипировка",
+        "ProductSubType": "Рюкзаки и сумки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "shlem",
+      "name": "Шлем",
+      "path": [
+        "Запчасти и аксессуары",
+        "Экипировка",
+        "Шлем"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductSubType",
+        "EquipmentBrand",
+        "TransportType",
+        "HelmetType",
+        "Age"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Экипировка",
+        "ProductSubType": "Шлем"
+      },
+      "http": 200
+    },
+    {
+      "slug": "odezhda_ekipirovka",
+      "name": "Одежда",
+      "path": [
+        "Запчасти и аксессуары",
+        "Экипировка",
+        "Одежда"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductSubType",
+        "TransportType",
+        "ClothingType",
+        "Gender",
+        "Age"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Экипировка",
+        "ProductSubType": "Одежда"
+      },
+      "http": 200
+    },
+    {
+      "slug": "obuv_ekipirovka",
+      "name": "Обувь",
+      "path": [
+        "Запчасти и аксессуары",
+        "Экипировка",
+        "Обувь"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductSubType",
+        "TransportType",
+        "ShoeType",
+        "Gender",
+        "Age"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Экипировка",
+        "ProductSubType": "Обувь"
+      },
+      "http": 200
+    },
+    {
+      "slug": "zashita_ekipirovka",
+      "name": "Защита",
+      "path": [
+        "Запчасти и аксессуары",
+        "Экипировка",
+        "Защита"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductSubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Экипировка",
+        "ProductSubType": "Защита"
+      },
+      "http": 200
+    },
+    {
+      "slug": "perchatki_ekipirovka",
+      "name": "Перчатки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Экипировка",
+        "Перчатки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductSubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Экипировка",
+        "ProductSubType": "Перчатки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "legkovye_shiny",
+      "name": "Легковые шины",
+      "path": [
+        "Запчасти и аксессуары",
+        "Шины, диски и колёса",
+        "Легковые шины"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Brand",
+        "Model",
+        "TireSectionWidth",
+        "RimDiameter",
+        "TireAspectRatio",
+        "TireType",
+        "Quantity",
+        "BackRimDiameter",
+        "BackTireAspectRatio",
+        "BackTireSectionWidth",
+        "ResidualTread",
+        "TireRuptureQuantity",
+        "TireSideRepairQuantity",
+        "OtherDefects",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Шины, диски и колёса",
+        "ProductType": "Легковые шины"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kolpaki",
+      "name": "Колпаки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Шины, диски и колёса",
+        "Колпаки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "RimDiameter",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Шины, диски и колёса",
+        "ProductType": "Колпаки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "diski",
+      "name": "Диски",
+      "path": [
+        "Запчасти и аксессуары",
+        "Шины, диски и колёса",
+        "Диски"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Condition",
+        "RimDiameter",
+        "RimBolts",
+        "RimBoltsDiameter",
+        "RimType",
+        "RimDIA",
+        "RimOffset",
+        "RimWidth"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Шины, диски и колёса",
+        "ProductType": "Диски"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kolesa",
+      "name": "Колёса",
+      "path": [
+        "Запчасти и аксессуары",
+        "Шины, диски и колёса",
+        "Колёса"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Brand",
+        "Model",
+        "ResidualTread",
+        "BackRimDiameter",
+        "BackTireAspectRatio",
+        "BackTireSectionWidth",
+        "RimDIA",
+        "TireSectionWidth",
+        "TireAspectRatio",
+        "RimDiameter",
+        "TireType",
+        "RimWidth",
+        "RimOffset",
+        "RimBolts",
+        "RimBoltsDiameter",
+        "RimType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Шины, диски и колёса",
+        "ProductType": "Колёса"
+      },
+      "http": 200
+    },
+    {
+      "slug": "motoshiny",
+      "name": "Мотошины",
+      "path": [
+        "Запчасти и аксессуары",
+        "Шины, диски и колёса",
+        "Мотошины"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "RimDiameter",
+        "TireSectionWidth",
+        "TireAspectRatio",
+        "WheelAxle",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Шины, диски и колёса",
+        "ProductType": "Мотошины"
+      },
+      "http": 200
+    },
+    {
+      "slug": "shiny_dlja_gruzovikov_i_spetstehniki",
+      "name": "Шины для грузовиков и спецтехники",
+      "path": [
+        "Запчасти и аксессуары",
+        "Шины, диски и колёса",
+        "Шины для грузовиков и спецтехники"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Brand",
+        "TireSectionWidth",
+        "RimDiameter",
+        "TireAspectRatio",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Шины, диски и колёса",
+        "ProductType": "Шины для грузовиков и спецтехники"
+      },
+      "http": 200
+    },
+    {
+      "slug": "aksessuary_dlya_avtoakustiki",
+      "name": "Аксессуары для автоакустики",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аудио- и видеотехника",
+        "Аксессуары для автоакустики"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "EquipmentType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аудио- и видеотехника",
+        "EquipmentType": "Аксессуары для автоакустики"
+      },
+      "http": 200
+    },
+    {
+      "slug": "magnitoly",
+      "name": "Магнитолы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аудио- и видеотехника",
+        "Магнитолы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "EquipmentType",
+        "Brand",
+        "Size",
+        "AndroidOS",
+        "RAM",
+        "ROM",
+        "CPU"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аудио- и видеотехника",
+        "EquipmentType": "Магнитолы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "avtoakustika",
+      "name": "Автоакустика",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аудио- и видеотехника",
+        "Автоакустика"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "EquipmentType",
+        "Brand",
+        "AudioType",
+        "VoiceCoil",
+        "Size",
+        "RMS",
+        "Impedance"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аудио- и видеотехника",
+        "EquipmentType": "Автоакустика"
+      },
+      "http": 200
+    },
+    {
+      "slug": "videoregistratory",
+      "name": "Видеорегистраторы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аудио- и видеотехника",
+        "Видеорегистраторы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "EquipmentType",
+        "Brand",
+        "Design",
+        "CamsNumber",
+        "Resolution"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аудио- и видеотехника",
+        "EquipmentType": "Видеорегистраторы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "usiliteli",
+      "name": "Усилители",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аудио- и видеотехника",
+        "Усилители"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "EquipmentType",
+        "Brand",
+        "AmplifierType",
+        "ChannelsNumber",
+        "RMSfour",
+        "RMStwo"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аудио- и видеотехника",
+        "EquipmentType": "Усилители"
+      },
+      "http": 200
+    },
+    {
+      "slug": "perekhodnye_ramki",
+      "name": "Переходные рамки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аудио- и видеотехника",
+        "Переходные рамки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "EquipmentType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аудио- и видеотехника",
+        "EquipmentType": "Переходные рамки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "koroba_i_podiumy",
+      "name": "Короба и подиумы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аудио- и видеотехника",
+        "Короба и подиумы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "EquipmentType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аудио- и видеотехника",
+        "EquipmentType": "Короба и подиумы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "audio__i_videotehnika_drugoe",
+      "name": "Другое",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аудио- и видеотехника",
+        "Другое"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "EquipmentType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аудио- и видеотехника",
+        "EquipmentType": "Другое"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dlia_moto_i_vodnogo_transporta",
+      "name": "Для мото- и водного транспорта",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для мото- и водного транспорта"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Для мото- и водного транспорта"
+      },
+      "http": 200
+    },
+    {
+      "slug": "shhetki_stekloocistitelia",
+      "name": "Щётки стеклоочистителя",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Щётки стеклоочистителя"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "InstallationLocation",
+        "Set",
+        "MountingType",
+        "BrushType",
+        "BrushLength",
+        "SecondBrushLength",
+        "Brand",
+        "Condition",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Щётки стеклоочистителя"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kovriki",
+      "name": "Коврики",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Коврики"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType",
+        "Brand",
+        "Material",
+        "CoverType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Коврики",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "chekhly_i_nakidki",
+      "name": "Чехлы и накидки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Чехлы и накидки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType",
+        "Brand",
+        "Material",
+        "MatType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Чехлы и накидки",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "klyuchi_i_breloki",
+      "name": "Ключи и брелоки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Ключи и брелоки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Ключи и брелоки",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "shtorki",
+      "name": "Шторки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Шторки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Шторки",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "sumki_i_organaizery",
+      "name": "Сумки и органайзеры",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Сумки и органайзеры"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Сумки и органайзеры",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "oplyotka_na_rul",
+      "name": "Оплётка на руль",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Оплётка на руль"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Оплётка на руль",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "podlokotniki",
+      "name": "Подлокотники",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Подлокотники"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessoryType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Для салона",
+        "AccessoryType": "Подлокотники"
+      },
+      "http": 200
+    },
+    {
+      "slug": "derzhateli_dlya_telefona",
+      "name": "Держатели для телефона",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Держатели для телефона"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Держатели для телефона",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "ruchki_kpp",
+      "name": "Ручки КПП",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Ручки КПП"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Ручки КПП",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "avtokholodilniki",
+      "name": "Автохолодильники",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Автохолодильники"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType",
+        "CoolingType",
+        "Brand",
+        "PowerType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Автохолодильники",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "drugoe_parts",
+      "name": "Другое",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Другое"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Другое",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "aromatizatory",
+      "name": "Ароматизаторы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Ароматизаторы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessoryType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Для салона",
+        "AccessoryType": "Ароматизаторы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "shumo__i_vibroizolyaciya",
+      "name": "Шумо- и виброизоляция",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Шумо- и виброизоляция"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Шумо- и виброизоляция",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "tonirovka",
+      "name": "Тонировка",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Тонировка"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Тонировка",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "takhografy",
+      "name": "Тахографы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для салона",
+        "Тахографы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Для салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dlya_far_porogov_i_bamperov",
+      "name": "Для фар, порогов и бамперов",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Защита и декор",
+        "Для фар, порогов и бамперов"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType",
+        "Material",
+        "InstallationType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Для фар, порогов и бамперов",
+        "ProductType": "Защита и декор"
+      },
+      "http": 200
+    },
+    {
+      "slug": "nakleiki_shildiki_i_znachki",
+      "name": "Наклейки, шильдики и значки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Защита и декор",
+        "Наклейки, шильдики и значки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Наклейки, шильдики и значки",
+        "ProductType": "Защита и декор"
+      },
+      "http": 200
+    },
+    {
+      "slug": "deflektory",
+      "name": "Дефлекторы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Защита и декор",
+        "Дефлекторы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType",
+        "InstallationLocation"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Дефлекторы",
+        "ProductType": "Защита и декор"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dlya_kartera_i_kpp",
+      "name": "Для картера и КПП",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Защита и декор",
+        "Для картера и КПП"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType",
+        "Brand",
+        "ProtectionType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Для картера и КПП",
+        "ProductType": "Защита и декор"
+      },
+      "http": 200
+    },
+    {
+      "slug": "bryzgoviki_i_podkrylki",
+      "name": "Брызговики и подкрылки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Защита и декор",
+        "Брызговики и подкрылки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType",
+        "InstallationLocation"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Брызговики и подкрылки",
+        "ProductType": "Защита и декор"
+      },
+      "http": 200
+    },
+    {
+      "slug": "ramki_nomernogo_znaka",
+      "name": "Рамки номерного знака",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Защита и декор",
+        "Рамки номерного знака"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Рамки номерного знака",
+        "ProductType": "Защита и декор"
+      },
+      "http": 200
+    },
+    {
+      "slug": "silovye_bampery_i_porogi",
+      "name": "Силовые бамперы и пороги",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Защита и декор",
+        "Силовые бамперы и пороги"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType",
+        "ProtectionType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Силовые бамперы и пороги",
+        "ProductType": "Защита и декор"
+      },
+      "http": 200
+    },
+    {
+      "slug": "utepliteli",
+      "name": "Утеплители",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Защита и декор",
+        "Утеплители"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Утеплители",
+        "ProductType": "Защита и декор"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dopolnitelnyi_svet",
+      "name": "Дополнительный свет",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Защита и декор",
+        "Дополнительный свет"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessoryType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Защита и декор",
+        "AccessoryType": "Дополнительный свет"
+      },
+      "http": 200
+    },
+    {
+      "slug": "shnorkeli",
+      "name": "Шноркели",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Защита и декор",
+        "Шноркели"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "AccessoryType": "Шноркели",
+        "ProductType": "Защита и декор"
+      },
+      "http": 200
+    },
+    {
+      "slug": "trosy__stropy_i_lebyodki_stropy",
+      "name": "Тросы, стропы и лебёдки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Набор автомобилиста",
+        "Тросы, стропы и лебёдки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessorySubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Набор автомобилиста",
+        "AccessorySubType": "Тросы, стропы и лебёдки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kanistry_i_voronki",
+      "name": "Канистры и воронки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Набор автомобилиста",
+        "Канистры и воронки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessorySubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Набор автомобилиста",
+        "AccessorySubType": "Канистры и воронки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kompressory_i_nasosy",
+      "name": "Компрессоры и насосы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Набор автомобилиста",
+        "Компрессоры и насосы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessorySubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Набор автомобилиста",
+        "AccessorySubType": "Компрессоры и насосы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "aptechki",
+      "name": "Аптечки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Набор автомобилиста",
+        "Аптечки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessorySubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Набор автомобилиста",
+        "AccessorySubType": "Аптечки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "drugoe_nabor_avtomobilista",
+      "name": "Другое",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Набор автомобилиста",
+        "Другое"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessorySubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Набор автомобилиста",
+        "AccessorySubType": "Другое"
+      },
+      "http": 200
+    },
+    {
+      "slug": "ognetushiteli",
+      "name": "Огнетушители",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Набор автомобилиста",
+        "Огнетушители"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessorySubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Набор автомобилиста",
+        "AccessorySubType": "Огнетушители"
+      },
+      "http": 200
+    },
+    {
+      "slug": "pusko_zaryadnye_ustroistva",
+      "name": "Пуско-зарядные устройства",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Набор автомобилиста",
+        "Пуско-зарядные устройства"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessorySubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Набор автомобилиста",
+        "AccessorySubType": "Пуско-зарядные устройства"
+      },
+      "http": 200
+    },
+    {
+      "slug": "znaki_avariinoi_ostanovki",
+      "name": "Знаки аварийной остановки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Набор автомобилиста",
+        "Знаки аварийной остановки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessorySubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Набор автомобилиста",
+        "AccessorySubType": "Знаки аварийной остановки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "gotovye_komplekty_avtomobilista",
+      "name": "Готовые комплекты автомобилиста",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Набор автомобилиста",
+        "Готовые комплекты автомобилиста"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessorySubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Набор автомобилиста",
+        "AccessorySubType": "Готовые комплекты автомобилиста"
+      },
+      "http": 200
+    },
+    {
+      "slug": "aksessuary_dlya_zaryadki",
+      "name": "Аксессуары для зарядки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Набор автомобилиста",
+        "Аксессуары для зарядки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessorySubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Набор автомобилиста",
+        "AccessorySubType": "Аксессуары для зарядки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "zaryadnye_adaptery_i_stancii_dlya_elektromobilya",
+      "name": "Зарядные адаптеры и станции для электромобиля",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Набор автомобилиста",
+        "Зарядные адаптеры и станции для электромобиля"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "AccessorySubType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Набор автомобилиста",
+        "AccessorySubType": "Зарядные адаптеры и станции для электромобиля"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dlia_koles",
+      "name": "Для колёс",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Для колёс"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Для колёс"
+      },
+      "http": 200
+    },
+    {
+      "slug": "avtonomnye_otopiteli",
+      "name": "Автономные отопители",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Отопительное оборудование",
+        "Автономные отопители"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "HeatingEquipmentType",
+        "Brand",
+        "FuelType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Отопительное оборудование",
+        "HeatingEquipmentType": "Автономные отопители"
+      },
+      "http": 200
+    },
+    {
+      "slug": "avtonomnye_podogrevateli",
+      "name": "Автономные подогреватели",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Отопительное оборудование",
+        "Автономные подогреватели"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "HeatingEquipmentType",
+        "Brand",
+        "FuelType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Отопительное оборудование",
+        "HeatingEquipmentType": "Автономные подогреватели"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kondicionery_i_refrizheratory",
+      "name": "Кондиционеры и рефрижераторы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Отопительное оборудование",
+        "Кондиционеры и рефрижераторы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "HeatingEquipmentType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Отопительное оборудование"
+      },
+      "http": 200
+    },
+    {
+      "slug": "zapchasti_i_komplektuyushie_otopitelnoe",
+      "name": "Запчасти и комплектующие",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Отопительное оборудование",
+        "Запчасти и комплектующие"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "HeatingEquipmentType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Отопительное оборудование"
+      },
+      "http": 200
+    },
+    {
+      "slug": "drugoe_otopitelnoe",
+      "name": "Другое",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Отопительное оборудование",
+        "Другое"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "ProductType",
+        "HeatingEquipmentType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Отопительное оборудование"
+      },
+      "http": 200
+    },
+    {
+      "slug": "uxod",
+      "name": "Уход",
+      "path": [
+        "Запчасти и аксессуары",
+        "Аксессуары",
+        "Уход"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "Condition",
+        "AccessoryType",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Аксессуары",
+        "ProductType": "Уход"
+      },
+      "http": 200
+    },
+    {
+      "slug": "ruchnoi_instrument_2304150",
+      "name": "Ручной инструмент",
+      "path": [
+        "Запчасти и аксессуары",
+        "Инструменты",
+        "Ручной инструмент"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "GoodsSubType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Инструменты",
+        "GoodsSubType": "Ручной инструмент"
+      },
+      "http": 200
+    },
+    {
+      "slug": "podyomnoe_oborudovanie_domkraty",
+      "name": "Подъёмное оборудование, домкраты",
+      "path": [
+        "Запчасти и аксессуары",
+        "Инструменты",
+        "Подъёмное оборудование, домкраты"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "GoodsSubType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Инструменты",
+        "GoodsSubType": "Подъёмное оборудование, домкраты"
+      },
+      "http": 200
+    },
+    {
+      "slug": "yashiki_telezhki_i_sumki_dlya_instrumentov",
+      "name": "Ящики, тележки и сумки для инструментов",
+      "path": [
+        "Запчасти и аксессуары",
+        "Инструменты",
+        "Ящики, тележки и сумки для инструментов"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "GoodsSubType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Инструменты",
+        "GoodsSubType": "Ящики, тележки и сумки для инструментов"
+      },
+      "http": 200
+    },
+    {
+      "slug": "osnastka_i_raskhodnye_materialy",
+      "name": "Оснастка и расходные материалы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Инструменты",
+        "Оснастка и расходные материалы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "GoodsSubType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Инструменты",
+        "GoodsSubType": "Оснастка и расходные материалы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "elektro__i_pnevmoinstrumenty",
+      "name": "Электро- и пневмоинструменты",
+      "path": [
+        "Запчасти и аксессуары",
+        "Инструменты",
+        "Электро- и пневмоинструменты"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "GoodsSubType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Инструменты",
+        "GoodsSubType": "Электро- и пневмоинструменты"
+      },
+      "http": 200
+    },
+    {
+      "slug": "diagnosticheskii_i_izmeritelnyi_instrument",
+      "name": "Диагностический и измерительный инструмент",
+      "path": [
+        "Запчасти и аксессуары",
+        "Инструменты",
+        "Диагностический и измерительный инструмент"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "GoodsSubType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Инструменты",
+        "GoodsSubType": "Диагностический и измерительный инструмент"
+      },
+      "http": 200
+    },
+    {
+      "slug": "zapravochnoe_i_smazochnoe_oborudovanie",
+      "name": "Заправочное и смазочное оборудование",
+      "path": [
+        "Запчасти и аксессуары",
+        "Инструменты",
+        "Заправочное и смазочное оборудование"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "GoodsSubType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Инструменты",
+        "GoodsSubType": "Заправочное и смазочное оборудование"
+      },
+      "http": 200
+    },
+    {
+      "slug": "pressy_2304148",
+      "name": "Прессы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Инструменты",
+        "Прессы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "GoodsSubType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Инструменты",
+        "GoodsSubType": "Прессы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "nabor_avtomobilista_2304149",
+      "name": "Набор автомобилиста",
+      "path": [
+        "Запчасти и аксессуары",
+        "Инструменты",
+        "Набор автомобилиста"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "GoodsSubType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Инструменты",
+        "GoodsSubType": "Набор автомобилиста"
+      },
+      "http": 200
+    },
+    {
+      "slug": "drugoe_2304145",
+      "name": "Другое",
+      "path": [
+        "Запчасти и аксессуары",
+        "Инструменты",
+        "Другое"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "GoodsSubType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Инструменты",
+        "GoodsSubType": "Другое"
+      },
+      "http": 200
+    },
+    {
+      "slug": "poperechnye_dugi_i_komplektuyushie",
+      "name": "Поперечные дуги и комплектующие",
+      "path": [
+        "Запчасти и аксессуары",
+        "Багажники и фаркопы",
+        "Поперечные дуги и комплектующие"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "ProductType",
+        "AdType",
+        "Condition",
+        "Brand"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Багажники и фаркопы",
+        "ProductType": "Поперечные дуги и комплектующие"
+      },
+      "http": 200
+    },
+    {
+      "slug": "reilingi_na_kryshu",
+      "name": "Рейлинги на крышу",
+      "path": [
+        "Запчасти и аксессуары",
+        "Багажники и фаркопы",
+        "Рейлинги на крышу"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "ProductType",
+        "AdType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Багажники и фаркопы",
+        "ProductType": "Рейлинги на крышу"
+      },
+      "http": 200
+    },
+    {
+      "slug": "avtoboksy",
+      "name": "Автобоксы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Багажники и фаркопы",
+        "Автобоксы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "ProductType",
+        "AdType",
+        "Condition",
+        "Brand",
+        "Volume"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Багажники и фаркопы",
+        "ProductType": "Автобоксы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "ekspedicionnye_bagazhniki",
+      "name": "Экспедиционные багажники",
+      "path": [
+        "Запчасти и аксессуары",
+        "Багажники и фаркопы",
+        "Экспедиционные багажники"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "ProductType",
+        "AdType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Багажники и фаркопы",
+        "ProductType": "Экспедиционные багажники"
+      },
+      "http": 200
+    },
+    {
+      "slug": "krepleniya_dlya_perevozki_velosipedov_i_lyzh",
+      "name": "Крепления для перевозки велосипедов и лыж",
+      "path": [
+        "Запчасти и аксессуары",
+        "Багажники и фаркопы",
+        "Крепления для перевозки велосипедов и лыж"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "ProductType",
+        "AdType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Багажники и фаркопы",
+        "ProductType": "Крепления для перевозки велосипедов и лыж"
+      },
+      "http": 200
+    },
+    {
+      "slug": "farkopy_i_komplektuyushie",
+      "name": "Фаркопы и комплектующие",
+      "path": [
+        "Запчасти и аксессуары",
+        "Багажники и фаркопы",
+        "Фаркопы и комплектующие"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "ProductType",
+        "AdType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Багажники и фаркопы",
+        "ProductType": "Фаркопы и комплектующие"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kung",
+      "name": "КУНГ",
+      "path": [
+        "Запчасти и аксессуары",
+        "Багажники и фаркопы",
+        "КУНГ"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "ProductType",
+        "AdType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Багажники и фаркопы",
+        "ProductType": "КУНГ"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dlja_mototehniki",
+      "name": "Для мототехники",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для мототехники"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для мототехники"
+      },
+      "http": 200
+    },
+    {
+      "slug": "avtosvet",
+      "name": "Автосвет",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Автосвет"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "CompatibleCars"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Автосвет"
+      },
+      "http": 200
+    },
+    {
+      "slug": "akkumuliatory_5530",
+      "name": "Аккумуляторы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Аккумуляторы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Voltage",
+        "Capacity",
+        "DCL",
+        "Polarity",
+        "TechnicLength",
+        "TechnicWidth",
+        "TechnicHeight",
+        "Condition",
+        "Brand"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Аккумуляторы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dvigatel",
+      "name": "Двигатель",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Двигатель"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "EngineSparePartType",
+        "Condition",
+        "CompatibleCars"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Двигатель"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kuzov",
+      "name": "Кузов",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Кузов"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "BodySparePartType",
+        "Condition",
+        "CompatibleCars"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Кузов"
+      },
+      "http": 200
+    },
+    {
+      "slug": "podveska",
+      "name": "Подвеска",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Подвеска"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "CompatibleCars"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Подвеска"
+      },
+      "http": 200
+    },
+    {
+      "slug": "rulevoe_upravlenie",
+      "name": "Рулевое управление",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Рулевое управление"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Рулевое управление"
+      },
+      "http": 200
+    },
+    {
+      "slug": "salon",
+      "name": "Салон",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Салон"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "CompatibleCars"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Салон"
+      },
+      "http": 200
+    },
+    {
+      "slug": "stekla",
+      "name": "Стёкла",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Стёкла"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Стёкла"
+      },
+      "http": 200
+    },
+    {
+      "slug": "toplivnaia_i_vyxlopnaia_sistemy",
+      "name": "Топливная и выхлопная системы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Топливная и выхлопная системы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "CompatibleCars"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Топливная и выхлопная системы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "tormoznaia_sistema_5539",
+      "name": "Тормозная система",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Тормозная система"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "CompatibleCars"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Тормозная система"
+      },
+      "http": 200
+    },
+    {
+      "slug": "transmissiia_i_privod",
+      "name": "Трансмиссия и привод",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Трансмиссия и привод"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TransmissionSparePartType",
+        "Condition",
+        "CompatibleCars"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Трансмиссия и привод"
+      },
+      "http": 200
+    },
+    {
+      "slug": "elektrooborudovanie",
+      "name": "Электрооборудование",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Электрооборудование"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "CompatibleCars"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Электрооборудование"
+      },
+      "http": 200
+    },
+    {
+      "slug": "sistema_oxlazdeniia",
+      "name": "Система охлаждения",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Система охлаждения"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "CompatibleCars"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Система охлаждения"
+      },
+      "http": 200
+    },
+    {
+      "slug": "avtomobil_na_zapcasti",
+      "name": "Автомобиль на запчасти",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для автомобилей",
+        "Автомобиль на запчасти"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для автомобилей",
+        "SparePartType": "Автомобиль на запчасти"
+      },
+      "http": 200
+    },
+    {
+      "slug": "toplivnaia_sistema",
+      "name": "Топливная система",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Топливная система"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Топливная система"
+      },
+      "http": 200
+    },
+    {
+      "slug": "sistema_vypuska",
+      "name": "Система выпуска",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Система выпуска"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Система выпуска"
+      },
+      "http": 200
+    },
+    {
+      "slug": "sistema_oxlazdeniia_dvs",
+      "name": "Система охлаждения ДВС",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Система охлаждения ДВС"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Система охлаждения ДВС"
+      },
+      "http": 200
+    },
+    {
+      "slug": "bloki_cilindrov_gbc_i_kartery",
+      "name": "Блоки цилиндров, ГБЦ и картеры",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Блоки цилиндров, ГБЦ и картеры"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Блоки цилиндров, ГБЦ и картеры"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kreplenie_i_zashhita_dvigatelia",
+      "name": "Крепление и защита двигателя",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Крепление и защита двигателя"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Крепление и защита двигателя"
+      },
+      "http": 200
+    },
+    {
+      "slug": "porsni_satuny_kolca_vkladysi",
+      "name": "Поршни, шатуны, кольца, вкладыши",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Поршни, шатуны, кольца, вкладыши"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Поршни, шатуны, кольца, вкладыши"
+      },
+      "http": 200
+    },
+    {
+      "slug": "sistema_smazki",
+      "name": "Система смазки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Система смазки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Система смазки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kolenvaly_raspredvaly_i_maxoviki",
+      "name": "Коленвалы, распредвалы и маховики",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Коленвалы, распредвалы и маховики"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Коленвалы, распредвалы и маховики"
+      },
+      "http": 200
+    },
+    {
+      "slug": "grm",
+      "name": "ГРМ",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "ГРМ"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "ГРМ"
+      },
+      "http": 200
+    },
+    {
+      "slug": "turbiny_kompressory",
+      "name": "Турбины, компрессоры",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Турбины, компрессоры"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Турбины, компрессоры"
+      },
+      "http": 200
+    },
+    {
+      "slug": "sistema_zaziganiia",
+      "name": "Система зажигания",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Система зажигания"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Система зажигания"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dvigateli_v_sbore",
+      "name": "Двигатели в сборе",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Двигатели в сборе"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Двигатели в сборе"
+      },
+      "http": 200
+    },
+    {
+      "slug": "sistema_vpuska",
+      "name": "Система впуска",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Система впуска"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Система впуска"
+      },
+      "http": 200
+    },
+    {
+      "slug": "sistema_kondicionirovaniia_i_otopleniia",
+      "name": "Система кондиционирования и отопления",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Система кондиционирования и отопления"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Система кондиционирования и отопления"
+      },
+      "http": 200
+    },
+    {
+      "slug": "startery_i_generatory",
+      "name": "Стартеры и генераторы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Двигатели и комплектующие",
+        "Стартеры и генераторы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Двигатели и комплектующие",
+        "TechnicSparePartType": "Стартеры и генераторы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "sceplenie",
+      "name": "Сцепление",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Трансмиссия",
+        "Сцепление"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Трансмиссия",
+        "TechnicSparePartType": "Сцепление"
+      },
+      "http": 200
+    },
+    {
+      "slug": "mekhanizmy_otbora_moshnosti",
+      "name": "Механизмы отбора мощности",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Трансмиссия",
+        "Механизмы отбора мощности"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Трансмиссия",
+        "TechnicSparePartType": "Механизмы отбора мощности"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kardannyi_val_privod_i_poluos",
+      "name": "Карданный вал, привод и полуось",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Трансмиссия",
+        "Карданный вал, привод и полуось"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Трансмиссия",
+        "TechnicSparePartType": "Карданный вал, привод и полуось"
+      },
+      "http": 200
+    },
+    {
+      "slug": "reduktor_mufta_i_differencialy",
+      "name": "Редуктор, муфта и дифференциалы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Трансмиссия",
+        "Редуктор, муфта и дифференциалы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Трансмиссия",
+        "TechnicSparePartType": "Редуктор, муфта и дифференциалы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "podshipniki_i_krestoviny",
+      "name": "Подшипники и крестовины",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Трансмиссия",
+        "Подшипники и крестовины"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Трансмиссия",
+        "TechnicSparePartType": "Подшипники и крестовины"
+      },
+      "http": 200
+    },
+    {
+      "slug": "razdatochnaya_korobka",
+      "name": "Раздаточная коробка",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Трансмиссия",
+        "Раздаточная коробка"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Трансмиссия",
+        "TechnicSparePartType": "Раздаточная коробка"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kpp_v_sbore",
+      "name": "КПП в сборе",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Трансмиссия",
+        "КПП в сборе"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Трансмиссия",
+        "TechnicSparePartType": "КПП в сборе"
+      },
+      "http": 200
+    },
+    {
+      "slug": "detali_kpp",
+      "name": "Детали КПП",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Трансмиссия",
+        "Детали КПП"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Трансмиссия",
+        "TechnicSparePartType": "Детали КПП"
+      },
+      "http": 200
+    },
+    {
+      "slug": "podveska_i_rulevoe_upravlenie",
+      "name": "Подвеска и рулевое управление",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Подвеска и рулевое управление"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Подвеска и рулевое управление"
+      },
+      "http": 200
+    },
+    {
+      "slug": "detali_salona",
+      "name": "Детали салона",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Детали салона"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина",
+        "TechnicSparePartType": "Детали салона"
+      },
+      "http": 200
+    },
+    {
+      "slug": "podveska_kabiny",
+      "name": "Подвеска кабины",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Подвеска кабины"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина",
+        "TechnicSparePartType": "Подвеска кабины"
+      },
+      "http": 200
+    },
+    {
+      "slug": "zerkala_kabina",
+      "name": "Зеркала",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Зеркала"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина",
+        "TechnicSparePartType": "Зеркала"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dveri",
+      "name": "Двери",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Двери"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина",
+        "TechnicSparePartType": "Двери"
+      },
+      "http": 200
+    },
+    {
+      "slug": "krylya_kabina",
+      "name": "Крылья",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Крылья"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина",
+        "TechnicSparePartType": "Крылья"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kapot",
+      "name": "Капот",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Капот"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина",
+        "TechnicSparePartType": "Капот"
+      },
+      "http": 200
+    },
+    {
+      "slug": "bampera",
+      "name": "Бампера",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Бампера"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина",
+        "TechnicSparePartType": "Бампера"
+      },
+      "http": 200
+    },
+    {
+      "slug": "sidenya_i_spalniki",
+      "name": "Сиденья и спальники",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Сиденья и спальники"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина",
+        "TechnicSparePartType": "Сиденья и спальники"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kabiny_v_sbore",
+      "name": "Кабины в сборе",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Кабины в сборе"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина",
+        "TechnicSparePartType": "Кабины в сборе"
+      },
+      "http": 200
+    },
+    {
+      "slug": "okna_i_styokla",
+      "name": "Окна и стёкла",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Окна и стёкла"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина",
+        "TechnicSparePartType": "Окна и стёкла"
+      },
+      "http": 200
+    },
+    {
+      "slug": "vneshnie_elementy_kabiny",
+      "name": "Внешние элементы кабины",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Внешние элементы кабины"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина",
+        "TechnicSparePartType": "Внешние элементы кабины"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kabiny_v_razbore",
+      "name": "Кабины в разборе",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Кабины в разборе"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина"
+      },
+      "http": 200
+    },
+    {
+      "slug": "ramy_i_detali_ram",
+      "name": "Рамы и детали рам",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Кабина",
+        "Рамы и детали рам"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Кабина"
+      },
+      "http": 200
+    },
+    {
+      "slug": "nadstroiki_i_platformy_v_sbore_2242413",
+      "name": "Надстройки и платформы в сборе",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Рамы, кузова и надстройки",
+        "Надстройки и платформы в сборе"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "TechnicSparePartType",
+        "TechnicAddOnType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Рамы, кузова и надстройки",
+        "TechnicSparePartType": "Надстройки и платформы в сборе"
+      },
+      "http": 200
+    },
+    {
+      "slug": "borta_i_elementy_kuzova_2242415",
+      "name": "Борта и элементы кузова",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Рамы, кузова и надстройки",
+        "Борта и элементы кузова"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "TechnicSparePartType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Рамы, кузова и надстройки",
+        "TechnicSparePartType": "Борта и элементы кузова"
+      },
+      "http": 200
+    },
+    {
+      "slug": "tenty_2242417",
+      "name": "Тенты",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Рамы, кузова и надстройки",
+        "Тенты"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "TechnicSparePartType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Рамы, кузова и надстройки",
+        "TechnicSparePartType": "Тенты"
+      },
+      "http": 200
+    },
+    {
+      "slug": "toplivnye_baki_2242418",
+      "name": "Топливные баки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Рамы, кузова и надстройки",
+        "Топливные баки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Рамы, кузова и надстройки",
+        "TechnicSparePartType": "Топливные баки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "ramy_i_lonzherony_2242420",
+      "name": "Рамы и лонжероны",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Рамы, кузова и надстройки",
+        "Рамы и лонжероны"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "TechnicSparePartType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Рамы, кузова и надстройки",
+        "TechnicSparePartType": "Рамы и лонжероны"
+      },
+      "http": 200
+    },
+    {
+      "slug": "fonari_i_fary",
+      "name": "Фонари и фары",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Электроника и свет",
+        "Фонари и фары"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Электроника и свет",
+        "TechnicSparePartType": "Фонари и фары"
+      },
+      "http": 200
+    },
+    {
+      "slug": "elektronnye_bloki_upravleniya",
+      "name": "Электронные блоки управления",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Электроника и свет",
+        "Электронные блоки управления"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Электроника и свет",
+        "TechnicSparePartType": "Электронные блоки управления"
+      },
+      "http": 200
+    },
+    {
+      "slug": "elektroprovodka",
+      "name": "Электропроводка",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Электроника и свет",
+        "Электропроводка"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Электроника и свет",
+        "TechnicSparePartType": "Электропроводка"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kontrollery_rele_i_datchiki",
+      "name": "Контроллеры, реле и датчики",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Электроника и свет",
+        "Контроллеры, реле и датчики"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Электроника и свет",
+        "TechnicSparePartType": "Контроллеры, реле и датчики"
+      },
+      "http": 200
+    },
+    {
+      "slug": "akkumulyatory",
+      "name": "Аккумуляторы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Электроника и свет",
+        "Аккумуляторы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Электроника и свет",
+        "TechnicSparePartType": "Аккумуляторы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "telematika_takhografy_i_racii",
+      "name": "Телематика, тахографы и рации",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Электроника и свет",
+        "Телематика, тахографы и рации"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Электроника и свет",
+        "TechnicSparePartType": "Телематика, тахографы и рации"
+      },
+      "http": 200
+    },
+    {
+      "slug": "elektrodvigateli_i_aktuatory",
+      "name": "Электродвигатели и актуаторы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Электроника и свет",
+        "Электродвигатели и актуаторы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Электроника и свет",
+        "TechnicSparePartType": "Электродвигатели и актуаторы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "pnevmatika_scepleniya_i_tormozov",
+      "name": "Пневматика сцепления и тормозов",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Гидравлические и пневмосистемы",
+        "Пневматика сцепления и тормозов"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Гидравлические и пневмосистемы",
+        "TechnicSparePartType": "Пневматика сцепления и тормозов"
+      },
+      "http": 200
+    },
+    {
+      "slug": "pnevmopodveska",
+      "name": "Пневмоподвеска",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Гидравлические и пневмосистемы",
+        "Пневмоподвеска"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Гидравлические и пневмосистемы",
+        "TechnicSparePartType": "Пневмоподвеска"
+      },
+      "http": 200
+    },
+    {
+      "slug": "kompressory_klapany_i_vozdukhopodgotovka",
+      "name": "Компрессоры, клапаны и воздухоподготовка",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Гидравлические и пневмосистемы",
+        "Компрессоры, клапаны и воздухоподготовка"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Гидравлические и пневмосистемы",
+        "TechnicSparePartType": "Компрессоры, клапаны и воздухоподготовка"
+      },
+      "http": 200
+    },
+    {
+      "slug": "shlangi_trubki_patrubki",
+      "name": "Шланги, трубки, патрубки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Гидравлические и пневмосистемы",
+        "Шланги, трубки, патрубки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Гидравлические и пневмосистемы",
+        "TechnicSparePartType": "Шланги, трубки, патрубки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "gidromotory_i_gidronasosy",
+      "name": "Гидромоторы и гидронасосы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Гидравлические и пневмосистемы",
+        "Гидромоторы и гидронасосы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Гидравлические и пневмосистемы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "gidrocilindry",
+      "name": "Гидроцилиндры",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Гидравлические и пневмосистемы",
+        "Гидроцилиндры"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition",
+        "BoreDiameter",
+        "RodDiameter",
+        "HydraulicStroke"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Гидравлические и пневмосистемы",
+        "TechnicSparePartType": "Гидроцилиндры"
+      },
+      "http": 200
+    },
+    {
+      "slug": "gidroraspredeliteli",
+      "name": "Гидрораспределители",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Гидравлические и пневмосистемы",
+        "Гидрораспределители"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition",
+        "HydraulicDistributorType",
+        "NumberOfSections"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Гидравлические и пневмосистемы",
+        "TechnicSparePartType": "Гидрораспределители"
+      },
+      "http": 200
+    },
+    {
+      "slug": "filtry_i_filtroelementy",
+      "name": "Фильтры и фильтроэлементы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Гидравлические и пневмосистемы",
+        "Фильтры и фильтроэлементы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Гидравлические и пневмосистемы",
+        "TechnicSparePartType": "Фильтры и фильтроэлементы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "gidroakkumulyatory_i_baki",
+      "name": "Гидроаккумуляторы и баки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Гидравлические и пневмосистемы",
+        "Гидроаккумуляторы и баки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Гидравлические и пневмосистемы",
+        "TechnicSparePartType": "Гидроаккумуляторы и баки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "remkomplekty_i_uplotneniya",
+      "name": "Ремкомплекты и уплотнения",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Гидравлические и пневмосистемы",
+        "Ремкомплекты и уплотнения"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "TechnicSparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Гидравлические и пневмосистемы",
+        "TechnicSparePartType": "Ремкомплекты и уплотнения"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dlia_navesnogo_oborudovaniia",
+      "name": "Для навесного оборудования",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Для навесного оборудования"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Для навесного оборудования"
+      },
+      "http": 200
+    },
+    {
+      "slug": "texnika_na_razbor",
+      "name": "Техника на разбор",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Техника на разбор"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "Technic",
+        "Make",
+        "Model"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Техника на разбор"
+      },
+      "http": 200
+    },
+    {
+      "slug": "tormoznaia_sistema",
+      "name": "Тормозная система",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Тормозная система"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition",
+        "TechnicSparePartType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Тормозная система"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dlia_pricepnoi_texniki",
+      "name": "Для прицепной техники",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для грузовиков и спецтехники",
+        "Для прицепной техники"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "SparePartType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для грузовиков и спецтехники",
+        "SparePartType": "Для прицепной техники"
+      },
+      "http": 200
+    },
+    {
+      "slug": "dlja_vodnogo_transporta",
+      "name": "Для водного транспорта",
+      "path": [
+        "Запчасти и аксессуары",
+        "Запчасти",
+        "Для водного транспорта"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "ProductType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Запчасти",
+        "ProductType": "Для водного транспорта"
+      },
+      "http": 200
+    },
+    {
+      "slug": "breloki_i_metki",
+      "name": "Брелоки и метки",
+      "path": [
+        "Запчасти и аксессуары",
+        "Противоугонные устройства",
+        "Автосигнализации",
+        "Брелоки и метки"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "DeviceType",
+        "Condition",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Противоугонные устройства",
+        "DeviceType": "Автосигнализации",
+        "ProductType": "Брелоки и метки"
+      },
+      "http": 200
+    },
+    {
+      "slug": "komplekt_signalizacii",
+      "name": "Комплект сигнализации",
+      "path": [
+        "Запчасти и аксессуары",
+        "Противоугонные устройства",
+        "Автосигнализации",
+        "Комплект сигнализации"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "DeviceType",
+        "Condition",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Противоугонные устройства",
+        "DeviceType": "Автосигнализации",
+        "ProductType": "Комплект сигнализации"
+      },
+      "http": 200
+    },
+    {
+      "slug": "zapchasti_i_komplektuyushie_avtosignalizacii",
+      "name": "Запчасти и комплектующие",
+      "path": [
+        "Запчасти и аксессуары",
+        "Противоугонные устройства",
+        "Автосигнализации",
+        "Запчасти и комплектующие"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "DeviceType",
+        "Condition",
+        "ProductType"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Противоугонные устройства",
+        "DeviceType": "Автосигнализации",
+        "ProductType": "Запчасти и комплектующие"
+      },
+      "http": 200
+    },
+    {
+      "slug": "immobilaizery",
+      "name": "Иммобилайзеры",
+      "path": [
+        "Запчасти и аксессуары",
+        "Противоугонные устройства",
+        "Иммобилайзеры"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "DeviceType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Противоугонные устройства",
+        "DeviceType": "Иммобилайзеры"
+      },
+      "http": 200
+    },
+    {
+      "slug": "mekhanicheskie_blokiratory",
+      "name": "Механические блокираторы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Противоугонные устройства",
+        "Механические блокираторы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "DeviceType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Противоугонные устройства",
+        "DeviceType": "Механические блокираторы"
+      },
+      "http": 200
+    },
+    {
+      "slug": "sputnikovye_sistemy",
+      "name": "Спутниковые системы",
+      "path": [
+        "Запчасти и аксессуары",
+        "Противоугонные устройства",
+        "Спутниковые системы"
+      ],
+      "required": [
+        "Id",
+        "Address",
+        "Category",
+        "Description",
+        "Title",
+        "Price",
+        "GoodsType",
+        "AdType",
+        "DeviceType",
+        "Condition"
+      ],
+      "fixed": {
+        "Category": "Запчасти и аксессуары",
+        "GoodsType": "Противоугонные устройства",
+        "DeviceType": "Спутниковые системы"
+      },
+      "http": 200
+    }
+  ]
+}
