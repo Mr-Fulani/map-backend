@@ -180,6 +180,39 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         handle_avito_error(resp)
         return False
 
+    def get_category_tree(self) -> list:
+        """
+        Возвращает дерево категорий Avito (GET /autoload/v1/user-docs/tree).
+
+        Каждый узел: {name, slug, nested}. Поля доступны только у листовых узлов
+        (см. get_node_fields). Используется командой sync_avito_categories.
+        """
+        token = self._auth.get_token(self.account)
+        resp = requests.get(
+            f'{AVITO_API_BASE}/autoload/v1/user-docs/tree',
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json().get('categories', [])
+
+    def get_node_fields(self, node_slug: str) -> dict:
+        """
+        Возвращает поля листовой категории Avito.
+
+        GET /autoload/v1/user-docs/node/{node_slug}/fields. Для нелистового узла
+        Avito отвечает 400 («not a leaf node»). В ответе fields[].content[] —
+        правила заполнения: required, field_type, values, dependencies.
+        """
+        token = self._auth.get_token(self.account)
+        resp = requests.get(
+            f'{AVITO_API_BASE}/autoload/v1/user-docs/node/{node_slug}/fields',
+            headers={'Authorization': f'Bearer {token}'},
+            timeout=60,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
     # ------------------------------------------------------------------ #
     #  Feed-based операции (publish / update / unpublish / delete)        #
     # ------------------------------------------------------------------ #

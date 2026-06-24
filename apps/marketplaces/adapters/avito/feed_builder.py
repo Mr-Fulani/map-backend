@@ -90,13 +90,34 @@ def build_stop_feed() -> bytes:
     return buf.getvalue()
 
 
+def _avito_spec(listing) -> dict:
+    """
+    Спецификация Avito (slug/fixed/required) по нашей категории товара.
+
+    Резолвит catalog_category товара в лист Avito через category_map и берёт
+    фиксированные значения полей и список обязательных полей из справочника.
+    """
+    from apps.marketplaces.adapters.avito.category_map import avito_spec_for
+    category = getattr(listing.product, 'catalog_category', None)
+    if not category:
+        return {}
+    parent = getattr(category, 'parent', None)
+    return avito_spec_for(getattr(category, 'name', ''), getattr(parent, 'name', ''))
+
+
+def _avito_fixed(listing, tag: str) -> str:
+    """Фиксированное значение поля Avito (tag) из маппинга категории, иначе пусто."""
+    return (_avito_spec(listing).get('fixed') or {}).get(tag, '')
+
+
 def _get_spare_part_type(listing) -> str:
-    """«Вид запчасти» (SparePartType) из attributes_map маппинга категории; иначе пусто."""
+    """«Вид запчасти» (SparePartType): attributes_map тенанта → маппинг категории → пусто."""
     mapping = _get_category_mapping(listing)
     attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
     return _first_value(
         attributes.get('SparePartType'),
         attributes.get('spare_part_type'),
+        _avito_fixed(listing, 'SparePartType'),
     )
 
 
@@ -119,6 +140,7 @@ def _get_goods_type(listing) -> str:
     return _first_value(
         attributes.get('GoodsType'),
         attributes.get('goods_type'),
+        _avito_fixed(listing, 'GoodsType'),
         'Запчасти',
     )
 
@@ -160,17 +182,39 @@ def product_has_oem(listing) -> bool:
 
 def _get_product_type(listing) -> str:
     """
-    Возвращает «Тип товара» (ProductType) из attributes_map маппинга категории.
+    Возвращает «Тип товара» (ProductType): attributes_map тенанта → маппинг категории.
 
-    Дефолта нет — значение зависит от конкретной запчасти; если не задано,
-    тег в фид не попадёт.
+    Для запчастей это класс техники («Для автомобилей»), для шин/масел — конкретный
+    тип («Легковые шины», «Моторные масла»). Если не задано — тег в фид не попадёт.
     """
     mapping = _get_category_mapping(listing)
     attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
     return _first_value(
         attributes.get('ProductType'),
         attributes.get('product_type'),
+        _avito_fixed(listing, 'ProductType'),
     )
+
+
+# Поля, которые build_feed формирует всегда. CompatibleCars Avito определяет сам
+# по названию/совместимости (объявления публикуются без него) — не считаем его дырой.
+_FEED_PROVIDED_TAGS = {
+    'Id', 'Title', 'Description', 'Price', 'Category', 'GoodsType', 'ProductType',
+    'SparePartType', 'AdType', 'Brand', 'OEM', 'Condition', 'Address', 'SellerAddressID',
+    'Images', 'CompatibleCars',
+}
+
+
+def missing_required_avito_fields(listing) -> list[str]:
+    """
+    Обязательные поля листа Avito, которые фид не заполняет (по справочнику категории).
+
+    Используется для предупреждения тенанта: для таких товаров (напр. шины без
+    размеров, масла без вязкости) Avito может отклонить объявление. Возвращает
+    список тегов; пусто — если категория не сопоставлена или всё заполняется.
+    """
+    required = _avito_spec(listing).get('required') or []
+    return [tag for tag in required if tag not in _FEED_PROVIDED_TAGS]
 
 
 def get_contact_fields(listing) -> tuple[str, str]:
