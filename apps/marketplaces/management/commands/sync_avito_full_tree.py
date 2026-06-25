@@ -22,8 +22,15 @@ from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
 from apps.marketplaces.models import MarketplaceAccount
 
 DATA_DIR = Path(__file__).resolve().parents[2] / 'data'
-# Поля, чьи значения = самый глубокий уровень каталога (виды запчастей).
-DEEP_TAGS = ('SparePartType', 'EngineSparePartType', 'BodySparePartType', 'TransmissionSparePartType')
+def _is_deep_tag(tag: str) -> bool:
+    """Поле-вид: любой тег вида *SparePartType (Engine/Body/Transmission/… SparePartType)."""
+    return bool(tag) and tag.endswith('SparePartType')
+
+
+def _slugify(name: str) -> str:
+    """Фолбэк-slug из имени (если у узла Avito нет slug)."""
+    import re
+    return re.sub(r'[^0-9a-zA-Zа-яА-ЯёЁ]+', '_', (name or '').lower()).strip('_') or 'domain'
 
 
 def _children(node: dict) -> list:
@@ -51,38 +58,48 @@ class Command(BaseCommand):
     help = 'Синхронизирует полное дерево категорий Avito (с видами) в data/avito_tree_<domain>.json'
 
     def add_arguments(self, parser):
-        parser.add_argument('--root', type=str, required=True, help='Имя корневой категории Avito')
-        parser.add_argument('--domain', type=str, required=True, help='Slug домена каталога (имя файла)')
+        parser.add_argument('--root', type=str, default=None, help='Имя корневой категории Avito')
+        parser.add_argument('--domain', type=str, default=None, help='Slug домена каталога (имя файла)')
+        parser.add_argument('--all', action='store_true', help='Все домены верхнего уровня Avito')
         parser.add_argument('--account', type=int, default=None, help='ID аккаунта Avito')
 
     def handle(self, *args, **options):
         account = self._resolve_account(options['account'])
         adapter = AvitoAdapter(account)
-
         tree = adapter.get_category_tree()
-        root = _find(tree, options['root'])
-        if not root:
-            raise CommandError(f'Корневая категория «{options["root"]}» не найдена в дереве Avito')
 
+        if options['all']:
+            for node in tree:
+                self._sync_one(adapter, tree, node.get('name'),
+                               node.get('slug') or _slugify(node.get('name')))
+            return
+        if not options['root'] or not options['domain']:
+            raise CommandError('Укажите --root и --domain, либо --all')
+        self._sync_one(adapter, tree, options['root'], options['domain'])
+
+    def _sync_one(self, adapter, tree, root_name: str, domain_slug: str):
+        """Собирает дерево одного корня и пишет avito_tree_<domain>.json."""
+        root = _find(tree, root_name)
+        if not root:
+            self.stderr.write(self.style.WARNING(f'Корень «{root_name}» не найден — пропуск'))
+            return
         self._leaf_count = 0
         self._deep_count = 0
         if _children(root):
-            # Дерево отдаёт вложенность (большинство доменов) — строим из него.
             built = self._build(adapter, root)
         else:
-            # Avito отдаёт «Запчасти и аксессуары» усечённым — берём пути из
-            # справочника avito_field_specs.json (там полное дерево листьев).
-            built = self._build_from_specs(adapter, options['root'])
+            # Усечённый корень (Запчасти и аксессуары) — берём пути из avito_field_specs.json.
+            built = self._build_from_specs(adapter, root_name)
 
         DATA_DIR.mkdir(parents=True, exist_ok=True)
-        out_path = DATA_DIR / f'avito_tree_{options["domain"]}.json'
+        out_path = DATA_DIR / f'avito_tree_{domain_slug}.json'
         out_path.write_text(
-            json.dumps({'root': options['root'], 'domain': options['domain'], 'tree': built['children']},
+            json.dumps({'root': root_name, 'domain': domain_slug, 'tree': built['children']},
                        ensure_ascii=False, indent=2),
             encoding='utf-8',
         )
         self.stdout.write(self.style.SUCCESS(
-            f'Готово: листьев {self._leaf_count}, видов {self._deep_count} → {out_path.name}'
+            f'{domain_slug}: листьев {self._leaf_count}, видов {self._deep_count} → {out_path.name}'
         ))
 
     def _resolve_account(self, account_id):
@@ -147,7 +164,7 @@ class Command(BaseCommand):
                 return []
             values = []
             for field in data.get('fields', []):
-                if field.get('tag') not in DEEP_TAGS:
+                if not _is_deep_tag(field.get('tag')):
                     continue
                 for content in (field.get('content') or []):
                     inline = [v.get('value') for v in (content.get('values') or []) if v.get('value')]

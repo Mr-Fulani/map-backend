@@ -1,0 +1,244 @@
+{
+  "root": "Недвижимость",
+  "domain": "nedvizhimost",
+  "tree": [
+    {
+      "name": "Дома, дачи, коттеджи",
+      "slug": "doma_dachi_kottedzhi",
+      "children": [
+        {
+          "name": "Продам",
+          "slug": "doma_prodam",
+          "children": []
+        },
+        {
+          "name": "Сдам",
+          "slug": "doma_sdam",
+          "children": [
+            {
+              "name": "Посуточно",
+              "slug": "posutochno",
+              "children": []
+            },
+            {
+              "name": "На длительный срок",
+              "slug": "na_dlitelnyj_srok",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Сниму",
+          "slug": "snimu_257",
+          "children": []
+        },
+        {
+          "name": "Куплю",
+          "slug": "kupliu_260",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Квартиры",
+      "slug": "kvartiry",
+      "children": [
+        {
+          "name": "Продам",
+          "slug": "kvartiry_prodam",
+          "children": [
+            {
+              "name": "Новостройка",
+              "slug": "novostrojka",
+              "children": []
+            },
+            {
+              "name": "Вторичка",
+              "slug": "vtorichka",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Сдам",
+          "slug": "kvartiry_sdam",
+          "children": [
+            {
+              "name": "Посуточно",
+              "slug": "posutocno",
+              "children": []
+            },
+            {
+              "name": "На длительный срок",
+              "slug": "na_dlitelnyi_srok",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Сниму",
+          "slug": "snimu",
+          "children": []
+        },
+        {
+          "name": "Куплю",
+          "slug": "kupliu",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Земельные участки",
+      "slug": "zemelnye_uchastki",
+      "children": [
+        {
+          "name": "Сдам",
+          "slug": "zemelnye_uchastki_sdam",
+          "children": []
+        },
+        {
+          "name": "Продам",
+          "slug": "zemelnye_uchastki_prodam",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Недвижимость за рубежом",
+      "slug": "nedvizhimost_za_rubezhom",
+      "children": [
+        {
+          "name": "Сдам",
+          "slug": "za_rubezhom_sdam",
+          "children": [
+            {
+              "name": "Гараж, машиноместо",
+              "slug": "za_rubezhom_sdam_garazh_mashinomesto",
+              "children": []
+            },
+            {
+              "name": "Земельный участок",
+              "slug": "za_rubezhom_sdam_zemelnyj_uchastok",
+              "children": []
+            },
+            {
+              "name": "Дом, вилла",
+              "slug": "za_rubezhom_sdam_dom_villa",
+              "children": []
+            },
+            {
+              "name": "Квартира, апартаменты",
+              "slug": "za_rubezhom_sdam_kvartira_apartamenty",
+              "children": []
+            },
+            {
+              "name": "Коммерческая недвижимость",
+              "slug": "za_rubezhom_sdam_kommercheskaja_nedvizhimost",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Продам",
+          "slug": "za_rubezhom_prodam",
+          "children": [
+            {
+              "name": "Квартира, апартаменты",
+              "slug": "za_rubezhom_prodam_kvartira_apartamenty",
+              "children": []
+            },
+            {
+              "name": "Дом, вилла",
+              "slug": "za_rubezhom_prodam_dom_villa",
+              "children": []
+            },
+            {
+              "name": "Гараж, машиноместо",
+              "slug": "za_rubezhom_prodam_garazh_mashinomesto",
+              "children": []
+            },
+            {
+              "name": "Коммерческая недвижимость",
+              "slug": "za_rubezhom_prodam_kommercheskaja_nedvizhimost",
+              "children": []
+            },
+            {
+              "name": "Земельный участок",
+              "slug": "za_rubezhom_prodam_zemelnyj_uchastok",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Коммерческая недвижимость",
+      "slug": "kommercheskaja_nedvizhimost",
+      "children": [
+        {
+          "name": "Сдам",
+          "slug": "kommercheskaja_nedvizhimost_sdam",
+          "children": []
+        },
+        {
+          "name": "Продам",
+          "slug": "kommercheskaja_nedvizhimost_prodam",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Гаражи и машиноместа",
+      "slug": "garazhi_i_mashinomesta",
+      "children": [
+        {
+          "name": "Сдам",
+          "slug": "garazh_mashinomesto_sdam",
+          "children": []
+        },
+        {
+          "name": "Продам",
+          "slug": "garazh_mashinomesto_prodam",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Комнаты",
+      "slug": "komnaty",
+      "children": [
+        {
+          "name": "Продам",
+          "slug": "komnaty_sdam",
+          "children": []
+        },
+        {
+          "name": "Сдам",
+          "slug": "komnaty_prodam",
+          "children": [
+            {
+              "name": "Посуточно",
+              "slug": "posutocno_3833",
+              "children": []
+            },
+            {
+              "name": "На длительный срок",
+              "slug": "na_dlitelnyi_srok_3834",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Сниму",
+          "slug": "snimu_249",
+          "children": []
+        },
+        {
+          "name": "Куплю",
+          "slug": "kupliu_252",
+          "children": []
+        }
+      ]
+    }
+  ]
+}

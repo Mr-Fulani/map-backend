@@ -1,0 +1,2097 @@
+{
+  "root": "Личные вещи",
+  "domain": "lichnye_veschi",
+  "tree": [
+    {
+      "name": "Красота и здоровье",
+      "slug": "krasota_i_zdorove",
+      "children": [
+        {
+          "name": "Средства для волос",
+          "slug": "sredstva_dlia_volos",
+          "children": []
+        },
+        {
+          "name": "Уход и гигиена",
+          "slug": "ukhod_i_gigiena_gigieny",
+          "children": [
+            {
+              "name": "Уход за лицом",
+              "slug": "ukhod_za_licom",
+              "children": [
+                {
+                  "name": "Средства для умывания",
+                  "slug": "sredstva_dlya_umyvaniya",
+                  "children": []
+                },
+                {
+                  "name": "Тоники и лосьоны",
+                  "slug": "toniki_i_losony",
+                  "children": []
+                },
+                {
+                  "name": "Сыворотки и эссенции",
+                  "slug": "syvorotki_i_essencii",
+                  "children": []
+                },
+                {
+                  "name": "Эмульсии и флюиды",
+                  "slug": "emulsii_i_flyuidy",
+                  "children": []
+                },
+                {
+                  "name": "Кремы",
+                  "slug": "kremy_ukhod_za_licom",
+                  "children": []
+                },
+                {
+                  "name": "Маски",
+                  "slug": "maski",
+                  "children": []
+                },
+                {
+                  "name": "Патчи",
+                  "slug": "patchi",
+                  "children": []
+                },
+                {
+                  "name": "Масла",
+                  "slug": "masla_ukhod_za_licom",
+                  "children": []
+                },
+                {
+                  "name": "Скрабы и пилинги",
+                  "slug": "skraby_i_pilingi_ukhod_za_licom",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Уход за телом",
+              "slug": "ukhod_za_telom",
+              "children": [
+                {
+                  "name": "Средства для душа и ванны",
+                  "slug": "sredstva_dlya_dusha_i_vanny",
+                  "children": []
+                },
+                {
+                  "name": "Мыло",
+                  "slug": "mylo",
+                  "children": []
+                },
+                {
+                  "name": "Кремы",
+                  "slug": "kremy_2304237",
+                  "children": []
+                },
+                {
+                  "name": "Лосьоны, спреи и молочко",
+                  "slug": "losony_sprei_i_molochko",
+                  "children": []
+                },
+                {
+                  "name": "Скрабы и пилинги",
+                  "slug": "skraby_i_pilingi_2304239",
+                  "children": []
+                },
+                {
+                  "name": "Масла",
+                  "slug": "masla_2304240",
+                  "children": []
+                },
+                {
+                  "name": "Дезодоранты",
+                  "slug": "dezodoranty_2304233",
+                  "children": []
+                },
+                {
+                  "name": "Корректирующие средства",
+                  "slug": "korrektiruyushie_sredstva",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Бритьё и эпиляция",
+              "slug": "brityo_i_epilyaciya",
+              "children": []
+            },
+            {
+              "name": "Загар и защита от солнца",
+              "slug": "zagar_i_zashita_ot_solnca",
+              "children": []
+            },
+            {
+              "name": "Уход за полостью рта",
+              "slug": "ukhod_za_polostyu_rta",
+              "children": []
+            },
+            {
+              "name": "Гигиена и контрацепция",
+              "slug": "gigiena_i_kontracepciya",
+              "children": []
+            },
+            {
+              "name": "Наборы уходовой косметики",
+              "slug": "nabory_ukhodovoi_kosmetiki",
+              "children": []
+            },
+            {
+              "name": "Приборы и аксессуары",
+              "slug": "pribory_i_aksessuary_150095",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Медицинские изделия",
+          "slug": "medicinskie_izdeliia",
+          "children": [
+            {
+              "name": "Оптика",
+              "slug": "optika",
+              "children": [
+                {
+                  "name": "Растворы и капли",
+                  "slug": "rastvory_i_kapli",
+                  "children": []
+                },
+                {
+                  "name": "Контактные линзы",
+                  "slug": "kontaktnye_linzy",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_2302286",
+                  "children": []
+                },
+                {
+                  "name": "Очки",
+                  "slug": "ochki_2302287",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Ортопедия",
+              "slug": "ortopediya",
+              "children": [
+                {
+                  "name": "Бельё",
+                  "slug": "belyo",
+                  "children": []
+                },
+                {
+                  "name": "Корсеты",
+                  "slug": "korsety",
+                  "children": []
+                },
+                {
+                  "name": "Обувь и стельки",
+                  "slug": "obuv_i_stelki",
+                  "children": []
+                },
+                {
+                  "name": "Бандажи и ортезы",
+                  "slug": "bandazhi_i_ortezy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Средства гигиены",
+              "slug": "sredstva_gigieny",
+              "children": [
+                {
+                  "name": "Кало- и мочеприёмники",
+                  "slug": "kalo__i_mochepriyomniki",
+                  "children": []
+                },
+                {
+                  "name": "Судна и утки",
+                  "slug": "sudna_i_utki",
+                  "children": []
+                },
+                {
+                  "name": "Уход за стомой",
+                  "slug": "ukhod_za_stomoi",
+                  "children": []
+                },
+                {
+                  "name": "Подгузники и прокладки",
+                  "slug": "podguzniki_i_prokladki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Диагностика",
+              "slug": "diagnostika",
+              "children": [
+                {
+                  "name": "Допплеры",
+                  "slug": "dopplery",
+                  "children": []
+                },
+                {
+                  "name": "Пульсоксиметры",
+                  "slug": "pulsoksimetry",
+                  "children": []
+                },
+                {
+                  "name": "Стетоскопы",
+                  "slug": "stetoskopy",
+                  "children": []
+                },
+                {
+                  "name": "Тесты",
+                  "slug": "testy",
+                  "children": []
+                },
+                {
+                  "name": "Тонометры",
+                  "slug": "tonometry",
+                  "children": []
+                },
+                {
+                  "name": "Глюкометры",
+                  "slug": "glyukometry",
+                  "children": []
+                },
+                {
+                  "name": "Термометры",
+                  "slug": "termometry",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Слуховые аппараты",
+              "slug": "slukhovye_apparaty",
+              "children": []
+            },
+            {
+              "name": "Расходные материалы",
+              "slug": "raskhodnye_materialy_2302072",
+              "children": [
+                {
+                  "name": "Перевязочные материалы",
+                  "slug": "perevyazochnye_materialy",
+                  "children": []
+                },
+                {
+                  "name": "Шприцы и иглы",
+                  "slug": "shpricy_i_igly",
+                  "children": []
+                },
+                {
+                  "name": "Пелёнки и простыни",
+                  "slug": "pelyonki_i_prostyni",
+                  "children": []
+                },
+                {
+                  "name": "Бахилы и шапочки",
+                  "slug": "bakhily_i_shapochki",
+                  "children": []
+                },
+                {
+                  "name": "Жгуты",
+                  "slug": "zhguty",
+                  "children": []
+                },
+                {
+                  "name": "Маски и перчатки",
+                  "slug": "maski_i_perchatki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Для маломобильных",
+              "slug": "dlya_malomobilnykh",
+              "children": [
+                {
+                  "name": "Кровати",
+                  "slug": "krovati_dlya_malomobilnykh",
+                  "children": []
+                },
+                {
+                  "name": "Физиотерапия",
+                  "slug": "fizioterapiya",
+                  "children": []
+                },
+                {
+                  "name": "Кресла-коляски",
+                  "slug": "kresla_kolyaski",
+                  "children": []
+                },
+                {
+                  "name": "Костыли и трости",
+                  "slug": "kostyli_i_trosti",
+                  "children": []
+                },
+                {
+                  "name": "Матрасы и подушки",
+                  "slug": "matrasy_i_podushki",
+                  "children": []
+                },
+                {
+                  "name": "Санитарные стулья",
+                  "slug": "sanitarnye_stulya",
+                  "children": []
+                },
+                {
+                  "name": "Приборы и комплектующие",
+                  "slug": "pribory_i_komplektuyushie",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Медицинская одежда",
+              "slug": "medicinskaya_odezhda",
+              "children": []
+            },
+            {
+              "name": "Приборы и аксессуары",
+              "slug": "pribory_i_aksessuary_2302078",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2302075",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Парфюмерия",
+          "slug": "parfiumeriia",
+          "children": [
+            {
+              "name": "Духи и туалетная вода",
+              "slug": "dukhi_i_tualetnaya_voda",
+              "children": []
+            },
+            {
+              "name": "Атомайзеры и флаконы",
+              "slug": "atomaizery_i_flakony",
+              "children": []
+            },
+            {
+              "name": "Парфюмерные наборы",
+              "slug": "parfyumernye_nabory",
+              "children": []
+            },
+            {
+              "name": "Парфюмерные масла",
+              "slug": "parfyumernye_masla",
+              "children": []
+            },
+            {
+              "name": "Диффузоры, спреи и саше",
+              "slug": "parfyumeriya_diffuzory_sprei_i_sashe",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "parfyumeriya_drugoe",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Макияж и маникюр",
+          "slug": "makiyazh_i_manikyur_",
+          "children": [
+            {
+              "name": "Для губ",
+              "slug": "dlya_gub",
+              "children": [
+                {
+                  "name": "Помады и карандаши",
+                  "slug": "pomady_i_karandashi",
+                  "children": []
+                },
+                {
+                  "name": "Блески и тинты",
+                  "slug": "bleski_i_tinty",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Для ногтей",
+              "slug": "dlya_nogtei",
+              "children": [
+                {
+                  "name": "Покрытие и дизайн",
+                  "slug": "pokrytie_i_dizain",
+                  "children": []
+                },
+                {
+                  "name": "Оборудование для маникюра и педикюра",
+                  "slug": "oborudovanie_dlya_manikyura_i_pedikyura",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Наборы и сертификаты",
+              "slug": "nabory_i_sertifikaty",
+              "children": []
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_2301983",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2301985",
+              "children": []
+            },
+            {
+              "name": "Для лица",
+              "slug": "dlya_lica",
+              "children": [
+                {
+                  "name": "Корректоры и консилеры",
+                  "slug": "korrektory_i_konsilery",
+                  "children": []
+                },
+                {
+                  "name": "Тональные средства",
+                  "slug": "tonalnye_sredstva",
+                  "children": []
+                },
+                {
+                  "name": "Пудры",
+                  "slug": "pudry",
+                  "children": []
+                },
+                {
+                  "name": "Бронзеры и хайлайтеры",
+                  "slug": "bronzery_i_khailaitery",
+                  "children": []
+                },
+                {
+                  "name": "Праймеры и фиксаторы",
+                  "slug": "praimery_i_fiksatory",
+                  "children": []
+                },
+                {
+                  "name": "Румяна и контуринг",
+                  "slug": "rumyana_i_konturing",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Для глаз и бровей",
+              "slug": "dlya_glaz_i_brovei",
+              "children": [
+                {
+                  "name": "Тени и глиттеры",
+                  "slug": "teni_i_glittery",
+                  "children": []
+                },
+                {
+                  "name": "Гели и туши",
+                  "slug": "geli_i_tushi",
+                  "children": []
+                },
+                {
+                  "name": "Наращивание ресниц",
+                  "slug": "narashivanie_resnic",
+                  "children": []
+                },
+                {
+                  "name": "Подводки и карандаши",
+                  "slug": "podvodki_i_karandashi",
+                  "children": []
+                },
+                {
+                  "name": "Окрашивание и ламинирование",
+                  "slug": "okrashivanie_i_laminirovanie",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Приборы и аксессуары",
+          "slug": "pribory_i_aksessuary",
+          "children": []
+        },
+        {
+          "name": "БАДы",
+          "slug": "bady",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Одежда, обувь, аксессуары",
+      "slug": "odezhda_obuv_aksessuary",
+      "children": [
+        {
+          "name": "Сумки, рюкзаки и чемоданы",
+          "slug": "sumki_rjukzaki_i_chemodany",
+          "children": [
+            {
+              "name": "Сумки",
+              "slug": "sumki",
+              "children": []
+            },
+            {
+              "name": "Рюкзаки",
+              "slug": "riukzaki",
+              "children": []
+            },
+            {
+              "name": "Чемоданы и дорожные сумки",
+              "slug": "cemodany_i_doroznye_sumki",
+              "children": []
+            },
+            {
+              "name": "Портфели и борсетки",
+              "slug": "portfeli_i_borsetki",
+              "children": []
+            },
+            {
+              "name": "Кошельки, визитницы, ключницы",
+              "slug": "koselki_vizitnicy_kliucnicy",
+              "children": []
+            },
+            {
+              "name": "Косметички и бьюти–кейсы",
+              "slug": "kosmeticki_i_biuti_keisy",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Мужская обувь",
+          "slug": "muzhskaja_obuv",
+          "children": [
+            {
+              "name": "Кроссовки",
+              "slug": "krossovki",
+              "children": []
+            },
+            {
+              "name": "Ботинки и полуботинки",
+              "slug": "botinki_i_polubotinki",
+              "children": []
+            },
+            {
+              "name": "Туфли",
+              "slug": "tufli",
+              "children": []
+            },
+            {
+              "name": "Кеды",
+              "slug": "kedy",
+              "children": []
+            },
+            {
+              "name": "Сапоги и полусапоги",
+              "slug": "sapogi_i_polusapogi",
+              "children": []
+            },
+            {
+              "name": "Мокасины и лоферы",
+              "slug": "mokasiny_i_lofery",
+              "children": []
+            },
+            {
+              "name": "Спортивная обувь",
+              "slug": "sportivnaia_obuv",
+              "children": []
+            },
+            {
+              "name": "Угги, валенки, дутики",
+              "slug": "uggi_valenki_dutiki",
+              "children": []
+            },
+            {
+              "name": "Рабочая обувь",
+              "slug": "rabocaia_obuv",
+              "children": []
+            },
+            {
+              "name": "Резиновая обувь",
+              "slug": "rezinovaia_obuv",
+              "children": []
+            },
+            {
+              "name": "Сандалии",
+              "slug": "sandalii",
+              "children": []
+            },
+            {
+              "name": "Шлёпанцы и сланцы",
+              "slug": "slepancy_i_slancy",
+              "children": []
+            },
+            {
+              "name": "Домашняя обувь",
+              "slug": "domasniaia_obuv",
+              "children": []
+            },
+            {
+              "name": "Слипоны и эспадрильи",
+              "slug": "slipony_i_espadrili",
+              "children": []
+            },
+            {
+              "name": "Уход за обувью",
+              "slug": "uxod_za_obuviu",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Женская обувь",
+          "slug": "zhenskaja_obuv",
+          "children": [
+            {
+              "name": "Туфли",
+              "slug": "tufli_1178044",
+              "children": []
+            },
+            {
+              "name": "Сапоги",
+              "slug": "sapogi",
+              "children": []
+            },
+            {
+              "name": "Босоножки",
+              "slug": "bosonozki",
+              "children": []
+            },
+            {
+              "name": "Ботильоны",
+              "slug": "botilyony",
+              "children": []
+            },
+            {
+              "name": "Ботинки и полуботинки",
+              "slug": "botinki_i_polubotinki_1178048",
+              "children": []
+            },
+            {
+              "name": "Кроссовки и кеды",
+              "slug": "krossovki_i_kedy",
+              "children": []
+            },
+            {
+              "name": "Полусапоги",
+              "slug": "polusapogi",
+              "children": []
+            },
+            {
+              "name": "Балетки",
+              "slug": "baletki",
+              "children": []
+            },
+            {
+              "name": "Угги, валенки, дутики",
+              "slug": "uggi_valenki_dutiki_1178052",
+              "children": []
+            },
+            {
+              "name": "Сабо и мюли",
+              "slug": "sabo_i_miuli",
+              "children": []
+            },
+            {
+              "name": "Резиновая обувь",
+              "slug": "rezinovaia_obuv_1178054",
+              "children": []
+            },
+            {
+              "name": "Мокасины и лоферы",
+              "slug": "mokasiny_i_lofery_1178055",
+              "children": []
+            },
+            {
+              "name": "Сандалии",
+              "slug": "sandalii_1178056",
+              "children": []
+            },
+            {
+              "name": "Шлёпанцы и сланцы",
+              "slug": "slepancy_i_slancy_1178057",
+              "children": []
+            },
+            {
+              "name": "Домашняя обувь",
+              "slug": "domasniaia_obuv_1178058",
+              "children": []
+            },
+            {
+              "name": "Спортивная обувь",
+              "slug": "sportivnaia_obuv_1178059",
+              "children": []
+            },
+            {
+              "name": "Слипоны и эспадрильи",
+              "slug": "slipony_i_espadrili_1178060",
+              "children": []
+            },
+            {
+              "name": "Уход за обувью",
+              "slug": "uxod_za_obuviu_1178061",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Аксессуары",
+          "slug": "odezhda_aksessuary",
+          "children": [
+            {
+              "name": "Аксессуары для волос",
+              "slug": "aksessuary_dlya_volos",
+              "children": []
+            },
+            {
+              "name": "Зонты",
+              "slug": "zonty",
+              "children": []
+            },
+            {
+              "name": "Украшения",
+              "slug": "ukrasheniya",
+              "children": []
+            },
+            {
+              "name": "Головные уборы",
+              "slug": "golovnye_ubory",
+              "children": []
+            },
+            {
+              "name": "Ремни, пояса, подтяжки",
+              "slug": "remni_poyasa_podtyazhki",
+              "children": []
+            },
+            {
+              "name": "Перчатки и варежки",
+              "slug": "perchatki_i_varezhki",
+              "children": []
+            },
+            {
+              "name": "Галстуки и бабочки",
+              "slug": "galstuki_i_babochki",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_accessories",
+              "children": []
+            },
+            {
+              "name": "Носки, чулки, колготки",
+              "slug": "noski_chulki_kolgotki",
+              "children": []
+            },
+            {
+              "name": "Платки и шарфы",
+              "slug": "platki_i_sharfy",
+              "children": []
+            },
+            {
+              "name": "Швейная фурнитура",
+              "slug": "shveinaya_furnitura",
+              "children": []
+            },
+            {
+              "name": "Очки",
+              "slug": "ochki",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Мужская одежда",
+          "slug": "muzhskaja_odezhda",
+          "children": [
+            {
+              "name": "Другое",
+              "slug": "drugoe_793",
+              "children": []
+            },
+            {
+              "name": "Верхняя одежда",
+              "slug": "verxniaia_odezda",
+              "children": [
+                {
+                  "name": "Зимние куртки и пуховики",
+                  "slug": "zimnie_kurtki_i_pukhoviki_muzshskaya",
+                  "children": []
+                },
+                {
+                  "name": "Лёгкие куртки и ветровки",
+                  "slug": "lyogkie_kurtki_i_vetrovki_muzshskaya",
+                  "children": []
+                },
+                {
+                  "name": "Демисезонные куртки",
+                  "slug": "demisezonnye_kurtki_muzshskaya",
+                  "children": []
+                },
+                {
+                  "name": "Пальто",
+                  "slug": "palto_muzshskaya_verhnaya",
+                  "children": []
+                },
+                {
+                  "name": "Дублёнки и шубы",
+                  "slug": "dublyonki_i_shuby",
+                  "children": []
+                },
+                {
+                  "name": "Жилеты",
+                  "slug": "zhilety_muzshskaya",
+                  "children": []
+                },
+                {
+                  "name": "Парки",
+                  "slug": "parki_muzshskaya",
+                  "children": []
+                },
+                {
+                  "name": "Джинсовые куртки",
+                  "slug": "dzhinsovye_kurtki_muzshskaya",
+                  "children": []
+                },
+                {
+                  "name": "Кожаные куртки",
+                  "slug": "kozhanye_kurtki_muzshskaya",
+                  "children": []
+                },
+                {
+                  "name": "Бомберы",
+                  "slug": "bombery_muzshskaya",
+                  "children": []
+                },
+                {
+                  "name": "Плащи и тренчи",
+                  "slug": "plashi_i_trenchi_muzshskaya",
+                  "children": []
+                },
+                {
+                  "name": "Косухи",
+                  "slug": "kosukhi_muzshskaya",
+                  "children": []
+                },
+                {
+                  "name": "Анораки",
+                  "slug": "anoraki_muzshskaya_verhnaya",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "drugoe_muzshskaya_verhnaya",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Брюки",
+              "slug": "briuki",
+              "children": []
+            },
+            {
+              "name": "Джинсы",
+              "slug": "dzinsy",
+              "children": []
+            },
+            {
+              "name": "Пиджаки и костюмы",
+              "slug": "pidzaki_i_kostiumy",
+              "children": []
+            },
+            {
+              "name": "Кофты и футболки",
+              "slug": "kofty_i_futbolki",
+              "children": []
+            },
+            {
+              "name": "Рубашки",
+              "slug": "rubaski",
+              "children": []
+            },
+            {
+              "name": "Шорты",
+              "slug": "sorty",
+              "children": []
+            },
+            {
+              "name": "Спортивные костюмы",
+              "slug": "sportivnye_kostiumy",
+              "children": []
+            },
+            {
+              "name": "Нижнее бельё",
+              "slug": "niznee_bele",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Женская одежда",
+          "slug": "zhenskaja_odezhda",
+          "children": [
+            {
+              "name": "Джемперы, свитеры, кардиганы",
+              "slug": "dzempery_svitery_kardigany",
+              "children": []
+            },
+            {
+              "name": "Верхняя одежда",
+              "slug": "verxniaia_odezda_774",
+              "children": [
+                {
+                  "name": "Шубы",
+                  "slug": "shuby",
+                  "children": []
+                },
+                {
+                  "name": "Пальто",
+                  "slug": "palto",
+                  "children": []
+                },
+                {
+                  "name": "Демисезонные куртки",
+                  "slug": "demisezonnye_kurtki",
+                  "children": []
+                },
+                {
+                  "name": "Плащи и тренчи",
+                  "slug": "plashi_i_trenchi",
+                  "children": []
+                },
+                {
+                  "name": "Парки",
+                  "slug": "parki",
+                  "children": []
+                },
+                {
+                  "name": "Жилеты",
+                  "slug": "zhilety",
+                  "children": []
+                },
+                {
+                  "name": "Джинсовые куртки",
+                  "slug": "dzhinsovye_kurtki",
+                  "children": []
+                },
+                {
+                  "name": "Лёгкие куртки и ветровки",
+                  "slug": "lyogkie_kurtki_i_vetrovki",
+                  "children": []
+                },
+                {
+                  "name": "Дублёнки",
+                  "slug": "dublyonki",
+                  "children": []
+                },
+                {
+                  "name": "Кожаные куртки",
+                  "slug": "kozhanye_kurtki",
+                  "children": []
+                },
+                {
+                  "name": "Косухи",
+                  "slug": "kosukhi",
+                  "children": []
+                },
+                {
+                  "name": "Бомберы",
+                  "slug": "bombery",
+                  "children": []
+                },
+                {
+                  "name": "Пончо",
+                  "slug": "poncho",
+                  "children": []
+                },
+                {
+                  "name": "Анораки",
+                  "slug": "anoraki",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "drugoe_1144491",
+                  "children": []
+                },
+                {
+                  "name": "Зимние куртки и пуховики",
+                  "slug": "zimnie_kurtki_i_pukhoviki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Нижнее бельё",
+              "slug": "niznee_bele_775",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_776",
+              "children": []
+            },
+            {
+              "name": "Брюки",
+              "slug": "briuki_777",
+              "children": []
+            },
+            {
+              "name": "Джинсы",
+              "slug": "dzinsy_778",
+              "children": []
+            },
+            {
+              "name": "Пиджаки и костюмы",
+              "slug": "pidzaki_i_kostiumy_779",
+              "children": []
+            },
+            {
+              "name": "Рубашки и блузки",
+              "slug": "rubaski_i_bluzki",
+              "children": []
+            },
+            {
+              "name": "Топы и футболки",
+              "slug": "topy_i_futbolki",
+              "children": []
+            },
+            {
+              "name": "Свадебные платья",
+              "slug": "svadebnye_platia",
+              "children": []
+            },
+            {
+              "name": "Купальники",
+              "slug": "kupalniki",
+              "children": []
+            },
+            {
+              "name": "Платья",
+              "slug": "platia",
+              "children": [
+                {
+                  "name": "Сарафаны",
+                  "slug": "sarafany",
+                  "children": []
+                },
+                {
+                  "name": "Повседневные",
+                  "slug": "povsednevnye",
+                  "children": []
+                },
+                {
+                  "name": "Вечерние",
+                  "slug": "vechernie",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Юбки",
+              "slug": "iubki",
+              "children": []
+            },
+            {
+              "name": "Толстовки и свитшоты",
+              "slug": "tolstovki_i_svitsoty",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Детская одежда и обувь",
+      "slug": "detskaja_odezhda_i_obuv",
+      "children": [
+        {
+          "name": "Для девочек",
+          "slug": "dlja_devochek",
+          "children": [
+            {
+              "name": "Свитеры и толстовки",
+              "slug": "svitery_i_tolstovki_801",
+              "children": [
+                {
+                  "name": "Толстовки",
+                  "slug": "tolstovki_2179526",
+                  "children": []
+                },
+                {
+                  "name": "Кофты",
+                  "slug": "kofty_2179527",
+                  "children": []
+                },
+                {
+                  "name": "Свитеры",
+                  "slug": "svitery_2179528",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Обувь",
+              "slug": "obuv_802",
+              "children": [
+                {
+                  "name": "Туфли и босоножки",
+                  "slug": "tufli_i_bosonozki",
+                  "children": []
+                },
+                {
+                  "name": "Кроссовки и кеды",
+                  "slug": "krossovki_i_kedy_2179539",
+                  "children": []
+                },
+                {
+                  "name": "Ботинки и полуботинки",
+                  "slug": "botinki_i_polubotinki_2179540",
+                  "children": []
+                },
+                {
+                  "name": "Сандалии и сланцы",
+                  "slug": "sandalii_i_slancy_2179541",
+                  "children": []
+                },
+                {
+                  "name": "Спортивная обувь",
+                  "slug": "sportivnaia_obuv_2179542",
+                  "children": []
+                },
+                {
+                  "name": "Домашняя обувь",
+                  "slug": "domasniaia_obuv_2179543",
+                  "children": []
+                },
+                {
+                  "name": "Валенки и угги",
+                  "slug": "valenki_i_uggi_2179544",
+                  "children": []
+                },
+                {
+                  "name": "Сапоги и полусапоги",
+                  "slug": "sapogi_i_polusapogi_2179545",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_803",
+              "children": []
+            },
+            {
+              "name": "Верхняя одежда",
+              "slug": "verxniaia_odezda_804",
+              "children": [
+                {
+                  "name": "Пальто и плащи",
+                  "slug": "palto_i_plashhi_2179534",
+                  "children": []
+                },
+                {
+                  "name": "Жилеты",
+                  "slug": "zilety_2179535",
+                  "children": []
+                },
+                {
+                  "name": "Куртки и пуховики",
+                  "slug": "kurtki_i_puxoviki_2179536",
+                  "children": []
+                },
+                {
+                  "name": "Дублёнки и шубы",
+                  "slug": "dublenki_i_suby_2179537",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Брюки и шорты",
+              "slug": "bryuki_i_shorty_805",
+              "children": [
+                {
+                  "name": "Брюки",
+                  "slug": "bryuki_dlya_devochek",
+                  "children": []
+                },
+                {
+                  "name": "Джинсы",
+                  "slug": "dzhinsy_dlya_devochek",
+                  "children": []
+                },
+                {
+                  "name": "Легинсы",
+                  "slug": "leginsy",
+                  "children": []
+                },
+                {
+                  "name": "Шорты",
+                  "slug": "shorty_dlya_devochek",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Комбинезоны",
+              "slug": "kombinezony_806",
+              "children": [
+                {
+                  "name": "Утеплённые комбинезоны",
+                  "slug": "uteplyonnye_kombinezony",
+                  "children": []
+                },
+                {
+                  "name": "Нательные комбинезоны",
+                  "slug": "natelnye_kombinezony",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Бельё и домашняя одежда",
+              "slug": "bele_i_domasniaia_odezda_807",
+              "children": [
+                {
+                  "name": "Домашняя одежда",
+                  "slug": "domasniaia_odezda_2179524",
+                  "children": []
+                },
+                {
+                  "name": "Нижнее бельё",
+                  "slug": "niznee_bele_2179525",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Платья и юбки",
+              "slug": "platia_i_iubki",
+              "children": [
+                {
+                  "name": "Платья",
+                  "slug": "platya",
+                  "children": []
+                },
+                {
+                  "name": "Юбки",
+                  "slug": "yubki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_809",
+              "children": []
+            },
+            {
+              "name": "Пляжная одежда",
+              "slug": "pliaznaia_odezda_2178794",
+              "children": []
+            },
+            {
+              "name": "Пиджаки и костюмы",
+              "slug": "pidzaki_i_kostiumy_2178795",
+              "children": []
+            },
+            {
+              "name": "Футболки и топы",
+              "slug": "futbolki_i_topy",
+              "children": [
+                {
+                  "name": "Футболки",
+                  "slug": "futbolki",
+                  "children": []
+                },
+                {
+                  "name": "Майки и топы",
+                  "slug": "maiki_i_topy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Блузки и рубашки",
+              "slug": "bluzki_i_rubaski",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Для мальчиков",
+          "slug": "dlja_malchikov",
+          "children": [
+            {
+              "name": "Свитеры и толстовки",
+              "slug": "svitery_i_tolstovki",
+              "children": [
+                {
+                  "name": "Кофты",
+                  "slug": "kofty",
+                  "children": []
+                },
+                {
+                  "name": "Свитеры",
+                  "slug": "svitery",
+                  "children": []
+                },
+                {
+                  "name": "Толстовки",
+                  "slug": "tolstovki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Обувь",
+              "slug": "obuv",
+              "children": [
+                {
+                  "name": "Спортивная обувь",
+                  "slug": "sportivnaia_obuv_2179583",
+                  "children": []
+                },
+                {
+                  "name": "Домашняя обувь",
+                  "slug": "domasniaia_obuv_2179584",
+                  "children": []
+                },
+                {
+                  "name": "Ботинки и туфли",
+                  "slug": "botinki_i_tufli",
+                  "children": []
+                },
+                {
+                  "name": "Сапоги и полусапоги",
+                  "slug": "sapogi_i_polusapogi_2179586",
+                  "children": []
+                },
+                {
+                  "name": "Валенки и угги",
+                  "slug": "valenki_i_uggi",
+                  "children": []
+                },
+                {
+                  "name": "Кроссовки и кеды",
+                  "slug": "krossovki_i_kedy_2179588",
+                  "children": []
+                },
+                {
+                  "name": "Сандалии и сланцы",
+                  "slug": "sandalii_i_slancy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Верхняя одежда",
+              "slug": "verxniaia_odezda_787",
+              "children": [
+                {
+                  "name": "Куртки и пуховики",
+                  "slug": "kurtki_i_puxoviki",
+                  "children": []
+                },
+                {
+                  "name": "Дублёнки и шубы",
+                  "slug": "dublenki_i_suby_2179575",
+                  "children": []
+                },
+                {
+                  "name": "Пальто и плащи",
+                  "slug": "palto_i_plashhi",
+                  "children": []
+                },
+                {
+                  "name": "Жилеты",
+                  "slug": "zilety_2179577",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_788",
+              "children": []
+            },
+            {
+              "name": "Брюки и шорты",
+              "slug": "bryuki_i_shorty_789",
+              "children": [
+                {
+                  "name": "Шорты",
+                  "slug": "shorty",
+                  "children": []
+                },
+                {
+                  "name": "Брюки",
+                  "slug": "bryuki",
+                  "children": []
+                },
+                {
+                  "name": "Джинсы",
+                  "slug": "dzhinsy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Комбинезоны",
+              "slug": "kombinezony",
+              "children": [
+                {
+                  "name": "Утеплённые комбинезоны",
+                  "slug": "uteplyonnye_kombinezony1",
+                  "children": []
+                },
+                {
+                  "name": "Нательные комбинезоны",
+                  "slug": "natelnye_kombinezony1",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Бельё и домашняя одежда",
+              "slug": "bele_i_domasniaia_odezda",
+              "children": [
+                {
+                  "name": "Нижнее бельё",
+                  "slug": "niznee_bele_2179569",
+                  "children": []
+                },
+                {
+                  "name": "Домашняя одежда",
+                  "slug": "domasniaia_odezda",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_792",
+              "children": []
+            },
+            {
+              "name": "Футболки и майки",
+              "slug": "futbolki_i_maiki",
+              "children": []
+            },
+            {
+              "name": "Рубашки",
+              "slug": "rubaski_2178789",
+              "children": []
+            },
+            {
+              "name": "Пляжная одежда",
+              "slug": "pliaznaia_odezda",
+              "children": []
+            },
+            {
+              "name": "Пиджаки и костюмы",
+              "slug": "pidzaki_i_kostiumy_2178791",
+              "children": [
+                {
+                  "name": "Костюмы",
+                  "slug": "kostiumy",
+                  "children": []
+                },
+                {
+                  "name": "Пиджаки",
+                  "slug": "pidzaki",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Товары для детей и игрушки",
+      "slug": "tovary_dlja_detej_i_igrushki",
+      "children": [
+        {
+          "name": "Автомобильные кресла",
+          "slug": "avtomobilnye_kresla",
+          "children": [
+            {
+              "name": "Автолюльки",
+              "slug": "avtolyulki",
+              "children": []
+            },
+            {
+              "name": "Автокресла",
+              "slug": "avtokresla",
+              "children": []
+            },
+            {
+              "name": "Бустеры",
+              "slug": "bustery",
+              "children": []
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "avtomobilnye_kresla_aksessuary",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Детская мебель",
+          "slug": "detskaia_mebel",
+          "children": [
+            {
+              "name": "Для детей",
+              "slug": "dlia_detei",
+              "children": [
+                {
+                  "name": "Кресла",
+                  "slug": "dlia_detei_kresla",
+                  "children": []
+                },
+                {
+                  "name": "Компьютерные кресла",
+                  "slug": "kompyuternye_kresla",
+                  "children": []
+                },
+                {
+                  "name": "Кровати",
+                  "slug": "dlia_detei_krovati",
+                  "children": []
+                },
+                {
+                  "name": "Стулья",
+                  "slug": "dlia_detei_stulya",
+                  "children": []
+                },
+                {
+                  "name": "Матрасы",
+                  "slug": "dlia_detei_matrasy",
+                  "children": []
+                },
+                {
+                  "name": "Шкафы",
+                  "slug": "dlia_detei_shkafy",
+                  "children": []
+                },
+                {
+                  "name": "Спортивные и игровые комплексы",
+                  "slug": "sportivnye_i_igrovye_kompleksy",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары для мебели",
+                  "slug": "aksessuary_dlya_mebeli",
+                  "children": []
+                },
+                {
+                  "name": "Комоды",
+                  "slug": "dlia_detei_komody",
+                  "children": []
+                },
+                {
+                  "name": "Стеллажи",
+                  "slug": "stellazhi",
+                  "children": []
+                },
+                {
+                  "name": "Комплекты мебели",
+                  "slug": "komplekty_mebeli",
+                  "children": []
+                },
+                {
+                  "name": "Столы",
+                  "slug": "dlia_detei_stoly",
+                  "children": []
+                },
+                {
+                  "name": "Диваны",
+                  "slug": "dlia_detei_divany",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Для новорождённых",
+              "slug": "dlia_novorozdennyx",
+              "children": [
+                {
+                  "name": "Кроватки и колыбели",
+                  "slug": "krovatki_i_kolybeli",
+                  "children": []
+                },
+                {
+                  "name": "Пеленальные комоды и столики",
+                  "slug": "pelenalnye_komody_i_stoliki",
+                  "children": []
+                },
+                {
+                  "name": "Манежи и коврики",
+                  "slug": "manezhi_i_kovriki",
+                  "children": []
+                },
+                {
+                  "name": "Стульчики для кормления",
+                  "slug": "stulchiki_dlya_kormleniya",
+                  "children": []
+                },
+                {
+                  "name": "Качели и шезлонги",
+                  "slug": "kacheli_i_shezlongi",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2275139",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Игрушки",
+          "slug": "igruski",
+          "children": [
+            {
+              "name": "Мягкие игрушки",
+              "slug": "myagkie_igrushki",
+              "children": []
+            },
+            {
+              "name": "Игрушечный транспорт",
+              "slug": "igrushechnyi_transport",
+              "children": []
+            },
+            {
+              "name": "Игровые и развивающие коврики",
+              "slug": "igrovye_i_razvivayushie_kovriki",
+              "children": []
+            },
+            {
+              "name": "Игрушки для малышей",
+              "slug": "igrushki_dlya_malyshei",
+              "children": []
+            },
+            {
+              "name": "Детский транспорт",
+              "slug": "detskii_transport",
+              "children": []
+            },
+            {
+              "name": "Конструкторы",
+              "slug": "konstruktory",
+              "children": []
+            },
+            {
+              "name": "Фигурки и наборы",
+              "slug": "figurki_i_nabory",
+              "children": []
+            },
+            {
+              "name": "Куклы и аксессуары",
+              "slug": "kukly_i_aksessuary",
+              "children": []
+            },
+            {
+              "name": "Детские площадки",
+              "slug": "detskie_ploshadki",
+              "children": []
+            },
+            {
+              "name": "Игрушечное оружие",
+              "slug": "igrushechnoe_oruzhie",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Детские коляски",
+          "slug": "detskie_koliaski",
+          "children": [
+            {
+              "name": "Прогулочные коляски",
+              "slug": "progulochnye_kolyaski",
+              "children": []
+            },
+            {
+              "name": "Коляски-люльки",
+              "slug": "kolyaski_lyulki",
+              "children": []
+            },
+            {
+              "name": "Коляски-трости",
+              "slug": "kolyaski_trosti",
+              "children": []
+            },
+            {
+              "name": "Коляски-санки",
+              "slug": "kolyaski_sanki",
+              "children": []
+            },
+            {
+              "name": "Аксессуары и комплектующие",
+              "slug": "aksessuary_i_komplektuyushie",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Товары для кормления",
+          "slug": "tovary_dlia_kormleniia",
+          "children": []
+        },
+        {
+          "name": "Постельные принадлежности",
+          "slug": "postelnye_prinadleznosti",
+          "children": [
+            {
+              "name": "Постельное бельё",
+              "slug": "postelnoe_belyo_postelnye_prinadleznosti",
+              "children": [
+                {
+                  "name": "Комплекты",
+                  "slug": "komplekty_postelnoye_belye",
+                  "children": []
+                },
+                {
+                  "name": "Простыни",
+                  "slug": "prostyni_postelnoye_belye",
+                  "children": []
+                },
+                {
+                  "name": "Наволочки",
+                  "slug": "navolochki_postelnoye_belye",
+                  "children": []
+                },
+                {
+                  "name": "Пододеяльники",
+                  "slug": "pododeyalniki_postelnoye_belye",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Подушки",
+              "slug": "podushki_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Конверты для колясок",
+              "slug": "konverty_dlya_kolyasok_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Одеяла",
+              "slug": "odeyala_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Бортики",
+              "slug": "bortiki_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Наматрасники",
+              "slug": "namatrasniki_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Спальные коконы и мешки",
+              "slug": "spalnye_kokony_i_meshki_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Пледы и покрывала",
+              "slug": "pledy_i_pokryvala_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Балдахины",
+              "slug": "baldakhiny_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Матрасы",
+              "slug": "matrasy_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Коконы и позиционеры",
+              "slug": "kokony_i_pozicionery_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Матрасики для пеленания",
+              "slug": "matrasiki_dlya_pelenaniya_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Пелёнки",
+              "slug": "pelyonki_postelnye_prinadleznosti",
+              "children": []
+            },
+            {
+              "name": "Конверты для выписки",
+              "slug": "konverty_dlya_vypiski_postelnye_prinadleznosti",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Товары для купания",
+          "slug": "tovary_dlia_kupaniia",
+          "children": []
+        },
+        {
+          "name": "Товары для школы",
+          "slug": "tovary_dlia_skoly",
+          "children": []
+        },
+        {
+          "name": "Самокаты и беговелы",
+          "slug": "samokaty_i_begovely_i",
+          "children": [
+            {
+              "name": "Веломобили и беговелы",
+              "slug": "velomobili_i_begovely",
+              "children": []
+            },
+            {
+              "name": "Детские самокаты",
+              "slug": "detskie_samokaty",
+              "children": []
+            },
+            {
+              "name": "Запчасти и аксессуары",
+              "slug": "velosipedy_i_samokaty_zapchasti_i_aksessuary",
+              "children": [
+                {
+                  "name": "Для велосипедов",
+                  "slug": "dlya_velosipedov",
+                  "children": []
+                },
+                {
+                  "name": "Для самокатов",
+                  "slug": "dlya_samokatov",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Детская гигиена",
+          "slug": "detskaya_gigiena",
+          "children": [
+            {
+              "name": "Многоразовые подгузники",
+              "slug": "mnogorazovye_podguzniki",
+              "children": []
+            },
+            {
+              "name": "Подгузники для плавания",
+              "slug": "podguzniki_dlya_plavaniya",
+              "children": []
+            },
+            {
+              "name": "Горшки и сиденья",
+              "slug": "gorshki_i_sidenya",
+              "children": []
+            },
+            {
+              "name": "Пелёнки одноразовые",
+              "slug": "pelyonki_odnorazovye",
+              "children": []
+            },
+            {
+              "name": "Кремы и аксессуары",
+              "slug": "kremy_i_aksessuary",
+              "children": []
+            },
+            {
+              "name": "Подгузники",
+              "slug": "podguzniki",
+              "children": []
+            },
+            {
+              "name": "Подгузники-трусики",
+              "slug": "podguzniki_trusiki",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Часы и украшения",
+      "slug": "chasy_i_ukrashenija",
+      "children": [
+        {
+          "name": "Часы",
+          "slug": "casy",
+          "children": [
+            {
+              "name": "Наручные или карманные",
+              "slug": "narucnye_ili_karmannye",
+              "children": []
+            },
+            {
+              "name": "Для интерьера",
+              "slug": "dlia_interera",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Ювелирные изделия",
+          "slug": "iuvelirnye_izdeliia",
+          "children": [
+            {
+              "name": "Кольца и перстни",
+              "slug": "kolca_i_perstni",
+              "children": []
+            },
+            {
+              "name": "Серьги",
+              "slug": "sergi",
+              "children": []
+            },
+            {
+              "name": "Кулоны и подвески",
+              "slug": "kulony_i_podveski",
+              "children": []
+            },
+            {
+              "name": "Браслеты",
+              "slug": "braslety",
+              "children": []
+            },
+            {
+              "name": "Цепи",
+              "slug": "cepi",
+              "children": []
+            },
+            {
+              "name": "Колье",
+              "slug": "kole",
+              "children": []
+            },
+            {
+              "name": "Шармы",
+              "slug": "sarmy",
+              "children": []
+            },
+            {
+              "name": "Броши",
+              "slug": "brosi",
+              "children": []
+            },
+            {
+              "name": "Комплекты",
+              "slug": "komplekty",
+              "children": []
+            },
+            {
+              "name": "Религиозные изделия",
+              "slug": "religioznye_izdeliia",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_1288005",
+              "children": []
+            },
+            {
+              "name": "Пирсинг",
+              "slug": "pirsing",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Бижутерия",
+          "slug": "bizuteriia",
+          "children": [
+            {
+              "name": "Серьги",
+              "slug": "sergi_bijouterie",
+              "children": []
+            },
+            {
+              "name": "Браслеты",
+              "slug": "braslety_bijouterie",
+              "children": []
+            },
+            {
+              "name": "Колье и бусы",
+              "slug": "kole_i_busy_bijouterie",
+              "children": []
+            },
+            {
+              "name": "Броши",
+              "slug": "broshi_bijouterie",
+              "children": []
+            },
+            {
+              "name": "Кольца и перстни",
+              "slug": "kolca_i_perstni_bijouterie",
+              "children": []
+            },
+            {
+              "name": "Кулоны и подвески",
+              "slug": "kulony_i_podveski_bijouterie",
+              "children": []
+            },
+            {
+              "name": "Комплекты",
+              "slug": "komplekty_bijouterie",
+              "children": []
+            },
+            {
+              "name": "Цепи",
+              "slug": "cepi_bijouterie",
+              "children": []
+            },
+            {
+              "name": "Чокеры",
+              "slug": "chokery_bijouterie",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_bijouterie",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

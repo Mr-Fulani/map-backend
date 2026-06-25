@@ -32,9 +32,16 @@
 
 2. **Сгенерировать дерево** (вшивается в код как JSON):
    ```bash
+   # один домен:
    python manage.py sync_avito_full_tree --root "Одежда, обувь, аксессуары" --domain apparel
+   # ВСЕ домены верхнего уровня Avito за раз (файлы по avito-slug):
+   python manage.py sync_avito_full_tree --all
    ```
-   Создаст `apps/marketplaces/data/avito_tree_apparel.json`. Закоммитить его.
+   Создаст `apps/marketplaces/data/avito_tree_<slug>.json`. Закоммитить.
+   Виды запчастей (`*SparePartType`, инлайн и по `values_link_json`) тянутся
+   автоматически; для усечённого Avito-корня «Запчасти и аксессуары» — фолбэк на
+   `avito_field_specs.json` (полное дерево запчастей — отдельный файл
+   `avito_tree_auto_parts.json`, он канонический для запчастей).
 
 3. **Импортировать в каталог тенантов** (идемпотентно):
    ```bash
