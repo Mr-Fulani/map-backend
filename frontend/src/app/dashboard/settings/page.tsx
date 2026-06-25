@@ -129,7 +129,7 @@ function buildCategoryTree(cats: CatalogCategory[]): { category: CatalogCategory
     if (!byParent.has(key)) byParent.set(key, []);
     byParent.get(key)!.push(c);
   }
-  for (const list of byParent.values()) list.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  byParent.forEach((list) => list.sort((a, b) => a.name.localeCompare(b.name, 'ru')));
   const result: { category: CatalogCategory; depth: number }[] = [];
   const walk = (parent: number | null, depth: number) => {
     for (const c of byParent.get(parent) ?? []) {
