@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
-import { accountApi, listingApi, imageApi } from '@/lib/api';
+import { accountApi, listingApi, imageApi, productApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -53,6 +53,18 @@ interface ListingDetail {
   bulk_contact_phone: string;
   rejection_reason: string;
   images: ListingImage[];
+  catalog_category: {
+    id: number;
+    name: string;
+    parent_id: number | null;
+    parent_name: string | null;
+  } | null;
+}
+
+interface CatalogCategory {
+  id: number;
+  name: string;
+  parent: number | null;
 }
 
 interface Account {
@@ -132,6 +144,9 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [editAccountId, setEditAccountId] = useState('');
   const [editPrice, setEditPrice] = useState('');
   const [editAdType, setEditAdType] = useState(DEFAULT_AD_TYPE);
+  const [categories, setCategories] = useState<CatalogCategory[]>([]);
+  const [editCategoryRootId, setEditCategoryRootId] = useState('');
+  const [editCategoryLeafId, setEditCategoryLeafId] = useState('');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [placementAddresses, setPlacementAddresses] = useState<PlacementAddress[]>([]);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
@@ -155,6 +170,18 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     setEditAccountId(String(data.account_id));
     setEditPrice(data.price_on_listing);
     setEditAdType(data.ad_type || DEFAULT_AD_TYPE);
+    // Категория может быть листом (есть parent_id) или корнем (parent_id отсутствует).
+    const cat = data.catalog_category;
+    if (cat && cat.parent_id) {
+      setEditCategoryRootId(String(cat.parent_id));
+      setEditCategoryLeafId(String(cat.id));
+    } else if (cat) {
+      setEditCategoryRootId(String(cat.id));
+      setEditCategoryLeafId('');
+    } else {
+      setEditCategoryRootId('');
+      setEditCategoryLeafId('');
+    }
   };
 
   useEffect(() => {
@@ -186,7 +213,15 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     accountApi.listPlacementAddresses()
       .then((res) => setPlacementAddresses(res.data.data ?? res.data))
       .catch(() => setPlacementAddresses([]));
+    productApi.catalogCategories()
+      .then((res) => setCategories(res.data.data ?? res.data))
+      .catch(() => setCategories([]));
   }, []);
+
+  const rootCategories = categories.filter((c) => c.parent === null);
+  const subCategories = categories.filter((c) => (
+    editCategoryRootId && c.parent === Number(editCategoryRootId)
+  ));
 
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     !editAccountId || address.account === Number(editAccountId)
@@ -259,12 +294,33 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     contact_phone_override: editContactPhone,
   });
 
+  // Выбранная категория: подкатегория (лист) приоритетнее корня; null — снять.
+  const selectedCategoryId = () => {
+    if (editCategoryLeafId) return Number(editCategoryLeafId);
+    if (editCategoryRootId) return Number(editCategoryRootId);
+    return null;
+  };
+
+  // Категория хранится у товара, не у листинга — сохраняем отдельным вызовом,
+  // только если изменилась. assign также закрепляет ручную классификацию.
+  const saveCategoryIfChanged = async () => {
+    if (!listing) return;
+    const selected = selectedCategoryId();
+    const current = listing.catalog_category?.id ?? null;
+    if (selected === current) return;
+    await productApi.assignCatalogCategory({
+      product_ids: [listing.product_id],
+      catalog_category: selected,
+    });
+  };
+
   const handlePublish = async () => {
     if (!listing) return;
     setActionLoading('publish');
     try {
       // «Опубликовать» = сначала сохранить текущие правки, потом публиковать,
       // чтобы изменения цены/описания/контактов не терялись.
+      await saveCategoryIfChanged();
       const saved = await listingApi.updateContent(listing.id, buildEditPayload());
       applyListingState(saved.data.data);
       setEditing(false);
@@ -325,6 +381,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     if (!listing) return;
     setActionLoading('save');
     try {
+      await saveCategoryIfChanged();
       const res = await listingApi.updateContent(listing.id, buildEditPayload());
       applyListingState(res.data.data);
       setEditing(false);
@@ -637,6 +694,49 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                     </option>
                   ))}
                 </select>
+              </div>
+
+              {/* Категория и подкатегория — проверить/изменить перед публикацией.
+                  По ним строится категория Avito (GoodsType/SparePartType). */}
+              <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Категория</p>
+                  <select
+                    value={editCategoryRootId}
+                    onChange={(e) => {
+                      setEditCategoryRootId(e.target.value);
+                      setEditCategoryLeafId('');
+                    }}
+                    disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                    className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
+                  >
+                    <option value="">— не задана —</option>
+                    {rootCategories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Подкатегория</p>
+                  <select
+                    value={editCategoryLeafId}
+                    onChange={(e) => setEditCategoryLeafId(e.target.value)}
+                    disabled={
+                      !editCategoryRootId || subCategories.length === 0
+                      || listing.status === 'active' || listing.status === 'deleted' || busy
+                    }
+                    className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
+                  >
+                    <option value="">— вся категория —</option>
+                    {subCategories.map((category) => (
+                      <option key={category.id} value={category.id}>
+                        {category.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div className="space-y-2 rounded-md border p-3">
