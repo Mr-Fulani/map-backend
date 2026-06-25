@@ -1,0 +1,4890 @@
+{
+  "root": "Для дома и дачи",
+  "domain": "dlja_doma_i_dachi",
+  "tree": [
+    {
+      "name": "Мебель и интерьер",
+      "slug": "mebel_i_interer",
+      "children": [
+        {
+          "name": "Кровати, диваны и кресла",
+          "slug": "krovati_divany_i_kresla",
+          "children": [
+            {
+              "name": "Диваны",
+              "slug": "divany",
+              "children": []
+            },
+            {
+              "name": "Кресла",
+              "slug": "kresla",
+              "children": []
+            },
+            {
+              "name": "Кровати",
+              "slug": "krovati",
+              "children": []
+            },
+            {
+              "name": "Матрасы",
+              "slug": "matrasy",
+              "children": []
+            },
+            {
+              "name": "Пуфы и банкетки",
+              "slug": "pufy_i_banketki",
+              "children": []
+            },
+            {
+              "name": "Спальные гарнитуры",
+              "slug": "spalnye_garnitury",
+              "children": []
+            },
+            {
+              "name": "Комплектующие",
+              "slug": "krovati_divany_i_kresla_komplektuyushie",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_1210481",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Шкафы, комоды и стеллажи",
+          "slug": "shkafy_komody_i_stellazhi",
+          "children": [
+            {
+              "name": "Шкафы и буфеты",
+              "slug": "shkafy",
+              "children": []
+            },
+            {
+              "name": "Комоды и тумбы",
+              "slug": "komody",
+              "children": []
+            },
+            {
+              "name": "Стеллажи и этажерки",
+              "slug": "stellazhi_i_etazherki",
+              "children": []
+            },
+            {
+              "name": "Полки",
+              "slug": "polki",
+              "children": []
+            },
+            {
+              "name": "Прихожие и обувницы",
+              "slug": "prikhozhie_i_obuvnicy",
+              "children": []
+            },
+            {
+              "name": "Гардеробные системы и вешалки",
+              "slug": "garderobnye_sistemy_i_veshalki",
+              "children": []
+            },
+            {
+              "name": "Гарнитуры и комплекты",
+              "slug": "garnitury_i_komplekty",
+              "children": []
+            },
+            {
+              "name": "Комплектующие",
+              "slug": "shkafy_komody_i_stellazhi_komplektuyushie",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_1287502",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Столы и стулья",
+          "slug": "stoly_i_stulya",
+          "children": [
+            {
+              "name": "Комплектующие",
+              "slug": "stoly_i_stulya_komplektuyushie",
+              "children": [
+                {
+                  "name": "Столешницы",
+                  "slug": "stoleshnicy",
+                  "children": []
+                },
+                {
+                  "name": "Подстолья",
+                  "slug": "podstolya",
+                  "children": []
+                },
+                {
+                  "name": "Ножки",
+                  "slug": "nozhki",
+                  "children": []
+                },
+                {
+                  "name": "Каркасы и сиденья",
+                  "slug": "karkasy_i_sidenya",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти",
+                  "slug": "zapchasti_komplektuyushie",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Обеденная группа",
+              "slug": "obedennaya_gruppa",
+              "children": []
+            },
+            {
+              "name": "Скамейки",
+              "slug": "skameiki",
+              "children": []
+            },
+            {
+              "name": "Столы",
+              "slug": "stoly",
+              "children": []
+            },
+            {
+              "name": "Стулья",
+              "slug": "stulya",
+              "children": []
+            },
+            {
+              "name": "Табуретки",
+              "slug": "taburetki",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2059610",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Текстиль и ковры",
+          "slug": "tekstil_i_kovry",
+          "children": [
+            {
+              "name": "Постельное бельё и наматрасники",
+              "slug": "postelnoe_bele_i_namatrasniki",
+              "children": [
+                {
+                  "name": "Постельное бельё",
+                  "slug": "postelnoe_belyo",
+                  "children": []
+                },
+                {
+                  "name": "Наматрасники",
+                  "slug": "namatrasniki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Пледы и покрывала",
+              "slug": "pledy_i_pokryvala",
+              "children": []
+            },
+            {
+              "name": "Полотенца",
+              "slug": "polotenca",
+              "children": []
+            },
+            {
+              "name": "Одеяла и подушки",
+              "slug": "odeiala_i_poduski",
+              "children": []
+            },
+            {
+              "name": "Ковры",
+              "slug": "kovry",
+              "children": []
+            },
+            {
+              "name": "Шторы и жалюзи",
+              "slug": "story_i_zaliuzi",
+              "children": []
+            },
+            {
+              "name": "Ткани",
+              "slug": "tkani",
+              "children": []
+            },
+            {
+              "name": "Скатерти и салфетки",
+              "slug": "skaterti_i_salfetki",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2170297",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Кухонные гарнитуры",
+          "slug": "kukhonnye_garnitury",
+          "children": [
+            {
+              "name": "Кухни",
+              "slug": "kukhni",
+              "children": []
+            },
+            {
+              "name": "Комплектующие",
+              "slug": "kukhonnye_garnitury_komplektuyushie",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2096703",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Предметы интерьера, искусство",
+          "slug": "predmety_interera_iskusstvo",
+          "children": [
+            {
+              "name": "Зеркала",
+              "slug": "zerkala_2180111",
+              "children": []
+            },
+            {
+              "name": "Вазы, кашпо, искусственные цветы",
+              "slug": "vazy_kaspo_iskusstvennye_cvety",
+              "children": [
+                {
+                  "name": "Вазы",
+                  "slug": "vazy",
+                  "children": []
+                },
+                {
+                  "name": "Горшки и кашпо",
+                  "slug": "gorshki_i_kashpo",
+                  "children": []
+                },
+                {
+                  "name": "Искусственные цветы",
+                  "slug": "iskusstvennye_cvety",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Ароматы для дома и свечи",
+              "slug": "aromaty_dlia_doma_i_sveci",
+              "children": [
+                {
+                  "name": "Свечи",
+                  "slug": "svechi",
+                  "children": []
+                },
+                {
+                  "name": "Подсвечники",
+                  "slug": "podsvechniki",
+                  "children": []
+                },
+                {
+                  "name": "Диффузоры, спреи и саше",
+                  "slug": "diffuzory_sprei_i_sashe",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Декор интерьера",
+              "slug": "dekor_interera",
+              "children": []
+            },
+            {
+              "name": "Предметы для хранения",
+              "slug": "predmety_dlia_xraneniia",
+              "children": [
+                {
+                  "name": "Шкатулки",
+                  "slug": "shkatulki",
+                  "children": []
+                },
+                {
+                  "name": "Корзины, коробки и сундуки",
+                  "slug": "korziny_korobki_i_sunduki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Новогодние украшения",
+              "slug": "novogodnie_ukraseniia",
+              "children": [
+                {
+                  "name": "Новогодние украшения",
+                  "slug": "novogodnie_ukrasheniya",
+                  "children": []
+                },
+                {
+                  "name": "Искусственные ёлки",
+                  "slug": "iskusstvennye_yolki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2180117",
+              "children": []
+            },
+            {
+              "name": "Картины, постеры и рамки",
+              "slug": "kartiny_postery_i_ramki",
+              "children": [
+                {
+                  "name": "Картины",
+                  "slug": "kartiny_mebel",
+                  "children": []
+                },
+                {
+                  "name": "Постеры и таблички",
+                  "slug": "postery_i_tablichki",
+                  "children": []
+                },
+                {
+                  "name": "Иконы",
+                  "slug": "ikony",
+                  "children": []
+                },
+                {
+                  "name": "Рамки",
+                  "slug": "ramki",
+                  "children": []
+                },
+                {
+                  "name": "Панно",
+                  "slug": "panno",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Освещение",
+          "slug": "osveshenie",
+          "children": [
+            {
+              "name": "Светодиодная подсветка",
+              "slug": "svetodiodnaia_podsvetka",
+              "children": []
+            },
+            {
+              "name": "Настольное и напольное",
+              "slug": "nastolnoe_i_napolnoe",
+              "children": [
+                {
+                  "name": "Настольные лампы",
+                  "slug": "nastolnye_lampy",
+                  "children": []
+                },
+                {
+                  "name": "Ночники",
+                  "slug": "nochniki",
+                  "children": []
+                },
+                {
+                  "name": "Торшеры",
+                  "slug": "torshery",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Декоративное освещение и гирлянды",
+              "slug": "dekorativnoe_osveshhenie_i_girliandy",
+              "children": []
+            },
+            {
+              "name": "Уличное",
+              "slug": "ulicnoe",
+              "children": []
+            },
+            {
+              "name": "Комплектующие",
+              "slug": "komplektuiushhie_2180146",
+              "children": [
+                {
+                  "name": "Лампочки",
+                  "slug": "lampochki",
+                  "children": []
+                },
+                {
+                  "name": "Плафоны и абажуры",
+                  "slug": "plafony_i_abazhury",
+                  "children": []
+                },
+                {
+                  "name": "Питание и управление светом",
+                  "slug": "pitanie_i_upravlenie_svetom",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Потолочное и настенное",
+              "slug": "potolocnoe_i_nastennoe",
+              "children": [
+                {
+                  "name": "Споты и точечные светильники",
+                  "slug": "spoty_i_tochechnye_svetilniki",
+                  "children": []
+                },
+                {
+                  "name": "Трековые системы",
+                  "slug": "trekovye_sistemy",
+                  "children": []
+                },
+                {
+                  "name": "Люстры и потолочные светильники",
+                  "slug": "lyustry_i_potolochnye_svetilniki",
+                  "children": []
+                },
+                {
+                  "name": "Бра и настенные светильники",
+                  "slug": "bra_i_nastennye_svetilniki",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Компьютерные столы и кресла",
+          "slug": "kompyuternye_stoly_i_kresla",
+          "children": [
+            {
+              "name": "Кресла и стулья",
+              "slug": "kresla_i_stulia",
+              "children": [
+                {
+                  "name": "Компьютерные кресла",
+                  "slug": "kompiuternye_kresla_2170273",
+                  "children": []
+                },
+                {
+                  "name": "Стулья для работы",
+                  "slug": "stulia_dlia_raboty",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2170271",
+              "children": []
+            },
+            {
+              "name": "Столы",
+              "slug": "stoly_2170272",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Подставки и тумбы",
+          "slug": "podstavki_i_tumby",
+          "children": [
+            {
+              "name": "Тумбы",
+              "slug": "tumby_2170259",
+              "children": [
+                {
+                  "name": "Обувницы",
+                  "slug": "obuvnicy",
+                  "children": []
+                },
+                {
+                  "name": "Тумбы",
+                  "slug": "tumby_2170263",
+                  "children": []
+                },
+                {
+                  "name": "Тумбы под телевизор",
+                  "slug": "tumby_pod_televizor",
+                  "children": []
+                },
+                {
+                  "name": "Прикроватные тумбы",
+                  "slug": "prikrovatnye_tumby",
+                  "children": []
+                },
+                {
+                  "name": "Тумбы для ванной",
+                  "slug": "tumby_dlia_vannoi",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Подставки и полки",
+              "slug": "podstavki_i_polki",
+              "children": [
+                {
+                  "name": "Полки",
+                  "slug": "polki_2170267",
+                  "children": []
+                },
+                {
+                  "name": "Подставки для растений",
+                  "slug": "podstavki_dlia_rastenii",
+                  "children": []
+                },
+                {
+                  "name": "Другие подставки",
+                  "slug": "drugie_podstavki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2170261",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Другое",
+          "slug": "drugoe_235",
+          "children": []
+        },
+        {
+          "name": "Садовая мебель",
+          "slug": "sadovaya_mebel",
+          "children": [
+            {
+              "name": "Качели",
+              "slug": "kacheli",
+              "children": []
+            },
+            {
+              "name": "Лежаки и шезлонги",
+              "slug": "lezhaki_i_shezlongi_sad",
+              "children": []
+            },
+            {
+              "name": "Столы",
+              "slug": "stoly_sad",
+              "children": []
+            },
+            {
+              "name": "Зонты от солнца",
+              "slug": "zonty_ot_solnca",
+              "children": []
+            },
+            {
+              "name": "Комплекты мебели",
+              "slug": "komplekty_mebeli_sad",
+              "children": []
+            },
+            {
+              "name": "Подвесные кресла",
+              "slug": "podvesnye_kresla_sad",
+              "children": []
+            },
+            {
+              "name": "Скамейки",
+              "slug": "skameiki_sad",
+              "children": []
+            },
+            {
+              "name": "Садовые кресла",
+              "slug": "sadovye_kresla_sad",
+              "children": []
+            },
+            {
+              "name": "Диваны",
+              "slug": "divany_sad",
+              "children": []
+            },
+            {
+              "name": "Садовые стулья и табуреты",
+              "slug": "sadovye_stulya_i_taburety_sad",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Растения",
+      "slug": "rastenija",
+      "children": [
+        {
+          "name": "Товары для ухода за растениями",
+          "slug": "tovary_dlya_ukhoda_za_rasteniyami",
+          "children": [
+            {
+              "name": "Грунты и субстраты",
+              "slug": "grunty_i_substraty",
+              "children": []
+            },
+            {
+              "name": "Удобрения",
+              "slug": "udobreniya",
+              "children": []
+            },
+            {
+              "name": "Средства от вредителей и сорняков",
+              "slug": "sredstva_ot_vreditelei_i_sornyakov",
+              "children": []
+            },
+            {
+              "name": "Горшки и кашпо",
+              "slug": "gorshki_i_kashpo_rastenie",
+              "children": []
+            },
+            {
+              "name": "Фитолампы",
+              "slug": "fitolampy",
+              "children": []
+            },
+            {
+              "name": "Измерители влаги",
+              "slug": "izmeriteli_vlagi",
+              "children": []
+            },
+            {
+              "name": "Теплицы, грядки, клумбы",
+              "slug": "teplicy_gryadki_klumby",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_rastenie",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Панно и искусственные растения",
+          "slug": "panno_i_iskusstvennye_rasteniya",
+          "children": []
+        },
+        {
+          "name": "Другое",
+          "slug": "rasteniya_drugoe",
+          "children": []
+        },
+        {
+          "name": "Комнатные растения",
+          "slug": "komnatnye_rasteniya",
+          "children": [
+            {
+              "name": "Декоративно-лиственные растения",
+              "slug": "dekorativno_listvennye_rasteniya",
+              "children": []
+            },
+            {
+              "name": "Цветущие растения",
+              "slug": "cvetushie_rasteniya",
+              "children": []
+            },
+            {
+              "name": "Пальмы и фикусы",
+              "slug": "palmy_i_fikusy",
+              "children": []
+            },
+            {
+              "name": "Кактусы и суккуленты",
+              "slug": "kaktusy_i_sukkulenty",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Букеты",
+          "slug": "bukety",
+          "children": []
+        },
+        {
+          "name": "Садовые растения",
+          "slug": "sadovye_rasteniya",
+          "children": [
+            {
+              "name": "Плодовые растения",
+              "slug": "plodovye_rasteniya",
+              "children": []
+            },
+            {
+              "name": "Многолетние растения",
+              "slug": "mnogoletnie_rasteniya",
+              "children": []
+            },
+            {
+              "name": "Газон",
+              "slug": "gazon",
+              "children": []
+            },
+            {
+              "name": "Зелень и пряные травы",
+              "slug": "zelen_i_pryanye_travy",
+              "children": []
+            },
+            {
+              "name": "Декоративные кустарники и деревья",
+              "slug": "dekorativnye_kustarniki_i_derevya",
+              "children": []
+            },
+            {
+              "name": "Хвойные растения",
+              "slug": "khvoinye_rasteniya",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Семена, луковицы, клубни",
+          "slug": "semena_lukovicy_klubni",
+          "children": []
+        },
+        {
+          "name": "Другое",
+          "slug": "drugoe_plants",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Продукты питания",
+      "slug": "produkty_pitanija",
+      "children": [
+        {
+          "name": "Чай, кофе, какао",
+          "slug": "chai_kofe_kakao",
+          "children": [
+            {
+              "name": "Чай",
+              "slug": "chai",
+              "children": []
+            },
+            {
+              "name": "Кофе",
+              "slug": "kofe",
+              "children": []
+            },
+            {
+              "name": "Какао",
+              "slug": "kakao",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Напитки",
+          "slug": "napitki",
+          "children": []
+        },
+        {
+          "name": "Рыба, морепродукты, икра",
+          "slug": "ryba_moreprodukty_ikra",
+          "children": [
+            {
+              "name": "Рыба",
+              "slug": "ryba",
+              "children": []
+            },
+            {
+              "name": "Икра",
+              "slug": "ikra",
+              "children": []
+            },
+            {
+              "name": "Морепродукты",
+              "slug": "moreprodukty",
+              "children": [
+                {
+                  "name": "Креветки",
+                  "slug": "krevetki",
+                  "children": []
+                },
+                {
+                  "name": "Крабы и раки",
+                  "slug": "kraby_i_raki",
+                  "children": []
+                },
+                {
+                  "name": "Мидии, устрицы и гребешки",
+                  "slug": "midii_ustricy_i_grebeshki",
+                  "children": []
+                },
+                {
+                  "name": "Кальмары и осьминоги",
+                  "slug": "kalmary_i_osminogi",
+                  "children": []
+                },
+                {
+                  "name": "Ассорти",
+                  "slug": "assorti",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Мясо, птица, субпродукты",
+          "slug": "myaso_ptica_subprodukty",
+          "children": []
+        },
+        {
+          "name": "Кондитерские изделия",
+          "slug": "konditerskie_izdeliya",
+          "children": [
+            {
+              "name": "Шоколад и конфеты",
+              "slug": "shokolad_i_konfety",
+              "children": []
+            },
+            {
+              "name": "Зефир, мармелад и леденцы",
+              "slug": "zefir_marmelad_i_ledency",
+              "children": []
+            },
+            {
+              "name": "Печенье, пряники и вафли",
+              "slug": "pechene_pryaniki_i_vafli",
+              "children": []
+            },
+            {
+              "name": "Восточные сладости",
+              "slug": "vostochnye_sladosti",
+              "children": []
+            },
+            {
+              "name": "Подарочные наборы",
+              "slug": "podarochnye_nabory",
+              "children": []
+            },
+            {
+              "name": "Торты и пирожные",
+              "slug": "torty_i_pirozhnye",
+              "children": [
+                {
+                  "name": "Торты",
+                  "slug": "torty",
+                  "children": []
+                },
+                {
+                  "name": "Пирожные",
+                  "slug": "pirozhnye",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Мёд и продукты пчеловодства",
+          "slug": "myod_i_produkty_pchelovodstva_",
+          "children": [
+            {
+              "name": "Мёд",
+              "slug": "myod",
+              "children": []
+            },
+            {
+              "name": "Продукты пчеловодства",
+              "slug": "produkty_pchelovodstva",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Бакалея",
+          "slug": "bakaleya",
+          "children": [
+            {
+              "name": "Консервация",
+              "slug": "konservaciya",
+              "children": [
+                {
+                  "name": "Мясные консервы",
+                  "slug": "myasnye_konservy",
+                  "children": []
+                },
+                {
+                  "name": "Рыбные консервы",
+                  "slug": "rybnye_konservy",
+                  "children": []
+                },
+                {
+                  "name": "Варенье, джемы и сиропы",
+                  "slug": "varene_dzhemy_i_siropy",
+                  "children": []
+                },
+                {
+                  "name": "Овощные и грибные консервы",
+                  "slug": "ovoshnye_i_gribnye_konservy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Снеки, орехи и сухофрукты",
+              "slug": "sneki_orekhi_i_sukhofrukty",
+              "children": [
+                {
+                  "name": "Орехи и семечки",
+                  "slug": "orekhi_i_semechki",
+                  "children": []
+                },
+                {
+                  "name": "Снеки",
+                  "slug": "sneki",
+                  "children": []
+                },
+                {
+                  "name": "Сухофрукты",
+                  "slug": "sukhofrukty",
+                  "children": []
+                },
+                {
+                  "name": "Наборы",
+                  "slug": "nabory_orehov",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Соусы, специи и добавки",
+              "slug": "sousy_specii_i_dobavki",
+              "children": [
+                {
+                  "name": "Соусы",
+                  "slug": "sousy",
+                  "children": []
+                },
+                {
+                  "name": "Специи",
+                  "slug": "specii",
+                  "children": []
+                },
+                {
+                  "name": "Сахар и соль",
+                  "slug": "sakhar_i_sol",
+                  "children": []
+                },
+                {
+                  "name": "Добавки для приготовления пищи",
+                  "slug": "dobavki_dlya_prigotovleniya_pishi",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Крупы, макароны и мука",
+              "slug": "krupy_makarony_i_muka",
+              "children": [
+                {
+                  "name": "Крупы и бобовые",
+                  "slug": "krupy_i_bobovye",
+                  "children": []
+                },
+                {
+                  "name": "Макаронные изделия",
+                  "slug": "makaronnye_izdeliya",
+                  "children": []
+                },
+                {
+                  "name": "Мука",
+                  "slug": "muka",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Растительные масла",
+              "slug": "rastitelnye_masla",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Овощи, грибы и зелень",
+          "slug": "ovoshi__griby_i_zelen_i",
+          "children": []
+        },
+        {
+          "name": "Молочные продукты, сыры, яйца",
+          "slug": "molochnye_produkty_syry_yaica",
+          "children": []
+        },
+        {
+          "name": "Фрукты и ягоды",
+          "slug": "frukty_i_yagody",
+          "children": [
+            {
+              "name": "Ягоды",
+              "slug": "yagody",
+              "children": []
+            },
+            {
+              "name": "Фрукты",
+              "slug": "frukty",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Хлеб и выпечка",
+          "slug": "khleb_i_vypechka",
+          "children": []
+        },
+        {
+          "name": "Специализированное питание",
+          "slug": "specializirovannoe_pitanie",
+          "children": []
+        },
+        {
+          "name": "Другое",
+          "slug": "drugoe_produkti",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Ремонт и строительство",
+      "slug": "remont_i_stroitelstvo",
+      "children": [
+        {
+          "name": "Готовые строения и срубы",
+          "slug": "gotovye_stroenija_i_sruby",
+          "children": [
+            {
+              "name": "Веранда или терраса",
+              "slug": "veranda_ili_terrasa",
+              "children": []
+            },
+            {
+              "name": "Беседка",
+              "slug": "besedka",
+              "children": []
+            },
+            {
+              "name": "Навес",
+              "slug": "naves",
+              "children": []
+            },
+            {
+              "name": "Другой",
+              "slug": "drugoi",
+              "children": []
+            },
+            {
+              "name": "Дом",
+              "slug": "dom",
+              "children": []
+            },
+            {
+              "name": "Туалет",
+              "slug": "tualet",
+              "children": []
+            },
+            {
+              "name": "Колодец",
+              "slug": "kolodec",
+              "children": []
+            },
+            {
+              "name": "Теплица",
+              "slug": "teplica",
+              "children": []
+            },
+            {
+              "name": "Хозблок",
+              "slug": "xozblok",
+              "children": []
+            },
+            {
+              "name": "Бытовка",
+              "slug": "bytovka",
+              "children": []
+            },
+            {
+              "name": "Для животных",
+              "slug": "dlia_zivotnyx",
+              "children": []
+            },
+            {
+              "name": "Гараж",
+              "slug": "garaz",
+              "children": []
+            },
+            {
+              "name": "Баня",
+              "slug": "bania",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Стройматериалы",
+          "slug": "strojmaterialy",
+          "children": [
+            {
+              "name": "Изоляция",
+              "slug": "strojmaterialy_izoljatsija",
+              "children": [
+                {
+                  "name": "Теплоизоляция",
+                  "slug": "teploizolyaciya",
+                  "children": [
+                    {
+                      "name": "Минеральная вата",
+                      "slug": "mineralnaya_vata",
+                      "children": []
+                    },
+                    {
+                      "name": "Эковата",
+                      "slug": "ekovata",
+                      "children": []
+                    },
+                    {
+                      "name": "Пенополистирол",
+                      "slug": "penopolistirol",
+                      "children": []
+                    },
+                    {
+                      "name": "Экструдированный пенополистирол",
+                      "slug": "ekstrudirovannyi_penopolistirol",
+                      "children": []
+                    },
+                    {
+                      "name": "Напыляемая теплоизоляция",
+                      "slug": "napylyaemaya_teploizolyaciya",
+                      "children": []
+                    },
+                    {
+                      "name": "Панели",
+                      "slug": "paneli_2302174",
+                      "children": []
+                    },
+                    {
+                      "name": "Изоляция для труб",
+                      "slug": "izolyaciya_dlya_trub",
+                      "children": []
+                    },
+                    {
+                      "name": "Другое",
+                      "slug": "drugoe_2302176",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Гидроизоляция",
+                  "slug": "gidroizolyaciya",
+                  "children": []
+                },
+                {
+                  "name": "Шумоизоляция",
+                  "slug": "shumoizolyaciya",
+                  "children": []
+                },
+                {
+                  "name": "Плёнки, мембраны, пароизоляция",
+                  "slug": "plyonki__membrany__paroizolyaciya_membrany",
+                  "children": []
+                },
+                {
+                  "name": "Ленты",
+                  "slug": "lenty_izolyaciya",
+                  "children": []
+                },
+                {
+                  "name": "Пена и герметики",
+                  "slug": "pena_i_germetiki",
+                  "children": [
+                    {
+                      "name": "Пена",
+                      "slug": "pena",
+                      "children": []
+                    },
+                    {
+                      "name": "Герметики",
+                      "slug": "germetiki",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Манжеты",
+                  "slug": "manzhety_izolyaciya",
+                  "children": []
+                },
+                {
+                  "name": "Подложка",
+                  "slug": "podlozhka_izolyaciya",
+                  "children": []
+                },
+                {
+                  "name": "Тенты",
+                  "slug": "tenty_izolyaciya",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Крепёж",
+              "slug": "krepezh",
+              "children": [
+                {
+                  "name": "Другое",
+                  "slug": "krepezh_drugoe",
+                  "children": []
+                },
+                {
+                  "name": "Дюбели, дюбель-гвозди",
+                  "slug": "dyubeli_dyubel_gvozdi",
+                  "children": [
+                    {
+                      "name": "Дюбели",
+                      "slug": "dyubeli",
+                      "children": []
+                    },
+                    {
+                      "name": "Дюбель-гвозди",
+                      "slug": "dyubel_gvozdi",
+                      "children": []
+                    },
+                    {
+                      "name": "Для теплоизоляции",
+                      "slug": "dlya_teploizolyacii",
+                      "children": []
+                    },
+                    {
+                      "name": "Фасадные дюбели",
+                      "slug": "fasadnye_dyubeli",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Специализированный крепёж",
+                  "slug": "specializirovannyi_krepyozh",
+                  "children": [
+                    {
+                      "name": "Мебельный крепёж",
+                      "slug": "mebelnyi_krepyozh",
+                      "children": []
+                    },
+                    {
+                      "name": "Для вагонки и террасной доски",
+                      "slug": "dlya_vagonki_i_terrasnoi_doski",
+                      "children": []
+                    },
+                    {
+                      "name": "Для гипсокартона",
+                      "slug": "dlya_gipsokartona",
+                      "children": []
+                    },
+                    {
+                      "name": "Для фундамента",
+                      "slug": "dlya_fundamenta",
+                      "children": []
+                    },
+                    {
+                      "name": "Кабельный крепёж",
+                      "slug": "kabelnyi_krepyozh",
+                      "children": []
+                    },
+                    {
+                      "name": "Сантехнический крепёж",
+                      "slug": "santekhnicheskii_krepyozh",
+                      "children": []
+                    },
+                    {
+                      "name": "Для строительных лесов",
+                      "slug": "dlya_stroitelnykh_lesov",
+                      "children": []
+                    },
+                    {
+                      "name": "Для опалубки",
+                      "slug": "dlya_opalubki",
+                      "children": []
+                    },
+                    {
+                      "name": "Другое",
+                      "slug": "specializirovanniy_krepyozh_drugoe",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Профили, трубы, уголки",
+                  "slug": "profili_truby_ugolki",
+                  "children": []
+                },
+                {
+                  "name": "Ленты",
+                  "slug": "lenty",
+                  "children": []
+                },
+                {
+                  "name": "Перфорированный крепёж",
+                  "slug": "perforirovannyi_krepyozh",
+                  "children": []
+                },
+                {
+                  "name": "Гвозди",
+                  "slug": "gvozdi",
+                  "children": []
+                },
+                {
+                  "name": "Саморезы",
+                  "slug": "samorezy",
+                  "children": []
+                },
+                {
+                  "name": "Химический крепёж",
+                  "slug": "khimicheskii_krepyozh",
+                  "children": []
+                },
+                {
+                  "name": "Такелаж",
+                  "slug": "takelazh",
+                  "children": []
+                },
+                {
+                  "name": "Метрический крепёж",
+                  "slug": "metricheskii_krepyozh",
+                  "children": [
+                    {
+                      "name": "Анкеры",
+                      "slug": "ankery",
+                      "children": []
+                    },
+                    {
+                      "name": "Болты",
+                      "slug": "bolty",
+                      "children": []
+                    },
+                    {
+                      "name": "Винты",
+                      "slug": "vinty",
+                      "children": []
+                    },
+                    {
+                      "name": "Гайки",
+                      "slug": "gaiki",
+                      "children": []
+                    },
+                    {
+                      "name": "Шайбы",
+                      "slug": "shaiby",
+                      "children": []
+                    },
+                    {
+                      "name": "Шпильки",
+                      "slug": "shpilki",
+                      "children": []
+                    },
+                    {
+                      "name": "Другое",
+                      "slug": "metricheskii_krepyozh_drugoe",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Заклёпки",
+                  "slug": "zaklyopki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Кровля и водосток",
+              "slug": "krovlja_i_vodostok",
+              "children": [
+                {
+                  "name": "Кровля и комплектующие",
+                  "slug": "krovlya_i_komplektuyushie",
+                  "children": [
+                    {
+                      "name": "Профнастил",
+                      "slug": "profnastil",
+                      "children": []
+                    },
+                    {
+                      "name": "Металлочерепица",
+                      "slug": "metallocherepica",
+                      "children": []
+                    },
+                    {
+                      "name": "Шифер, композитная, натуральная черепица",
+                      "slug": "shifer_kompozitnaya_naturalnaya_cherepica",
+                      "children": []
+                    },
+                    {
+                      "name": "Мягкая кровля",
+                      "slug": "myagkaya_krovlya",
+                      "children": [
+                        {
+                          "name": "Гибкая черепица",
+                          "slug": "gibkaya_cherepica",
+                          "children": []
+                        },
+                        {
+                          "name": "Рулонная кровля",
+                          "slug": "rulonnaya_krovlya",
+                          "children": []
+                        },
+                        {
+                          "name": "Ондулин",
+                          "slug": "ondulin",
+                          "children": []
+                        },
+                        {
+                          "name": "Мембранная кровля",
+                          "slug": "membrannaya_krovlya",
+                          "children": []
+                        },
+                        {
+                          "name": "Наливная кровля",
+                          "slug": "nalivnaya_krovlya",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Фальцевая кровля",
+                      "slug": "falcevaya_krovlya",
+                      "children": []
+                    },
+                    {
+                      "name": "Комплектующие для кровли",
+                      "slug": "komplektuyushie_dlya_krovli",
+                      "children": [
+                        {
+                          "name": "Доборные элементы",
+                          "slug": "dobornye_elementy",
+                          "children": []
+                        },
+                        {
+                          "name": "Дымники",
+                          "slug": "dymniki",
+                          "children": []
+                        },
+                        {
+                          "name": "Кровельная вентиляция",
+                          "slug": "krovelnaya_ventilyatsiya",
+                          "children": []
+                        },
+                        {
+                          "name": "Ленты",
+                          "slug": "krepezh_lenty",
+                          "children": []
+                        },
+                        {
+                          "name": "Ограждения и мостики",
+                          "slug": "ograzhdeniya_i_mostiki",
+                          "children": []
+                        },
+                        {
+                          "name": "Отливы",
+                          "slug": "otlivy",
+                          "children": []
+                        },
+                        {
+                          "name": "Подкладочные материалы",
+                          "slug": "podkladochnye_materialy",
+                          "children": []
+                        },
+                        {
+                          "name": "Проходные элементы",
+                          "slug": "prokhodnye_elementy",
+                          "children": []
+                        },
+                        {
+                          "name": "Снегозадержатели",
+                          "slug": "snegozaderzhateli",
+                          "children": []
+                        },
+                        {
+                          "name": "Флюгеры",
+                          "slug": "flyugery",
+                          "children": []
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "name": "Водосток",
+                  "slug": "vodostok",
+                  "children": [
+                    {
+                      "name": "Воронки, колена, отводы",
+                      "slug": "voronki_kolena_otvody",
+                      "children": []
+                    },
+                    {
+                      "name": "Готовые комплекты",
+                      "slug": "gotovye_komplekty",
+                      "children": []
+                    },
+                    {
+                      "name": "Дождеприёмники, решётки, водосборники",
+                      "slug": "dozhdepriyomniki_reshyotki_vodosborniki",
+                      "children": []
+                    },
+                    {
+                      "name": "Желоба",
+                      "slug": "zheloba",
+                      "children": []
+                    },
+                    {
+                      "name": "Соединители, кожухи, хомуты",
+                      "slug": "soediniteli_kozhukhi_khomuty",
+                      "children": []
+                    },
+                    {
+                      "name": "Трубы",
+                      "slug": "truby",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Сайдинг",
+                  "slug": "saiding",
+                  "children": []
+                },
+                {
+                  "name": "Поликарбонат",
+                  "slug": "polikarbonat",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Лаки и краски",
+              "slug": "laki_i_kraski",
+              "children": [
+                {
+                  "name": "Краски",
+                  "slug": "kraski",
+                  "children": []
+                },
+                {
+                  "name": "Масла, лаки, пропитки",
+                  "slug": "masla_laki_propitki",
+                  "children": [
+                    {
+                      "name": "Пропитки",
+                      "slug": "propitki",
+                      "children": []
+                    },
+                    {
+                      "name": "Лаки, защитные покрытия",
+                      "slug": "laki_zashitnye_pokrytiya",
+                      "children": []
+                    },
+                    {
+                      "name": "Масла, воск для дерева",
+                      "slug": "masla_vosk_dlya_dereva",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Грунтовки",
+                  "slug": "gruntovki",
+                  "children": []
+                },
+                {
+                  "name": "Эмали",
+                  "slug": "emali",
+                  "children": []
+                },
+                {
+                  "name": "Растворители, очистители",
+                  "slug": "rastvoriteli_ochistiteli",
+                  "children": []
+                },
+                {
+                  "name": "Клеи",
+                  "slug": "klei",
+                  "children": []
+                },
+                {
+                  "name": "Смолы",
+                  "slug": "smoly",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "drugoe_laki_i_kraski",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Металлопрокат",
+              "slug": "metalloprokat",
+              "children": [
+                {
+                  "name": "Сортовой прокат",
+                  "slug": "sortovoi_prokat",
+                  "children": [
+                    {
+                      "name": "Арматура",
+                      "slug": "armatura",
+                      "children": []
+                    },
+                    {
+                      "name": "Квадрат",
+                      "slug": "kvadrat",
+                      "children": []
+                    },
+                    {
+                      "name": "Круг",
+                      "slug": "krug",
+                      "children": []
+                    },
+                    {
+                      "name": "Шестигранник",
+                      "slug": "shestigrannik",
+                      "children": []
+                    },
+                    {
+                      "name": "Проволока",
+                      "slug": "provoloka",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Фасонный прокат",
+                  "slug": "fasonnyi_prokat",
+                  "children": [
+                    {
+                      "name": "Двутавровая балка",
+                      "slug": "dvutavrovaya_balka",
+                      "children": []
+                    },
+                    {
+                      "name": "Уголки",
+                      "slug": "ugolki",
+                      "children": []
+                    },
+                    {
+                      "name": "Швеллер",
+                      "slug": "shveller",
+                      "children": []
+                    },
+                    {
+                      "name": "Шпунт",
+                      "slug": "shpunt",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Листовой прокат",
+                  "slug": "listovoi_prokat",
+                  "children": [
+                    {
+                      "name": "Лист",
+                      "slug": "list",
+                      "children": []
+                    },
+                    {
+                      "name": "Полоса",
+                      "slug": "polosa",
+                      "children": []
+                    },
+                    {
+                      "name": "Лента",
+                      "slug": "lenta",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Трубный прокат",
+                  "slug": "trubnyi_prokat",
+                  "children": []
+                },
+                {
+                  "name": "Сетка",
+                  "slug": "setka",
+                  "children": []
+                },
+                {
+                  "name": "Слитки, лом, поковки",
+                  "slug": "slitki_lom_pokovki",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "metalloprokat_drugoe",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Отделка",
+              "slug": "otdelka",
+              "children": [
+                {
+                  "name": "Напольные покрытия",
+                  "slug": "napolnye_pokrytiya",
+                  "children": [
+                    {
+                      "name": "Ламинат",
+                      "slug": "laminat",
+                      "children": []
+                    },
+                    {
+                      "name": "Кварц-винил",
+                      "slug": "kvarc_vinil",
+                      "children": []
+                    },
+                    {
+                      "name": "Подложки, плинтусы, пороги",
+                      "slug": "podlozhki_plintusy_porogi",
+                      "children": []
+                    },
+                    {
+                      "name": "Паркет, инженерная доска",
+                      "slug": "parket_inzhenernaya_doska",
+                      "children": []
+                    },
+                    {
+                      "name": "Линолеум",
+                      "slug": "linoleum",
+                      "children": []
+                    },
+                    {
+                      "name": "ПВХ плитка",
+                      "slug": "napolnye_pokrytiya_pvkh_plitka",
+                      "children": []
+                    },
+                    {
+                      "name": "Ковролин",
+                      "slug": "kovrolin",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Керамическая плитка и керамогранит",
+                  "slug": "keramicheskaya_plitka_i_keramogranit",
+                  "children": [
+                    {
+                      "name": "Ревизионные люки",
+                      "slug": "revizionnye_lyuki",
+                      "children": []
+                    },
+                    {
+                      "name": "Керамогранит",
+                      "slug": "keramogranit",
+                      "children": []
+                    },
+                    {
+                      "name": "Керамическая плитка",
+                      "slug": "keramicheskaya_plitka",
+                      "children": []
+                    },
+                    {
+                      "name": "Расходные материалы для укладки плитки",
+                      "slug": "raskhodnye_materialy_dlya_ukladki_plitki",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Обои и клеи",
+                  "slug": "oboi_i_klei_",
+                  "children": [
+                    {
+                      "name": "Обои",
+                      "slug": "oboi_oboi",
+                      "children": []
+                    },
+                    {
+                      "name": "Клей для обоев",
+                      "slug": "klei_dlya_oboev",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Наружная отделка и декоративный камень",
+                  "slug": "naruzhnaya_otdelka_i_dekorativnyi_kamen",
+                  "children": [
+                    {
+                      "name": "Сайдинг и фасадные панели",
+                      "slug": "saiding_i_fasadnye_paneli",
+                      "children": []
+                    },
+                    {
+                      "name": "Облицовочный и декоративный камень",
+                      "slug": "oblicovochnyi_i_dekorativnyi_kamen",
+                      "children": []
+                    },
+                    {
+                      "name": "Натуральный камень",
+                      "slug": "naturalnyi_kamen",
+                      "children": []
+                    },
+                    {
+                      "name": "Тротуарная плитка",
+                      "slug": "trotuarnaya_plitka",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Стеновые панели, рейки и элементы декора",
+                  "slug": "stenovye_paneli_reiki_i_elementy_dekora",
+                  "children": [
+                    {
+                      "name": "Стеновые панели",
+                      "slug": "stenovye_paneli",
+                      "children": []
+                    },
+                    {
+                      "name": "Рейки",
+                      "slug": "reiki",
+                      "children": []
+                    },
+                    {
+                      "name": "Молдинги и лепнина",
+                      "slug": "moldingi_i_lepnina",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Пиломатериалы",
+              "slug": "pilomaterialy",
+              "children": []
+            },
+            {
+              "name": "Строительные смеси",
+              "slug": "stroitelnye_smesi",
+              "children": [
+                {
+                  "name": "Бетон",
+                  "slug": "beton",
+                  "children": []
+                },
+                {
+                  "name": "Штукатурка",
+                  "slug": "shtukaturka",
+                  "children": []
+                },
+                {
+                  "name": "Грунтовка",
+                  "slug": "gruntovka",
+                  "children": []
+                },
+                {
+                  "name": "Смеси для пола",
+                  "slug": "smesi_dlya_pola",
+                  "children": []
+                },
+                {
+                  "name": "Шпаклёвка",
+                  "slug": "shpaklyovka",
+                  "children": []
+                },
+                {
+                  "name": "Цемент, пескобетон",
+                  "slug": "cement_peskobeton",
+                  "children": []
+                },
+                {
+                  "name": "Кладочная смесь и монтажный клей",
+                  "slug": "kladochnaya_smes_i_montazhnyi_klei",
+                  "children": []
+                },
+                {
+                  "name": "Затирки",
+                  "slug": "zatirki",
+                  "children": []
+                },
+                {
+                  "name": "Добавки для растворов",
+                  "slug": "dobavki_dlya_rastvorov",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "stroitelnye_smesi_drugoe",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Строительство стен",
+              "slug": "stroitelstvo_sten",
+              "children": [
+                {
+                  "name": "Блоки для строительства",
+                  "slug": "bloki_dlya_stroitelstva",
+                  "children": [
+                    {
+                      "name": "Керамические блоки",
+                      "slug": "keramicheskie_bloki",
+                      "children": []
+                    },
+                    {
+                      "name": "Другие материалы",
+                      "slug": "drugie_materialy",
+                      "children": []
+                    },
+                    {
+                      "name": "Газобетон",
+                      "slug": "gazobeton",
+                      "children": []
+                    },
+                    {
+                      "name": "Газосиликат",
+                      "slug": "gazosilikat",
+                      "children": []
+                    },
+                    {
+                      "name": "Пенобетон",
+                      "slug": "penobeton",
+                      "children": []
+                    },
+                    {
+                      "name": "Керамзит, шлакоблок",
+                      "slug": "keramzit_shlakoblok",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Панели",
+                  "slug": "paneli",
+                  "children": [
+                    {
+                      "name": "Сэндвич-панели",
+                      "slug": "sendvich_paneli",
+                      "children": []
+                    },
+                    {
+                      "name": "СИП-панели",
+                      "slug": "sip_paneli",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Опалубка",
+                  "slug": "opalubka",
+                  "children": [
+                    {
+                      "name": "Для перекрытий",
+                      "slug": "dlya_perekrytii",
+                      "children": []
+                    },
+                    {
+                      "name": "Для стен и колонн",
+                      "slug": "dlya_sten_i_kolonn",
+                      "children": []
+                    },
+                    {
+                      "name": "Балки",
+                      "slug": "balki",
+                      "children": []
+                    },
+                    {
+                      "name": "Стойки",
+                      "slug": "stoiki",
+                      "children": []
+                    },
+                    {
+                      "name": "Фанера",
+                      "slug": "opalubka_fanera",
+                      "children": []
+                    },
+                    {
+                      "name": "Комплектующие",
+                      "slug": "opalubka_komplektuyushie",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Кирпич",
+                  "slug": "kirpich",
+                  "children": []
+                },
+                {
+                  "name": "Строительные леса",
+                  "slug": "stroitelnye_lesa",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Электрика",
+              "slug": "strojmaterialy_elektrika",
+              "children": [
+                {
+                  "name": "Кабели и провода",
+                  "slug": "kabeli_i_provoda",
+                  "children": []
+                },
+                {
+                  "name": "Выключатели, розетки, удлинители",
+                  "slug": "vyklyuchateli_rozetki_udliniteli",
+                  "children": [
+                    {
+                      "name": "Рамки, крышки",
+                      "slug": "ramki_kryshki",
+                      "children": []
+                    },
+                    {
+                      "name": "Удлинители, кабельные розетки и вилки",
+                      "slug": "udliniteli_kabelnye_rozetki_i_vilki",
+                      "children": []
+                    },
+                    {
+                      "name": "Выключатели и розетки",
+                      "slug": "vyklyuchateli_i_rozetki",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Щитовое и электромонтажное оборудование",
+                  "slug": "shitovoe_i_elektromontazhnoe_oborudovanie",
+                  "children": []
+                },
+                {
+                  "name": "Устройства защиты, контроля и управления",
+                  "slug": "ustroistva_zashity_kontrolya_i_upravleniya",
+                  "children": [
+                    {
+                      "name": "Автоматические выключатели",
+                      "slug": "avtomaticheskie_vyklyuchateli_control",
+                      "children": []
+                    },
+                    {
+                      "name": "Дифференциальные автоматы",
+                      "slug": "differencialnye_avtomaty",
+                      "children": []
+                    },
+                    {
+                      "name": "Реле",
+                      "slug": "rele",
+                      "children": []
+                    },
+                    {
+                      "name": "Приборы учёта",
+                      "slug": "pribory_uchyota",
+                      "children": []
+                    },
+                    {
+                      "name": "УЗО и другие устройства защиты",
+                      "slug": "uzo_i_drugie_ustroistva_zashity",
+                      "children": []
+                    },
+                    {
+                      "name": "Средства и системы охранно-пожарной сигнализации",
+                      "slug": "sredstva_i_sistemy_okhranno_pozharnoi_signalizacii",
+                      "children": []
+                    },
+                    {
+                      "name": "Клеммы, сжимы, кабельная арматура",
+                      "slug": "klemmy_szhimy_kabelnaya_armatura",
+                      "children": []
+                    },
+                    {
+                      "name": "Другое",
+                      "slug": "drugoe_zashchita",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Коммутационное оборудование",
+                  "slug": "kommutacionnoe_oborudovanie",
+                  "children": []
+                },
+                {
+                  "name": "Солнечные панели",
+                  "slug": "solnechnye_paneli",
+                  "children": []
+                },
+                {
+                  "name": "Тёплые полы",
+                  "slug": "tyoplye_poly",
+                  "children": []
+                },
+                {
+                  "name": "Освещение",
+                  "slug": "osveshenie_electrics",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "drugoe_elektrika",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Другое",
+              "slug": "strojmaterialy_drugoe",
+              "children": []
+            },
+            {
+              "name": "Листовые материалы",
+              "slug": "listovye_materialy",
+              "children": [
+                {
+                  "name": "Листовой пластик",
+                  "slug": "listovoi_plastik",
+                  "children": [
+                    {
+                      "name": "Поликарбонат и оргстекло",
+                      "slug": "polikarbonat_i_orgsteklo",
+                      "children": []
+                    },
+                    {
+                      "name": "Полимерный пластик и стержни",
+                      "slug": "polimernyi_plastik_i_sterzhni",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Гипсокартон",
+                  "slug": "gipsokarton",
+                  "children": [
+                    {
+                      "name": "ГКЛ",
+                      "slug": "gkl",
+                      "children": []
+                    },
+                    {
+                      "name": "ГВЛ",
+                      "slug": "gvl",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Баннеры, брезент и тенты",
+                  "slug": "bannery_brezent_i_tenty",
+                  "children": []
+                },
+                {
+                  "name": "Древесноплитные материалы",
+                  "slug": "drevesnoplitnye_materialy",
+                  "children": [
+                    {
+                      "name": "Фанера",
+                      "slug": "fanera",
+                      "children": []
+                    },
+                    {
+                      "name": "ДСП, ОСБ",
+                      "slug": "dsp_osb",
+                      "children": []
+                    },
+                    {
+                      "name": "ДВП, МДФ, ХДФ",
+                      "slug": "dvp_mdf_khdf",
+                      "children": []
+                    },
+                    {
+                      "name": "ЦСП",
+                      "slug": "csp",
+                      "children": []
+                    },
+                    {
+                      "name": "Другое",
+                      "slug": "drevesnoplitnye_materialy_drugoe",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Мебельный щит",
+                  "slug": "mebelnyi_shit",
+                  "children": []
+                },
+                {
+                  "name": "Листовой прокат",
+                  "slug": "listovye_materialy_listovoi_prokat",
+                  "children": []
+                },
+                {
+                  "name": "ПВХ плитка",
+                  "slug": "pvkh_plitka",
+                  "children": []
+                },
+                {
+                  "name": "Кровля и водосток",
+                  "slug": "krovlya_i_vodostok",
+                  "children": []
+                },
+                {
+                  "name": "Адресные таблички",
+                  "slug": "adresnye_tablichki",
+                  "children": []
+                },
+                {
+                  "name": "Решётчатый настил",
+                  "slug": "reshyotchatyi_nastil",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "listovye_materialy_drugoe",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Лестницы и комплектующие",
+              "slug": "lestnitsy_i_komplektujuschie",
+              "children": [
+                {
+                  "name": "Лестницы",
+                  "slug": "lestnitsy_i_komplektujuschie_lestnicy",
+                  "children": []
+                },
+                {
+                  "name": "Ступени",
+                  "slug": "stupeni",
+                  "children": [
+                    {
+                      "name": "Металлические",
+                      "slug": "metalliceskie_stypeni",
+                      "children": []
+                    },
+                    {
+                      "name": "Каменные",
+                      "slug": "kamennye_stypeni",
+                      "children": []
+                    },
+                    {
+                      "name": "Деревянные",
+                      "slug": "derevyannye_stypeni",
+                      "children": []
+                    },
+                    {
+                      "name": "Композитные",
+                      "slug": "kompozitnye_stypeni",
+                      "children": []
+                    },
+                    {
+                      "name": "Из керамогранита и плитки",
+                      "slug": "iz_keramogranita_i_plitki_stypeni",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Перила и ограждения",
+                  "slug": "perila_i_ograzhdeniya",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие",
+                  "slug": "stairs_komplektuyushie",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Сыпучие материалы",
+              "slug": "sypuchie_materialy",
+              "children": [
+                {
+                  "name": "Щебень, гравий",
+                  "slug": "sheben_gravii",
+                  "children": []
+                },
+                {
+                  "name": "Песок",
+                  "slug": "pesok",
+                  "children": []
+                },
+                {
+                  "name": "Песчаные смеси",
+                  "slug": "peschanye_smesi",
+                  "children": []
+                },
+                {
+                  "name": "Грунт, чернозём, органические удобрения",
+                  "slug": "grunt__chernozyom__organicheskie_udobreniya_chernozem",
+                  "children": [
+                    {
+                      "name": "Грунт",
+                      "slug": "grunt",
+                      "children": []
+                    },
+                    {
+                      "name": "Чернозём",
+                      "slug": "chernozyom_",
+                      "children": []
+                    },
+                    {
+                      "name": "Органические удобрения",
+                      "slug": "organicheskie_udobreniya",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Асфальт и асфальтная крошка",
+                  "slug": "asfalt_i_asfaltnaya_kroshka",
+                  "children": []
+                },
+                {
+                  "name": "Бой",
+                  "slug": "boi",
+                  "children": []
+                },
+                {
+                  "name": "Крошка, отсев",
+                  "slug": "kroshka_otsev",
+                  "children": []
+                },
+                {
+                  "name": "Керамзит",
+                  "slug": "keramzit",
+                  "children": []
+                },
+                {
+                  "name": "Камень, галька",
+                  "slug": "kamen_galka",
+                  "children": []
+                },
+                {
+                  "name": "Глина",
+                  "slug": "glina",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "cypuchie_materialy_drugoe",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Железобетонные изделия",
+              "slug": "zhelezobetonnye_izdelija",
+              "children": [
+                {
+                  "name": "Дорожные",
+                  "slug": "doroznye_2274698",
+                  "children": [
+                    {
+                      "name": "Аэродромные плиты",
+                      "slug": "aerodromnye_plity",
+                      "children": []
+                    },
+                    {
+                      "name": "Дорожные плиты",
+                      "slug": "dorozhnye_plity",
+                      "children": []
+                    },
+                    {
+                      "name": "Бордюры",
+                      "slug": "bordyury",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Другие",
+                  "slug": "drugie",
+                  "children": []
+                },
+                {
+                  "name": "Строительные",
+                  "slug": "stroitelnye",
+                  "children": [
+                    {
+                      "name": "Фундаментные блоки (ФБС)",
+                      "slug": "fundamentnye_bloki_fbs",
+                      "children": []
+                    },
+                    {
+                      "name": "Плиты стеновые",
+                      "slug": "plity_stenovye",
+                      "children": []
+                    },
+                    {
+                      "name": "Плиты перекрытия",
+                      "slug": "plity_perekrytiya",
+                      "children": []
+                    },
+                    {
+                      "name": "Перемычки",
+                      "slug": "peremychki",
+                      "children": []
+                    },
+                    {
+                      "name": "Балки, колонны, прогоны",
+                      "slug": "balki_kolonny_progony",
+                      "children": []
+                    },
+                    {
+                      "name": "Лестничные марши, площадки, ступени",
+                      "slug": "lestnichnye_marshi_ploshadki_stupeni",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Инженерные",
+                  "slug": "inzenernye",
+                  "children": [
+                    {
+                      "name": "Кольца, люки, днища",
+                      "slug": "kolca_lyuki_dnisha",
+                      "children": []
+                    },
+                    {
+                      "name": "Опоры и столбы",
+                      "slug": "opory_i_stolby",
+                      "children": []
+                    },
+                    {
+                      "name": "Лотки, каналы, короба",
+                      "slug": "lotki_kanaly_koroba",
+                      "children": []
+                    },
+                    {
+                      "name": "Трубы",
+                      "slug": "truby_inzhenernye",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Сваи",
+              "slug": "svai",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Сантехника, водоснабжение и сауна",
+          "slug": "santehnika_vodosnabzhenie_i_sauna",
+          "children": [
+            {
+              "name": "Аксессуары для ванной",
+              "slug": "aksessuary_dlya_vannoi",
+              "children": [
+                {
+                  "name": "Полки, держатели, стаканы",
+                  "slug": "polki_derzhateli_stakany",
+                  "children": []
+                },
+                {
+                  "name": "Шторки, коврики",
+                  "slug": "shtorki_kovriki",
+                  "children": []
+                },
+                {
+                  "name": "Крючки, вешалки",
+                  "slug": "kryuchki_veshalki",
+                  "children": []
+                },
+                {
+                  "name": "Мыльницы, дозаторы",
+                  "slug": "mylnicy_dozatory",
+                  "children": []
+                },
+                {
+                  "name": "Ёршики",
+                  "slug": "yorshiki",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "drugoe_2177850",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Ванны и комплектующие",
+              "slug": "vanny_i_komplektuyushie",
+              "children": [
+                {
+                  "name": "Ванны",
+                  "slug": "vanny",
+                  "children": []
+                },
+                {
+                  "name": "Шторки и перегородки",
+                  "slug": "shtorki_i_peregorodki",
+                  "children": []
+                },
+                {
+                  "name": "Экраны",
+                  "slug": "ekrany",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие",
+                  "slug": "vanny_i_komplektuyushie_komplektuyushie",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Водоснабжение и канализация",
+              "slug": "vodosnabzhenie_i_kanalizaciya",
+              "children": [
+                {
+                  "name": "Арматура и автоматика",
+                  "slug": "armatura_i_avtomatika",
+                  "children": []
+                },
+                {
+                  "name": "Насосы",
+                  "slug": "nasosy",
+                  "children": []
+                },
+                {
+                  "name": "Водоочистка и фильтры",
+                  "slug": "vodoochistka_i_filtry",
+                  "children": [
+                    {
+                      "name": "Системы водоподготовки и комплектующие",
+                      "slug": "sistemy_vodopodgotovki_i_komplektuyushie",
+                      "children": [
+                        {
+                          "name": "Кабинетные фильтры",
+                          "slug": "kabinetnye_filtry",
+                          "children": []
+                        },
+                        {
+                          "name": "Комплексные системы для загородных домов",
+                          "slug": "kompleksnye_sistemy_dlya_zagorodnykh_domov",
+                          "children": []
+                        },
+                        {
+                          "name": "Комплектующие для водоподготовки",
+                          "slug": "komplektuyushie_dlya_vodopodgotovki",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Бытовые фильтры",
+                      "slug": "bytovye_filtry",
+                      "children": [
+                        {
+                          "name": "Картриджи и кассеты",
+                          "slug": "kartridzhi_i_kassety",
+                          "children": []
+                        },
+                        {
+                          "name": "Магистральные фильтры",
+                          "slug": "magistralnye_filtry",
+                          "children": []
+                        },
+                        {
+                          "name": "Системы обратного осмоса",
+                          "slug": "sistemy_obratnogo_osmosa",
+                          "children": []
+                        },
+                        {
+                          "name": "Фильтры для питьевой воды",
+                          "slug": "filtry_dlya_pitevoi_vody",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "name": "Загрузки и реагенты",
+                      "slug": "zagruzki_i_reagenty",
+                      "children": []
+                    },
+                    {
+                      "name": "Обеззараживание воды",
+                      "slug": "obezzarazhivanie_vody",
+                      "children": []
+                    },
+                    {
+                      "name": "Комплектующие",
+                      "slug": "komplektuyushie_filtry",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Баки, ёмкости, гидроаккумуляторы",
+                  "slug": "baki_yomkosti_gidroakkumulyatory",
+                  "children": []
+                },
+                {
+                  "name": "Трубы и фитинги",
+                  "slug": "truby_i_fitingi",
+                  "children": [
+                    {
+                      "name": "Трубы",
+                      "slug": "truby_truby_i_fitingi",
+                      "children": []
+                    },
+                    {
+                      "name": "Фитинги",
+                      "slug": "fitingi",
+                      "children": []
+                    },
+                    {
+                      "name": "Теплоизоляция для труб",
+                      "slug": "teploizolyaciya_dlya_trub",
+                      "children": []
+                    },
+                    {
+                      "name": "Септики",
+                      "slug": "septiki",
+                      "children": []
+                    },
+                    {
+                      "name": "Сифоны",
+                      "slug": "sifony",
+                      "children": []
+                    },
+                    {
+                      "name": "Подводка",
+                      "slug": "podvodka",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Септики и биостанции",
+                  "slug": "septiki_i_biostancii",
+                  "children": []
+                },
+                {
+                  "name": "Коллекторы и смесительные узлы",
+                  "slug": "kollektory_i_smesitelnye_uzly",
+                  "children": [
+                    {
+                      "name": "Запчасти и комплектующие",
+                      "slug": "zapchasti_i_komplektuyushie_kollektory_i_smesitelnye_uzly",
+                      "children": []
+                    },
+                    {
+                      "name": "Коллекторы",
+                      "slug": "kollektory",
+                      "children": []
+                    },
+                    {
+                      "name": "Коллекторные группы",
+                      "slug": "kollektornye_gruppy",
+                      "children": []
+                    },
+                    {
+                      "name": "Смесительные узлы",
+                      "slug": "smesitelnye_uzly",
+                      "children": []
+                    },
+                    {
+                      "name": "Коллекторные шкафы",
+                      "slug": "kollektornye_shkafy",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Водонагреватели и комплектующие",
+                  "slug": "vodonagrevateli_i_komplektuyushie_",
+                  "children": [
+                    {
+                      "name": "Водонагреватели",
+                      "slug": "vodonagrevateli",
+                      "children": []
+                    },
+                    {
+                      "name": "Комплектующие",
+                      "slug": "komplektuyushie_dlya_vodonagrevatelej",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Другое",
+                  "slug": "vodosnabzhenie_i_kanalizaciya_drugoe",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Душевые кабины и ограждения",
+              "slug": "dushevye_kabiny_i_ograzhdeniya",
+              "children": [
+                {
+                  "name": "Душевые уголки, перегородки и двери",
+                  "slug": "dushevye_ugolki_peregorodki_i_dveri",
+                  "children": []
+                },
+                {
+                  "name": "Душевые поддоны",
+                  "slug": "dushevye_poddony",
+                  "children": []
+                },
+                {
+                  "name": "Душевые кабины и боксы",
+                  "slug": "dushevye_kabiny_i_boksy",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие",
+                  "slug": "dushevye_kabiny_i_ograzhdeniya_komplektuyushie",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Душевые системы и лейки",
+              "slug": "dushevye_sistemy_i_leiki",
+              "children": []
+            },
+            {
+              "name": "Кухонные мойки и комплектующие",
+              "slug": "kukhonnye_moiki_i_komplektuyushie",
+              "children": [
+                {
+                  "name": "Кухонные мойки",
+                  "slug": "kuxonnye_moiki_i_komplektuiushhie_kukhonnye_moiki",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие",
+                  "slug": "kuxonnye_moiki_i_komplektuiushhie_komplektuyushie",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Мебель для ванной",
+              "slug": "mebel_dlya_vannoi",
+              "children": []
+            },
+            {
+              "name": "Полотенцесушители и комплектующие",
+              "slug": "polotencesushiteli_i_komplektuyushie",
+              "children": [
+                {
+                  "name": "Полотенцесушители",
+                  "slug": "polotencesushiteli",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Раковины, умывальники, пьедесталы",
+              "slug": "rakoviny_umyvalniki_pedestaly",
+              "children": [
+                {
+                  "name": "Комплектующие",
+                  "slug": "komplektuyushie_dlya_rakoviny",
+                  "children": []
+                },
+                {
+                  "name": "Раковины",
+                  "slug": "rakoviny",
+                  "children": []
+                },
+                {
+                  "name": "Умывальники",
+                  "slug": "umyvalniki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Смесители и комплектующие",
+              "slug": "smesiteli_i_komplektuyushie",
+              "children": [
+                {
+                  "name": "Смесители",
+                  "slug": "smesiteli_smesiteli_i_komplektuyushie",
+                  "children": [
+                    {
+                      "name": "Для ванн и душей",
+                      "slug": "dlya_vann_i_dushei",
+                      "children": []
+                    },
+                    {
+                      "name": "Для умывальников и раковин",
+                      "slug": "dlya_umyvalnikov_i_rakovin",
+                      "children": []
+                    },
+                    {
+                      "name": "Для кухни",
+                      "slug": "smesiteli_dlya_kukhni",
+                      "children": []
+                    },
+                    {
+                      "name": "Для биде",
+                      "slug": "dlya_bide",
+                      "children": []
+                    },
+                    {
+                      "name": "Краны питьевой воды",
+                      "slug": "krany_pitevoi_vody",
+                      "children": []
+                    },
+                    {
+                      "name": "Комплекты",
+                      "slug": "smesiteli_komplekty",
+                      "children": []
+                    },
+                    {
+                      "name": "Комплектующие",
+                      "slug": "smesiteli_komplektuyushie",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Комплектующие",
+                  "slug": "komplektuyushie_smesiteli",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Товары для бани и сауны, бассейны",
+              "slug": "tovary_dlya_bani_i_sauny__basseiny",
+              "children": [
+                {
+                  "name": "Купели, чаны, бочки",
+                  "slug": "kupeli_chany_bochki",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары для бани",
+                  "slug": "aksessuary_dlya_bani",
+                  "children": []
+                },
+                {
+                  "name": "Бассейны и комплектующие",
+                  "slug": "basseiny_i_komplektuyushie",
+                  "children": [
+                    {
+                      "name": "Бассейны",
+                      "slug": "basseiny",
+                      "children": []
+                    },
+                    {
+                      "name": "Оборудование и аксессуары",
+                      "slug": "oborudovanie_i_aksessuary",
+                      "children": []
+                    },
+                    {
+                      "name": "Водонагреватели, фильтры и насосы",
+                      "slug": "vodonagrevateli_filtry_i_nasosy",
+                      "children": []
+                    },
+                    {
+                      "name": "Химия для бассейнов",
+                      "slug": "khimiya_dlya_basseinov",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Другое",
+                  "slug": "tovary_dlya_bani_i_sauny__basseiny_drugoe",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Унитазы, писсуары, биде, инсталляции",
+              "slug": "unitazy_pissuary_bide_installyacii",
+              "children": [
+                {
+                  "name": "Унитазы и бачки",
+                  "slug": "unitazy_i_bachki",
+                  "children": []
+                },
+                {
+                  "name": "Инсталляции",
+                  "slug": "installyacii",
+                  "children": []
+                },
+                {
+                  "name": "Писсуары",
+                  "slug": "pissuary",
+                  "children": []
+                },
+                {
+                  "name": "Биде",
+                  "slug": "bide",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие",
+                  "slug": "unitazy_pissuary_bide_installyacii_komplektuyushie",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_1288755",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Инструменты",
+          "slug": "stroitelstvo_iinstrumenty",
+          "children": [
+            {
+              "name": "Электроинструменты",
+              "slug": "elektroinstrumenty",
+              "children": [
+                {
+                  "name": "Дрели и шуруповёрты",
+                  "slug": "dreli_i_shurupovyorty",
+                  "children": []
+                },
+                {
+                  "name": "Перфораторы",
+                  "slug": "perforatory",
+                  "children": []
+                },
+                {
+                  "name": "Болгарки (УШМ)",
+                  "slug": "bolgarki_ushm",
+                  "children": []
+                },
+                {
+                  "name": "Шлифовальные инструменты",
+                  "slug": "shlifovalnye_instrumenty",
+                  "children": []
+                },
+                {
+                  "name": "Пилы",
+                  "slug": "pily",
+                  "children": [
+                    {
+                      "name": "Цепные",
+                      "slug": "cepnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Дисковые (Циркулярные)",
+                      "slug": "diskovye_cirkulyarnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Торцовочные",
+                      "slug": "torcovochnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Отрезные (Монтажные)",
+                      "slug": "otreznye_montazhnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Сабельные",
+                      "slug": "sabelnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Ленточные",
+                      "slug": "lentochnye",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Фрезеры",
+                  "slug": "frezery",
+                  "children": []
+                },
+                {
+                  "name": "Отбойные молотки",
+                  "slug": "otboinye_molotki",
+                  "children": []
+                },
+                {
+                  "name": "Электролобзики",
+                  "slug": "elektrolobziki",
+                  "children": []
+                },
+                {
+                  "name": "Пылесосы строительные",
+                  "slug": "pylesosy_stroitelnye",
+                  "children": []
+                },
+                {
+                  "name": "Строительные фены",
+                  "slug": "stroitelnye_feny",
+                  "children": []
+                },
+                {
+                  "name": "Электрорубанки",
+                  "slug": "elektrorubanki",
+                  "children": []
+                },
+                {
+                  "name": "Строительные миксеры",
+                  "slug": "stroitelnye_miksery",
+                  "children": []
+                },
+                {
+                  "name": "Плиткорезы",
+                  "slug": "plitkorezy",
+                  "children": []
+                },
+                {
+                  "name": "Строительные пистолеты",
+                  "slug": "stroitelnye_pistolety",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "elektroinstrument_drugoe",
+                  "children": []
+                },
+                {
+                  "name": "Оснастка и комплектующие",
+                  "slug": "osnastka_i_komplektuyushie",
+                  "children": []
+                },
+                {
+                  "name": "Гайковёрты",
+                  "slug": "gaikovyorty",
+                  "children": []
+                },
+                {
+                  "name": "Штроборезы, бетонорезы",
+                  "slug": "shtroborezy_betonorezy",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и комплектующие для электроинструмента",
+                  "slug": "zapchasti_i_komplektuyushie_dlya_elektroinstrumenta",
+                  "children": []
+                },
+                {
+                  "name": "Наборы электроинструмента",
+                  "slug": "nabory_elektroinstrumenta",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Ручные инструменты",
+              "slug": "ruchnye_instrumenty",
+              "children": [
+                {
+                  "name": "Домкраты",
+                  "slug": "domkraty",
+                  "children": []
+                },
+                {
+                  "name": "Малярные инструменты",
+                  "slug": "malyarnye_instrumenty",
+                  "children": []
+                },
+                {
+                  "name": "Наборы инструментов",
+                  "slug": "nabory_instrumentov",
+                  "children": []
+                },
+                {
+                  "name": "Пистолеты для пены и герметика",
+                  "slug": "pistolety_dlya_peny_i_germetika",
+                  "children": []
+                },
+                {
+                  "name": "Столярно-слесарные инструменты",
+                  "slug": "stolyarno_slesarnye_instrumenty",
+                  "children": [
+                    {
+                      "name": "Рубанки",
+                      "slug": "rubanki",
+                      "children": []
+                    },
+                    {
+                      "name": "Резьбонарезные инструменты",
+                      "slug": "rezbonareznye_instrumenty",
+                      "children": []
+                    },
+                    {
+                      "name": "Другое",
+                      "slug": "drugoe_stolyar",
+                      "children": []
+                    },
+                    {
+                      "name": "Ключи",
+                      "slug": "klyuchi",
+                      "children": []
+                    },
+                    {
+                      "name": "Тиски и струбцины",
+                      "slug": "tiski_i_strubciny",
+                      "children": []
+                    },
+                    {
+                      "name": "Отвёртки",
+                      "slug": "otvyortki",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Ударно-рычажные инструменты",
+                  "slug": "udarno_rychazhnye_instrumenty",
+                  "children": []
+                },
+                {
+                  "name": "Режущие инструменты",
+                  "slug": "rezhushie_instrumenty",
+                  "children": [
+                    {
+                      "name": "Пилы и ножовки",
+                      "slug": "pily_i_nozhovki",
+                      "children": []
+                    },
+                    {
+                      "name": "Ножницы",
+                      "slug": "nozhnicy",
+                      "children": []
+                    },
+                    {
+                      "name": "Плиткорезы",
+                      "slug": "plitkorezy_instrumenti",
+                      "children": []
+                    },
+                    {
+                      "name": "Ножи",
+                      "slug": "nozhi",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Шарнирно-губцевый инструмент",
+                  "slug": "sharnirno_gubcevyi_instrument",
+                  "children": []
+                },
+                {
+                  "name": "Электромонтажные инструменты",
+                  "slug": "elektromontazhnye_instrumenty",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "ruchnye_instrumenty_drugoe",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Измерительные инструменты",
+              "slug": "izmeritelnye_instrumenty",
+              "children": []
+            },
+            {
+              "name": "Газовое и сварочное оборудование",
+              "slug": "gazovoe_i_svarochnoe_oborudovanie",
+              "children": [
+                {
+                  "name": "Газовое оборудование",
+                  "slug": "gazovoe_oborudovanie",
+                  "children": [
+                    {
+                      "name": "Газовые баллоны",
+                      "slug": "gazovye_ballony",
+                      "children": []
+                    },
+                    {
+                      "name": "Газовые горелки и паяльные лампы",
+                      "slug": "gazovye_gorelki_i_payalnye_lampy",
+                      "children": []
+                    },
+                    {
+                      "name": "Резаки",
+                      "slug": "rezaki",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Сварочные аппараты",
+                  "slug": "svarochnye_apparaty",
+                  "children": [
+                    {
+                      "name": "Инверторы",
+                      "slug": "invertory",
+                      "children": []
+                    },
+                    {
+                      "name": "Аппараты для сварки полимеров",
+                      "slug": "apparaty_dlya_svarki_polimerov",
+                      "children": []
+                    },
+                    {
+                      "name": "Полуавтоматы",
+                      "slug": "poluavtomaty",
+                      "children": []
+                    },
+                    {
+                      "name": "Другое",
+                      "slug": "drugoe_scarochnie",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Паяльники и аксессуары для пайки",
+                  "slug": "payalniki_i_aksessuary_dlya_paiki",
+                  "children": []
+                },
+                {
+                  "name": "Электроды, проволока, прутки",
+                  "slug": "elektrody_provoloka_prutki",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары и комплектующие для сварки",
+                  "slug": "aksessuary_i_komplektuyushie_dlya_svarki",
+                  "children": []
+                },
+                {
+                  "name": "Спецодежда и средства защиты",
+                  "slug": "gazovoe_i_svarochnoe_oborudovanie_specodezhda_i_sredstva_zashity",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Расходные материалы и оснастка",
+              "slug": "raskhodnye_materialy_i_osnastka",
+              "children": [
+                {
+                  "name": "Коронки",
+                  "slug": "koronki",
+                  "children": []
+                },
+                {
+                  "name": "Зарядные устройства и аккумуляторы",
+                  "slug": "zaryadnye_ustroistva_i_akkumulyatory",
+                  "children": [
+                    {
+                      "name": "Комплекты",
+                      "slug": "komplekty_zaryadnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Комплектующие и аксессуары",
+                      "slug": "komplektuyushie_i_aksessuary_zaryadnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Аккумуляторы",
+                      "slug": "akkumulyatory_zaryadnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Зарядные устройства",
+                      "slug": "zaryadnye_ustroistva",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Алмазные диски",
+                  "slug": "almaznye_diski",
+                  "children": []
+                },
+                {
+                  "name": "Свёрла",
+                  "slug": "svyorla",
+                  "children": []
+                },
+                {
+                  "name": "Буры, долота, пики",
+                  "slug": "bury_dolota_piki",
+                  "children": []
+                },
+                {
+                  "name": "Патроны и переходники",
+                  "slug": "patrony_i_perekhodniki",
+                  "children": []
+                },
+                {
+                  "name": "Отрезные круги и пильные диски",
+                  "slug": "otreznye_krugi_i_pilnye_diski",
+                  "children": []
+                },
+                {
+                  "name": "Шлифовальные круги и насадки",
+                  "slug": "shlifovalnye_krugi_i_nasadki",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "drugoe_1218593",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Организация рабочего места",
+              "slug": "organizaciya_rabochego_mesta_instrumenty",
+              "children": [
+                {
+                  "name": "Оборудование для работ на высоте",
+                  "slug": "oborudovanie_dlya_rabot_na_vysote",
+                  "children": [
+                    {
+                      "name": "Строительные леса",
+                      "slug": "stroitelnye_lesa_remont",
+                      "children": []
+                    },
+                    {
+                      "name": "Лестницы",
+                      "slug": "lestnicy_remont",
+                      "children": []
+                    },
+                    {
+                      "name": "Стремянки",
+                      "slug": "stremyanki",
+                      "children": []
+                    },
+                    {
+                      "name": "Вышки-туры",
+                      "slug": "vyshki_tury",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Верстаки и оборудование для мастерской",
+                  "slug": "verstaki_i_oborudovanie_dlya_masterskoi",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Силовая, строительная техника и комплектующие",
+              "slug": "silovaya_stroitelnaya_tekhnika_i_komplektuyushie",
+              "children": [
+                {
+                  "name": "Бетономешалки",
+                  "slug": "betonomeshalki",
+                  "children": []
+                },
+                {
+                  "name": "Виброоборудование",
+                  "slug": "vibroplity",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "ustanovki_dlya_bureniya",
+                  "children": []
+                },
+                {
+                  "name": "Двигатели и моторы",
+                  "slug": "dvigateli_i_motory",
+                  "children": [
+                    {
+                      "name": "Бензиновые двигатели",
+                      "slug": "benzinovye_dvigateli",
+                      "children": []
+                    },
+                    {
+                      "name": "Электродвигатели",
+                      "slug": "elektrodvigateli",
+                      "children": []
+                    },
+                    {
+                      "name": "Электромоторы",
+                      "slug": "elektromotory",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Устройства электропитания",
+                  "slug": "ustroistva_elektropitaniya",
+                  "children": [
+                    {
+                      "name": "Генераторы",
+                      "slug": "generatory_electropitanie",
+                      "children": []
+                    },
+                    {
+                      "name": "Частотные преобразователи",
+                      "slug": "chastotnye_preobrazovateli",
+                      "children": []
+                    },
+                    {
+                      "name": "Стабилизаторы напряжения",
+                      "slug": "stabilizatory_napryazheniya",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Пескоструйные и окрасочные аппараты",
+                  "slug": "peskostruinye_i_okrasochnye_apparaty",
+                  "children": [
+                    {
+                      "name": "Окрасочные",
+                      "slug": "okrasochnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Пескоструйные",
+                      "slug": "peskostruinye",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Компрессоры",
+                  "slug": "kompressory",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Электрика",
+              "slug": "elektrika",
+              "children": [
+                {
+                  "name": "Кабели и провода",
+                  "slug": "kabeli_i_provoda_remont",
+                  "children": []
+                },
+                {
+                  "name": "Трансформаторы",
+                  "slug": "transformatory",
+                  "children": []
+                },
+                {
+                  "name": "Удлинители",
+                  "slug": "udliniteli",
+                  "children": []
+                },
+                {
+                  "name": "Автоматические выключатели",
+                  "slug": "avtomaticheskie_vyklyuchateli",
+                  "children": []
+                },
+                {
+                  "name": "Розетки и выключатели",
+                  "slug": "rozetki_i_vyklyuchateli",
+                  "children": []
+                },
+                {
+                  "name": "Солнечные панели",
+                  "slug": "solnechnye_paneli_remont",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Спецодежда и средства защиты",
+              "slug": "specodezhda_i_sredstva_zashity",
+              "children": []
+            },
+            {
+              "name": "Садовая техника",
+              "slug": "sadovaya_tekhnika",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_1210658",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Окна и балконы",
+          "slug": "okna_i_balkony",
+          "children": [
+            {
+              "name": "Окна",
+              "slug": "okna",
+              "children": []
+            },
+            {
+              "name": "Москитные сетки и фурнитура для окон",
+              "slug": "moskitnye_setki_i_furnitura_dlya_okon_i",
+              "children": [
+                {
+                  "name": "Москитные сетки",
+                  "slug": "moskitnye_setki",
+                  "children": []
+                },
+                {
+                  "name": "Рулонные шторы и жалюзи",
+                  "slug": "rulonnye_shtory_i_zhalyuzi",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие для окон",
+                  "slug": "komplektuyushie_dlya_okon",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Подоконники, откосы, решётки",
+              "slug": "podokonniki_otkosy_reshyotki",
+              "children": []
+            },
+            {
+              "name": "Мягкие окна",
+              "slug": "myagkie_okna",
+              "children": []
+            },
+            {
+              "name": "Стеклопакеты без обрамления",
+              "slug": "steklopakety_bez_obramleniya",
+              "children": []
+            },
+            {
+              "name": "Балконы",
+              "slug": "balkony",
+              "children": [
+                {
+                  "name": "Остекление",
+                  "slug": "osteklenie",
+                  "children": []
+                },
+                {
+                  "name": "Балконные блоки",
+                  "slug": "balkonnye_bloki",
+                  "children": []
+                },
+                {
+                  "name": "Готовые балконы",
+                  "slug": "gotovye_balkony",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Балконные двери",
+              "slug": "balkonnye_dveri_dveri",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Потолки",
+          "slug": "stroitelstvo_potolki",
+          "children": []
+        },
+        {
+          "name": "Двери",
+          "slug": "stroitelstvo_dveri",
+          "children": [
+            {
+              "name": "Межкомнатные",
+              "slug": "mezhkomnatnye",
+              "children": []
+            },
+            {
+              "name": "Входные",
+              "slug": "vkhodnye",
+              "children": []
+            },
+            {
+              "name": "Фурнитура",
+              "slug": "furnitura",
+              "children": []
+            },
+            {
+              "name": "Перегородки",
+              "slug": "peregorodki",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "dveri_drugoe",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Камины и обогреватели",
+          "slug": "kaminy_i_obogrevateli",
+          "children": [
+            {
+              "name": "Комплектующие и аксессуары",
+              "slug": "komplektuiushhie_i_aksessuary",
+              "children": [
+                {
+                  "name": "Дымоходы",
+                  "slug": "dymodkhody",
+                  "children": []
+                },
+                {
+                  "name": "Топливные брикеты, уголь",
+                  "slug": "toplivnye_brikety_ugol",
+                  "children": [
+                    {
+                      "name": "Уголь",
+                      "slug": "ugol",
+                      "children": []
+                    },
+                    {
+                      "name": "Топливные брикеты",
+                      "slug": "topd",
+                      "children": []
+                    },
+                    {
+                      "name": "Пеллеты",
+                      "slug": "pellety",
+                      "children": []
+                    },
+                    {
+                      "name": "Другое",
+                      "slug": "drugoe_2302701",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Комплектующие для системы отопления",
+                  "slug": "komplektuyushie_dlya_sistemy_otopleniya",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2170246",
+              "children": []
+            },
+            {
+              "name": "Печи и камины",
+              "slug": "peci_i_kaminy",
+              "children": [
+                {
+                  "name": "Камины и печи для дома",
+                  "slug": "kaminy_i_pechi_dlya_doma",
+                  "children": []
+                },
+                {
+                  "name": "Печи для бани и сауны",
+                  "slug": "pechi_dlya_bani_i_sauny",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Отопительные системы",
+              "slug": "otopitelnye_sistemy",
+              "children": [
+                {
+                  "name": "Тёплые полы",
+                  "slug": "tyoplye_poly_remont",
+                  "children": []
+                },
+                {
+                  "name": "Радиаторы отопления и конвекторы",
+                  "slug": "radiatory_otopleniya_i_konvektory",
+                  "children": [
+                    {
+                      "name": "Радиаторы",
+                      "slug": "radiatory",
+                      "children": []
+                    },
+                    {
+                      "name": "Конвекторы",
+                      "slug": "konvektory",
+                      "children": []
+                    },
+                    {
+                      "name": "Теплообменники",
+                      "slug": "teploobmenniki",
+                      "children": []
+                    },
+                    {
+                      "name": "Электрические обогреватели",
+                      "slug": "elektricheskie_obogrevateli",
+                      "children": []
+                    },
+                    {
+                      "name": "Комплектующие",
+                      "slug": "komplektuyushie_radiatory",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Котлы",
+                  "slug": "kotly",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Обогреватели",
+              "slug": "obogrevateli",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Для сада и дачи",
+          "slug": "dlya_sada_i_dachi_tehnika",
+          "children": [
+            {
+              "name": "Садовая техника",
+              "slug": "sadovaya_tekhnika_remont",
+              "children": [
+                {
+                  "name": "Бензопилы",
+                  "slug": "benzopily_sadovaya",
+                  "children": []
+                },
+                {
+                  "name": "Электропилы",
+                  "slug": "elektropily",
+                  "children": []
+                },
+                {
+                  "name": "Снегоуборщики",
+                  "slug": "snegouborshiki",
+                  "children": []
+                },
+                {
+                  "name": "Газонокосилки",
+                  "slug": "gazonokosilki",
+                  "children": []
+                },
+                {
+                  "name": "Измельчители",
+                  "slug": "izmelchiteli_sadovaya",
+                  "children": []
+                },
+                {
+                  "name": "Подметальные машины",
+                  "slug": "podmetalnye_mashiny",
+                  "children": []
+                },
+                {
+                  "name": "Дровоколы",
+                  "slug": "drovokoly",
+                  "children": []
+                },
+                {
+                  "name": "Аэраторы и скарификаторы",
+                  "slug": "aeratory_i_skarifikatory",
+                  "children": []
+                },
+                {
+                  "name": "Мотоблоки, культиваторы",
+                  "slug": "motobloki_kultivatory",
+                  "children": []
+                },
+                {
+                  "name": "Триммеры",
+                  "slug": "trimmery",
+                  "children": []
+                },
+                {
+                  "name": "Воздуходувки и пылесосы",
+                  "slug": "vozdukhoduvki_i_pylesosy",
+                  "children": []
+                },
+                {
+                  "name": "Мини-тракторы",
+                  "slug": "mini_traktory",
+                  "children": []
+                },
+                {
+                  "name": "Мотобуры",
+                  "slug": "motobury",
+                  "children": []
+                },
+                {
+                  "name": "Кусторезы, ножницы, сучкорезы",
+                  "slug": "kustorezy_nozhnicy_suchkorezy",
+                  "children": []
+                },
+                {
+                  "name": "Мойки высокого давления",
+                  "slug": "moiki_vysokogo_davleniya_sadovaya",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Запчасти и комплектующие для техники",
+              "slug": "zapchasti_i_komplektuyushie_dlya_tekhniki",
+              "children": [
+                {
+                  "name": "Навесное оборудование",
+                  "slug": "zapchasti_i_komplektuyushie_dlya_tekhniki_navesnoe_oborudovanie",
+                  "children": []
+                },
+                {
+                  "name": "Расходники",
+                  "slug": "raskhodniki",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти",
+                  "slug": "zapchasti_i_komplektuyushie_dlya_tekhniki_zapchasti",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Полив и орошение",
+              "slug": "poliv_i_oroshenie",
+              "children": [
+                {
+                  "name": "Баки и ёмкости для полива",
+                  "slug": "baki_i_yomkosti_dlya_poliva",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Садовый инструмент",
+              "slug": "sadovyi_instrument",
+              "children": []
+            },
+            {
+              "name": "Дачные конструкции",
+              "slug": "dachnye_konstrukcii",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Ворота, заборы и ограждения",
+          "slug": "vorota_zabory_i_ograzdeniia",
+          "children": [
+            {
+              "name": "Ворота",
+              "slug": "vorota",
+              "children": [
+                {
+                  "name": "Секционные ворота для гаража",
+                  "slug": "kovanye_vorota",
+                  "children": []
+                },
+                {
+                  "name": "Откатные ворота",
+                  "slug": "otkatnye_vorota",
+                  "children": []
+                },
+                {
+                  "name": "Автоматика для ворот",
+                  "slug": "avtomatika_dlya_vorot",
+                  "children": []
+                },
+                {
+                  "name": "Распашные ворота",
+                  "slug": "raspashnye_vorota",
+                  "children": []
+                },
+                {
+                  "name": "Промышленные ворота",
+                  "slug": "promyshlennye_vorota",
+                  "children": []
+                },
+                {
+                  "name": "Кованые ворота",
+                  "slug": "vorota_kovanye_vorota",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "vorota_drugoe",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Заборы",
+              "slug": "zabory",
+              "children": [
+                {
+                  "name": "Металлические",
+                  "slug": "metallicheskie",
+                  "children": []
+                },
+                {
+                  "name": "2D и 3D заборы",
+                  "slug": "2d_i_3d_zabory_zabory",
+                  "children": []
+                },
+                {
+                  "name": "Деревянные",
+                  "slug": "derevyannye",
+                  "children": []
+                },
+                {
+                  "name": "Кованые",
+                  "slug": "kovanye",
+                  "children": []
+                },
+                {
+                  "name": "Каменные",
+                  "slug": "kamennye",
+                  "children": []
+                },
+                {
+                  "name": "Столбы и трубы для заборов",
+                  "slug": "stolby_i_truby_dlya_zaborov",
+                  "children": []
+                },
+                {
+                  "name": "Колпаки, парапеты и крепёж",
+                  "slug": "kolpaki_parapety_i_krepyozh",
+                  "children": [
+                    {
+                      "name": "Колпаки",
+                      "slug": "kolpaki_dlya_stolbov",
+                      "children": []
+                    },
+                    {
+                      "name": "Парапеты",
+                      "slug": "parapety",
+                      "children": []
+                    },
+                    {
+                      "name": "Крепёж и фурнитура",
+                      "slug": "krepyozh_i_furnitura",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Роллеты и рольставни",
+              "slug": "rollety_i_rolstavni",
+              "children": [
+                {
+                  "name": "На ворота",
+                  "slug": "na_vorota",
+                  "children": []
+                },
+                {
+                  "name": "На окна",
+                  "slug": "na_okna",
+                  "children": []
+                },
+                {
+                  "name": "На двери",
+                  "slug": "na_dveri",
+                  "children": []
+                },
+                {
+                  "name": "Сантехнические",
+                  "slug": "santekhnicheskie",
+                  "children": []
+                },
+                {
+                  "name": "Замки для рольставней",
+                  "slug": "zamki_dlya_rolstavnei",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Ограждения и сетки",
+              "slug": "ograzhdeniya_i_setki",
+              "children": [
+                {
+                  "name": "Дорожные ограждения",
+                  "slug": "dorozhnye_ograzhdeniya",
+                  "children": []
+                },
+                {
+                  "name": "Декоративные ограждения",
+                  "slug": "dekorativnye_ograzhdeniya",
+                  "children": []
+                },
+                {
+                  "name": "Временные ограждения",
+                  "slug": "vremennye_ograzhdeniya",
+                  "children": []
+                },
+                {
+                  "name": "Металлические сетки",
+                  "slug": "metallicheskie_setki",
+                  "children": []
+                },
+                {
+                  "name": "Ограждение для балкона и террас",
+                  "slug": "ograzhdenie_dlya_balkona_i_terras",
+                  "children": []
+                },
+                {
+                  "name": "Колючая проволока",
+                  "slug": "kolyuchaya_provoloka",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Посуда и товары для кухни",
+      "slug": "posuda_i_tovary_dlja_kuhni",
+      "children": [
+        {
+          "name": "Посуда",
+          "slug": "posuda",
+          "children": [
+            {
+              "name": "Кухонные принадлежности",
+              "slug": "kukhonnye_prinadlezhnosti",
+              "children": [
+                {
+                  "name": "Принадлежности для готовки",
+                  "slug": "prinadlezhnosti_dlya_gotovki",
+                  "children": []
+                },
+                {
+                  "name": "Разделочные доски",
+                  "slug": "razdelochnye_doski",
+                  "children": []
+                },
+                {
+                  "name": "Кухонные ножи, точилки",
+                  "slug": "kukhonnye_nozhi_tochilki",
+                  "children": []
+                },
+                {
+                  "name": "Принадлежности для выпечки",
+                  "slug": "prinadlezhnosti_dlya_vypechki",
+                  "children": []
+                },
+                {
+                  "name": "Принадлежности для консервации и закатки",
+                  "slug": "prinadlezhnosti_dlya_konservacii_i_zakatki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Хранение на кухне",
+              "slug": "khranenie_na_kukhne",
+              "children": []
+            },
+            {
+              "name": "Хозяйственные товары",
+              "slug": "khozyaistvennye_tovary",
+              "children": []
+            },
+            {
+              "name": "Сервировка стола",
+              "slug": "servirovka_stola",
+              "children": [
+                {
+                  "name": "Тарелки",
+                  "slug": "tarelki",
+                  "children": []
+                },
+                {
+                  "name": "Блюда, салатники и миски",
+                  "slug": "blyuda_salatniki_i_miski",
+                  "children": []
+                },
+                {
+                  "name": "Столовые приборы",
+                  "slug": "stolovye_pribory",
+                  "children": []
+                },
+                {
+                  "name": "Текстиль для сервировки",
+                  "slug": "tekstil_dlya_servirovki",
+                  "children": []
+                },
+                {
+                  "name": "Сервизы",
+                  "slug": "servizy",
+                  "children": []
+                },
+                {
+                  "name": "Посуда для напитков",
+                  "slug": "posuda_dlya_napitkov",
+                  "children": [
+                    {
+                      "name": "Посуда для чая и кофе",
+                      "slug": "posuda_dlya_chaya_i_kofe",
+                      "children": []
+                    },
+                    {
+                      "name": "Бокалы, рюмки, стопки",
+                      "slug": "bokaly_ryumki_stopki",
+                      "children": []
+                    },
+                    {
+                      "name": "Графины, кувшины",
+                      "slug": "grafiny_kuvshiny",
+                      "children": []
+                    },
+                    {
+                      "name": "Стаканы",
+                      "slug": "stakany",
+                      "children": []
+                    },
+                    {
+                      "name": "Барное оборудование",
+                      "slug": "barnoe_oborudovanie",
+                      "children": []
+                    },
+                    {
+                      "name": "Кружки, чашки и блюдца",
+                      "slug": "kruzhki_chashki_i_blyudca",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Посуда для сервировки",
+                  "slug": "posuda_dlya_servirovki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Посуда для готовки",
+              "slug": "posuda_dlya_gotovki",
+              "children": [
+                {
+                  "name": "Казаны",
+                  "slug": "kazany",
+                  "children": []
+                },
+                {
+                  "name": "Оборудование для приготовления алкоголя",
+                  "slug": "oborudovanie_dlya_prigotovleniya_alkogolya",
+                  "children": []
+                },
+                {
+                  "name": "Кастрюли, ковши",
+                  "slug": "kastryuli_kovshi",
+                  "children": []
+                },
+                {
+                  "name": "Сковороды, сотейники",
+                  "slug": "skovorody_soteiniki",
+                  "children": []
+                },
+                {
+                  "name": "Наборы посуды для готовки",
+                  "slug": "nabory_posudy_dlya_gotovki",
+                  "children": []
+                },
+                {
+                  "name": "Крышки для кастрюль и сковород",
+                  "slug": "kryshki_dlya_kastryul_i_skovorod",
+                  "children": []
+                },
+                {
+                  "name": "Посуда для выпечки и запекания",
+                  "slug": "posuda_dlya_vypechki_i_zapekaniya",
+                  "children": []
+                },
+                {
+                  "name": "Тандыры, мангалы, грили",
+                  "slug": "tandyry_mangaly_grili",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "drugoe_posuda",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Товары для кухни",
+          "slug": "tovary_dlya_kukhni",
+          "children": [
+            {
+              "name": "Хозяйственные товары",
+              "slug": "khozyaistvennye_tovary_2303152",
+              "children": [
+                {
+                  "name": "Весы кухонные",
+                  "slug": "vesy_kukhonnye",
+                  "children": []
+                },
+                {
+                  "name": "Инвентарь для уборки",
+                  "slug": "inventar_dlya_uborki",
+                  "children": []
+                },
+                {
+                  "name": "Бытовая химия",
+                  "slug": "bytovaya_khimiya",
+                  "children": []
+                },
+                {
+                  "name": "Одноразовая посуда и упаковка",
+                  "slug": "odnorazovaya_posuda_i_upakovka",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Хранение на кухне",
+              "slug": "khranenie_na_kukhne_2303153",
+              "children": [
+                {
+                  "name": "Подставки, сушилки",
+                  "slug": "podstavki_sushilki",
+                  "children": []
+                },
+                {
+                  "name": "Пакеты для продуктов",
+                  "slug": "pakety_dlya_produktov",
+                  "children": []
+                },
+                {
+                  "name": "Банки, бутылки, бидоны",
+                  "slug": "banki_butylki_bidony",
+                  "children": []
+                },
+                {
+                  "name": "Ёмкости для специй и масел",
+                  "slug": "yomkosti_dlya_specii_i_masel",
+                  "children": []
+                },
+                {
+                  "name": "Контейнеры, ланч-боксы",
+                  "slug": "konteinery_lanch_boksy",
+                  "children": []
+                },
+                {
+                  "name": "Коробки и корзины",
+                  "slug": "korobki_i_korziny",
+                  "children": []
+                },
+                {
+                  "name": "Хлебницы",
+                  "slug": "khlebnicy",
+                  "children": []
+                },
+                {
+                  "name": "Рейлинги и полки",
+                  "slug": "reilingi_i_polki",
+                  "children": []
+                },
+                {
+                  "name": "Термосы и термобоксы",
+                  "slug": "termosy_i_termoboksy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Текстиль для кухни",
+              "slug": "tekstil_dlya_kukhni",
+              "children": []
+            },
+            {
+              "name": "Кухонные фильтры для воды",
+              "slug": "kukhonnye_filtry_dlya_vody",
+              "children": []
+            },
+            {
+              "name": "Посуда",
+              "slug": "posuda_2303156",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2303157",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Бытовая техника",
+      "slug": "bytovaja_tehnika",
+      "children": [
+        {
+          "name": "Для дома",
+          "slug": "dlya_doma",
+          "children": [
+            {
+              "name": "Пылесосы и запчасти",
+              "slug": "pylesosy_i_zapchasti",
+              "children": [
+                {
+                  "name": "Пылесосы",
+                  "slug": "pylesosy",
+                  "children": [
+                    {
+                      "name": "Напольные",
+                      "slug": "napolnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Ручные",
+                      "slug": "ruchnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Пароочистители",
+                      "slug": "paroochistiteli",
+                      "children": []
+                    },
+                    {
+                      "name": "Строительные",
+                      "slug": "stroitelnye_pilesosi",
+                      "children": []
+                    },
+                    {
+                      "name": "Вертикальные",
+                      "slug": "vertikalnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Роботы-пылесосы",
+                      "slug": "roboty_pylesosy",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Запчасти",
+                  "slug": "zapchasti_vacuum_cleaners",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Стиральные и сушильные машины",
+              "slug": "stiralnye_i_sushilnye_mashiny",
+              "children": [
+                {
+                  "name": "Стиральные машины",
+                  "slug": "stiralnye_mashiny",
+                  "children": []
+                },
+                {
+                  "name": "Сушильные машины",
+                  "slug": "sushilnye_mashiny",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и аксессуары",
+                  "slug": "zapchasti_i_aksessuary_2301126",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Утюги",
+              "slug": "utyugi",
+              "children": []
+            },
+            {
+              "name": "Швейное оборудование",
+              "slug": "shveinoe_oborudovanie_mashiny",
+              "children": [
+                {
+                  "name": "Швейные машины",
+                  "slug": "shveinye_mashiny",
+                  "children": []
+                },
+                {
+                  "name": "Вышивальные машины",
+                  "slug": "vyshivalnye_mashiny",
+                  "children": []
+                },
+                {
+                  "name": "Вязальные машины",
+                  "slug": "vyazalnye_mashiny",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти, акcессуары и фурнитура",
+                  "slug": "zapchasti_akcessuary_i_furnitura",
+                  "children": []
+                },
+                {
+                  "name": "Машины для работы с кожей и тканью",
+                  "slug": "mashiny_dlya_raboty_s_kozhei_i_tkanyu",
+                  "children": []
+                },
+                {
+                  "name": "Прялки и ткацкие станки",
+                  "slug": "pryalki_i_tkackie_stanki",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Климатическое оборудование",
+          "slug": "klimaticheskoe_oborudovanie",
+          "children": [
+            {
+              "name": "Кондиционеры и запчасти",
+              "slug": "kondicionery_i_zapchasti",
+              "children": [
+                {
+                  "name": "Кондиционеры",
+                  "slug": "kondicionery",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти",
+                  "slug": "zapchasti_kondicionery",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Вентиляторы",
+              "slug": "ventilyatory",
+              "children": []
+            },
+            {
+              "name": "Обогреватели",
+              "slug": "obgorevateli",
+              "children": []
+            },
+            {
+              "name": "Очистители воздуха",
+              "slug": "ochistiteli_vozdukha",
+              "children": []
+            },
+            {
+              "name": "Термометры и метеостанции",
+              "slug": "termometry_i_meteostancii",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Для индивидуального ухода",
+          "slug": "dlya_individualnogo_ukhoda",
+          "children": [
+            {
+              "name": "Бритвы и триммеры",
+              "slug": "britvy_i_trimmery",
+              "children": []
+            },
+            {
+              "name": "Машинки для стрижки",
+              "slug": "mashinki_dlya_strizhki",
+              "children": []
+            },
+            {
+              "name": "Эпиляторы",
+              "slug": "epilyatory",
+              "children": []
+            },
+            {
+              "name": "Фены и приборы для укладки",
+              "slug": "feny_i_pribory_dlya_ukladki",
+              "children": [
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_2304128",
+                  "children": []
+                },
+                {
+                  "name": "Выпрямители",
+                  "slug": "vypryamiteli",
+                  "children": []
+                },
+                {
+                  "name": "Мультистайлеры",
+                  "slug": "multistailery_2304125",
+                  "children": []
+                },
+                {
+                  "name": "Плойки и гофре",
+                  "slug": "ploiki_i_gofre_2304130",
+                  "children": []
+                },
+                {
+                  "name": "Фен-щётки",
+                  "slug": "fen_shyotki",
+                  "children": []
+                },
+                {
+                  "name": "Фены классические",
+                  "slug": "feny_klassicheskie",
+                  "children": []
+                },
+                {
+                  "name": "Электробигуди",
+                  "slug": "elektrobigudi",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Для кухни",
+          "slug": "dlya_kukhni",
+          "children": [
+            {
+              "name": "Вытяжки",
+              "slug": "vytiazki",
+              "children": []
+            },
+            {
+              "name": "Микроволновые печи",
+              "slug": "mikrovolnovye_peci",
+              "children": []
+            },
+            {
+              "name": "Плиты и духовые шкафы",
+              "slug": "plity_i_dukhovye_shkafy_kukhni",
+              "children": [
+                {
+                  "name": "Плиты",
+                  "slug": "plity_2301870",
+                  "children": []
+                },
+                {
+                  "name": "Варочные панели",
+                  "slug": "varochnye_paneli",
+                  "children": []
+                },
+                {
+                  "name": "Духовые шкафы",
+                  "slug": "dukhovye_shkafy",
+                  "children": []
+                },
+                {
+                  "name": "Настольные плиты",
+                  "slug": "nastolnye_plity",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и аксессуары",
+                  "slug": "zapchasti_i_aksessuary_2301869",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Посудомоечные машины и запчасти",
+              "slug": "posudomoechnye_mashiny_i_zapchasti_masiny",
+              "children": [
+                {
+                  "name": "Посудомоечные машины",
+                  "slug": "posudomoechnye_mashiny_2304489",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти",
+                  "slug": "zapchasti_2304490",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Холодильники и морозильные камеры",
+              "slug": "xolodilniki_i_morozilnye_kamery",
+              "children": [
+                {
+                  "name": "Холодильники",
+                  "slug": "xolodilniki",
+                  "children": []
+                },
+                {
+                  "name": "Морозильные камеры и лари",
+                  "slug": "morozilnye_kamery_i_lari",
+                  "children": []
+                },
+                {
+                  "name": "Винные шкафы",
+                  "slug": "vinnye_skafy",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и аксессуары",
+                  "slug": "zapcasti_i_aksessuary_3753",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Мелкая кухонная техника",
+              "slug": "melkaia_kuxonnaia_texnika",
+              "children": [
+                {
+                  "name": "Для приготовления десертов",
+                  "slug": "dlya_prigotovleniya_desertov",
+                  "children": [
+                    {
+                      "name": "Блинницы",
+                      "slug": "blinnicy_melkaya_kuhonnaya_tehnika",
+                      "children": []
+                    },
+                    {
+                      "name": "Мультипекари",
+                      "slug": "multipekari",
+                      "children": []
+                    },
+                    {
+                      "name": "Вафельницы",
+                      "slug": "vafelnicy_melkaya_kuhonnaya_tehnika",
+                      "children": []
+                    },
+                    {
+                      "name": "Йогуртницы",
+                      "slug": "iogurtnicy",
+                      "children": []
+                    },
+                    {
+                      "name": "Мороженицы",
+                      "slug": "morozhenicy",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Для приготовления напитков",
+                  "slug": "dlya_prigotovleniya_napitkov",
+                  "children": [
+                    {
+                      "name": "Кипятильники",
+                      "slug": "kipyatilniki_2303634",
+                      "children": []
+                    },
+                    {
+                      "name": "Термопоты",
+                      "slug": "termopoty_2303635",
+                      "children": []
+                    },
+                    {
+                      "name": "Электросамовары",
+                      "slug": "elektrosamovary_2303636",
+                      "children": []
+                    },
+                    {
+                      "name": "Кофемашины",
+                      "slug": "kofemashiny_2303637",
+                      "children": []
+                    },
+                    {
+                      "name": "Соковыжималки",
+                      "slug": "sokovyzhimalki_2303638",
+                      "children": []
+                    },
+                    {
+                      "name": "Кофеварки",
+                      "slug": "kofevarki_2303639",
+                      "children": []
+                    },
+                    {
+                      "name": "Электрочайники",
+                      "slug": "elektrochainiki_2303640",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Для приготовления блюд",
+                  "slug": "dlya_prigotovleniya_blyud",
+                  "children": [
+                    {
+                      "name": "Тостеры",
+                      "slug": "toster",
+                      "children": []
+                    },
+                    {
+                      "name": "Мини-печи",
+                      "slug": "mini_pechi",
+                      "children": []
+                    },
+                    {
+                      "name": "Хлебопечки",
+                      "slug": "khlebopechki",
+                      "children": []
+                    },
+                    {
+                      "name": "Мультиварки",
+                      "slug": "multivarki",
+                      "children": []
+                    },
+                    {
+                      "name": "Аэрогрили",
+                      "slug": "aerogrili",
+                      "children": []
+                    },
+                    {
+                      "name": "Электрошашлычницы",
+                      "slug": "elektroshashlychnicy",
+                      "children": []
+                    },
+                    {
+                      "name": "Фритюрницы",
+                      "slug": "frityurnica",
+                      "children": []
+                    },
+                    {
+                      "name": "Сэндвичницы",
+                      "slug": "sendvichnicy",
+                      "children": []
+                    },
+                    {
+                      "name": "Пароварки",
+                      "slug": "parovarki",
+                      "children": []
+                    },
+                    {
+                      "name": "Электрогрили",
+                      "slug": "elektrogrili",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Прочая кухонная техника",
+                  "slug": "prochaya_kukhonnaya_tekhnika",
+                  "children": [
+                    {
+                      "name": "Сушилки для овощей и фруктов",
+                      "slug": "sushilki_dlya_ovoshei_i_fruktov",
+                      "children": []
+                    },
+                    {
+                      "name": "Аппараты для приготовления сахарной ваты",
+                      "slug": "apparaty_dlya_prigotovleniya_sakharnoi_vaty",
+                      "children": []
+                    },
+                    {
+                      "name": "Вакууматоры",
+                      "slug": "vakuumatory",
+                      "children": []
+                    },
+                    {
+                      "name": "Весы",
+                      "slug": "kukhonnyie_vesy",
+                      "children": []
+                    },
+                    {
+                      "name": "Штопоры электрические",
+                      "slug": "shtopory_elektricheskie",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Аксессуары и запчасти",
+                  "slug": "aksessuary_i_zapchasti_melkaia_kuxonnaia_texnika",
+                  "children": []
+                },
+                {
+                  "name": "Для нарезки и смешивания",
+                  "slug": "dlya_narezki_i_smeshivaniya",
+                  "children": [
+                    {
+                      "name": "Миксеры",
+                      "slug": "miksery_2303682",
+                      "children": []
+                    },
+                    {
+                      "name": "Планетарные миксеры",
+                      "slug": "planetarnye_miksery",
+                      "children": []
+                    },
+                    {
+                      "name": "Измельчители",
+                      "slug": "izmelchiteli_2303684",
+                      "children": []
+                    },
+                    {
+                      "name": "Ломтерезки",
+                      "slug": "lomterezki",
+                      "children": []
+                    },
+                    {
+                      "name": "Блендеры",
+                      "slug": "blendery_2303686",
+                      "children": []
+                    },
+                    {
+                      "name": "Кухонные комбайны",
+                      "slug": "kukhonnye_kombainy",
+                      "children": []
+                    },
+                    {
+                      "name": "Мясорубки",
+                      "slug": "myasorubki_2303688",
+                      "children": []
+                    },
+                    {
+                      "name": "Кофемолки",
+                      "slug": "kofemolki",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Другое",
+          "slug": "drugoe_248",
+          "children": []
+        }
+      ]
+    }
+  ]
+}

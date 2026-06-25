@@ -119,6 +119,28 @@ const FALLBACK_DOMAIN_LABELS: Record<string, string> = {
   unknown: 'Не определено',
 };
 
+// Раскладывает плоский список категорий в порядок дерева (родитель → дети) с
+// глубиной для отступов. Категория с отсутствующим родителем считается корневой.
+function buildCategoryTree(cats: CatalogCategory[]): { category: CatalogCategory; depth: number }[] {
+  const ids = new Set(cats.map((c) => c.id));
+  const byParent = new Map<number | null, CatalogCategory[]>();
+  for (const c of cats) {
+    const key = c.parent && ids.has(c.parent) ? c.parent : null;
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key)!.push(c);
+  }
+  for (const list of byParent.values()) list.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+  const result: { category: CatalogCategory; depth: number }[] = [];
+  const walk = (parent: number | null, depth: number) => {
+    for (const c of byParent.get(parent) ?? []) {
+      result.push({ category: c, depth });
+      walk(c.id, depth + 1);
+    }
+  };
+  walk(null, 0);
+  return result;
+}
+
 export default function SettingsPage() {
   const { user, tenant } = useAuth();
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
@@ -1964,17 +1986,21 @@ export default function SettingsPage() {
                       Ничего не найдено
                     </p>
                   )}
-                  {catalogCategories
-                    .filter((category) =>
-                      !categorySearch || category.name.toLowerCase().includes(categorySearch.toLowerCase())
-                    )
-                    .map((category) => {
+                  {(categorySearch
+                    ? catalogCategories
+                        .filter((category) => category.name.toLowerCase().includes(categorySearch.toLowerCase()))
+                        .map((category) => ({ category, depth: 0 }))
+                    : buildCategoryTree(catalogCategories)
+                  ).map(({ category, depth }) => {
                     const isEditing = editingCatalogCategoryId === category.id;
                     const isSaving = savingCatalogCategoryId === category.id;
                     return (
                       <div
                         key={category.id}
-                        className="flex flex-col gap-3 rounded-lg border p-3 md:flex-row md:items-center md:justify-between"
+                        style={depth ? { marginLeft: depth * 20 } : undefined}
+                        className={`flex flex-col gap-3 rounded-lg border p-3 md:flex-row md:items-center md:justify-between${
+                          depth ? ' border-l-2 border-l-primary/40 bg-muted/30' : ''
+                        }`}
                       >
                         <div className="flex min-w-0 items-center gap-3">
                           <div className="h-14 w-14 shrink-0 overflow-hidden rounded-md border bg-muted">

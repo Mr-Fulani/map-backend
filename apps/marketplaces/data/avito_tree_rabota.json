@@ -1,0 +1,11 @@
+{
+  "root": "Работа",
+  "domain": "rabota",
+  "tree": [
+    {
+      "name": "Вакансии",
+      "slug": "vakansii",
+      "children": []
+    }
+  ]
+}

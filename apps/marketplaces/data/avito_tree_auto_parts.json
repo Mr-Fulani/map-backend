@@ -1,0 +1,1751 @@
+{
+  "root": "Запчасти и аксессуары",
+  "domain": "auto_parts",
+  "tree": [
+    {
+      "name": "Масла и автохимия",
+      "slug": null,
+      "children": [
+        {
+          "name": "Моторные масла",
+          "slug": "motornye_masla",
+          "children": []
+        },
+        {
+          "name": "Трансмиссионные масла",
+          "slug": "transmissionnye_masla",
+          "children": []
+        },
+        {
+          "name": "Охлаждающие жидкости",
+          "slug": "oxlazdaiushhie_zidkosti",
+          "children": []
+        },
+        {
+          "name": "Тормозные жидкости",
+          "slug": "tormoznye_zidkosti",
+          "children": []
+        },
+        {
+          "name": "Гидравлические жидкости",
+          "slug": "gidravliceskie_zidkosti",
+          "children": []
+        },
+        {
+          "name": "Жидкости для омывателя стекла",
+          "slug": "zidkosti_dlia_omyvatelia_stekla",
+          "children": []
+        },
+        {
+          "name": "Промывочные жидкости, присадки и смазки",
+          "slug": "promyvocnye_zidkosti_prisadki_i_smazki",
+          "children": []
+        },
+        {
+          "name": "Другие масла",
+          "slug": "drugie_masla",
+          "children": []
+        },
+        {
+          "name": "Автокосметика и аксессуары",
+          "slug": "avtokosmetika_i_aksessuary",
+          "children": []
+        },
+        {
+          "name": "Топливо",
+          "slug": "toplivo",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "GPS-навигаторы",
+      "slug": "gps_navigatory",
+      "children": []
+    },
+    {
+      "name": "Прицепы",
+      "slug": null,
+      "children": [
+        {
+          "name": "Бортовые",
+          "slug": "bortovye",
+          "children": []
+        },
+        {
+          "name": "Для водного транспорта",
+          "slug": "dlya_vodnogo_transporta",
+          "children": []
+        },
+        {
+          "name": "Эвакуаторы",
+          "slug": "evakuatory",
+          "children": []
+        },
+        {
+          "name": "Запчасти и комплектующие",
+          "slug": null,
+          "children": [
+            {
+              "name": "Сцепное устройство",
+              "slug": "scepnoe_ustroistvo",
+              "children": []
+            },
+            {
+              "name": "Детали подвески",
+              "slug": "detali_podveski",
+              "children": []
+            },
+            {
+              "name": "Борта",
+              "slug": "borta",
+              "children": []
+            },
+            {
+              "name": "Кузовные запчасти",
+              "slug": "kuzovnye_zapchasti",
+              "children": []
+            },
+            {
+              "name": "Крепление",
+              "slug": "kreplenie",
+              "children": []
+            },
+            {
+              "name": "Опорные колеса и стойки",
+              "slug": "opornye_kolesa_i_stoiki",
+              "children": []
+            },
+            {
+              "name": "Электроника и свет",
+              "slug": "elektronika_i_svet_parts",
+              "children": []
+            },
+            {
+              "name": "Тенты и крышки",
+              "slug": "tenty_i_kryshki",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Другое",
+          "slug": "zapchasti_pritsepy_drugoe",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Экипировка",
+      "slug": null,
+      "children": [
+        {
+          "name": "Очки, маски",
+          "slug": "ochki_maski",
+          "children": []
+        },
+        {
+          "name": "Аксессуары",
+          "slug": "aksessuary_ekipirovka",
+          "children": []
+        },
+        {
+          "name": "Рюкзаки и сумки",
+          "slug": "ryukzaki_i_sumki",
+          "children": []
+        },
+        {
+          "name": "Шлем",
+          "slug": "shlem",
+          "children": []
+        },
+        {
+          "name": "Одежда",
+          "slug": "odezhda_ekipirovka",
+          "children": []
+        },
+        {
+          "name": "Обувь",
+          "slug": "obuv_ekipirovka",
+          "children": []
+        },
+        {
+          "name": "Защита",
+          "slug": "zashita_ekipirovka",
+          "children": []
+        },
+        {
+          "name": "Перчатки",
+          "slug": "perchatki_ekipirovka",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Шины, диски и колёса",
+      "slug": null,
+      "children": [
+        {
+          "name": "Легковые шины",
+          "slug": "legkovye_shiny",
+          "children": []
+        },
+        {
+          "name": "Колпаки",
+          "slug": "kolpaki",
+          "children": []
+        },
+        {
+          "name": "Диски",
+          "slug": "diski",
+          "children": []
+        },
+        {
+          "name": "Колёса",
+          "slug": "kolesa",
+          "children": []
+        },
+        {
+          "name": "Мотошины",
+          "slug": "motoshiny",
+          "children": []
+        },
+        {
+          "name": "Шины для грузовиков и спецтехники",
+          "slug": "shiny_dlja_gruzovikov_i_spetstehniki",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Аудио- и видеотехника",
+      "slug": null,
+      "children": [
+        {
+          "name": "Аксессуары для автоакустики",
+          "slug": "aksessuary_dlya_avtoakustiki",
+          "children": []
+        },
+        {
+          "name": "Магнитолы",
+          "slug": "magnitoly",
+          "children": []
+        },
+        {
+          "name": "Автоакустика",
+          "slug": "avtoakustika",
+          "children": []
+        },
+        {
+          "name": "Видеорегистраторы",
+          "slug": "videoregistratory",
+          "children": []
+        },
+        {
+          "name": "Усилители",
+          "slug": "usiliteli",
+          "children": []
+        },
+        {
+          "name": "Переходные рамки",
+          "slug": "perekhodnye_ramki",
+          "children": []
+        },
+        {
+          "name": "Короба и подиумы",
+          "slug": "koroba_i_podiumy",
+          "children": []
+        },
+        {
+          "name": "Другое",
+          "slug": "audio__i_videotehnika_drugoe",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Аксессуары",
+      "slug": null,
+      "children": [
+        {
+          "name": "Для мото- и водного транспорта",
+          "slug": "dlia_moto_i_vodnogo_transporta",
+          "children": []
+        },
+        {
+          "name": "Щётки стеклоочистителя",
+          "slug": "shhetki_stekloocistitelia",
+          "children": []
+        },
+        {
+          "name": "Для салона",
+          "slug": null,
+          "children": [
+            {
+              "name": "Коврики",
+              "slug": "kovriki",
+              "children": []
+            },
+            {
+              "name": "Чехлы и накидки",
+              "slug": "chekhly_i_nakidki",
+              "children": []
+            },
+            {
+              "name": "Ключи и брелоки",
+              "slug": "klyuchi_i_breloki",
+              "children": []
+            },
+            {
+              "name": "Шторки",
+              "slug": "shtorki",
+              "children": []
+            },
+            {
+              "name": "Сумки и органайзеры",
+              "slug": "sumki_i_organaizery",
+              "children": []
+            },
+            {
+              "name": "Оплётка на руль",
+              "slug": "oplyotka_na_rul",
+              "children": []
+            },
+            {
+              "name": "Подлокотники",
+              "slug": "podlokotniki",
+              "children": []
+            },
+            {
+              "name": "Держатели для телефона",
+              "slug": "derzhateli_dlya_telefona",
+              "children": []
+            },
+            {
+              "name": "Ручки КПП",
+              "slug": "ruchki_kpp",
+              "children": []
+            },
+            {
+              "name": "Автохолодильники",
+              "slug": "avtokholodilniki",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_parts",
+              "children": []
+            },
+            {
+              "name": "Ароматизаторы",
+              "slug": "aromatizatory",
+              "children": []
+            },
+            {
+              "name": "Шумо- и виброизоляция",
+              "slug": "shumo__i_vibroizolyaciya",
+              "children": []
+            },
+            {
+              "name": "Тонировка",
+              "slug": "tonirovka",
+              "children": []
+            },
+            {
+              "name": "Тахографы",
+              "slug": "takhografy",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Защита и декор",
+          "slug": null,
+          "children": [
+            {
+              "name": "Для фар, порогов и бамперов",
+              "slug": "dlya_far_porogov_i_bamperov",
+              "children": []
+            },
+            {
+              "name": "Наклейки, шильдики и значки",
+              "slug": "nakleiki_shildiki_i_znachki",
+              "children": []
+            },
+            {
+              "name": "Дефлекторы",
+              "slug": "deflektory",
+              "children": []
+            },
+            {
+              "name": "Для картера и КПП",
+              "slug": "dlya_kartera_i_kpp",
+              "children": []
+            },
+            {
+              "name": "Брызговики и подкрылки",
+              "slug": "bryzgoviki_i_podkrylki",
+              "children": []
+            },
+            {
+              "name": "Рамки номерного знака",
+              "slug": "ramki_nomernogo_znaka",
+              "children": []
+            },
+            {
+              "name": "Силовые бамперы и пороги",
+              "slug": "silovye_bampery_i_porogi",
+              "children": []
+            },
+            {
+              "name": "Утеплители",
+              "slug": "utepliteli",
+              "children": []
+            },
+            {
+              "name": "Дополнительный свет",
+              "slug": "dopolnitelnyi_svet",
+              "children": []
+            },
+            {
+              "name": "Шноркели",
+              "slug": "shnorkeli",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Набор автомобилиста",
+          "slug": null,
+          "children": [
+            {
+              "name": "Тросы, стропы и лебёдки",
+              "slug": "trosy__stropy_i_lebyodki_stropy",
+              "children": []
+            },
+            {
+              "name": "Канистры и воронки",
+              "slug": "kanistry_i_voronki",
+              "children": []
+            },
+            {
+              "name": "Компрессоры и насосы",
+              "slug": "kompressory_i_nasosy",
+              "children": []
+            },
+            {
+              "name": "Аптечки",
+              "slug": "aptechki",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_nabor_avtomobilista",
+              "children": []
+            },
+            {
+              "name": "Огнетушители",
+              "slug": "ognetushiteli",
+              "children": []
+            },
+            {
+              "name": "Пуско-зарядные устройства",
+              "slug": "pusko_zaryadnye_ustroistva",
+              "children": []
+            },
+            {
+              "name": "Знаки аварийной остановки",
+              "slug": "znaki_avariinoi_ostanovki",
+              "children": []
+            },
+            {
+              "name": "Готовые комплекты автомобилиста",
+              "slug": "gotovye_komplekty_avtomobilista",
+              "children": []
+            },
+            {
+              "name": "Аксессуары для зарядки",
+              "slug": "aksessuary_dlya_zaryadki",
+              "children": []
+            },
+            {
+              "name": "Зарядные адаптеры и станции для электромобиля",
+              "slug": "zaryadnye_adaptery_i_stancii_dlya_elektromobilya",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Для колёс",
+          "slug": "dlia_koles",
+          "children": []
+        },
+        {
+          "name": "Отопительное оборудование",
+          "slug": null,
+          "children": [
+            {
+              "name": "Автономные отопители",
+              "slug": "avtonomnye_otopiteli",
+              "children": []
+            },
+            {
+              "name": "Автономные подогреватели",
+              "slug": "avtonomnye_podogrevateli",
+              "children": []
+            },
+            {
+              "name": "Кондиционеры и рефрижераторы",
+              "slug": "kondicionery_i_refrizheratory",
+              "children": []
+            },
+            {
+              "name": "Запчасти и комплектующие",
+              "slug": "zapchasti_i_komplektuyushie_otopitelnoe",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_otopitelnoe",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Уход",
+          "slug": "uxod",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Инструменты",
+      "slug": null,
+      "children": [
+        {
+          "name": "Ручной инструмент",
+          "slug": "ruchnoi_instrument_2304150",
+          "children": []
+        },
+        {
+          "name": "Подъёмное оборудование, домкраты",
+          "slug": "podyomnoe_oborudovanie_domkraty",
+          "children": []
+        },
+        {
+          "name": "Ящики, тележки и сумки для инструментов",
+          "slug": "yashiki_telezhki_i_sumki_dlya_instrumentov",
+          "children": []
+        },
+        {
+          "name": "Оснастка и расходные материалы",
+          "slug": "osnastka_i_raskhodnye_materialy",
+          "children": []
+        },
+        {
+          "name": "Электро- и пневмоинструменты",
+          "slug": "elektro__i_pnevmoinstrumenty",
+          "children": []
+        },
+        {
+          "name": "Диагностический и измерительный инструмент",
+          "slug": "diagnosticheskii_i_izmeritelnyi_instrument",
+          "children": []
+        },
+        {
+          "name": "Заправочное и смазочное оборудование",
+          "slug": "zapravochnoe_i_smazochnoe_oborudovanie",
+          "children": []
+        },
+        {
+          "name": "Прессы",
+          "slug": "pressy_2304148",
+          "children": []
+        },
+        {
+          "name": "Набор автомобилиста",
+          "slug": "nabor_avtomobilista_2304149",
+          "children": []
+        },
+        {
+          "name": "Другое",
+          "slug": "drugoe_2304145",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Багажники и фаркопы",
+      "slug": null,
+      "children": [
+        {
+          "name": "Поперечные дуги и комплектующие",
+          "slug": "poperechnye_dugi_i_komplektuyushie",
+          "children": []
+        },
+        {
+          "name": "Рейлинги на крышу",
+          "slug": "reilingi_na_kryshu",
+          "children": []
+        },
+        {
+          "name": "Автобоксы",
+          "slug": "avtoboksy",
+          "children": []
+        },
+        {
+          "name": "Экспедиционные багажники",
+          "slug": "ekspedicionnye_bagazhniki",
+          "children": []
+        },
+        {
+          "name": "Крепления для перевозки велосипедов и лыж",
+          "slug": "krepleniya_dlya_perevozki_velosipedov_i_lyzh",
+          "children": []
+        },
+        {
+          "name": "Фаркопы и комплектующие",
+          "slug": "farkopy_i_komplektuyushie",
+          "children": []
+        },
+        {
+          "name": "КУНГ",
+          "slug": "kung",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Запчасти",
+      "slug": null,
+      "children": [
+        {
+          "name": "Для мототехники",
+          "slug": "dlja_mototehniki",
+          "children": []
+        },
+        {
+          "name": "Для автомобилей",
+          "slug": null,
+          "children": [
+            {
+              "name": "Автосвет",
+              "slug": "avtosvet",
+              "children": []
+            },
+            {
+              "name": "Аккумуляторы",
+              "slug": "akkumuliatory_5530",
+              "children": []
+            },
+            {
+              "name": "Двигатель",
+              "slug": "dvigatel",
+              "children": [
+                {
+                  "name": "Блок цилиндров, головка, картер",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Вакуумная система",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Впускная система",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Генераторы, стартеры",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Двигатель в сборе",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Катушка зажигания, свечи, электрика",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Клапанная крышка",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Коленвал, маховик",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Коллекторы",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Крепление двигателя",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Масляный насос, система смазки",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Патрубки вентиляции",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Поршни, шатуны, кольца",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Приводные ремни, натяжители",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Прокладки и ремкомплекты",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Ремни, цепи, элементы ГРМ",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Турбины, компрессоры",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Электродвигатели и компоненты",
+                  "slug": null,
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Кузов",
+              "slug": "kuzov",
+              "children": [
+                {
+                  "name": "Бамперы",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Брызговики",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Двери",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Заглушки",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Замки",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Защита",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Зеркала",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Кабина",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Капот",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Комплект обвеса",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Комплекты для рестайлинга",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Крепления",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Крылья и арки",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Крыша",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Крышка, дверь багажника",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Кузов по частям",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Кузов целиком",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Лонжероны и усилители кузова",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Лючок бензобака",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Молдинги, накладки, спойлеры",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Пороги",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Рама",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Решетка радиатора",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Стойка кузова",
+                  "slug": null,
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Подвеска",
+              "slug": "podveska",
+              "children": []
+            },
+            {
+              "name": "Рулевое управление",
+              "slug": "rulevoe_upravlenie",
+              "children": []
+            },
+            {
+              "name": "Салон",
+              "slug": "salon",
+              "children": []
+            },
+            {
+              "name": "Стёкла",
+              "slug": "stekla",
+              "children": []
+            },
+            {
+              "name": "Топливная и выхлопная системы",
+              "slug": "toplivnaia_i_vyxlopnaia_sistemy",
+              "children": []
+            },
+            {
+              "name": "Тормозная система",
+              "slug": "tormoznaia_sistema_5539",
+              "children": []
+            },
+            {
+              "name": "Трансмиссия и привод",
+              "slug": "transmissiia_i_privod",
+              "children": [
+                {
+                  "name": "КПП в сборе",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Корпус КПП",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Дифференциал",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Валы, муфты, шестерни и подшипники КПП",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Фрикционы КПП",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Прокладки и уплотнения КПП",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Крепёж КПП",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Приводные валы, полуоси и ШРУСы",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Сцепление",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Электронное управление КПП",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Переключение передач",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Система смазки и охлаждения КПП",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Карданная передача",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Раздаточная коробка",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Муфта полного привода",
+                  "slug": null,
+                  "children": []
+                },
+                {
+                  "name": "Мосты и редукторы",
+                  "slug": null,
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Электрооборудование",
+              "slug": "elektrooborudovanie",
+              "children": []
+            },
+            {
+              "name": "Система охлаждения",
+              "slug": "sistema_oxlazdeniia",
+              "children": []
+            },
+            {
+              "name": "Автомобиль на запчасти",
+              "slug": "avtomobil_na_zapcasti",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Для грузовиков и спецтехники",
+          "slug": null,
+          "children": [
+            {
+              "name": "Двигатели и комплектующие",
+              "slug": null,
+              "children": [
+                {
+                  "name": "Топливная система",
+                  "slug": "toplivnaia_sistema",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Система выпуска",
+                  "slug": "sistema_vypuska",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Система охлаждения ДВС",
+                  "slug": "sistema_oxlazdeniia_dvs",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Блоки цилиндров, ГБЦ и картеры",
+                  "slug": "bloki_cilindrov_gbc_i_kartery",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Крепление и защита двигателя",
+                  "slug": "kreplenie_i_zashhita_dvigatelia",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Поршни, шатуны, кольца, вкладыши",
+                  "slug": "porsni_satuny_kolca_vkladysi",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Система смазки",
+                  "slug": "sistema_smazki",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Коленвалы, распредвалы и маховики",
+                  "slug": "kolenvaly_raspredvaly_i_maxoviki",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "ГРМ",
+                  "slug": "grm",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Турбины, компрессоры",
+                  "slug": "turbiny_kompressory",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Система зажигания",
+                  "slug": "sistema_zaziganiia",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Двигатели в сборе",
+                  "slug": "dvigateli_v_sbore",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Система впуска",
+                  "slug": "sistema_vpuska",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Система кондиционирования и отопления",
+                  "slug": "sistema_kondicionirovaniia_i_otopleniia",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Стартеры и генераторы",
+                  "slug": "startery_i_generatory",
+                  "children": [
+                    {
+                      "name": "Двигатели и комплектующие",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Трансмиссия",
+              "slug": null,
+              "children": [
+                {
+                  "name": "Сцепление",
+                  "slug": "sceplenie",
+                  "children": [
+                    {
+                      "name": "Трансмиссия",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Механизмы отбора мощности",
+                  "slug": "mekhanizmy_otbora_moshnosti",
+                  "children": [
+                    {
+                      "name": "Трансмиссия",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Карданный вал, привод и полуось",
+                  "slug": "kardannyi_val_privod_i_poluos",
+                  "children": [
+                    {
+                      "name": "Трансмиссия",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Редуктор, муфта и дифференциалы",
+                  "slug": "reduktor_mufta_i_differencialy",
+                  "children": [
+                    {
+                      "name": "Трансмиссия",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Подшипники и крестовины",
+                  "slug": "podshipniki_i_krestoviny",
+                  "children": [
+                    {
+                      "name": "Трансмиссия",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Раздаточная коробка",
+                  "slug": "razdatochnaya_korobka",
+                  "children": [
+                    {
+                      "name": "Трансмиссия",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "КПП в сборе",
+                  "slug": "kpp_v_sbore",
+                  "children": [
+                    {
+                      "name": "Трансмиссия",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Детали КПП",
+                  "slug": "detali_kpp",
+                  "children": [
+                    {
+                      "name": "Трансмиссия",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Подвеска и рулевое управление",
+              "slug": "podveska_i_rulevoe_upravlenie",
+              "children": []
+            },
+            {
+              "name": "Кабина",
+              "slug": null,
+              "children": [
+                {
+                  "name": "Детали салона",
+                  "slug": "detali_salona",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Подвеска кабины",
+                  "slug": "podveska_kabiny",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Зеркала",
+                  "slug": "zerkala_kabina",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Двери",
+                  "slug": "dveri",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Крылья",
+                  "slug": "krylya_kabina",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Капот",
+                  "slug": "kapot",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Бампера",
+                  "slug": "bampera",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Сиденья и спальники",
+                  "slug": "sidenya_i_spalniki",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Кабины в сборе",
+                  "slug": "kabiny_v_sbore",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Окна и стёкла",
+                  "slug": "okna_i_styokla",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Внешние элементы кабины",
+                  "slug": "vneshnie_elementy_kabiny",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Кабины в разборе",
+                  "slug": "kabiny_v_razbore",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Рамы и детали рам",
+                  "slug": "ramy_i_detali_ram",
+                  "children": [
+                    {
+                      "name": "Кабина",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Рамы, кузова и надстройки",
+              "slug": null,
+              "children": [
+                {
+                  "name": "Надстройки и платформы в сборе",
+                  "slug": "nadstroiki_i_platformy_v_sbore_2242413",
+                  "children": [
+                    {
+                      "name": "Рамы, кузова и надстройки",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Борта и элементы кузова",
+                  "slug": "borta_i_elementy_kuzova_2242415",
+                  "children": [
+                    {
+                      "name": "Рамы, кузова и надстройки",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Тенты",
+                  "slug": "tenty_2242417",
+                  "children": [
+                    {
+                      "name": "Рамы, кузова и надстройки",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Топливные баки",
+                  "slug": "toplivnye_baki_2242418",
+                  "children": [
+                    {
+                      "name": "Рамы, кузова и надстройки",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Рамы и лонжероны",
+                  "slug": "ramy_i_lonzherony_2242420",
+                  "children": [
+                    {
+                      "name": "Рамы, кузова и надстройки",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Электроника и свет",
+              "slug": null,
+              "children": [
+                {
+                  "name": "Фонари и фары",
+                  "slug": "fonari_i_fary",
+                  "children": [
+                    {
+                      "name": "Электроника и свет",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Электронные блоки управления",
+                  "slug": "elektronnye_bloki_upravleniya",
+                  "children": [
+                    {
+                      "name": "Электроника и свет",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Электропроводка",
+                  "slug": "elektroprovodka",
+                  "children": [
+                    {
+                      "name": "Электроника и свет",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Контроллеры, реле и датчики",
+                  "slug": "kontrollery_rele_i_datchiki",
+                  "children": [
+                    {
+                      "name": "Электроника и свет",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Аккумуляторы",
+                  "slug": "akkumulyatory",
+                  "children": [
+                    {
+                      "name": "Электроника и свет",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Телематика, тахографы и рации",
+                  "slug": "telematika_takhografy_i_racii",
+                  "children": [
+                    {
+                      "name": "Электроника и свет",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Электродвигатели и актуаторы",
+                  "slug": "elektrodvigateli_i_aktuatory",
+                  "children": [
+                    {
+                      "name": "Электроника и свет",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Гидравлические и пневмосистемы",
+              "slug": null,
+              "children": [
+                {
+                  "name": "Пневматика сцепления и тормозов",
+                  "slug": "pnevmatika_scepleniya_i_tormozov",
+                  "children": [
+                    {
+                      "name": "Гидравлические и пневмосистемы",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Пневмоподвеска",
+                  "slug": "pnevmopodveska",
+                  "children": [
+                    {
+                      "name": "Гидравлические и пневмосистемы",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Компрессоры, клапаны и воздухоподготовка",
+                  "slug": "kompressory_klapany_i_vozdukhopodgotovka",
+                  "children": [
+                    {
+                      "name": "Гидравлические и пневмосистемы",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Шланги, трубки, патрубки",
+                  "slug": "shlangi_trubki_patrubki",
+                  "children": [
+                    {
+                      "name": "Гидравлические и пневмосистемы",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Гидромоторы и гидронасосы",
+                  "slug": "gidromotory_i_gidronasosy",
+                  "children": [
+                    {
+                      "name": "Гидравлические и пневмосистемы",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Гидроцилиндры",
+                  "slug": "gidrocilindry",
+                  "children": [
+                    {
+                      "name": "Гидравлические и пневмосистемы",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Гидрораспределители",
+                  "slug": "gidroraspredeliteli",
+                  "children": [
+                    {
+                      "name": "Гидравлические и пневмосистемы",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Фильтры и фильтроэлементы",
+                  "slug": "filtry_i_filtroelementy",
+                  "children": [
+                    {
+                      "name": "Гидравлические и пневмосистемы",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Гидроаккумуляторы и баки",
+                  "slug": "gidroakkumulyatory_i_baki",
+                  "children": [
+                    {
+                      "name": "Гидравлические и пневмосистемы",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Ремкомплекты и уплотнения",
+                  "slug": "remkomplekty_i_uplotneniya",
+                  "children": [
+                    {
+                      "name": "Гидравлические и пневмосистемы",
+                      "slug": null,
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Для навесного оборудования",
+              "slug": "dlia_navesnogo_oborudovaniia",
+              "children": []
+            },
+            {
+              "name": "Техника на разбор",
+              "slug": "texnika_na_razbor",
+              "children": []
+            },
+            {
+              "name": "Тормозная система",
+              "slug": "tormoznaia_sistema",
+              "children": []
+            },
+            {
+              "name": "Для прицепной техники",
+              "slug": "dlia_pricepnoi_texniki",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Для водного транспорта",
+          "slug": "dlja_vodnogo_transporta",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Противоугонные устройства",
+      "slug": null,
+      "children": [
+        {
+          "name": "Автосигнализации",
+          "slug": null,
+          "children": [
+            {
+              "name": "Брелоки и метки",
+              "slug": "breloki_i_metki",
+              "children": []
+            },
+            {
+              "name": "Комплект сигнализации",
+              "slug": "komplekt_signalizacii",
+              "children": []
+            },
+            {
+              "name": "Запчасти и комплектующие",
+              "slug": "zapchasti_i_komplektuyushie_avtosignalizacii",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Иммобилайзеры",
+          "slug": "immobilaizery",
+          "children": []
+        },
+        {
+          "name": "Механические блокираторы",
+          "slug": "mekhanicheskie_blokiratory",
+          "children": []
+        },
+        {
+          "name": "Спутниковые системы",
+          "slug": "sputnikovye_sistemy",
+          "children": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2823 @@
+{
+  "root": "Готовый бизнес и оборудование",
+  "domain": "gotovyj_biznes_i_oborudovanie",
+  "tree": [
+    {
+      "name": "Оборудование для бизнеса",
+      "slug": "oborudovanie_dlja_biznesa",
+      "children": [
+        {
+          "name": "Логистика и склад",
+          "slug": "logistika_i_sklad",
+          "children": [
+            {
+              "name": "Грузоподъёмное",
+              "slug": "gruzopodieemnoe",
+              "children": [
+                {
+                  "name": "Краны и балки",
+                  "slug": "krany_i_balki",
+                  "children": []
+                },
+                {
+                  "name": "Захваты",
+                  "slug": "zaxvaty",
+                  "children": []
+                },
+                {
+                  "name": "Тележки и рохли",
+                  "slug": "telezki_i_roxli",
+                  "children": []
+                },
+                {
+                  "name": "Штабелеры",
+                  "slug": "stabelery",
+                  "children": []
+                },
+                {
+                  "name": "Подъемные столы и платформы",
+                  "slug": "podieemnye_stoly_i_platformy",
+                  "children": []
+                },
+                {
+                  "name": "Подвесные механизмы",
+                  "slug": "podvesnye_mexanizmy",
+                  "children": []
+                },
+                {
+                  "name": "Такелаж",
+                  "slug": "takelaz_2141368",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Склады и хранение",
+              "slug": "sklady_i_xranenie",
+              "children": [
+                {
+                  "name": "Ящики и коробки",
+                  "slug": "yashiki_i_korobki",
+                  "children": []
+                },
+                {
+                  "name": "Мезонин",
+                  "slug": "mezonin",
+                  "children": []
+                },
+                {
+                  "name": "Резервуары и ёмкости",
+                  "slug": "rezervuary_i_yomkosti",
+                  "children": []
+                },
+                {
+                  "name": "Стеллажи",
+                  "slug": "stellazhi_2141372",
+                  "children": []
+                },
+                {
+                  "name": "Контейнеры для хранения",
+                  "slug": "konteinery_dlya_khraneniya",
+                  "children": []
+                },
+                {
+                  "name": "Ангары",
+                  "slug": "angary",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Контейнеры",
+              "slug": "konteinery",
+              "children": [
+                {
+                  "name": "Морские и грузовые",
+                  "slug": "morskie_i_gruzovye",
+                  "children": []
+                },
+                {
+                  "name": "Мусорные, строительные и бытовые",
+                  "slug": "musornye_stroitelnye_i_bytovye",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и комплектующие",
+                  "slug": "zapchasti_i_komplektuyushie_konteynery",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Для автобизнеса",
+          "slug": "dlya_avtobiznesa",
+          "children": [
+            {
+              "name": "Сход-развал",
+              "slug": "sxod_razval",
+              "children": []
+            },
+            {
+              "name": "Малярно-кузовное",
+              "slug": "maliarno_kuzovnoe",
+              "children": [
+                {
+                  "name": "Пескоструйные аппараты",
+                  "slug": "peskostruinye_apparaty",
+                  "children": []
+                },
+                {
+                  "name": "Стапель",
+                  "slug": "stapel",
+                  "children": []
+                },
+                {
+                  "name": "Покрасочные и сушильные камеры",
+                  "slug": "pokrasochnye_i_sushilnye_kamery",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Заправочное",
+              "slug": "zapravocnoe",
+              "children": [
+                {
+                  "name": "Заправка масел и жидкостей",
+                  "slug": "zapravka_masel_i_zhidkostei",
+                  "children": []
+                },
+                {
+                  "name": "Бензиновые колонки",
+                  "slug": "benzinovye_kolonki",
+                  "children": []
+                },
+                {
+                  "name": "Газовые колонки",
+                  "slug": "gazovye_kolonki",
+                  "children": []
+                },
+                {
+                  "name": "Заправка кондиционера",
+                  "slug": "zapravka_kondicionera",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Диагностика и ремонт",
+              "slug": "diagnostika_i_remont",
+              "children": [
+                {
+                  "name": "Стенды",
+                  "slug": "stendy",
+                  "children": []
+                },
+                {
+                  "name": "Автомобильные весы",
+                  "slug": "avtomobilnye_vesy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Подъёмное",
+              "slug": "podieemnoe",
+              "children": [
+                {
+                  "name": "Стойки",
+                  "slug": "stoiki_2141224",
+                  "children": []
+                },
+                {
+                  "name": "Подъёмники",
+                  "slug": "podieemniki",
+                  "children": []
+                },
+                {
+                  "name": "Домкраты",
+                  "slug": "domkraty_2141226",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Моечное",
+              "slug": "moecnoe",
+              "children": [
+                {
+                  "name": "Комплектующие и расходники",
+                  "slug": "komplektuyushie_i_raskhodniki",
+                  "children": []
+                },
+                {
+                  "name": "Мойки самообслуживания",
+                  "slug": "moiki_samoobsluzhivaniya",
+                  "children": []
+                },
+                {
+                  "name": "Автоматические мойки",
+                  "slug": "avtomaticheskie_moiki",
+                  "children": []
+                },
+                {
+                  "name": "Мойки деталей",
+                  "slug": "moiki_detalei",
+                  "children": []
+                },
+                {
+                  "name": "Мойки высокого давления",
+                  "slug": "moiki_vysokogo_davleniya",
+                  "children": []
+                },
+                {
+                  "name": "Мойки колёс",
+                  "slug": "moiki_kolyos",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Шиномонтаж",
+              "slug": "sinomontaz",
+              "children": [
+                {
+                  "name": "Комплектующие и расходники",
+                  "slug": "sinomontaz_komplektuyushie_i_raskhodniki",
+                  "children": []
+                },
+                {
+                  "name": "Шиномонтажные станки",
+                  "slug": "shinomontazhnye_stanki",
+                  "children": []
+                },
+                {
+                  "name": "Балансировочные станки",
+                  "slug": "balansirovochnye_stanki",
+                  "children": []
+                },
+                {
+                  "name": "Для правки дисков",
+                  "slug": "dlya_pravki_diskov",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Промышленное",
+          "slug": "promyshlennoe",
+          "children": [
+            {
+              "name": "Другое",
+              "slug": "drugoe_2097708",
+              "children": []
+            },
+            {
+              "name": "Паяльное и сварочное",
+              "slug": "paialnoe_i_svarocnoe",
+              "children": [
+                {
+                  "name": "Сварочные аппараты",
+                  "slug": "svarochnye_apparaty_2141332",
+                  "children": []
+                },
+                {
+                  "name": "Сварочные столы",
+                  "slug": "svarochnye_stoly",
+                  "children": []
+                },
+                {
+                  "name": "Паяльники и паяльные станции",
+                  "slug": "payalniki_i_payalnye_stancii",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и комплектующие",
+                  "slug": "zapchasti_i_komplektuyushie_2141335",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Специализированное",
+              "slug": "specializirovannoe",
+              "children": [
+                {
+                  "name": "Клининговое",
+                  "slug": "kliningovoe",
+                  "children": []
+                },
+                {
+                  "name": "Полиграфия",
+                  "slug": "poligrafiya",
+                  "children": []
+                },
+                {
+                  "name": "Полимерное и покрасочное",
+                  "slug": "polimernoe_i_pokrasochnoe",
+                  "children": []
+                },
+                {
+                  "name": "Смесители",
+                  "slug": "smesiteli",
+                  "children": []
+                },
+                {
+                  "name": "Строительное",
+                  "slug": "stroitelnoe",
+                  "children": []
+                },
+                {
+                  "name": "Текстильное",
+                  "slug": "tekstilnoe",
+                  "children": []
+                },
+                {
+                  "name": "Водоснабжение и водоотведение",
+                  "slug": "vodosnabzhenie_i_vodootvedenie",
+                  "children": []
+                },
+                {
+                  "name": "Перерабатывающее",
+                  "slug": "pererabatyvayushee",
+                  "children": []
+                },
+                {
+                  "name": "Сельскохозяйственное",
+                  "slug": "selskokhozyaistvennoe",
+                  "children": []
+                },
+                {
+                  "name": "Добывающее",
+                  "slug": "dobyvayushee",
+                  "children": []
+                },
+                {
+                  "name": "Химическое",
+                  "slug": "khimicheskoe",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Приводное",
+              "slug": "privodnoe",
+              "children": [
+                {
+                  "name": "Привод",
+                  "slug": "privod",
+                  "children": []
+                },
+                {
+                  "name": "Редуктор",
+                  "slug": "reduktor",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и комплектующие",
+                  "slug": "zapchasti_i_komplektuyushie_2141229",
+                  "children": []
+                },
+                {
+                  "name": "Гидростанция",
+                  "slug": "gidrostanciya",
+                  "children": []
+                },
+                {
+                  "name": "Двигатель",
+                  "slug": "dvigatel_2141231",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Насосы и компрессоры",
+              "slug": "nasosy_i_kompressory",
+              "children": [
+                {
+                  "name": "Компрессоры",
+                  "slug": "kompressory_2141311",
+                  "children": []
+                },
+                {
+                  "name": "Насосы",
+                  "slug": "nasosy_i_kompressory_nasosy",
+                  "children": []
+                },
+                {
+                  "name": "Осушители",
+                  "slug": "osusiteli",
+                  "children": []
+                },
+                {
+                  "name": "Рукава высокого давления",
+                  "slug": "rukava_vysokogo_davleniia",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и комплектующие",
+                  "slug": "zapcasti_i_komplektuiushhie_2141315",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Контрольно-измерительное",
+              "slug": "kontrolno_izmeritelnoe",
+              "children": [
+                {
+                  "name": "Датчики",
+                  "slug": "datchiki",
+                  "children": []
+                },
+                {
+                  "name": "Измерители и сигнализаторы",
+                  "slug": "izmeriteli_i_signalizatory",
+                  "children": []
+                },
+                {
+                  "name": "Расходомер",
+                  "slug": "raskhodomer",
+                  "children": []
+                },
+                {
+                  "name": "Тахеометр",
+                  "slug": "takheometr",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и комплектующие",
+                  "slug": "zapchasti_i_komplektuyushie_2141320",
+                  "children": []
+                },
+                {
+                  "name": "Анализаторы",
+                  "slug": "analizatory",
+                  "children": []
+                },
+                {
+                  "name": "Весы",
+                  "slug": "kontrolno_izmeritelnoe_vesy",
+                  "children": []
+                },
+                {
+                  "name": "Дальномеры и нивелиры",
+                  "slug": "dalnomery_i_niveliry",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Электрическое",
+              "slug": "elektriceskoe",
+              "children": [
+                {
+                  "name": "Трансформаторы",
+                  "slug": "elektriceskoe_transformatory",
+                  "children": []
+                },
+                {
+                  "name": "Релейная защита и автоматика",
+                  "slug": "releinaya_zashita_i_avtomatika",
+                  "children": []
+                },
+                {
+                  "name": "Генераторы и электростанции",
+                  "slug": "generatory_i_elektrostancii",
+                  "children": []
+                },
+                {
+                  "name": "Преобразователи",
+                  "slug": "preobrazovateli",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и комплектующие",
+                  "slug": "zapchasti_i_komplektuyushie_2141241",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Конвейеры и транспортеры",
+              "slug": "konveiery_i_transportery",
+              "children": []
+            },
+            {
+              "name": "Климатическое",
+              "slug": "klimaticeskoe",
+              "children": [
+                {
+                  "name": "Вентиляция",
+                  "slug": "ventilyaciya",
+                  "children": []
+                },
+                {
+                  "name": "Кондиционирование",
+                  "slug": "kondicionirovanie",
+                  "children": []
+                },
+                {
+                  "name": "Сушильные камеры",
+                  "slug": "sushilnye_kamery",
+                  "children": []
+                },
+                {
+                  "name": "Отопление",
+                  "slug": "otoplenie",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Фасовочное и упаковочное",
+              "slug": "fasovocnoe_i_upakovocnoe",
+              "children": [
+                {
+                  "name": "Дозаторы",
+                  "slug": "dozatory",
+                  "children": []
+                },
+                {
+                  "name": "Фасовочный аппарат",
+                  "slug": "fasovochnyi_apparat",
+                  "children": []
+                },
+                {
+                  "name": "Запайщик",
+                  "slug": "zapaishik",
+                  "children": []
+                },
+                {
+                  "name": "Укупорщики",
+                  "slug": "ukuporshiki",
+                  "children": []
+                },
+                {
+                  "name": "Фасовочно-упаковочный аппарат",
+                  "slug": "fasovochno_upakovochnyi_apparat",
+                  "children": []
+                },
+                {
+                  "name": "Упаковочный аппарат",
+                  "slug": "upakovochnyi_apparat",
+                  "children": []
+                },
+                {
+                  "name": "Этикетировщик",
+                  "slug": "etiketirovshik",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и расходные материалы",
+                  "slug": "fasovocnoe_i_upakovocnoe_zapchasti_i_raskhodnye_materialy",
+                  "children": []
+                },
+                {
+                  "name": "Заклейщик",
+                  "slug": "zakleishik",
+                  "children": []
+                },
+                {
+                  "name": "Маркиратор",
+                  "slug": "markirator",
+                  "children": []
+                },
+                {
+                  "name": "Тубонаполнительные машины",
+                  "slug": "tubonapolnitelnye_mashiny",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Станки",
+              "slug": "stanki_2097719",
+              "children": [
+                {
+                  "name": "Металлообработка",
+                  "slug": "metalloobrabotka",
+                  "children": [
+                    {
+                      "name": "Гибка и формовка",
+                      "slug": "gibka_i_formovka",
+                      "children": []
+                    },
+                    {
+                      "name": "Ковка и штамповка",
+                      "slug": "kovka_i_shtampovka",
+                      "children": []
+                    },
+                    {
+                      "name": "Фрезерная обработка",
+                      "slug": "frezernaya_obrabotka",
+                      "children": []
+                    },
+                    {
+                      "name": "Токарная обработка",
+                      "slug": "tokarnaya_obrabotka",
+                      "children": []
+                    },
+                    {
+                      "name": "Специализированные станки",
+                      "slug": "specializirovannye_stanki",
+                      "children": []
+                    },
+                    {
+                      "name": "Сверление и расточка",
+                      "slug": "sverlenie_i_rastochka",
+                      "children": []
+                    },
+                    {
+                      "name": "Пиление и механическая резка",
+                      "slug": "pilenie_i_mekhanicheskaya_rezka",
+                      "children": []
+                    },
+                    {
+                      "name": "Обработка проволоки",
+                      "slug": "obrabotka_provoloki",
+                      "children": []
+                    },
+                    {
+                      "name": "Электроэрозионная обработка",
+                      "slug": "elektroerozionnaya_obrabotka",
+                      "children": []
+                    },
+                    {
+                      "name": "Шлифование и полирование",
+                      "slug": "shlifovanie_i_polirovanie",
+                      "children": []
+                    },
+                    {
+                      "name": "Гидроабразивная резка",
+                      "slug": "gidroabrazivnaya_rezka",
+                      "children": []
+                    },
+                    {
+                      "name": "Сварка",
+                      "slug": "svarka",
+                      "children": []
+                    },
+                    {
+                      "name": "Пескоструйная и дробеструйная обработка",
+                      "slug": "peskostruinaya_i_drobestruinaya_obrabotka",
+                      "children": []
+                    },
+                    {
+                      "name": "Плазменная резка",
+                      "slug": "plazmennaya_rezka",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Деревообработка",
+                  "slug": "derevoobrabotka",
+                  "children": [
+                    {
+                      "name": "Шлифование древесины и покрытий",
+                      "slug": "shlifovanie_drevesiny_i_pokrytii",
+                      "children": []
+                    },
+                    {
+                      "name": "Лесопиление",
+                      "slug": "lesopilenie",
+                      "children": []
+                    },
+                    {
+                      "name": "Столярная обработка",
+                      "slug": "stolyarnaya_obrabotka",
+                      "children": []
+                    },
+                    {
+                      "name": "Переработка древесных отходов",
+                      "slug": "pererabotka_drevesnykh_otkhodov",
+                      "children": []
+                    },
+                    {
+                      "name": "Строгание и профилирование",
+                      "slug": "stroganie_i_profilirovanie",
+                      "children": []
+                    },
+                    {
+                      "name": "Домостроение",
+                      "slug": "domostroenie",
+                      "children": []
+                    },
+                    {
+                      "name": "Прессование, склеивание и облицовка",
+                      "slug": "pressovanie_skleivanie_i_oblicovka_dlya_derevoobrabotki",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Производство мебели",
+                  "slug": "proizvodstvo_mebeli",
+                  "children": [
+                    {
+                      "name": "Прессование, склеивание и облицовка",
+                      "slug": "pressovanie_skleivanie_i_oblicovka",
+                      "children": []
+                    },
+                    {
+                      "name": "Кромкооблицовка",
+                      "slug": "kromkooblicovka",
+                      "children": []
+                    },
+                    {
+                      "name": "Сверление и присадка",
+                      "slug": "sverlenie_i_prisadka",
+                      "children": []
+                    },
+                    {
+                      "name": "Специализированная обработка",
+                      "slug": "specializirovannaya_obrabotka",
+                      "children": []
+                    },
+                    {
+                      "name": "Раскрой плитных материалов",
+                      "slug": "raskroi_plitnykh_materialov",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Лазерная обработка",
+                  "slug": "lazernaya_obrabotka",
+                  "children": []
+                },
+                {
+                  "name": "Обработка пластмасс и резины",
+                  "slug": "obrabotka_plastmass_i_reziny",
+                  "children": []
+                },
+                {
+                  "name": "Обработка камня и стекла",
+                  "slug": "obrabotka_kamnya_i_stekla",
+                  "children": [
+                    {
+                      "name": "Резка и обработка стекла",
+                      "slug": "rezka_i_obrabotka_stekla",
+                      "children": []
+                    },
+                    {
+                      "name": "Резка и обработка камня",
+                      "slug": "rezka_i_obrabotka_kamnya",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Обработка других материалов",
+                  "slug": "obrabotka_drugikh_materialov",
+                  "children": []
+                },
+                {
+                  "name": "3D печать",
+                  "slug": "3d_pechat",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и комплектующие",
+                  "slug": "zapchasti_i_komplektuyushie_dlya_stankov",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Для салона красоты",
+          "slug": "dlya_salona_krasoty",
+          "children": [
+            {
+              "name": "Эпиляция",
+              "slug": "epiliaciia_2199153",
+              "children": [
+                {
+                  "name": "Лазерная эпиляция",
+                  "slug": "lazernaya_epilyaciya",
+                  "children": []
+                },
+                {
+                  "name": "Фотоэпиляция",
+                  "slug": "fotoepilyaciya",
+                  "children": []
+                },
+                {
+                  "name": "Электроэпиляция",
+                  "slug": "elektroepilyaciya",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и расходные материалы",
+                  "slug": "zapchasti_i_raskhodnye_materialy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Косметологическое",
+              "slug": "kosmetologiceskoe",
+              "children": [
+                {
+                  "name": "Аппараты плазменного омоложения",
+                  "slug": "apparaty_plazmennogo_omolozheniya",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для пилинга и чистки",
+                  "slug": "apparaty_dlya_pilinga_i_chistki",
+                  "children": []
+                },
+                {
+                  "name": "Косметологические комбайны",
+                  "slug": "kosmetologicheskie_kombainy",
+                  "children": []
+                },
+                {
+                  "name": "Лазерные аппараты для косметологии",
+                  "slug": "lazernye_apparaty_dlya_kosmetologii",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для мезотерапии и биоревитализации",
+                  "slug": "apparaty_dlya_mezoterapii_i_biorevitalizacii",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для физиотерапии",
+                  "slug": "apparaty_dlya_fizioterapii",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для SMAS-лифтинга",
+                  "slug": "apparaty_dlya_smas_liftinga",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и расходные материалы",
+                  "slug": "kosmetologiceskoe_zapchasti_i_raskhodnye_materialy",
+                  "children": []
+                },
+                {
+                  "name": "Косметологические кресла",
+                  "slug": "kosmetologicheskie_kresla",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для RF-лифтинга",
+                  "slug": "apparaty_dlya_rf_liftinga",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Тату и татуаж",
+              "slug": "tatu_i_tatuaz",
+              "children": [
+                {
+                  "name": "Аппараты для удаления тату",
+                  "slug": "apparaty_dlya_udaleniya_tatu",
+                  "children": []
+                },
+                {
+                  "name": "Тату-машинки и аксессуары",
+                  "slug": "tatu_mashinki_i_aksessuary",
+                  "children": []
+                },
+                {
+                  "name": "Холдеры",
+                  "slug": "kholdery",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Массаж и коррекция фигуры",
+              "slug": "massaz_i_korrekciia_figury",
+              "children": [
+                {
+                  "name": "Массажные столы и кушетки",
+                  "slug": "massazhnye_stoly_i_kushetki",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для лазерного липолиза",
+                  "slug": "apparaty_dlya_lazernogo_lipoliza",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для EMS и миостимуляции",
+                  "slug": "apparaty_dlya_ems_i_miostimulyacii",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для вибромассажа",
+                  "slug": "apparaty_dlya_vibromassazha",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для эндосфера-терапии",
+                  "slug": "apparaty_dlya_endosfera_terapii",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары для массажных процедур",
+                  "slug": "aksessuary_dlya_massazhnykh_procedur",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для прессотерапии",
+                  "slug": "apparaty_dlya_pressoterapii",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для криолиполиза",
+                  "slug": "apparaty_dlya_kriolipoliza",
+                  "children": []
+                },
+                {
+                  "name": "Вакуумно-роликовые аппараты",
+                  "slug": "vakuumno_rolikovye_apparaty",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для вакуумного массажа",
+                  "slug": "apparaty_dlya_vakuumnogo_massazha",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Маникюр и педикюр",
+              "slug": "manikiur_i_pedikiur",
+              "children": [
+                {
+                  "name": "Аппараты для маникюра и педикюра",
+                  "slug": "apparaty_dlya_manikyura_i_pedikyura",
+                  "children": []
+                },
+                {
+                  "name": "Стерилизаторы",
+                  "slug": "manikiur_i_pedikiur_sterilizatory",
+                  "children": []
+                },
+                {
+                  "name": "Маникюрные столы",
+                  "slug": "manikyurnye_stoly",
+                  "children": []
+                },
+                {
+                  "name": "Педикюрные кресла",
+                  "slug": "pedikyurnye_kresla",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и расходные материалы",
+                  "slug": "manikiur_i_pedikiur_zapchasti_i_raskhodnye_materialy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Парикмахерское",
+              "slug": "parikmaxerskoe",
+              "children": [
+                {
+                  "name": "Запчасти и расходные материалы",
+                  "slug": "parikmaxerskoe_zapchasti_i_raskhodnye_materialy",
+                  "children": []
+                },
+                {
+                  "name": "Парикмахерские кресла",
+                  "slug": "parikmakherskie_kresla",
+                  "children": []
+                },
+                {
+                  "name": "Климазоны и сушуары",
+                  "slug": "klimazony_i_sushuary",
+                  "children": []
+                },
+                {
+                  "name": "Парикмахерские мойки",
+                  "slug": "parikmakherskie_moiki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Инвентарь",
+              "slug": "inventar",
+              "children": [
+                {
+                  "name": "Лампы-лупы",
+                  "slug": "lampy_lupy",
+                  "children": []
+                },
+                {
+                  "name": "Зеркала",
+                  "slug": "zerkala_2199198",
+                  "children": []
+                },
+                {
+                  "name": "Кресла-реклайнеры",
+                  "slug": "kresla_reklainery",
+                  "children": []
+                },
+                {
+                  "name": "Тележки",
+                  "slug": "telezhki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Солярии",
+              "slug": "soliarii",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Пищевое",
+          "slug": "pishchevoe",
+          "children": [
+            {
+              "name": "Холодильное",
+              "slug": "xolodilnoe",
+              "children": [
+                {
+                  "name": "Холодильные моноблоки",
+                  "slug": "kholodilnye_monobloki",
+                  "children": []
+                },
+                {
+                  "name": "Льдогенераторы",
+                  "slug": "ldogeneratory",
+                  "children": []
+                },
+                {
+                  "name": "Морозильные лари",
+                  "slug": "morozilnye_lari",
+                  "children": []
+                },
+                {
+                  "name": "Холодильные горки",
+                  "slug": "kholodilnye_gorki",
+                  "children": []
+                },
+                {
+                  "name": "Холодильные столы",
+                  "slug": "kholodilnye_stoly",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и комплектующие",
+                  "slug": "zapchasti_i_komplektuyushie_2180326",
+                  "children": []
+                },
+                {
+                  "name": "Морозильные шкафы",
+                  "slug": "morozilnye_shkafy",
+                  "children": []
+                },
+                {
+                  "name": "Холодильные витрины",
+                  "slug": "kholodilnye_vitriny",
+                  "children": []
+                },
+                {
+                  "name": "Охладители",
+                  "slug": "okhladiteli",
+                  "children": []
+                },
+                {
+                  "name": "Холодильные камеры",
+                  "slug": "kholodilnye_kamery",
+                  "children": []
+                },
+                {
+                  "name": "Холодильные шкафы",
+                  "slug": "kholodilnye_shkafy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Нейтральное",
+              "slug": "neitralnoe",
+              "children": [
+                {
+                  "name": "Зонты вытяжные",
+                  "slug": "zonty_vytyazhnye",
+                  "children": []
+                },
+                {
+                  "name": "Столы",
+                  "slug": "stoly_2180351",
+                  "children": []
+                },
+                {
+                  "name": "Моечное оборудование",
+                  "slug": "moechnoe_oborudovanie",
+                  "children": []
+                },
+                {
+                  "name": "Стеллажи",
+                  "slug": "stellazhi_2180353",
+                  "children": []
+                },
+                {
+                  "name": "Полки",
+                  "slug": "neitralnoe_polki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Хлебопекарное",
+              "slug": "xlebopekarnoe",
+              "children": [
+                {
+                  "name": "Тестоокруглители",
+                  "slug": "testookrugliteli",
+                  "children": []
+                },
+                {
+                  "name": "Тестомесы",
+                  "slug": "testomesy",
+                  "children": []
+                },
+                {
+                  "name": "Тестораскаточные аппараты",
+                  "slug": "testoraskatochnye_apparaty",
+                  "children": []
+                },
+                {
+                  "name": "Тестоделители",
+                  "slug": "testodeliteli",
+                  "children": []
+                },
+                {
+                  "name": "Хлеборезки",
+                  "slug": "khleborezki",
+                  "children": []
+                },
+                {
+                  "name": "Мукопросеиватели",
+                  "slug": "mukoproseivateli",
+                  "children": []
+                },
+                {
+                  "name": "Ферментаторы",
+                  "slug": "fermentatory",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Электромеханическое",
+              "slug": "elektromexaniceskoe",
+              "children": [
+                {
+                  "name": "Шприцы колбасные",
+                  "slug": "shpricy_kolbasnye",
+                  "children": []
+                },
+                {
+                  "name": "Массажеры для мяса",
+                  "slug": "massazhery_dlya_myasa",
+                  "children": []
+                },
+                {
+                  "name": "Фаршемешалки",
+                  "slug": "farshemeshalki",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и комплектующие",
+                  "slug": "zapchasti_i_komplektuyushie_2180376",
+                  "children": []
+                },
+                {
+                  "name": "Мясорубки",
+                  "slug": "myasorubki",
+                  "children": []
+                },
+                {
+                  "name": "Слайсеры",
+                  "slug": "slaisery",
+                  "children": []
+                },
+                {
+                  "name": "Измельчители",
+                  "slug": "izmelchiteli",
+                  "children": []
+                },
+                {
+                  "name": "Овощечистки и рыбочистки",
+                  "slug": "ovoshechistki_i_rybochistki",
+                  "children": []
+                },
+                {
+                  "name": "Блендеры",
+                  "slug": "blendery",
+                  "children": []
+                },
+                {
+                  "name": "Миксеры",
+                  "slug": "miksery",
+                  "children": []
+                },
+                {
+                  "name": "Пельменные аппараты",
+                  "slug": "pelmennye_apparaty",
+                  "children": []
+                },
+                {
+                  "name": "Котлетоформовочные аппараты",
+                  "slug": "kotletoformovochnye_apparaty",
+                  "children": []
+                },
+                {
+                  "name": "Тендерайзеры",
+                  "slug": "tenderaizery",
+                  "children": []
+                },
+                {
+                  "name": "Овощерезки",
+                  "slug": "ovosherezki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Кухонный инвентарь",
+              "slug": "kuxonnyi_inventar",
+              "children": []
+            },
+            {
+              "name": "Тепловое",
+              "slug": "teplovoe",
+              "children": [
+                {
+                  "name": "Дегидраторы",
+                  "slug": "degidratory",
+                  "children": []
+                },
+                {
+                  "name": "Пищеварочные котлы",
+                  "slug": "pishevarochnye_kotly",
+                  "children": []
+                },
+                {
+                  "name": "Печи",
+                  "slug": "pechi",
+                  "children": []
+                },
+                {
+                  "name": "Блинницы",
+                  "slug": "blinnicy",
+                  "children": []
+                },
+                {
+                  "name": "Фритюрницы",
+                  "slug": "frityurnicy",
+                  "children": []
+                },
+                {
+                  "name": "Грили",
+                  "slug": "grili",
+                  "children": []
+                },
+                {
+                  "name": "Макароноварки",
+                  "slug": "makaronovarki",
+                  "children": []
+                },
+                {
+                  "name": "Тостеры",
+                  "slug": "tostery",
+                  "children": []
+                },
+                {
+                  "name": "Тепловые шкафы",
+                  "slug": "teplovye_shkafy",
+                  "children": []
+                },
+                {
+                  "name": "Аппараты для ваты и попкорна",
+                  "slug": "apparaty_dlya_vaty_i_popkorna",
+                  "children": []
+                },
+                {
+                  "name": "Кипятильники",
+                  "slug": "kipyatilniki",
+                  "children": []
+                },
+                {
+                  "name": "Рисоварки",
+                  "slug": "risovarki",
+                  "children": []
+                },
+                {
+                  "name": "Пароконвектоматы",
+                  "slug": "parokonvektomaty",
+                  "children": []
+                },
+                {
+                  "name": "Мармиты",
+                  "slug": "marmity",
+                  "children": []
+                },
+                {
+                  "name": "Коптильни",
+                  "slug": "koptilni",
+                  "children": []
+                },
+                {
+                  "name": "Плиты",
+                  "slug": "plity",
+                  "children": []
+                },
+                {
+                  "name": "Подогреватели",
+                  "slug": "podogrevateli",
+                  "children": []
+                },
+                {
+                  "name": "Вафельницы",
+                  "slug": "vafelnicy",
+                  "children": []
+                },
+                {
+                  "name": "Тепловые витрины",
+                  "slug": "teplovye_vitriny",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти и комплектующие",
+                  "slug": "zapchasti_i_komplektuyushie_2274473",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Для производства напитков",
+              "slug": "dlia_proizvodstva_napitkov",
+              "children": [
+                {
+                  "name": "Кофемашины",
+                  "slug": "kofemashiny",
+                  "children": []
+                },
+                {
+                  "name": "Пивоваренное оборудование",
+                  "slug": "pivovarennoe_oborudovanie",
+                  "children": []
+                },
+                {
+                  "name": "Соковыжималки",
+                  "slug": "sokovyzhimalki",
+                  "children": []
+                },
+                {
+                  "name": "Граниторы",
+                  "slug": "granitory",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Другое",
+          "slug": "drugoe_354",
+          "children": []
+        },
+        {
+          "name": "Майнинг",
+          "slug": "maining",
+          "children": [
+            {
+              "name": "Asic-майнеры",
+              "slug": "asic_mainery",
+              "children": []
+            },
+            {
+              "name": "Комплектующие",
+              "slug": "komplektuyushie_asic",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Медицинское",
+          "slug": "medicinskoe",
+          "children": [
+            {
+              "name": "Мебель",
+              "slug": "mebel",
+              "children": []
+            },
+            {
+              "name": "Эндоскопия",
+              "slug": "endoskopiya",
+              "children": []
+            },
+            {
+              "name": "Функциональная диагностика",
+              "slug": "funkcionalnaya_diagnostika",
+              "children": []
+            },
+            {
+              "name": "Стерилизация",
+              "slug": "sterilizaciya",
+              "children": []
+            },
+            {
+              "name": "УЗИ",
+              "slug": "uzi",
+              "children": []
+            },
+            {
+              "name": "Физиотерапия и реабилитация",
+              "slug": "fizioterapiya_i_reabilitaciya",
+              "children": []
+            },
+            {
+              "name": "Хирургия",
+              "slug": "khirurgiya",
+              "children": []
+            },
+            {
+              "name": "Оториноларингология",
+              "slug": "otorinolaringologiya",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "medicinskoe_drugoe",
+              "children": []
+            },
+            {
+              "name": "Стоматология",
+              "slug": "stomatologiya",
+              "children": []
+            },
+            {
+              "name": "Офтальмология",
+              "slug": "oftalmologiya",
+              "children": []
+            },
+            {
+              "name": "Расходные материалы",
+              "slug": "raskhodnye_materialy",
+              "children": []
+            },
+            {
+              "name": "Гинекология",
+              "slug": "ginekologiya",
+              "children": []
+            },
+            {
+              "name": "Фармацевтические холодильники",
+              "slug": "farmacevticheskie_kholodilniki",
+              "children": []
+            },
+            {
+              "name": "Анестезиология и реанимация",
+              "slug": "anesteziologiya_i_reanimaciya",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Лабораторное",
+          "slug": "laboratornoe",
+          "children": [
+            {
+              "name": "Микроскопы",
+              "slug": "mikroskopy",
+              "children": []
+            },
+            {
+              "name": "Муфельные печи",
+              "slug": "mufelnye_pechi",
+              "children": []
+            },
+            {
+              "name": "Стерилизаторы",
+              "slug": "sterilizatory",
+              "children": []
+            },
+            {
+              "name": "Весы",
+              "slug": "vesy",
+              "children": []
+            },
+            {
+              "name": "Аналитическое",
+              "slug": "analiticheskoe",
+              "children": []
+            },
+            {
+              "name": "Расходные материалы",
+              "slug": "laboratornoe_raskhodnye_materialy",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "laboratornoe_drugoe",
+              "children": []
+            },
+            {
+              "name": "Центрифуги",
+              "slug": "centrifugi",
+              "children": []
+            },
+            {
+              "name": "Измерительное",
+              "slug": "izmeritelnoe",
+              "children": []
+            },
+            {
+              "name": "Общелабораторное",
+              "slug": "obshelaboratornoe",
+              "children": []
+            },
+            {
+              "name": "Мебель",
+              "slug": "laboratornoe_mebel",
+              "children": []
+            },
+            {
+              "name": "Запчасти",
+              "slug": "laboratornoe_zapchasti",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Телекоммуникационное",
+          "slug": "telekommunikacionnoe",
+          "children": []
+        },
+        {
+          "name": "Торговое",
+          "slug": "torgovoe",
+          "children": [
+            {
+              "name": "Рекламное",
+              "slug": "reklamnoe_2171439",
+              "children": [
+                {
+                  "name": "Бегущие строки",
+                  "slug": "begushie_stroki",
+                  "children": []
+                },
+                {
+                  "name": "Информационные стенды и доски",
+                  "slug": "informacionnye_stendy_i_doski",
+                  "children": []
+                },
+                {
+                  "name": "Проекторы",
+                  "slug": "reklamnoe_2171439_proektory",
+                  "children": []
+                },
+                {
+                  "name": "Баннеры и билборды",
+                  "slug": "bannery_i_bilbordy",
+                  "children": []
+                },
+                {
+                  "name": "Вывески",
+                  "slug": "vyveski",
+                  "children": []
+                },
+                {
+                  "name": "Видеоэкраны",
+                  "slug": "videoekrany",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Павильоны и фудтраки",
+              "slug": "pavilyony_i_fudtraki",
+              "children": [
+                {
+                  "name": "Фудтраки и автолавки",
+                  "slug": "fudtraki_i_avtolavki",
+                  "children": []
+                },
+                {
+                  "name": "Павильоны",
+                  "slug": "pavilony",
+                  "children": []
+                },
+                {
+                  "name": "Шатры",
+                  "slug": "shatry",
+                  "children": []
+                },
+                {
+                  "name": "Киоски",
+                  "slug": "kioski",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Вендинговые и торговые аппараты",
+              "slug": "vendingovye_i_torgovye_apparaty",
+              "children": []
+            },
+            {
+              "name": "Развлекательное",
+              "slug": "razvlekatelnoe_2171442",
+              "children": [
+                {
+                  "name": "Аттракционы",
+                  "slug": "attrakciony_razvlekatelnoe",
+                  "children": []
+                },
+                {
+                  "name": "Батуты",
+                  "slug": "batuty",
+                  "children": []
+                },
+                {
+                  "name": "Инвентарь",
+                  "slug": "razvlekatelnoe_2171442_inventar",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Торговый инвентарь",
+              "slug": "torgovyi_inventar",
+              "children": [
+                {
+                  "name": "Покупательские корзины и тележки",
+                  "slug": "pokupatelskie_korziny_i_telezhki",
+                  "children": []
+                },
+                {
+                  "name": "Канцелярия",
+                  "slug": "kancelyariya",
+                  "children": []
+                },
+                {
+                  "name": "Аквариумы",
+                  "slug": "akvariumy",
+                  "children": []
+                },
+                {
+                  "name": "Зеркала",
+                  "slug": "zerkala_2177773",
+                  "children": []
+                },
+                {
+                  "name": "Торговые весы",
+                  "slug": "torgovye_vesy",
+                  "children": []
+                },
+                {
+                  "name": "Освещение",
+                  "slug": "torgovyi_inventar_osveshenie",
+                  "children": []
+                },
+                {
+                  "name": "Манекены",
+                  "slug": "manekeny",
+                  "children": []
+                },
+                {
+                  "name": "Вешалки",
+                  "slug": "veshalki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2171444",
+              "children": []
+            },
+            {
+              "name": "Мебель",
+              "slug": "mebel_2171445",
+              "children": [
+                {
+                  "name": "Комплекты",
+                  "slug": "mebel_2171445_komplekty",
+                  "children": []
+                },
+                {
+                  "name": "Шкафы",
+                  "slug": "shkafy_2177744",
+                  "children": []
+                },
+                {
+                  "name": "Диваны",
+                  "slug": "divany_2177745",
+                  "children": []
+                },
+                {
+                  "name": "Кресла",
+                  "slug": "mebel_2171445_kresla",
+                  "children": []
+                },
+                {
+                  "name": "Прилавки",
+                  "slug": "prilavki",
+                  "children": []
+                },
+                {
+                  "name": "Сейфы",
+                  "slug": "seify",
+                  "children": []
+                },
+                {
+                  "name": "Кассовые боксы",
+                  "slug": "kassovye_boksy",
+                  "children": []
+                },
+                {
+                  "name": "Барные стойки",
+                  "slug": "barnye_stoiki",
+                  "children": []
+                },
+                {
+                  "name": "Столы",
+                  "slug": "stoly_2177751",
+                  "children": []
+                },
+                {
+                  "name": "Витрины",
+                  "slug": "vitriny",
+                  "children": []
+                },
+                {
+                  "name": "Торговые островки",
+                  "slug": "torgovye_ostrovki",
+                  "children": []
+                },
+                {
+                  "name": "Ресепшены",
+                  "slug": "resepsheny",
+                  "children": []
+                },
+                {
+                  "name": "Панели и фурнитура",
+                  "slug": "paneli_i_furnitura",
+                  "children": []
+                },
+                {
+                  "name": "Перегородки",
+                  "slug": "mebel_2171445_peregorodki",
+                  "children": []
+                },
+                {
+                  "name": "Стулья",
+                  "slug": "stulya_2177757",
+                  "children": []
+                },
+                {
+                  "name": "Полки",
+                  "slug": "mebel_2171445_polki",
+                  "children": []
+                },
+                {
+                  "name": "Стеллажи",
+                  "slug": "stellazhi_2177759",
+                  "children": []
+                },
+                {
+                  "name": "Тумбы и подставки",
+                  "slug": "tumby_i_podstavki",
+                  "children": []
+                },
+                {
+                  "name": "Торговые стойки",
+                  "slug": "torgovye_stoiki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Расчетно-кассовое",
+              "slug": "rascetno_kassovoe_2171446",
+              "children": [
+                {
+                  "name": "Сканеры",
+                  "slug": "skanery",
+                  "children": []
+                },
+                {
+                  "name": "Кассовое ПО",
+                  "slug": "kassovoe_po",
+                  "children": []
+                },
+                {
+                  "name": "Принтеры",
+                  "slug": "printery",
+                  "children": []
+                },
+                {
+                  "name": "Расходные материалы и аксессуары",
+                  "slug": "raskhodnye_materialy_i_aksessuary",
+                  "children": []
+                },
+                {
+                  "name": "Фискальные накопители",
+                  "slug": "fiskalnye_nakopiteli",
+                  "children": []
+                },
+                {
+                  "name": "POS-моноблоки и мониторы",
+                  "slug": "pos_monobloki_i_monitory",
+                  "children": []
+                },
+                {
+                  "name": "Денежные ящики",
+                  "slug": "denezhnye_yashiki",
+                  "children": []
+                },
+                {
+                  "name": "Счетчики и сортировщики",
+                  "slug": "schetchiki_i_sortirovshiki",
+                  "children": []
+                },
+                {
+                  "name": "Детекторы банкнот",
+                  "slug": "detektory_banknot",
+                  "children": []
+                },
+                {
+                  "name": "Контрольно-кассовые аппараты",
+                  "slug": "kontrolno_kassovye_apparaty",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Готовый бизнес",
+      "slug": "gotovyj_biznes",
+      "children": [
+        {
+          "name": "Производство",
+          "slug": "proizvodstvo_763",
+          "children": [
+            {
+              "name": "Автомобильное производство",
+              "slug": "avtomobilnoe_proizvodstvo",
+              "children": []
+            },
+            {
+              "name": "Деревообрабатывающее производство",
+              "slug": "derevoobrabatyvayushee_proizvodstvo",
+              "children": []
+            },
+            {
+              "name": "Добыча и обработка природных ресурсов",
+              "slug": "dobycha_i_obrabotka_prirodnykh_resursov_i",
+              "children": []
+            },
+            {
+              "name": "Мебельное производство",
+              "slug": "mebelnoe_proizvodstvo",
+              "children": []
+            },
+            {
+              "name": "Металлообрабатывающее производство",
+              "slug": "metalloobrabatyvayushee_proizvodstvo",
+              "children": []
+            },
+            {
+              "name": "Переработка и утилизация",
+              "slug": "pererabotka_i_utilizaciya",
+              "children": []
+            },
+            {
+              "name": "Пищевое производство",
+              "slug": "pishevoe_proizvodstvo",
+              "children": []
+            },
+            {
+              "name": "Производство строительных материалов",
+              "slug": "proizvodstvo_stroitelnykh_materialov",
+              "children": []
+            },
+            {
+              "name": "Производство товаров",
+              "slug": "proizvodstvo_tovarov",
+              "children": []
+            },
+            {
+              "name": "Текстильное производство",
+              "slug": "tekstilnoe_proizvodstvo",
+              "children": []
+            },
+            {
+              "name": "Химическое производство",
+              "slug": "khimicheskoe_proizvodstvo",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "IT бизнес",
+          "slug": "it_biznes",
+          "children": [
+            {
+              "name": "Интернет-ресурсы",
+              "slug": "internet_resursy",
+              "children": []
+            },
+            {
+              "name": "Майнинг",
+              "slug": "maining_it",
+              "children": []
+            },
+            {
+              "name": "Разработка",
+              "slug": "razrabotka",
+              "children": []
+            },
+            {
+              "name": "Сайты и приложения",
+              "slug": "saity_i_prilozheniya",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Другое",
+          "slug": "drugoe_765",
+          "children": []
+        },
+        {
+          "name": "Торговля",
+          "slug": "torgovlia",
+          "children": [
+            {
+              "name": "Автомобильные магазины",
+              "slug": "avtomobilnye_magaziny_2301462",
+              "children": []
+            },
+            {
+              "name": "Алкогольные магазины",
+              "slug": "alkogolnye_magaziny_2301454",
+              "children": []
+            },
+            {
+              "name": "Вендинговые автоматы",
+              "slug": "vendingovye_avtomaty_magaziny",
+              "children": []
+            },
+            {
+              "name": "Детские магазины",
+              "slug": "detskie_magaziny_2301461",
+              "children": []
+            },
+            {
+              "name": "Для дома и офиса",
+              "slug": "dlya_doma_i_ofisa_2301456",
+              "children": []
+            },
+            {
+              "name": "Зоомагазины",
+              "slug": "zoomagaziny_2301459",
+              "children": []
+            },
+            {
+              "name": "Интернет магазины и маркетплейсы",
+              "slug": "internet_magaziny_i_marketpleisy_2301463",
+              "children": []
+            },
+            {
+              "name": "Косметические магазины",
+              "slug": "kosmeticheskie_magaziny_2301466",
+              "children": []
+            },
+            {
+              "name": "Одежда, обувь, аксессуары",
+              "slug": "odezhda_obuv_aksessuary_2301465",
+              "children": []
+            },
+            {
+              "name": "Продуктовые магазины",
+              "slug": "produktovye_magaziny_2301455",
+              "children": []
+            },
+            {
+              "name": "Табачные магазины",
+              "slug": "tabachnye_magaziny_2301467",
+              "children": []
+            },
+            {
+              "name": "Техника и электроника",
+              "slug": "tekhnika_i_elektronika_2301457",
+              "children": []
+            },
+            {
+              "name": "Универсальные магазины",
+              "slug": "universalnye_magaziny_2301464",
+              "children": []
+            },
+            {
+              "name": "Цветочные магазины",
+              "slug": "cvetochnye_magaziny_2301460",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Сфера услуг",
+          "slug": "sfera_uslug_767",
+          "children": [
+            {
+              "name": "Агентства недвижимости",
+              "slug": "agentstva_nedvizhimosti",
+              "children": []
+            },
+            {
+              "name": "Бытовые услуги",
+              "slug": "sfera_uslug_767_bytovye_uslugi",
+              "children": []
+            },
+            {
+              "name": "Готовые юр.лица",
+              "slug": "gotovye_yur_lica_yur",
+              "children": []
+            },
+            {
+              "name": "Деловые услуги",
+              "slug": "sfera_uslug_767_delovye_uslugi",
+              "children": []
+            },
+            {
+              "name": "Образование",
+              "slug": "obrazovanie",
+              "children": []
+            },
+            {
+              "name": "Перевозки и склад",
+              "slug": "perevozki_i_sklad",
+              "children": []
+            },
+            {
+              "name": "Реклама и печать",
+              "slug": "reklama_i_pechat",
+              "children": []
+            },
+            {
+              "name": "Ремонт и обслуживание техники",
+              "slug": "remont_i_obsluzhivanie_tekhniki",
+              "children": []
+            },
+            {
+              "name": "Специализированные услуги",
+              "slug": "specializirovannye_uslugi",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Строительство",
+          "slug": "stroitelstvo_768",
+          "children": [
+            {
+              "name": "Ремонт и отделка",
+              "slug": "remont_i_otdelka_2301929",
+              "children": []
+            },
+            {
+              "name": "Строительный бизнес",
+              "slug": "stroitelnyi_biznes_2301930",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Сельское хозяйство",
+          "slug": "selskoe_xoziaistvo",
+          "children": [
+            {
+              "name": "Растениеводство",
+              "slug": "rastenievodstvo_2301844",
+              "children": []
+            },
+            {
+              "name": "Животноводство",
+              "slug": "zhivotnovodstvo_2301846",
+              "children": []
+            },
+            {
+              "name": "Рыбоводство",
+              "slug": "rybovodstvo_2301845",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Сфера развлечений",
+          "slug": "sfera_razvlecenii_770",
+          "children": [
+            {
+              "name": "Спорт и активный отдых",
+              "slug": "sport_i_aktivnyi_otdykh",
+              "children": []
+            },
+            {
+              "name": "Виртуальная реальность",
+              "slug": "virtualnaya_realnost",
+              "children": []
+            },
+            {
+              "name": "Компьютерные клубы",
+              "slug": "kompyuternye_kluby",
+              "children": []
+            },
+            {
+              "name": "Развлечения для детей",
+              "slug": "razvlecheniya_dlya_detei",
+              "children": []
+            },
+            {
+              "name": "Досуг и творчество",
+              "slug": "dosug_i_tvorchestvo",
+              "children": []
+            },
+            {
+              "name": "Ночные и караоке клубы",
+              "slug": "nochnye_i_karaoke_kluby",
+              "children": []
+            },
+            {
+              "name": "Аттракционы",
+              "slug": "attrakciony",
+              "children": []
+            },
+            {
+              "name": "Культура и просвещение",
+              "slug": "kultura_i_prosveshenie",
+              "children": []
+            },
+            {
+              "name": "Бани и сауны",
+              "slug": "bani_i_sauny",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Общественное питание",
+          "slug": "obshhestvennoe_pitanie",
+          "children": [
+            {
+              "name": "Бары",
+              "slug": "bary_i",
+              "children": []
+            },
+            {
+              "name": "Кальянные",
+              "slug": "kalyannye",
+              "children": []
+            },
+            {
+              "name": "Кондитерские и пекарни",
+              "slug": "konditerskie_i_pekarni",
+              "children": []
+            },
+            {
+              "name": "Кофейни",
+              "slug": "kofeini",
+              "children": []
+            },
+            {
+              "name": "Рестораны и кафе",
+              "slug": "restorany_i_kafe",
+              "children": []
+            },
+            {
+              "name": "Фастфуд",
+              "slug": "fastfud",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Автобизнес",
+          "slug": "avtobiznes",
+          "children": [
+            {
+              "name": "Автостоянки",
+              "slug": "avtostoyanki",
+              "children": []
+            },
+            {
+              "name": "Автосервис",
+              "slug": "avtoservis",
+              "children": []
+            },
+            {
+              "name": "Автоуслуги",
+              "slug": "avtouslugi",
+              "children": []
+            },
+            {
+              "name": "АЗС и ЭЗС",
+              "slug": "azs_i_ezs",
+              "children": []
+            },
+            {
+              "name": "Шиномонтаж",
+              "slug": "shinomontazh",
+              "children": []
+            },
+            {
+              "name": "Автомойки и детейлинг",
+              "slug": "avtomoiki_i_deteiling",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Красота и здоровье",
+          "slug": "krasota_i_zdorove_1210564",
+          "children": [
+            {
+              "name": "Аптеки и оптики",
+              "slug": "apteki_i_optiki",
+              "children": []
+            },
+            {
+              "name": "Косметологии",
+              "slug": "kosmetologii",
+              "children": []
+            },
+            {
+              "name": "Медицинские центры",
+              "slug": "medicinskie_centry",
+              "children": []
+            },
+            {
+              "name": "Парикмахерские и барбершопы",
+              "slug": "parikmakherskie_i_barbershopy",
+              "children": []
+            },
+            {
+              "name": "Салоны красоты",
+              "slug": "salony_krasoty",
+              "children": []
+            },
+            {
+              "name": "Стоматологии",
+              "slug": "stomatologii",
+              "children": []
+            },
+            {
+              "name": "Студии маникюра",
+              "slug": "studii_manikyura",
+              "children": []
+            },
+            {
+              "name": "Студии массажа",
+              "slug": "studii_massazha",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Туризм",
+          "slug": "turizm_1210566",
+          "children": [
+            {
+              "name": "Туристические базы",
+              "slug": "turisticheskie_bazy",
+              "children": []
+            },
+            {
+              "name": "Туристические агентства",
+              "slug": "turisticheskie_agentstva",
+              "children": []
+            },
+            {
+              "name": "Гостиницы и отели",
+              "slug": "gostinicy_i_oteli",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Франшизы",
+          "slug": "fransizy",
+          "children": [
+            {
+              "name": "Красота и здоровье",
+              "slug": "krasota_i_zdorove_2242397",
+              "children": [
+                {
+                  "name": "Аптеки и оптики",
+                  "slug": "apteki_i_optiki_2301003",
+                  "children": []
+                },
+                {
+                  "name": "Косметологии",
+                  "slug": "kosmetologii_2301004",
+                  "children": []
+                },
+                {
+                  "name": "Медицинские центры",
+                  "slug": "medicinskie_centry_2301005",
+                  "children": []
+                },
+                {
+                  "name": "Парикмахерские и барбершопы",
+                  "slug": "parikmakherskie_i_barbershopy_2301006",
+                  "children": []
+                },
+                {
+                  "name": "Салоны красоты",
+                  "slug": "salony_krasoty_2300999",
+                  "children": []
+                },
+                {
+                  "name": "Стоматологии",
+                  "slug": "stomatologii_2301000",
+                  "children": []
+                },
+                {
+                  "name": "Студии маникюра",
+                  "slug": "studii_manikyura_2301001",
+                  "children": []
+                },
+                {
+                  "name": "Студии массажа",
+                  "slug": "studii_massazha_2301002",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Производство",
+              "slug": "proizvodstvo_2242398",
+              "children": [
+                {
+                  "name": "Автомобильное производство",
+                  "slug": "avtomobilnoe_proizvodstvo_2300524",
+                  "children": []
+                },
+                {
+                  "name": "Деревообрабатывающее производство",
+                  "slug": "derevoobrabatyvayushee_proizvodstvo_2300525",
+                  "children": []
+                },
+                {
+                  "name": "Мебельное производство",
+                  "slug": "mebelnoe_proizvodstvo_2300526",
+                  "children": []
+                },
+                {
+                  "name": "Пищевое производство",
+                  "slug": "pishevoe_proizvodstvo_2300527",
+                  "children": []
+                },
+                {
+                  "name": "Производство строительных материалов",
+                  "slug": "proizvodstvo_stroitelnykh_materialov_2300521",
+                  "children": []
+                },
+                {
+                  "name": "Производство товаров",
+                  "slug": "proizvodstvo_tovarov_2300522",
+                  "children": []
+                },
+                {
+                  "name": "Химическое производство",
+                  "slug": "khimicheskoe_proizvodstvo_2300523",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "IT бизнес",
+              "slug": "it_biznes_2242399",
+              "children": [
+                {
+                  "name": "Интернет-сервисы",
+                  "slug": "internet_servisy_2301694",
+                  "children": []
+                },
+                {
+                  "name": "Разработка",
+                  "slug": "razrabotka_2301695",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Арендный бизнес",
+              "slug": "arendnyi_biznes_2242400",
+              "children": [
+                {
+                  "name": "Аренда недвижимости",
+                  "slug": "arenda_nedvizhimosti_2301841",
+                  "children": []
+                },
+                {
+                  "name": "Аренда спецтехники",
+                  "slug": "arenda_spectekhniki_2301842",
+                  "children": []
+                },
+                {
+                  "name": "Прокатные компании",
+                  "slug": "prokatnye_kompanii_2301843",
+                  "children": []
+                },
+                {
+                  "name": "Таксопарки и автопрокат",
+                  "slug": "taksoparki_i_avtoprokat_2301840",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Общественное питание",
+              "slug": "obshhestvennoe_pitanie_2242401",
+              "children": [
+                {
+                  "name": "Бары",
+                  "slug": "bary_2278309",
+                  "children": []
+                },
+                {
+                  "name": "Кальянные",
+                  "slug": "kalyannye_2278312",
+                  "children": []
+                },
+                {
+                  "name": "Кондитерские и пекарни",
+                  "slug": "konditerskie_i_pekarni_2278311",
+                  "children": []
+                },
+                {
+                  "name": "Кофейни",
+                  "slug": "kofeini_2278307",
+                  "children": []
+                },
+                {
+                  "name": "Рестораны и кафе",
+                  "slug": "restorany_i_kafe_2278308",
+                  "children": []
+                },
+                {
+                  "name": "Фастфуд",
+                  "slug": "fastfud_2278310",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Строительство",
+              "slug": "stroitelstvo_2242402",
+              "children": [
+                {
+                  "name": "Строительный бизнес",
+                  "slug": "stroitelnyi_biznes_2301931",
+                  "children": []
+                },
+                {
+                  "name": "Ремонт и отделка",
+                  "slug": "remont_i_otdelka_2301932",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Сфера услуг",
+              "slug": "sfera_uslug",
+              "children": [
+                {
+                  "name": "Агентства недвижимости",
+                  "slug": "agentstva_nedvizhimosti_2301084",
+                  "children": []
+                },
+                {
+                  "name": "Бытовые услуги",
+                  "slug": "bytovye_uslugi_2301085",
+                  "children": []
+                },
+                {
+                  "name": "Деловые услуги",
+                  "slug": "delovye_uslugi_2301086",
+                  "children": []
+                },
+                {
+                  "name": "Образование",
+                  "slug": "obrazovanie_2301079",
+                  "children": []
+                },
+                {
+                  "name": "Перевозки и склад",
+                  "slug": "perevozki_i_sklad_2301080",
+                  "children": []
+                },
+                {
+                  "name": "Реклама и печать",
+                  "slug": "reklama_i_pechat_2301081",
+                  "children": []
+                },
+                {
+                  "name": "Ремонт и обслуживание техники",
+                  "slug": "remont_i_obsluzhivanie_tekhniki_2301082",
+                  "children": []
+                },
+                {
+                  "name": "Специализированные услуги",
+                  "slug": "specializirovannye_uslugi_2301083",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Торговля",
+              "slug": "torgovlia_2242404",
+              "children": [
+                {
+                  "name": "Автомобильные магазины",
+                  "slug": "avtomobilnye_magaziny_2301472",
+                  "children": []
+                },
+                {
+                  "name": "Алкогольные магазины",
+                  "slug": "alkogolnye_magaziny_2301478",
+                  "children": []
+                },
+                {
+                  "name": "Вендинговые автоматы",
+                  "slug": "vendingovye_avtomaty_2301481",
+                  "children": []
+                },
+                {
+                  "name": "Детские магазины",
+                  "slug": "detskie_magaziny_2301476",
+                  "children": []
+                },
+                {
+                  "name": "Для дома и офиса",
+                  "slug": "dlya_doma_i_ofisa_2301469",
+                  "children": []
+                },
+                {
+                  "name": "Зоомагазины",
+                  "slug": "zoomagaziny_2301479",
+                  "children": []
+                },
+                {
+                  "name": "Косметические магазины",
+                  "slug": "kosmeticheskie_magaziny_2301480",
+                  "children": []
+                },
+                {
+                  "name": "Одежда, обувь, аксессуары",
+                  "slug": "odezhda_obuv_aksessuary_2301473",
+                  "children": []
+                },
+                {
+                  "name": "Продуктовые магазины",
+                  "slug": "produktovye_magaziny_2301470",
+                  "children": []
+                },
+                {
+                  "name": "Табачные магазины",
+                  "slug": "tabachnye_magaziny_2301471",
+                  "children": []
+                },
+                {
+                  "name": "Техника и электроника",
+                  "slug": "tekhnika_i_elektronika_2301477",
+                  "children": []
+                },
+                {
+                  "name": "Универсальные магазины",
+                  "slug": "universalnye_magaziny_2301474",
+                  "children": []
+                },
+                {
+                  "name": "Цветочные магазины",
+                  "slug": "cvetochnye_magaziny_2301475",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Автобизнес",
+              "slug": "avtobiznes_2242405",
+              "children": [
+                {
+                  "name": "Автомойки и детейлинг",
+                  "slug": "avtomoiki_i_deteiling_2300124",
+                  "children": []
+                },
+                {
+                  "name": "Автосервис",
+                  "slug": "avtoservis_2300125",
+                  "children": []
+                },
+                {
+                  "name": "Автоуслуги",
+                  "slug": "avtouslugi_2300126",
+                  "children": []
+                },
+                {
+                  "name": "АЗС и ЭЗС",
+                  "slug": "azs_i_ezs_2300127",
+                  "children": []
+                },
+                {
+                  "name": "Шиномонтаж",
+                  "slug": "shinomontazh_2300128",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Пункты выдачи заказов",
+              "slug": "punkty_vydaci_zakazov_2242406",
+              "children": []
+            },
+            {
+              "name": "Сельское хозяйство",
+              "slug": "selskoe_xoziaistvo_2242407",
+              "children": []
+            },
+            {
+              "name": "Сфера развлечений",
+              "slug": "sfera_razvlecenii_2242408",
+              "children": [
+                {
+                  "name": "Аттракционы",
+                  "slug": "attrakciony_2301761",
+                  "children": []
+                },
+                {
+                  "name": "Виртуальная реальность",
+                  "slug": "virtualnaya_realnost_2301762",
+                  "children": []
+                },
+                {
+                  "name": "Ночные и караоке клубы",
+                  "slug": "nochnye_i_karaoke_kluby_2301763",
+                  "children": []
+                },
+                {
+                  "name": "Развлечения для детей",
+                  "slug": "razvlecheniya_dlya_detei_2301764",
+                  "children": []
+                },
+                {
+                  "name": "Компьютерные клубы",
+                  "slug": "kompyuternye_kluby_2301765",
+                  "children": []
+                },
+                {
+                  "name": "Досуг и творчество",
+                  "slug": "dosug_i_tvorchestvo_2301766",
+                  "children": []
+                },
+                {
+                  "name": "Культура и просвещение",
+                  "slug": "kultura_i_prosveshenie_2301767",
+                  "children": []
+                },
+                {
+                  "name": "Спорт и активный отдых",
+                  "slug": "sport_i_aktivnyi_otdykh_2301768",
+                  "children": []
+                },
+                {
+                  "name": "Бани и сауны",
+                  "slug": "bani_i_sauny_2301769",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Туризм",
+              "slug": "turizm_2242409",
+              "children": [
+                {
+                  "name": "Гостиницы и отели",
+                  "slug": "gostinicy_i_oteli_2301896",
+                  "children": []
+                },
+                {
+                  "name": "Туристические агентства",
+                  "slug": "turisticheskie_agentstva_2301897",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Арендный бизнес",
+          "slug": "arendnyi_biznes",
+          "children": [
+            {
+              "name": "Аренда недвижимости",
+              "slug": "arenda_nedvizhimosti",
+              "children": []
+            },
+            {
+              "name": "Аренда спецтехники",
+              "slug": "arenda_spectekhniki",
+              "children": []
+            },
+            {
+              "name": "Прокатные компании",
+              "slug": "prokatnye_kompanii",
+              "children": []
+            },
+            {
+              "name": "Таксопарки и автопрокат",
+              "slug": "taksoparki_i_avtoprokat",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Пункты выдачи заказов",
+          "slug": "punkty_vydaci_zakazov",
+          "children": []
+        },
+        {
+          "name": "ПО для бизнеса",
+          "slug": "po_dlya_biznesa",
+          "children": [
+            {
+              "name": "Аналитика",
+              "slug": "analitika",
+              "children": []
+            },
+            {
+              "name": "Безопасность",
+              "slug": "bezopasnost",
+              "children": []
+            },
+            {
+              "name": "Закупки, склад, логистика",
+              "slug": "zakupki_sklad_logistika",
+              "children": []
+            },
+            {
+              "name": "Отраслевое ПО",
+              "slug": "otraslevoe_po",
+              "children": []
+            },
+            {
+              "name": "Офисное ПО",
+              "slug": "ofisnoe_po",
+              "children": []
+            },
+            {
+              "name": "Продажи и маркетинг",
+              "slug": "prodazhi_i_marketing",
+              "children": []
+            },
+            {
+              "name": "Управление персоналом и обучение",
+              "slug": "upravlenie_personalom_i_obuchenie",
+              "children": []
+            },
+            {
+              "name": "Управление предприятием и производством",
+              "slug": "upravlenie_predpriyatiem_i_proizvodstvom",
+              "children": []
+            },
+            {
+              "name": "Управление IT инфраструктурой",
+              "slug": "upravlenie_it_infrastrukturoi",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
