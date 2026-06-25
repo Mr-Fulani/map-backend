@@ -651,18 +651,16 @@ class TestPublishListingTask:
             status=Listing.STATUS_QUEUED, external_id='OLD-AVITO-ID',
         )
 
-        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.cache') as mock_cache, \
-             patch('apps.marketplaces.tasks.poll_feed_results_task') as mock_poll:
+        with patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
             mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
             mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
-            mock_cls.return_value.is_autoload_active.return_value = True
-            mock_poll.apply_async = MagicMock()
             publish_listing_task(listing.pk)
 
         listing.refresh_from_db()
+        assert listing.external_id is None
         assert listing.status == Listing.STATUS_PENDING
-        mock_cls.return_value.flush_feed.assert_called_once()
+        mock_flush.delay.assert_called_once_with(account.pk)
 
     def test_publish_idempotency(self):
         """Активное объявление (external_id + status=active) повторно не публикуется."""
@@ -679,28 +677,23 @@ class TestPublishListingTask:
             publish_listing_task(listing.pk)
             mock_adapter.return_value.flush_feed.assert_not_called()
 
-    def test_publish_sets_pending_status_after_feed_upload(self):
-        """После успешного flush_feed статус становится PENDING."""
+    def test_publish_sets_pending_and_requests_flush(self):
+        """Публикация помечает «На модерации Авито» и отдаёт фид координатору окна."""
         from apps.marketplaces.tasks import publish_listing_task
         tenant = make_tenant('pending-co')
         account = make_account(tenant)
         product = make_product(tenant)
         listing = make_listing(tenant, product, account)
 
-        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.cache') as mock_cache, \
-             patch('apps.marketplaces.tasks.poll_feed_results_task') as mock_poll:
+        with patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
             mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
             mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
-            mock_cache.get.return_value = None
-            mock_cls.return_value.flush_feed.return_value = True
-            mock_poll.apply_async = MagicMock()
-
             publish_listing_task(listing.pk)
 
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_PENDING
-        mock_cls.return_value.flush_feed.assert_called_once_with([listing])
+        mock_flush.delay.assert_called_once_with(account.pk)
 
     def test_publish_rejects_listing_without_contacts(self):
         """Без контактного лица/телефона объявление отклоняется и не уходит в feed."""
@@ -727,8 +720,8 @@ class TestPublishListingTask:
         assert 'контактное лицо' in listing.rejection_reason.lower()
         mock_cls.return_value.flush_feed.assert_not_called()
 
-    def test_publish_waits_when_account_has_active_feed(self):
-        """Новый листинг остаётся QUEUED, если предыдущий feed ещё pending."""
+    def test_publish_does_not_serialize_behind_active_feed(self):
+        """Новое объявление сразу «На модерации» (не висит «В очереди» за предыдущим фидом)."""
         from apps.marketplaces.tasks import publish_listing_task
         tenant = make_tenant('queue-waits-co')
         account = make_account(tenant)
@@ -737,51 +730,22 @@ class TestPublishListingTask:
         queued_product = make_product_with_article(tenant, 'ART-002')
         queued = make_listing(tenant, queued_product, account, status=Listing.STATUS_QUEUED)
 
-        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.cache') as mock_cache:
+        with patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
             mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
             mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
-            mock_cls.return_value.is_autoload_active.return_value = True
-
             publish_listing_task(queued.pk)
 
         queued.refresh_from_db()
-        assert queued.status == Listing.STATUS_QUEUED
-        mock_cls.return_value.flush_feed.assert_not_called()
+        assert queued.status == Listing.STATUS_PENDING
+        mock_flush.delay.assert_called_once_with(account.pk)
 
-    def test_publish_flushes_all_queued_listings_as_next_batch(self):
-        """Когда активного feed нет, queued-листинги аккаунта уходят одним батчем."""
-        from apps.marketplaces.tasks import publish_listing_task
-        tenant = make_tenant('queue-batch-co')
-        account = make_account(tenant)
-        product = make_product(tenant)
-        first = make_listing(tenant, product, account, status=Listing.STATUS_QUEUED)
-        second_product = make_product_with_article(tenant, 'ART-002')
-        second = make_listing(tenant, second_product, account, status=Listing.STATUS_QUEUED)
-
-        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.cache') as mock_cache, \
-             patch('apps.marketplaces.tasks.poll_feed_results_task') as mock_poll:
-            mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
-            mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
-            mock_cls.return_value.is_autoload_active.return_value = True
-            mock_poll.apply_async = MagicMock()
-
-            publish_listing_task(first.pk)
-
-        first.refresh_from_db()
-        second.refresh_from_db()
-        assert first.status == Listing.STATUS_PENDING
-        assert second.status == Listing.STATUS_PENDING
-        flushed = mock_cls.return_value.flush_feed.call_args[0][0]
-        assert {item.pk for item in flushed} == {first.pk, second.pk}
-
-    def test_unpublish_omits_target_keeps_others_active(self):
-        """Снятие: фид содержит только оставшиеся активные; снимаемое исключается (Avito архивирует)."""
+    def test_unpublish_sets_archiving_and_requests_flush(self):
+        """Снятие помечает «Снимается» и отдаёт фид координатору окна (без немедленного flush)."""
         from apps.marketplaces.tasks import unpublish_listing_task
         tenant = make_tenant('unpub-fullstate-co')
         account = make_account(tenant)
-        active = make_listing(
+        make_listing(
             tenant, make_product(tenant), account,
             status=Listing.STATUS_ACTIVE, external_id='AV-ACTIVE-1',
         )
@@ -790,61 +754,12 @@ class TestPublishListingTask:
             status=Listing.STATUS_ACTIVE, external_id='AV-TARGET-2',
         )
 
-        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.confirm_removal_task') as mock_confirm:
-            mock_cls.return_value.flush_feed.return_value = True
-            mock_confirm.apply_async = MagicMock()
+        with patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
             unpublish_listing_task(target.pk)
 
         target.refresh_from_db()
         assert target.status == Listing.STATUS_ARCHIVING
-        # В фиде только активный; снимаемый исключён (его Avito уберёт по отсутствию).
-        flushed = mock_cls.return_value.flush_feed.call_args[0][0]
-        assert {i.pk for i in flushed} == {active.pk}
-
-    def test_unpublish_last_active_sends_stop(self):
-        """Если активных не осталось — снятие отправляет команду STOP, а не пустой фид."""
-        from apps.marketplaces.tasks import unpublish_listing_task
-        tenant = make_tenant('unpub-stop-co')
-        account = make_account(tenant)
-        only = make_listing(
-            tenant, make_product(tenant), account,
-            status=Listing.STATUS_ACTIVE, external_id='AV-ONLY-1',
-        )
-
-        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.confirm_removal_task') as mock_confirm:
-            mock_confirm.apply_async = MagicMock()
-            unpublish_listing_task(only.pk)
-
-        only.refresh_from_db()
-        assert only.status == Listing.STATUS_ARCHIVING
-        mock_cls.return_value.flush_stop.assert_called_once()
-        mock_cls.return_value.flush_feed.assert_not_called()
-
-    def test_unpublish_retries_on_rate_limit(self):
-        """На лимит 1/час снятие не падает, а уходит в retry (повтор после окна)."""
-        from celery.exceptions import Retry
-        from apps.marketplaces.adapters.avito.rate_limiter import RateLimitError
-        from apps.marketplaces.tasks import unpublish_listing_task
-        tenant = make_tenant('unpub-rl-co')
-        account = make_account(tenant)
-        listing = make_listing(
-            tenant, make_product(tenant), account,
-            status=Listing.STATUS_ACTIVE, external_id='AV-RL-9',
-        )
-        # ещё один активный — чтобы после снятия фид был непустым (flush_feed, не STOP)
-        make_listing(
-            tenant, make_product_with_article(tenant, 'ART-RL2'), account,
-            status=Listing.STATUS_ACTIVE, external_id='AV-RL-10',
-        )
-
-        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls:
-            mock_cls.return_value.flush_feed.side_effect = RateLimitError('1/час')
-            # В eager-режиме retry повторяет задачу и после исчерпания бросает
-            # исходный RateLimitError — оба варианта означают «ушли в повтор».
-            with pytest.raises((Retry, RateLimitError)):
-                unpublish_listing_task(listing.pk)
+        mock_flush.delay.assert_called_once_with(account.pk)
 
     def test_unpublish_sets_archiving_not_archived(self):
         """Снятие переводит в «Снимается», а не сразу «В архиве» (ждём подтверждения)."""
@@ -855,10 +770,7 @@ class TestPublishListingTask:
             tenant, make_product(tenant), account,
             status=Listing.STATUS_ACTIVE, external_id='AV-ARCHN-1',
         )
-        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.confirm_removal_task') as mock_confirm:
-            mock_cls.return_value.flush_stop.return_value = True
-            mock_confirm.apply_async = MagicMock()
+        with patch('apps.marketplaces.tasks.coalesced_flush_task'):
             unpublish_listing_task(listing.pk)
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_ARCHIVING
@@ -893,22 +805,19 @@ class TestPublishListingTask:
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_ARCHIVING
 
-    def test_publish_rejects_when_autoload_profile_is_inactive(self):
-        from apps.marketplaces.tasks import publish_listing_task
+    def test_coalesced_flush_rejects_when_autoload_profile_is_inactive(self):
+        from apps.marketplaces.tasks import coalesced_flush_task
 
         tenant = make_tenant('autoload-inactive-co')
         account = make_account(tenant)
         product = make_product(tenant)
-        listing = make_listing(tenant, product, account)
+        listing = make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
 
         with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks.cache'), \
              patch('apps.marketplaces.tasks._notify_error') as mock_notify:
-            mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
-            mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
             mock_cls.return_value.is_autoload_active.return_value = False
-
-            publish_listing_task(listing.pk)
+            coalesced_flush_task(account.pk)
 
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_REJECTED
@@ -916,25 +825,23 @@ class TestPublishListingTask:
         mock_cls.return_value.flush_feed.assert_not_called()
         mock_notify.assert_called_once()
 
-    def test_401_triggers_token_refresh(self):
-        """После TokenExpiredError задача ставится на retry."""
+    def test_coalesced_flush_retries_on_feed_upload_error(self):
+        """Сбой загрузки фида → задача уходит в retry (повтор позже)."""
         from celery.exceptions import Retry
-        from apps.marketplaces.tasks import publish_listing_task
+        from apps.marketplaces.adapters.avito.adapter import FeedUploadError
+        from apps.marketplaces.tasks import coalesced_flush_task
         tenant = make_tenant('token-co')
         account = make_account(tenant)
         product = make_product(tenant)
-        listing = make_listing(tenant, product, account)
+        make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
 
         with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.cache') as mock_cache:
-            mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
-            mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
-            mock_cache.get.return_value = None
-            from apps.marketplaces.adapters.avito.adapter import FeedUploadError
+             patch('apps.marketplaces.tasks.cache'):
+            mock_cls.return_value.is_autoload_active.return_value = True
             mock_cls.return_value.flush_feed.side_effect = FeedUploadError('S3 not configured')
 
             with pytest.raises((FeedUploadError, Retry)):
-                publish_listing_task(listing.pk)
+                coalesced_flush_task(account.pk)
 
     def test_429_applies_exponential_backoff(self):
         assert backoff(0) == 30
@@ -958,6 +865,131 @@ class TestPublishListingTask:
             update_price_task(listing.pk)
             mock_cls.return_value.update_price.assert_called_once_with(listing)
             mock_cls.return_value.flush_feed.assert_not_called()
+
+
+# ------------------------------------------------------------------ #
+#  Часовое окно автозагрузки: coalesced_flush_task + координатор       #
+# ------------------------------------------------------------------ #
+
+@pytest.mark.django_db
+class TestCoalescedFlushTask:
+    def test_promotes_queued_and_flushes_full_state(self):
+        """Единый flush промотирует QUEUED→PENDING и грузит фид со всем состоянием."""
+        from apps.marketplaces.tasks import coalesced_flush_task
+        tenant = make_tenant('coalesce-batch-co')
+        account = make_account(tenant)
+        first = make_listing(tenant, make_product(tenant), account, status=Listing.STATUS_QUEUED)
+        second = make_listing(
+            tenant, make_product_with_article(tenant, 'ART-002'), account,
+            status=Listing.STATUS_QUEUED,
+        )
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.cache'), \
+             patch('apps.marketplaces.tasks.poll_feed_results_task') as mock_poll:
+            mock_cls.return_value.is_autoload_active.return_value = True
+            mock_poll.apply_async = MagicMock()
+            coalesced_flush_task(account.pk)
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        account.refresh_from_db()
+        assert first.status == Listing.STATUS_PENDING
+        assert second.status == Listing.STATUS_PENDING
+        flushed = mock_cls.return_value.flush_feed.call_args[0][0]
+        assert {item.pk for item in flushed} == {first.pk, second.pk}
+        assert account.last_feed_flush_at is not None
+        mock_poll.apply_async.assert_called_once()
+
+    def test_excludes_archiving_listing_from_feed(self):
+        """Снимаемое (ARCHIVING) объявление исключается из фида — Avito его архивирует."""
+        from apps.marketplaces.tasks import coalesced_flush_task
+        tenant = make_tenant('coalesce-archiving-co')
+        account = make_account(tenant)
+        active = make_listing(
+            tenant, make_product(tenant), account,
+            status=Listing.STATUS_ACTIVE, external_id='AV-ACTIVE-1',
+        )
+        make_listing(
+            tenant, make_product_with_article(tenant, 'ART-2'), account,
+            status=Listing.STATUS_ARCHIVING, external_id='AV-TARGET-2',
+        )
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.cache'), \
+             patch('apps.marketplaces.tasks.poll_feed_results_task'):
+            mock_cls.return_value.is_autoload_active.return_value = True
+            coalesced_flush_task(account.pk)
+
+        flushed = mock_cls.return_value.flush_feed.call_args[0][0]
+        assert {i.pk for i in flushed} == {active.pk}
+
+    def test_sends_stop_when_no_active_remains(self):
+        """Сняли последнее активное → команда STOP, а не пустой фид."""
+        from apps.marketplaces.tasks import coalesced_flush_task
+        tenant = make_tenant('coalesce-stop-co')
+        account = make_account(tenant)
+        make_listing(
+            tenant, make_product(tenant), account,
+            status=Listing.STATUS_ARCHIVING, external_id='AV-ONLY-1',
+        )
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.cache'), \
+             patch('apps.marketplaces.tasks.poll_feed_results_task'):
+            coalesced_flush_task(account.pk)
+
+        mock_cls.return_value.flush_stop.assert_called_once()
+        mock_cls.return_value.flush_feed.assert_not_called()
+
+    def test_retries_on_rate_limit(self):
+        """Лимит 1/час → задача уходит в retry, не падает."""
+        from celery.exceptions import Retry
+        from apps.marketplaces.adapters.avito.rate_limiter import RateLimitError
+        from apps.marketplaces.tasks import coalesced_flush_task
+        tenant = make_tenant('coalesce-rl-co')
+        account = make_account(tenant)
+        make_listing(tenant, make_product(tenant), account, status=Listing.STATUS_PENDING)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks.cache'):
+            mock_cls.return_value.is_autoload_active.return_value = True
+            mock_cls.return_value.flush_feed.side_effect = RateLimitError('1/час')
+            with pytest.raises((Retry, RateLimitError)):
+                coalesced_flush_task(account.pk)
+
+
+@pytest.mark.django_db
+class TestFeedWindowCoordinator:
+    def test_flushes_immediately_when_window_open(self):
+        """Окно открыто (давно/никогда не слали) → flush сразу."""
+        from apps.marketplaces.tasks import request_feed_flush
+        tenant = make_tenant('window-open-co')
+        account = make_account(tenant)  # last_feed_flush_at = None → окно открыто
+
+        with patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
+            request_feed_flush(account)
+
+        mock_flush.delay.assert_called_once_with(account.pk)
+
+    def test_defers_one_flush_when_window_closed(self):
+        """Окно закрыто (только что слали) → один отложенный flush на момент открытия."""
+        from apps.marketplaces.tasks import request_feed_flush
+        from django.utils.timezone import now
+        tenant = make_tenant('window-closed-co')
+        account = make_account(tenant)
+        account.last_feed_flush_at = now()
+        account.save(update_fields=['last_feed_flush_at'])
+
+        with patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush, \
+             patch('apps.marketplaces.tasks.cache') as mock_cache:
+            mock_cache.add.return_value = True
+            request_feed_flush(account)
+
+        mock_flush.delay.assert_not_called()
+        mock_flush.apply_async.assert_called_once()
+        _, kwargs = mock_flush.apply_async.call_args
+        assert kwargs['countdown'] > 0
 
 
 # ------------------------------------------------------------------ #
@@ -1107,26 +1139,6 @@ class TestPollFeedResultsTask:
         assert listing.status == Listing.STATUS_ACTIVE
         mock_success.assert_called_once()
 
-    def test_starts_next_queued_batch_after_successful_poll(self):
-        """После успешного poll запускается следующая queued-партия аккаунта."""
-        from apps.marketplaces.tasks import poll_feed_results_task
-        tenant = make_tenant('poll-next-queue-co')
-        account = make_account(tenant)
-        product = make_product(tenant)
-        pending = make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
-        queued_product = make_product_with_article(tenant, 'ART-002')
-        queued = make_listing(tenant, queued_product, account, status=Listing.STATUS_QUEUED)
-
-        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks._notify_success'), \
-             patch('apps.marketplaces.tasks.publish_listing_task') as mock_publish:
-            mock_cls.return_value.get_feed_results.return_value = [
-                {'ad_id': get_ad_id(pending), 'avito_id': 123}
-            ]
-            poll_feed_results_task(account.pk)
-
-        mock_publish.delay.assert_called_once_with(queued.pk)
-
     def test_retries_when_some_listings_still_pending(self):
         """Если часть листингов ещё не обработана — задача ставится на retry."""
         from celery.exceptions import Retry
@@ -1164,6 +1176,28 @@ class TestPollFeedResultsTask:
         assert listing.status == Listing.STATUS_REJECTED
         assert 'не вернул ни ID объявления, ни ошибок' in listing.rejection_reason
         mock_notify.assert_called_once()
+
+    def test_keeps_pending_while_avito_upload_still_processing(self):
+        """Ретраи исчерпаны, но загрузка у Avito ещё processing — не отклоняем, ждём дальше."""
+        from apps.marketplaces.tasks import poll_feed_results_task
+
+        tenant = make_tenant('poll-still-processing-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks._notify_error') as mock_notify:
+            mock_cls.return_value.get_feed_results.return_value = [
+                {'ad_id': get_ad_id(listing), 'avito_id': None}
+            ]
+            mock_cls.return_value.get_feed_item_errors.return_value = {}
+            mock_cls.return_value.get_latest_upload.return_value = {'status': 'processing'}
+            poll_feed_results_task.apply(args=[account.pk], throw=True, retries=10)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_PENDING
+        mock_notify.assert_not_called()
 
     def test_rejection_uses_real_avito_report_messages_immediately(self):
         """Если в отчёте Avito есть ошибки — отклоняем сразу (retries=0) с их текстом, без ожидания ретраев."""
@@ -1254,7 +1288,7 @@ class TestUpdateListingTask:
 class TestE2EFeedFlow:
     def test_10_products_publish_via_feed(self):
         """10 товаров проходят полный путь: flush_feed → PENDING → poll → ACTIVE."""
-        from apps.marketplaces.tasks import poll_feed_results_task, publish_listing_task
+        from apps.marketplaces.tasks import coalesced_flush_task, poll_feed_results_task
         tenant = make_tenant('e2e-co')
         account = make_account(tenant)
         ds = DataSourceConnection.objects.create(
@@ -1274,17 +1308,15 @@ class TestE2EFeedFlow:
             lst.save(update_fields=['status'])
             listings.append(lst)
 
-        # Шаг 1: публикация через фид → статус PENDING
+        # Шаг 1: единый фид по часовому окну → все QUEUED становятся PENDING
         with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
-             patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks.cache'), \
              patch('apps.marketplaces.tasks.poll_feed_results_task') as mock_poll:
-            mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
-            mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
-            mock_cache.get.return_value = None
+            mock_cls.return_value.is_autoload_active.return_value = True
             mock_cls.return_value.flush_feed.return_value = True
             mock_poll.apply_async = MagicMock()
 
-            publish_listing_task(listings[0].pk)
+            coalesced_flush_task(account.pk)
 
         pending = Listing.objects.filter(tenant=tenant, status=Listing.STATUS_PENDING).count()
         assert pending == 10

@@ -330,57 +330,77 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         handle_avito_error(resp)
         return resp.json().get('items', [])
 
+    def get_latest_upload(self) -> dict:
+        """
+        Возвращает последнюю загрузку Autoload (v4): {upload_id, status, stats, ...} или {}.
+
+        status: 'processing' (Avito ещё обрабатывает фид), 'success', 'success_warning'.
+        Нужно, чтобы не отклонять объявления, пока загрузка не завершена.
+        Сетевые сбои не пробрасывает — возвращает {}.
+        """
+        token = self._auth.get_token(self.account)
+        try:
+            resp = requests.get(
+                f'{AVITO_API_BASE}/autoload/v4/uploads',
+                headers={'Authorization': f'Bearer {token}'},
+                params={'per_page': 1, 'page': 1}, timeout=30,
+            )
+            if not resp.ok:
+                return {}
+            uploads = resp.json().get('uploads', [])
+        except (requests.RequestException, ValueError, KeyError):
+            return {}
+        # Список приходит свежими сверху, но не полагаемся на это — берём по времени.
+        return max(uploads, key=lambda u: u.get('started_at', ''), default={}) if uploads else {}
+
     def get_feed_item_errors(self, ad_ids: list[str]) -> dict[str, str]:
         """
-        Возвращает {ad_id: человекочитаемый текст ошибок} из последнего отчёта Autoload.
+        Возвращает {ad_id: человекочитаемый текст ошибок} из последней успешной загрузки.
 
-        Берёт последний отчёт (GET /autoload/v2/reports), затем его позиции
-        (GET /autoload/v2/reports/{id}/items) и собирает сообщения Avito с типом
-        error/alarm по каждому ad_id. Сетевые сбои не пробрасывает — возвращает {},
-        чтобы вызывающий код мог откатиться на общий текст ошибки.
+        Источник — v4 GET /autoload/v4/uploads/last_successful/items (старый
+        /autoload/v2/reports/{id}/items устарел и больше не отдаёт позиции).
+        Собирает сообщения Avito с типом error/alarm по каждому ad_id. Сетевые
+        сбои не пробрасывает — возвращает {}, чтобы вызывающий код мог откатиться
+        на общий текст ошибки.
         """
         if not ad_ids:
             return {}
         token = self._auth.get_token(self.account)
         headers = {'Authorization': f'Bearer {token}'}
-        try:
-            resp = requests.get(
-                f'{AVITO_API_BASE}/autoload/v2/reports',
-                headers=headers, params={'per_page': 10, 'page': 1}, timeout=30,
-            )
-            reports = resp.json().get('reports', []) if resp.ok else []
-            if not reports:
-                return {}
-            # Список отчётов приходит без гарантии порядка — берём самый свежий
-            # по id (id монотонно растёт), а не reports[0].
-            report_id = max(reports, key=lambda r: r.get('id', 0))['id']
-            resp = requests.get(
-                f'{AVITO_API_BASE}/autoload/v2/reports/{report_id}/items',
-                headers=headers, params={'per_page': 100, 'page': 1}, timeout=30,
-            )
-            items = resp.json().get('items', []) if resp.ok else []
-        except (requests.RequestException, ValueError, KeyError):
-            return {}
-
         wanted = set(ad_ids)
         result: dict[str, str] = {}
-        for item in items or []:
-            ad_id = item.get('ad_id')
-            if ad_id not in wanted:
-                continue
-            item_messages = item.get('messages', [])
-            # Возвращаем ad_id только при наличии блокирующей ошибки (type=error),
-            # иначе объявление ещё обрабатывается или это лишь предупреждения —
-            # отклонять его нельзя.
-            if not any(m.get('type') == 'error' for m in item_messages):
-                continue
-            messages = [
-                _format_avito_message(m)
-                for m in item_messages
-                if m.get('type') in ('error', 'alarm')
-            ]
-            if messages:
-                result[ad_id] = '\n'.join(messages)
+        try:
+            page = 1
+            while True:
+                resp = requests.get(
+                    f'{AVITO_API_BASE}/autoload/v4/uploads/last_successful/items',
+                    headers=headers, params={'per_page': 100, 'page': page}, timeout=30,
+                )
+                if not resp.ok:
+                    break
+                body = resp.json()
+                for item in body.get('items') or []:
+                    ad_id = item.get('ad_id')
+                    if ad_id not in wanted:
+                        continue
+                    item_messages = item.get('messages') or []
+                    # Реальной ошибкой считаем только type=error; warning/alarm
+                    # (напр. авто-определение SparePartType) — не повод отклонять.
+                    if not any(m.get('type') == 'error' for m in item_messages):
+                        continue
+                    messages = [
+                        _format_avito_message(m)
+                        for m in item_messages
+                        if m.get('type') in ('error', 'alarm')
+                    ]
+                    if messages:
+                        result[ad_id] = '\n'.join(messages)
+                meta = body.get('meta') or {}
+                if page >= (meta.get('pages') or 1):
+                    break
+                page += 1
+        except (requests.RequestException, ValueError, KeyError):
+            return result
         return result
 
     def get_stats(
