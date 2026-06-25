@@ -777,19 +777,35 @@ export default function SettingsPage() {
     }
   }
 
+  async function uploadCsvFile(file: File, confirm: boolean) {
+    try {
+      const { data: uploadResult } = await datasourceApi.uploadCsv(file, confirm);
+      toast.success(`Файл загружен: ${uploadResult.data?.rows_count || uploadResult.items?.length || 0} строк`);
+      setCsvFile(null);
+      await loadDatasources();
+    } catch (err: unknown) {
+      const axiosErr = err as {
+        response?: { status?: number; data?: { status?: string; message?: string; detail?: string } };
+      };
+      // Бэкенд нашёл такой же файл (по содержимому или имени) — спрашиваем подтверждение.
+      if (axiosErr?.response?.status === 409 && axiosErr.response.data?.status === 'duplicate') {
+        const msg = axiosErr.response.data.message || 'Такой файл уже загружали. Загрузить повторно?';
+        if (window.confirm(msg)) {
+          await uploadCsvFile(file, true);
+        }
+        return;
+      }
+      const message = axiosErr?.response?.data?.detail || axiosErr?.response?.data?.message || 'Ошибка загрузки файла';
+      toast.error(message);
+    }
+  }
+
   async function handleUploadCsv(e: React.FormEvent) {
     e.preventDefault();
     if (!csvFile) return;
     setUploadingCsv(true);
     try {
-      const { data: uploadResult } = await datasourceApi.uploadCsv(csvFile);
-      toast.success(`Файл загружен: ${uploadResult.data?.rows_count || uploadResult.items?.length || 0} строк`);
-      setCsvFile(null);
-      await loadDatasources();
-    } catch (err: unknown) {
-      const axiosErr = err as { response?: { data?: { detail?: string; message?: string } } };
-      const message = axiosErr?.response?.data?.detail || axiosErr?.response?.data?.message || 'Ошибка загрузки файла';
-      toast.error(message);
+      await uploadCsvFile(csvFile, false);
     } finally {
       setUploadingCsv(false);
     }

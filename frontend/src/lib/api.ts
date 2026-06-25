@@ -195,10 +195,11 @@ export const datasourceApi = {
   delete: (id: number) => api.delete(`/datasources/${id}/`),
   test: (id: number) => api.post(`/datasources/${id}/test/`),
   sync: (id: number) => api.post(`/datasources/${id}/sync/`),
-  uploadCsv: (file: File) => {
+  uploadCsv: (file: File, confirm = false) => {
     const formData = new FormData();
     formData.append('file', file);
-    return api.post('/datasources/upload-csv/', formData, {
+    const url = confirm ? '/datasources/upload-csv/?confirm=1' : '/datasources/upload-csv/';
+    return api.post(url, formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },

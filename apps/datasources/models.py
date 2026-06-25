@@ -33,6 +33,11 @@ class DataSourceConnection(TimestampedModel):
         max_length=20, default=STATUS_NEVER, verbose_name='Статус последней синхронизации',
     )
     last_error = models.TextField(blank=True, verbose_name='Последняя ошибка')
+    content_hash = models.CharField(
+        max_length=64, blank=True, db_index=True,
+        verbose_name='SHA-256 загруженного файла',
+        help_text='Для CSV/Excel — хэш содержимого, чтобы ловить повторную загрузку того же файла.',
+    )
 
     class Meta:
         verbose_name = 'Источник данных'
