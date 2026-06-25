@@ -1,0 +1,3214 @@
+{
+  "root": "Хобби и отдых",
+  "domain": "hobbi_i_otdyh",
+  "tree": [
+    {
+      "name": "Охота и рыбалка",
+      "slug": "ohota_i_rybalka",
+      "children": [
+        {
+          "name": "Рыбалка",
+          "slug": "rybalka",
+          "children": [
+            {
+              "name": "Удочки, спиннинги и катушки",
+              "slug": "udochki_spinningi_i_katushki",
+              "children": [
+                {
+                  "name": "Удочки",
+                  "slug": "udochki",
+                  "children": []
+                },
+                {
+                  "name": "Катушки",
+                  "slug": "katushki",
+                  "children": []
+                },
+                {
+                  "name": "Чехлы и тубусы",
+                  "slug": "chekhly_i_tubusy",
+                  "children": []
+                },
+                {
+                  "name": "Держатели для удочек",
+                  "slug": "derzhateli_dlya_udochek",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие",
+                  "slug": "komplektuyushie_udocki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Приманки и снасти",
+              "slug": "primanki_i_snasti",
+              "children": [
+                {
+                  "name": "Воблеры",
+                  "slug": "voblery",
+                  "children": []
+                },
+                {
+                  "name": "Блесны",
+                  "slug": "blesny",
+                  "children": []
+                },
+                {
+                  "name": "Балансиры",
+                  "slug": "balansiry",
+                  "children": []
+                },
+                {
+                  "name": "Мягкие приманки",
+                  "slug": "myagkie_primanki",
+                  "children": []
+                },
+                {
+                  "name": "Мормышки",
+                  "slug": "mormyshki",
+                  "children": []
+                },
+                {
+                  "name": "Прикормки и насадки",
+                  "slug": "prikormki_i_nasadki",
+                  "children": []
+                },
+                {
+                  "name": "Крючки",
+                  "slug": "kryuchki",
+                  "children": []
+                },
+                {
+                  "name": "Лески и шнуры",
+                  "slug": "leski_i_shnury",
+                  "children": []
+                },
+                {
+                  "name": "Сигнализаторы поклевки",
+                  "slug": "signalizatory_poklevki",
+                  "children": []
+                },
+                {
+                  "name": "Грузила",
+                  "slug": "gruzila",
+                  "children": []
+                },
+                {
+                  "name": "Поплавки",
+                  "slug": "poplavki",
+                  "children": []
+                },
+                {
+                  "name": "Готовые снасти",
+                  "slug": "gotovye_snasti",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие для оснастки",
+                  "slug": "komplektuyushie_dlya_osnastki",
+                  "children": []
+                },
+                {
+                  "name": "Кормушки",
+                  "slug": "kormushki",
+                  "children": []
+                },
+                {
+                  "name": "Жерлицы",
+                  "slug": "zherlicy",
+                  "children": []
+                },
+                {
+                  "name": "Багры и черпаки",
+                  "slug": "bagry_i_cherpaki",
+                  "children": []
+                },
+                {
+                  "name": "Формы для литья",
+                  "slug": "formy_dlya_litya",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Эхолоты и снаряжение",
+              "slug": "ekholoty_i_snaryazhenie",
+              "children": [
+                {
+                  "name": "Эхолоты",
+                  "slug": "ekholoty",
+                  "children": []
+                },
+                {
+                  "name": "Прикормочные кораблики",
+                  "slug": "prikormochnye_korabliki",
+                  "children": []
+                },
+                {
+                  "name": "Ледобуры и пешни",
+                  "slug": "ledobury_i_peshni",
+                  "children": []
+                },
+                {
+                  "name": "Моторные лодки и моторы",
+                  "slug": "motornye_lodki_i_motory_ekholoty_i_snaryazhenie",
+                  "children": []
+                },
+                {
+                  "name": "Коптильни",
+                  "slug": "koptilni_ekholoty_i_snaryazhenie",
+                  "children": []
+                },
+                {
+                  "name": "Рыболовное снаряжение",
+                  "slug": "rybolovnoe_snaryazhenie",
+                  "children": []
+                },
+                {
+                  "name": "Палатки, тенты, шатры",
+                  "slug": "palatki_tenty_shatry",
+                  "children": []
+                },
+                {
+                  "name": "Средства связи и навигации",
+                  "slug": "sredstva_svyazi_i_navigacii",
+                  "children": []
+                },
+                {
+                  "name": "Фонари и лампы",
+                  "slug": "fonari_i_lampy_ekholoty_i_snaryazhenie",
+                  "children": []
+                },
+                {
+                  "name": "Ящики, сумки, чехлы",
+                  "slug": "yashiki_sumki_chekhly",
+                  "children": []
+                },
+                {
+                  "name": "Сани для рыбалки",
+                  "slug": "sani_dlya_rybalki",
+                  "children": []
+                },
+                {
+                  "name": "Походная мебель",
+                  "slug": "pokhodnaya_mebel",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары для эхолотов",
+                  "slug": "aksessuary_dlya_ekholotov",
+                  "children": []
+                },
+                {
+                  "name": "Камеры",
+                  "slug": "kamery",
+                  "children": []
+                },
+                {
+                  "name": "Ведра, садки и подсачеки",
+                  "slug": "vedra_sadki_i_podsacheki",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Охота",
+          "slug": "okhota",
+          "children": [
+            {
+              "name": "Прицелы",
+              "slug": "pricely_i",
+              "children": []
+            },
+            {
+              "name": "Хранение оружия и аксессуары",
+              "slug": "khranenie_oruzhiya_i_aksessuary",
+              "children": [
+                {
+                  "name": "Чехлы и кейсы",
+                  "slug": "chekhly_i_keisy",
+                  "children": []
+                },
+                {
+                  "name": "Кобуры",
+                  "slug": "kobury",
+                  "children": []
+                },
+                {
+                  "name": "Товары для ухода",
+                  "slug": "tovary_dlya_ukhoda",
+                  "children": []
+                },
+                {
+                  "name": "Ремни",
+                  "slug": "remni",
+                  "children": []
+                },
+                {
+                  "name": "Патронаши",
+                  "slug": "patronashi",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_2303518",
+                  "children": []
+                },
+                {
+                  "name": "Сейфы и шкафы",
+                  "slug": "seify_i_shkafy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Аксессуары для прицелов",
+              "slug": "aksessuary_dlya_pricelov",
+              "children": []
+            },
+            {
+              "name": "Монокуляры, бинокли, дальномеры",
+              "slug": "monokulyary_binokli_dalnomery",
+              "children": []
+            },
+            {
+              "name": "Снаряжение для охоты",
+              "slug": "snaryazhenie_dlya_okhoty",
+              "children": [
+                {
+                  "name": "Приманки и манки",
+                  "slug": "primanki_i_manki",
+                  "children": []
+                },
+                {
+                  "name": "Трофеи",
+                  "slug": "trofei",
+                  "children": []
+                },
+                {
+                  "name": "Фотоловушки",
+                  "slug": "fotolovushki",
+                  "children": []
+                },
+                {
+                  "name": "Лыжи и снегоступы",
+                  "slug": "lyzhi_i_snegostupy",
+                  "children": []
+                },
+                {
+                  "name": "Маскировочные сети",
+                  "slug": "maskirovochnye_seti",
+                  "children": []
+                },
+                {
+                  "name": "Охотничий инвентарь",
+                  "slug": "okhotnichii_inventar",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_snaryazhenie_dlya_ohoty",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "drugoe_snaryazhenie_dlya_ohoty",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Фонари и лампы",
+              "slug": "fonari_i_lampy",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Костюмы для охоты и рыбалки",
+          "slug": "kostyumy_dlya_okhoty_i_rybalki",
+          "children": [
+            {
+              "name": "Костюмы",
+              "slug": "kostyumy_2302093",
+              "children": []
+            },
+            {
+              "name": "Куртки и плащи",
+              "slug": "kurtki_i_plashi_2302100",
+              "children": []
+            },
+            {
+              "name": "Обувь",
+              "slug": "obuv_2302101",
+              "children": []
+            },
+            {
+              "name": "Брюки",
+              "slug": "bryuki_2302102",
+              "children": []
+            },
+            {
+              "name": "Вейдерсы",
+              "slug": "veidersy_2302099",
+              "children": []
+            },
+            {
+              "name": "Жилеты",
+              "slug": "zhilety_2302094",
+              "children": []
+            },
+            {
+              "name": "Толстовки и футболки",
+              "slug": "tolstovki_i_futbolki_2302096",
+              "children": []
+            },
+            {
+              "name": "Термобельё",
+              "slug": "termobelyo_2302106",
+              "children": []
+            },
+            {
+              "name": "Носки",
+              "slug": "noski_2302095",
+              "children": []
+            },
+            {
+              "name": "Головные уборы",
+              "slug": "golovnye_ubory_2302103",
+              "children": []
+            },
+            {
+              "name": "Перчатки",
+              "slug": "perchatki_2302104",
+              "children": []
+            },
+            {
+              "name": "Очки",
+              "slug": "ochki_2302105",
+              "children": []
+            },
+            {
+              "name": "Сумки и патронташи",
+              "slug": "sumki_i_patrontashi_2302107",
+              "children": []
+            },
+            {
+              "name": "Маскировка",
+              "slug": "maskirovka_2302098",
+              "children": []
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_2302097",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Ножи, мультитулы, топоры",
+          "slug": "nozhi_multituly_topory",
+          "children": [
+            {
+              "name": "Ножи",
+              "slug": "nozhi_2302989",
+              "children": []
+            },
+            {
+              "name": "Топоры",
+              "slug": "topory",
+              "children": []
+            },
+            {
+              "name": "Мультитулы",
+              "slug": "multituly",
+              "children": []
+            },
+            {
+              "name": "Походные наборы",
+              "slug": "pokhodnye_nabory",
+              "children": []
+            },
+            {
+              "name": "Инструменты",
+              "slug": "instrumenty",
+              "children": []
+            },
+            {
+              "name": "Чехлы и ножны",
+              "slug": "chekhly_i_nozhny",
+              "children": []
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_2302995",
+              "children": []
+            },
+            {
+              "name": "Шашлычные наборы",
+              "slug": "shashlychnye_nabory",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Билеты и путешествия",
+      "slug": "bilety_i_puteshestvija",
+      "children": [
+        {
+          "name": "Цирк, кино",
+          "slug": "cirk_kino",
+          "children": []
+        },
+        {
+          "name": "Карты, купоны",
+          "slug": "karty_kupony",
+          "children": [
+            {
+              "name": "Подарочные сертификаты",
+              "slug": "podarochnye_sertifikaty",
+              "children": []
+            },
+            {
+              "name": "Промокоды",
+              "slug": "promokody",
+              "children": []
+            },
+            {
+              "name": "Скидочные и бонусные карты",
+              "slug": "skidochnye_i_bonusnye_karty",
+              "children": []
+            },
+            {
+              "name": "Пропуски и приглашения",
+              "slug": "propuski_i_priglasheniya",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_karty_kupony",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Шоу, мюзикл",
+          "slug": "shou_myuzikl",
+          "children": []
+        },
+        {
+          "name": "Театр, опера, балет",
+          "slug": "teatr_opera_balet",
+          "children": []
+        },
+        {
+          "name": "Спорт",
+          "slug": "sport",
+          "children": []
+        },
+        {
+          "name": "Путешествия",
+          "slug": "puteshestviya",
+          "children": [
+            {
+              "name": "Билеты",
+              "slug": "puteshestviya_bilety",
+              "children": []
+            },
+            {
+              "name": "Туры и путёвки",
+              "slug": "tury_i_putyovki",
+              "children": []
+            },
+            {
+              "name": "Экскурсии",
+              "slug": "ekskursii",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "puteshestviya_drugoe",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Концерты",
+          "slug": "koncerty",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Музыкальные инструменты",
+      "slug": "muzykalnye_instrumenty",
+      "children": [
+        {
+          "name": "Аксессуары",
+          "slug": "music_aksessuary",
+          "children": []
+        },
+        {
+          "name": "Аккордеоны, гармони, баяны",
+          "slug": "akkordeony_garmoni_bayany",
+          "children": []
+        },
+        {
+          "name": "Гитары и другие струнные",
+          "slug": "gitary_i_drugie_strunnye",
+          "children": [
+            {
+              "name": "Гитары",
+              "slug": "gitary",
+              "children": []
+            },
+            {
+              "name": "Укулеле и балалайки",
+              "slug": "ukulele_i_balalaiki_strunnye",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Для студии и концертов",
+          "slug": "dlya_studii_i_koncertov",
+          "children": [
+            {
+              "name": "Звуковое и DJ-оборудование",
+              "slug": "zvukovoe_i_dj_oborudovanie",
+              "children": []
+            },
+            {
+              "name": "Световое оборудование",
+              "slug": "svetovoe_oborudovanie",
+              "children": []
+            },
+            {
+              "name": "Педали и усилители",
+              "slug": "pedali_i_usiliteli",
+              "children": []
+            },
+            {
+              "name": "Обустройство студии",
+              "slug": "obustroistvo_studii",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Духовые",
+          "slug": "dukhovye",
+          "children": []
+        },
+        {
+          "name": "Клавишные и синтезаторы",
+          "slug": "klavishnye_i_sintezatory",
+          "children": [
+            {
+              "name": "Синтезаторы и MIDI-клавиатуры",
+              "slug": "sintezatory_i_midi_klaviatury",
+              "children": []
+            },
+            {
+              "name": "Пианино, рояли, органы",
+              "slug": "pianino_royali_organy",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Ударные",
+          "slug": "udarnye",
+          "children": []
+        },
+        {
+          "name": "Скрипки и другие смычковые",
+          "slug": "skripki_i_drugie_smychkovye",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Велосипеды",
+      "slug": "velosipedy",
+      "children": [
+        {
+          "name": "BMX",
+          "slug": "bmx",
+          "children": []
+        },
+        {
+          "name": "Городские",
+          "slug": "gorodskie",
+          "children": []
+        },
+        {
+          "name": "Шоссейные",
+          "slug": "shosseinye",
+          "children": []
+        },
+        {
+          "name": "Детские",
+          "slug": "detskie",
+          "children": []
+        },
+        {
+          "name": "Горные",
+          "slug": "gornye",
+          "children": []
+        },
+        {
+          "name": "Электровелосипеды",
+          "slug": "elektrovelosipedy",
+          "children": []
+        },
+        {
+          "name": "Запчасти и аксессуары",
+          "slug": "zapchasti_i_aksessuary_velosipedy",
+          "children": [
+            {
+              "name": "Ремонт и уход",
+              "slug": "remont_i_ukhod",
+              "children": []
+            },
+            {
+              "name": "Запчасти",
+              "slug": "zapchasti_dlya_velosipedov",
+              "children": [
+                {
+                  "name": "Колёса и комплектующие",
+                  "slug": "kolyosa_i_komplektuyushie",
+                  "children": [
+                    {
+                      "name": "Колёса в сборе",
+                      "slug": "kolyosa_v_sbore_velosiped",
+                      "children": []
+                    },
+                    {
+                      "name": "Ниппели",
+                      "slug": "nippeli_velosiped",
+                      "children": []
+                    },
+                    {
+                      "name": "Оси и эксцентрики",
+                      "slug": "osi_i_ekscentriki_velosiped",
+                      "children": []
+                    },
+                    {
+                      "name": "Обода",
+                      "slug": "oboda_velosipedy",
+                      "children": []
+                    },
+                    {
+                      "name": "Спицы",
+                      "slug": "spicy_velosipedy",
+                      "children": []
+                    },
+                    {
+                      "name": "Мелкие детали колёс",
+                      "slug": "melkie_detali_kolyos_velosipedy",
+                      "children": []
+                    },
+                    {
+                      "name": "Покрышки",
+                      "slug": "pokryshki_velosipedy",
+                      "children": []
+                    },
+                    {
+                      "name": "Втулки",
+                      "slug": "vtulki_velosipedy",
+                      "children": []
+                    },
+                    {
+                      "name": "Велокамеры",
+                      "slug": "velokamery",
+                      "children": []
+                    },
+                    {
+                      "name": "Ободные ленты",
+                      "slug": "obodnye_lenty_velosipedy",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Сёдла и подседельные штыри",
+                  "slug": "syodla_i_podsedelnye_shtyri",
+                  "children": []
+                },
+                {
+                  "name": "Трансмиссия и привод",
+                  "slug": "transmissiya_i_privod",
+                  "children": [
+                    {
+                      "name": "Комплекты трансмиссии",
+                      "slug": "komplekty_transmissii",
+                      "children": []
+                    },
+                    {
+                      "name": "Шатуны",
+                      "slug": "shatuny",
+                      "children": []
+                    },
+                    {
+                      "name": "Держатели переключателя",
+                      "slug": "derzhateli_pereklyuchatelya",
+                      "children": []
+                    },
+                    {
+                      "name": "Каретки",
+                      "slug": "karetki",
+                      "children": []
+                    },
+                    {
+                      "name": "Кассеты",
+                      "slug": "kassety",
+                      "children": []
+                    },
+                    {
+                      "name": "Трещотки",
+                      "slug": "treshotki",
+                      "children": []
+                    },
+                    {
+                      "name": "Переключатели скоростей",
+                      "slug": "pereklyuchateli_skorostei",
+                      "children": []
+                    },
+                    {
+                      "name": "Манетки и комборучки",
+                      "slug": "manetki_i_komboruchki",
+                      "children": []
+                    },
+                    {
+                      "name": "Системы шатунов",
+                      "slug": "sistemy_shatunov",
+                      "children": []
+                    },
+                    {
+                      "name": "Звёзды",
+                      "slug": "zvyozdy",
+                      "children": []
+                    },
+                    {
+                      "name": "Цепи, ремни, замки",
+                      "slug": "cepi_remni_zamki",
+                      "children": []
+                    },
+                    {
+                      "name": "Тросы",
+                      "slug": "trosy",
+                      "children": []
+                    },
+                    {
+                      "name": "Успокоители цепи",
+                      "slug": "uspokoiteli_cepi",
+                      "children": []
+                    },
+                    {
+                      "name": "Ролики, болты, подшипники",
+                      "slug": "roliki_bolty_podshipniki",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Амортизация и вилки",
+                  "slug": "amortizaciya_i_vilki",
+                  "children": [
+                    {
+                      "name": "Амортизаторы",
+                      "slug": "amortizatory",
+                      "children": []
+                    },
+                    {
+                      "name": "Вилки",
+                      "slug": "vilki",
+                      "children": []
+                    },
+                    {
+                      "name": "Комплектующие",
+                      "slug": "komplektuyushie_dlya_velosipedov",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Рамы",
+                  "slug": "ramy_zapchasti",
+                  "children": []
+                },
+                {
+                  "name": "Педали",
+                  "slug": "pedali_zapchasti",
+                  "children": []
+                },
+                {
+                  "name": "Рулевое управление",
+                  "slug": "rulevoe_upravlenie_zapchasti",
+                  "children": []
+                },
+                {
+                  "name": "Тормозная система",
+                  "slug": "tormoznaya_sistema",
+                  "children": []
+                },
+                {
+                  "name": "Комплекты электрификации",
+                  "slug": "komplekty_elektrifikacii",
+                  "children": []
+                },
+                {
+                  "name": "Крепёж и мелкие детали",
+                  "slug": "krepyozh_i_melkie_detali",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_dlya_velosipedov",
+              "children": [
+                {
+                  "name": "Сумки на велосипед",
+                  "slug": "sumki_na_velosiped",
+                  "children": []
+                },
+                {
+                  "name": "Корзины и багажники",
+                  "slug": "korziny_i_bagazhniki",
+                  "children": []
+                },
+                {
+                  "name": "Детские велокресла",
+                  "slug": "detskie_velokresla",
+                  "children": []
+                },
+                {
+                  "name": "Фары и фонари",
+                  "slug": "fary_i_fonari",
+                  "children": []
+                },
+                {
+                  "name": "Насосы",
+                  "slug": "nasosy_dlya_velosipedov",
+                  "children": []
+                },
+                {
+                  "name": "Звонки и гудки",
+                  "slug": "zvonki_i_gudki",
+                  "children": []
+                },
+                {
+                  "name": "Велозамки",
+                  "slug": "velozamki",
+                  "children": []
+                },
+                {
+                  "name": "Зеркала",
+                  "slug": "zerkala",
+                  "children": []
+                },
+                {
+                  "name": "Крылья",
+                  "slug": "krylya",
+                  "children": []
+                },
+                {
+                  "name": "Подножки",
+                  "slug": "podnozhki",
+                  "children": []
+                },
+                {
+                  "name": "Велогаджеты",
+                  "slug": "velogadzhety",
+                  "children": []
+                },
+                {
+                  "name": "Фляги и держатели",
+                  "slug": "flyagi_i_derzhateli",
+                  "children": []
+                },
+                {
+                  "name": "Защита велосипеда",
+                  "slug": "zashita_velosipeda",
+                  "children": []
+                },
+                {
+                  "name": "Обмотка руля",
+                  "slug": "obmotka_rulya",
+                  "children": []
+                },
+                {
+                  "name": "Велопарковки",
+                  "slug": "veloparkovki",
+                  "children": []
+                },
+                {
+                  "name": "Хранение велосипеда",
+                  "slug": "khranenie_velosipeda",
+                  "children": []
+                },
+                {
+                  "name": "Чехлы",
+                  "slug": "chekhly_dlya_velosipedov",
+                  "children": []
+                },
+                {
+                  "name": "Крепления для аксессуаров",
+                  "slug": "krepleniya_dlya_aksessuarov",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "drugoe_dlya_velosipedov",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Защита и экипировка",
+              "slug": "zashita_i_ekipirovka",
+              "children": [
+                {
+                  "name": "Обувь",
+                  "slug": "obuv_2303131",
+                  "children": []
+                },
+                {
+                  "name": "Защита",
+                  "slug": "zashita_2303131",
+                  "children": []
+                },
+                {
+                  "name": "Рюкзаки",
+                  "slug": "ryukzaki_2303131",
+                  "children": []
+                },
+                {
+                  "name": "Шлемы",
+                  "slug": "shlemy_2303131",
+                  "children": []
+                },
+                {
+                  "name": "Перчатки",
+                  "slug": "perchatki_2303131",
+                  "children": []
+                },
+                {
+                  "name": "Очки",
+                  "slug": "ochki_2303131",
+                  "children": []
+                },
+                {
+                  "name": "Одежда",
+                  "slug": "odezhda_2303131",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Книги и журналы",
+      "slug": "knigi_i_zhurnaly",
+      "children": [
+        {
+          "name": "Журналы, газеты, брошюры",
+          "slug": "zhurnaly_gazety_broshyury",
+          "children": []
+        },
+        {
+          "name": "Книги",
+          "slug": "knigi",
+          "children": [
+            {
+              "name": "Художественная литература",
+              "slug": "khudozhestvennaya_literatura",
+              "children": []
+            },
+            {
+              "name": "Нехудожественная литература",
+              "slug": "nekhudozhestvennaya_literatura",
+              "children": []
+            },
+            {
+              "name": "Книги для детей",
+              "slug": "knigi_dlya_detei",
+              "children": []
+            },
+            {
+              "name": "Комиксы и манга",
+              "slug": "komiksy_i_manga",
+              "children": []
+            },
+            {
+              "name": "Антикварные издания",
+              "slug": "antikvarnye_izdaniya",
+              "children": []
+            },
+            {
+              "name": "Книги на иностранных языках",
+              "slug": "knigi_na_inostrannykh_yazykakh",
+              "children": []
+            },
+            {
+              "name": "Учебная литература",
+              "slug": "knigi_uchebnaya_literatura",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Учебная литература",
+          "slug": "uchebnaya_literatura",
+          "children": [
+            {
+              "name": "Дошкольное обучение",
+              "slug": "doshkolnoe_obuchenie",
+              "children": []
+            },
+            {
+              "name": "Учебники для вузов",
+              "slug": "uchebniki_dlya_vuzov",
+              "children": []
+            },
+            {
+              "name": "Иностранные языки",
+              "slug": "inostrannye_yazyki",
+              "children": []
+            },
+            {
+              "name": "Словари и разговорники",
+              "slug": "slovari_i_razgovorniki",
+              "children": []
+            },
+            {
+              "name": "Подготовка к экзаменам",
+              "slug": "podgotovka_k_ekzamenam",
+              "children": []
+            },
+            {
+              "name": "Педагогика и логопедия",
+              "slug": "pedagogika_i_logopediya",
+              "children": []
+            },
+            {
+              "name": "Вождение",
+              "slug": "vozhdenie",
+              "children": []
+            },
+            {
+              "name": "Музыкальная школа",
+              "slug": "muzykalnaya_shkola",
+              "children": []
+            },
+            {
+              "name": "Школьные учебники",
+              "slug": "shkolnye_uchebniki",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Коллекционирование",
+      "slug": "kollektsionirovanie",
+      "children": [
+        {
+          "name": "Другое",
+          "slug": "kollektsionirovanie_drugoe",
+          "children": []
+        },
+        {
+          "name": "Банкноты",
+          "slug": "banknoty",
+          "children": []
+        },
+        {
+          "name": "Билеты",
+          "slug": "bilety",
+          "children": []
+        },
+        {
+          "name": "Вещи знаменитостей, автографы",
+          "slug": "veshi_znamenitostei_avtografy",
+          "children": []
+        },
+        {
+          "name": "Военные вещи",
+          "slug": "voennye_veshi",
+          "children": []
+        },
+        {
+          "name": "Документы",
+          "slug": "dokumenty",
+          "children": []
+        },
+        {
+          "name": "Жетоны, медали, значки",
+          "slug": "zhetony_medali_znachki",
+          "children": []
+        },
+        {
+          "name": "Игры",
+          "slug": "igry",
+          "children": []
+        },
+        {
+          "name": "Календари",
+          "slug": "kalendari",
+          "children": []
+        },
+        {
+          "name": "Киндер-сюрприз",
+          "slug": "kinder_syurpriz",
+          "children": []
+        },
+        {
+          "name": "Макеты оружия",
+          "slug": "makety_oruzhiya",
+          "children": []
+        },
+        {
+          "name": "Конверты и почтовые карточки",
+          "slug": "konverty_i_pochtovye_kartochki",
+          "children": []
+        },
+        {
+          "name": "Марки",
+          "slug": "marki",
+          "children": []
+        },
+        {
+          "name": "Модели, фигурки, куклы",
+          "slug": "modeli__figurki__kukly_",
+          "children": [
+            {
+              "name": "Модели",
+              "slug": "modeli_2303483",
+              "children": [
+                {
+                  "name": "Автомобили",
+                  "slug": "avtomobili_kollektsionirovanie",
+                  "children": []
+                },
+                {
+                  "name": "Корабли и лодки",
+                  "slug": "korabli_i_lodki",
+                  "children": []
+                },
+                {
+                  "name": "Спецтехника",
+                  "slug": "spectekhnika",
+                  "children": []
+                },
+                {
+                  "name": "Военная техника",
+                  "slug": "voennaya_tekhnika",
+                  "children": []
+                },
+                {
+                  "name": "Радиоуправляемые модели",
+                  "slug": "radioupravlyaemye_modeli",
+                  "children": []
+                },
+                {
+                  "name": "Диорамы и румбоксы",
+                  "slug": "dioramy_i_rumboksy",
+                  "children": []
+                },
+                {
+                  "name": "Солдатики",
+                  "slug": "soldatiki",
+                  "children": []
+                },
+                {
+                  "name": "Железная дорога",
+                  "slug": "zheleznaya_doroga",
+                  "children": []
+                },
+                {
+                  "name": "Мотоциклы",
+                  "slug": "motocikly_kollektsionirovanie",
+                  "children": []
+                },
+                {
+                  "name": "Городской транспорт",
+                  "slug": "gorodskoi_transport",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти",
+                  "slug": "zapchasti_kollektsionirovanie",
+                  "children": []
+                },
+                {
+                  "name": "Авиация и космос",
+                  "slug": "aviaciya_i_kosmos",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Фигурки и статуэтки",
+              "slug": "figurki_i_statuetki_2303484",
+              "children": [
+                {
+                  "name": "Фигурки",
+                  "slug": "figurki",
+                  "children": []
+                },
+                {
+                  "name": "Статуэтки и скульптуры",
+                  "slug": "statuetki_i_skulptury",
+                  "children": []
+                },
+                {
+                  "name": "Миниатюры",
+                  "slug": "miniatyury",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Куклы коллекционные",
+              "slug": "kukly_kollekcionnye_2303485",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2303486",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Монеты",
+          "slug": "monety",
+          "children": []
+        },
+        {
+          "name": "Открытки",
+          "slug": "otkrytki",
+          "children": []
+        },
+        {
+          "name": "Пластиковые карточки",
+          "slug": "plastikovye_kartochki",
+          "children": []
+        },
+        {
+          "name": "Пепельницы, зажигалки",
+          "slug": "pepelnicy_zazhigalki",
+          "children": []
+        },
+        {
+          "name": "Спортивные карточки",
+          "slug": "sportivnye_kartochki",
+          "children": []
+        },
+        {
+          "name": "Фотографии, письма",
+          "slug": "fotografii_pisma",
+          "children": []
+        },
+        {
+          "name": "Этикетки, бутылки, пробки",
+          "slug": "etiketki_butylki_probki",
+          "children": []
+        },
+        {
+          "name": "Картины",
+          "slug": "kartiny",
+          "children": [
+            {
+              "name": "Живопись и графика",
+              "slug": "zhivopis_i_grafika",
+              "children": []
+            },
+            {
+              "name": "Постеры и плакаты",
+              "slug": "postery_i_plakaty",
+              "children": []
+            },
+            {
+              "name": "Мозаики, вышивки, гобелены",
+              "slug": "mozaiki_vyshivki_gobeleny",
+              "children": []
+            },
+            {
+              "name": "Религиозное искусство",
+              "slug": "religioznoe_iskusstvo",
+              "children": []
+            },
+            {
+              "name": "Товары для творчества",
+              "slug": "tovary_dlya_tvorchestva",
+              "children": []
+            },
+            {
+              "name": "Интерьерные картины",
+              "slug": "interernye_kartiny",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Грампластинки",
+          "slug": "gramplastinki",
+          "children": [
+            {
+              "name": "CD диски",
+              "slug": "cd_diski_gram",
+              "children": []
+            },
+            {
+              "name": "Аудиокассеты",
+              "slug": "audiokassety_gram",
+              "children": []
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_gram",
+              "children": []
+            },
+            {
+              "name": "Виниловые пластинки",
+              "slug": "vinilovye_plastinki",
+              "children": []
+            },
+            {
+              "name": "Проигрыватели винила",
+              "slug": "proigryvateli_vinila",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Спорт и отдых",
+      "slug": "sport_i_otdyh",
+      "children": [
+        {
+          "name": "Ролики и скейтбординг",
+          "slug": "roliki_i_skeitbording",
+          "children": [
+            {
+              "name": "Ролики",
+              "slug": "roliki",
+              "children": [
+                {
+                  "name": "Взрослые",
+                  "slug": "vzroslye",
+                  "children": []
+                },
+                {
+                  "name": "Детские",
+                  "slug": "roliki_detskie",
+                  "children": []
+                },
+                {
+                  "name": "Ролики на обувь",
+                  "slug": "roliki_na_obuv",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти",
+                  "slug": "roliki_zapchasti",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "roliki_aksessuary",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Скейтбординг",
+              "slug": "skeitbording",
+              "children": [
+                {
+                  "name": "Маунтинборды",
+                  "slug": "mauntinbordy",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти",
+                  "slug": "skeitbording_zapchasti",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "skeitbording_aksessuary",
+                  "children": []
+                },
+                {
+                  "name": "Скейтборды",
+                  "slug": "skeitbordy",
+                  "children": []
+                },
+                {
+                  "name": "Пенни борды",
+                  "slug": "penni_bordy",
+                  "children": []
+                },
+                {
+                  "name": "Лонгборды и круизеры",
+                  "slug": "longbordy_i_kruizery",
+                  "children": []
+                },
+                {
+                  "name": "Роллерсёрфы",
+                  "slug": "rollersyorfy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Защита",
+              "slug": "zashita",
+              "children": []
+            },
+            {
+              "name": "Шлемы",
+              "slug": "shlemy_dlja_rolikov_i_skeitbordinga",
+              "children": []
+            },
+            {
+              "name": "Лыжероллеры",
+              "slug": "lyzherollery",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Настольные и карточные игры",
+          "slug": "nastolnye_i_kartochnye_igry_igry",
+          "children": [
+            {
+              "name": "Головоломки",
+              "slug": "golovolomki",
+              "children": []
+            },
+            {
+              "name": "Покер",
+              "slug": "poker",
+              "children": []
+            },
+            {
+              "name": "Лото",
+              "slug": "loto",
+              "children": []
+            },
+            {
+              "name": "Шахматы, нарды, шашки",
+              "slug": "shakhmaty_nardy_shashki",
+              "children": [
+                {
+                  "name": "Шахматы",
+                  "slug": "shakhmaty",
+                  "children": []
+                },
+                {
+                  "name": "Нарды",
+                  "slug": "nardy",
+                  "children": []
+                },
+                {
+                  "name": "Шашки",
+                  "slug": "shashki",
+                  "children": []
+                },
+                {
+                  "name": "Наборы",
+                  "slug": "nabory",
+                  "children": []
+                },
+                {
+                  "name": "Столы",
+                  "slug": "stoly_2302334",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_2302335",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Игральные карты",
+              "slug": "igralnye_karty",
+              "children": []
+            },
+            {
+              "name": "Пазлы",
+              "slug": "pazly",
+              "children": []
+            },
+            {
+              "name": "Домино",
+              "slug": "domino",
+              "children": []
+            },
+            {
+              "name": "Дополнения к играм",
+              "slug": "dopolneniya_k_igram",
+              "children": []
+            },
+            {
+              "name": "Игровые столы",
+              "slug": "igrovye_stoly",
+              "children": []
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_nastolnye_igry",
+              "children": []
+            },
+            {
+              "name": "Рулетка",
+              "slug": "ruletka",
+              "children": []
+            },
+            {
+              "name": "Настольные игры",
+              "slug": "nastolnye_igry_nastolnye",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Теннис и бадминтон",
+          "slug": "tennis_i_badminton_badminton",
+          "children": [
+            {
+              "name": "Большой теннис",
+              "slug": "bolshoi_tennis",
+              "children": [
+                {
+                  "name": "Ракетки",
+                  "slug": "raketki_2303049",
+                  "children": []
+                },
+                {
+                  "name": "Мячи",
+                  "slug": "myachi_2303050",
+                  "children": []
+                },
+                {
+                  "name": "Инвентарь",
+                  "slug": "inventar_2303051",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие",
+                  "slug": "komplektuyushie_2303052",
+                  "children": []
+                },
+                {
+                  "name": "Сумки и чехлы",
+                  "slug": "sumki_i_chekhly_2303053",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Настольный теннис",
+              "slug": "nastolnyi_tennis",
+              "children": [
+                {
+                  "name": "Мячи",
+                  "slug": "myachi_nastolnyi_tennis",
+                  "children": []
+                },
+                {
+                  "name": "Наборы",
+                  "slug": "nabory_nastolnyi_tennis",
+                  "children": []
+                },
+                {
+                  "name": "Ракетки",
+                  "slug": "raketki_nastolnyi_tennis",
+                  "children": []
+                },
+                {
+                  "name": "Накладки",
+                  "slug": "nakladki_nastolnyi_tennis",
+                  "children": []
+                },
+                {
+                  "name": "Сетки",
+                  "slug": "setki_nastolnyi_tennis",
+                  "children": []
+                },
+                {
+                  "name": "Столы",
+                  "slug": "stoly_nastolnyi_tennis",
+                  "children": []
+                },
+                {
+                  "name": "Тренажёры",
+                  "slug": "trenazhyory_nastolnyi_tennis",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_nastolnyi_tennis",
+                  "children": []
+                },
+                {
+                  "name": "Основания",
+                  "slug": "osnovaniya_nastolnyi_tennis",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Бадминтон",
+              "slug": "badminton",
+              "children": []
+            },
+            {
+              "name": "Падел и сквош",
+              "slug": "padel_i_skvosh",
+              "children": []
+            },
+            {
+              "name": "Одежда",
+              "slug": "odezhda",
+              "children": []
+            },
+            {
+              "name": "Обувь",
+              "slug": "obuv_dlya_tennisa",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Стрелковый спорт",
+          "slug": "strelkovyi_sport_i",
+          "children": [
+            {
+              "name": "Пневматическое оружие",
+              "slug": "pnevmaticheskoe_oruzhie",
+              "children": []
+            },
+            {
+              "name": "Разгрузочные жилеты",
+              "slug": "razgruzochnye_zhilety",
+              "children": []
+            },
+            {
+              "name": "Кобуры и подсумки",
+              "slug": "kobury_i_podsumki",
+              "children": []
+            },
+            {
+              "name": "Наушники",
+              "slug": "naushniki_strelkovye",
+              "children": []
+            },
+            {
+              "name": "Заправка и расходники",
+              "slug": "zapravka_i_raskhodniki",
+              "children": []
+            },
+            {
+              "name": "Защита",
+              "slug": "zashita_strelkovaya",
+              "children": []
+            },
+            {
+              "name": "Луки и арбалеты",
+              "slug": "luki_i_arbalety",
+              "children": []
+            },
+            {
+              "name": "Мишени",
+              "slug": "misheni",
+              "children": []
+            },
+            {
+              "name": "Военные вещи",
+              "slug": "voennye_veshi_strelkovye",
+              "children": []
+            },
+            {
+              "name": "Маски и очки",
+              "slug": "maski_i_ochki",
+              "children": []
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_strelkovye",
+              "children": []
+            },
+            {
+              "name": "Товары для охоты",
+              "slug": "tovary_dlya_okhoty",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Единоборства",
+          "slug": "edinoborstva",
+          "children": [
+            {
+              "name": "Фехтование",
+              "slug": "fekhtovanie",
+              "children": []
+            },
+            {
+              "name": "Снаряды для единоборств",
+              "slug": "snaryady_dlya_edinoborstv",
+              "children": [
+                {
+                  "name": "Маты, татами, ковры",
+                  "slug": "maty_tatami_kovry",
+                  "children": []
+                },
+                {
+                  "name": "Груши и мешки",
+                  "slug": "grushi_i_meshki",
+                  "children": []
+                },
+                {
+                  "name": "Лапы и макивары",
+                  "slug": "lapy_i_makivary",
+                  "children": []
+                },
+                {
+                  "name": "Тренировочное оружие",
+                  "slug": "trenirovochnoe_oruzhie",
+                  "children": []
+                },
+                {
+                  "name": "Манекены борцовские",
+                  "slug": "manekeny_borcovskie",
+                  "children": []
+                },
+                {
+                  "name": "Ринги и помосты",
+                  "slug": "ringi_i_pomosty",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти",
+                  "slug": "zapchasti_snaryady_dlya_edinoborstv",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Защита",
+              "slug": "zashita_edinoborstva",
+              "children": []
+            },
+            {
+              "name": "Шлемы",
+              "slug": "shlemy_edinoborstva",
+              "children": []
+            },
+            {
+              "name": "Капы",
+              "slug": "kapy",
+              "children": []
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_dlya_edinoborstv",
+              "children": []
+            },
+            {
+              "name": "Бокс и ММА",
+              "slug": "boks_i_mma",
+              "children": [
+                {
+                  "name": "Перчатки боксёрские",
+                  "slug": "perchatki_boksyorskie",
+                  "children": []
+                },
+                {
+                  "name": "Перчатки для ММА",
+                  "slug": "perchatki_dlya_mma",
+                  "children": []
+                },
+                {
+                  "name": "Снарядные перчатки",
+                  "slug": "snaryadnye_perchatki",
+                  "children": []
+                },
+                {
+                  "name": "Одежда",
+                  "slug": "odezhda_dlja_boksa_i_mma",
+                  "children": []
+                },
+                {
+                  "name": "Боксёрки",
+                  "slug": "boksyorki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Борьба и карате",
+              "slug": "borba_i_karate",
+              "children": [
+                {
+                  "name": "Перчатки и накладки",
+                  "slug": "perchatki_i_nakladki_borba_i_karate",
+                  "children": []
+                },
+                {
+                  "name": "Одежда",
+                  "slug": "odezhda_borba_i_karate",
+                  "children": []
+                },
+                {
+                  "name": "Пояса",
+                  "slug": "poyasa_borba_i_karate",
+                  "children": []
+                },
+                {
+                  "name": "Обувь",
+                  "slug": "obuv_borba_i_karate",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Бильярд и боулинг",
+          "slug": "bilyard_i_bouling",
+          "children": [
+            {
+              "name": "Бильярд",
+              "slug": "bilyard",
+              "children": [
+                {
+                  "name": "Кии",
+                  "slug": "kii",
+                  "children": []
+                },
+                {
+                  "name": "Шары",
+                  "slug": "shary",
+                  "children": []
+                },
+                {
+                  "name": "Столы",
+                  "slug": "stoly_2302087",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие для столов",
+                  "slug": "komplektuyushie_dlya_stolov",
+                  "children": []
+                },
+                {
+                  "name": "Мебель для бильярдной",
+                  "slug": "mebel_dlya_bilyardnoi",
+                  "children": []
+                },
+                {
+                  "name": "Освещение",
+                  "slug": "osveshenie_2302083",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_2302084",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Боулинг",
+              "slug": "bouling",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Товары для отдыха",
+          "slug": "tovary_dlya_otdykha",
+          "children": [
+            {
+              "name": "Хобби и творчество",
+              "slug": "khobbi_i_tvorchestvo",
+              "children": []
+            },
+            {
+              "name": "Товары для праздников",
+              "slug": "tovary_dlya_prazdnikov",
+              "children": [
+                {
+                  "name": "Салюты и фейерверки",
+                  "slug": "salyuty_i_feierverki_2304114",
+                  "children": []
+                },
+                {
+                  "name": "Воздушные шары",
+                  "slug": "vozdushnye_shary_2304120",
+                  "children": []
+                },
+                {
+                  "name": "Декор",
+                  "slug": "dekor_2304115",
+                  "children": []
+                },
+                {
+                  "name": "Карнавальные костюмы",
+                  "slug": "karnavalnye_kostyumy_2304116",
+                  "children": []
+                },
+                {
+                  "name": "Маски и головные уборы",
+                  "slug": "maski_i_golovnye_ubory_2304112",
+                  "children": []
+                },
+                {
+                  "name": "Оборудование для праздника",
+                  "slug": "oborudovanie_dlya_prazdnika_2304117",
+                  "children": []
+                },
+                {
+                  "name": "Баллоны с гелием",
+                  "slug": "ballony_s_geliem_2304113",
+                  "children": []
+                },
+                {
+                  "name": "Украшения для тортов",
+                  "slug": "ukrasheniya_dlya_tortov_2304118",
+                  "children": []
+                },
+                {
+                  "name": "Подарочная упаковка",
+                  "slug": "podarochnaya_upakovka_2304119",
+                  "children": []
+                },
+                {
+                  "name": "Фотозоны",
+                  "slug": "fotozony_2304121",
+                  "children": []
+                },
+                {
+                  "name": "Реквизит",
+                  "slug": "rekvizit_2304122",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары для костюмов",
+                  "slug": "aksessuary_dlya_kostyumov_2304123",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Активные виды отдыха",
+              "slug": "aktivnye_vidy_otdykha",
+              "children": []
+            },
+            {
+              "name": "Электротранспорт",
+              "slug": "elektrotransport",
+              "children": []
+            },
+            {
+              "name": "Фототехника",
+              "slug": "fototekhnika",
+              "children": []
+            },
+            {
+              "name": "Аксессуары для фототехники",
+              "slug": "aksessuary_dlya_fototekhniki",
+              "children": []
+            },
+            {
+              "name": "Туризм и отдых на природе",
+              "slug": "turizm_i_otdykh_na_prirode",
+              "children": []
+            },
+            {
+              "name": "Фитнес и тренажёры",
+              "slug": "fitnes_i_trenazhyory_2302941",
+              "children": []
+            },
+            {
+              "name": "Луки и арбалеты",
+              "slug": "luki_i_arbalety_2302932",
+              "children": []
+            },
+            {
+              "name": "Мангальные зоны",
+              "slug": "mangalnye_zony",
+              "children": []
+            },
+            {
+              "name": "Аксессуары для бани",
+              "slug": "aksessuary_dlya_bani_2302933",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_2302931",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Фитнес и тренажёры",
+          "slug": "fitnes_i_trenazhyory",
+          "children": [
+            {
+              "name": "Карты и абонементы",
+              "slug": "karty_i_abonementy",
+              "children": []
+            },
+            {
+              "name": "Кардиотренажёры",
+              "slug": "kardiotrenazhyory",
+              "children": []
+            },
+            {
+              "name": "Силовые тренажёры и инвентарь",
+              "slug": "silovye_trenazhyory_i_inventar",
+              "children": [
+                {
+                  "name": "Тренажёры",
+                  "slug": "trenazhyory",
+                  "children": []
+                },
+                {
+                  "name": "Скамьи и стойки",
+                  "slug": "skami_i_stoiki",
+                  "children": []
+                },
+                {
+                  "name": "Турники, брусья и стенки",
+                  "slug": "turniki_brusya_i_stenki",
+                  "children": []
+                },
+                {
+                  "name": "Гантели",
+                  "slug": "ganteli",
+                  "children": []
+                },
+                {
+                  "name": "Штанги",
+                  "slug": "shtangi",
+                  "children": []
+                },
+                {
+                  "name": "Гири",
+                  "slug": "giri",
+                  "children": []
+                },
+                {
+                  "name": "Уличные площадки",
+                  "slug": "ulichnye_ploshadki",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары для тренировок",
+                  "slug": "aksessuary_dlya_trenirovok",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Аксессуары для фитнеса",
+              "slug": "aksessuary_dlya_fitnesa",
+              "children": [
+                {
+                  "name": "Обручи",
+                  "slug": "obruchi_2303572",
+                  "children": []
+                },
+                {
+                  "name": "Скакалки",
+                  "slug": "skakalki_2303573",
+                  "children": []
+                },
+                {
+                  "name": "Фитболы",
+                  "slug": "fitboly",
+                  "children": []
+                },
+                {
+                  "name": "Утяжелители",
+                  "slug": "utyazheliteli",
+                  "children": []
+                },
+                {
+                  "name": "Эспандеры и ленты",
+                  "slug": "espandery_i_lenty",
+                  "children": []
+                },
+                {
+                  "name": "Коврики",
+                  "slug": "kovriki_2303582",
+                  "children": []
+                },
+                {
+                  "name": "Йога и пилатес",
+                  "slug": "ioga_i_pilates",
+                  "children": []
+                },
+                {
+                  "name": "Массажные роллы и мячи",
+                  "slug": "massazhnye_rolly_i_myachi",
+                  "children": []
+                },
+                {
+                  "name": "Ролики для пресса",
+                  "slug": "roliki_dlya_pressa",
+                  "children": []
+                },
+                {
+                  "name": "Балансборды",
+                  "slug": "balansbordy",
+                  "children": []
+                },
+                {
+                  "name": "Степ платформы",
+                  "slug": "step_platformy",
+                  "children": []
+                },
+                {
+                  "name": "Петли, лестницы, барьеры",
+                  "slug": "petli_lestnicy_barery",
+                  "children": []
+                },
+                {
+                  "name": "Гаджеты для фитнеса",
+                  "slug": "gadzhety_dlya_fitnesa",
+                  "children": []
+                },
+                {
+                  "name": "Одежда для похудения",
+                  "slug": "odezhda_dlya_pokhudeniya",
+                  "children": []
+                },
+                {
+                  "name": "Фитнес перчатки",
+                  "slug": "fitnes_perchatki",
+                  "children": []
+                },
+                {
+                  "name": "Суппорты, тейпы, бинты",
+                  "slug": "supporty_teipy_binty",
+                  "children": []
+                },
+                {
+                  "name": "Упоры для отжиманий",
+                  "slug": "upory_dlya_otzhimanii",
+                  "children": []
+                },
+                {
+                  "name": "Другое",
+                  "slug": "drugoe_2303587",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Детские спорткомплексы",
+              "slug": "detskie_sportkompleksy",
+              "children": []
+            },
+            {
+              "name": "Батуты",
+              "slug": "fitnes_i_trenazhyory_batuty",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Туризм и отдых на природе",
+          "slug": "turizm_i_otdykh_na_prirode_",
+          "children": [
+            {
+              "name": "Надувные матрасы и коврики",
+              "slug": "naduvnye_matrasy_i_kovriki",
+              "children": []
+            },
+            {
+              "name": "Туристическое снаряжение",
+              "slug": "turisticheskoe_snaryazhenie_aksessuary",
+              "children": [
+                {
+                  "name": "Портативные электростанции",
+                  "slug": "portativnye_elektrostancii",
+                  "children": []
+                },
+                {
+                  "name": "Фильтры и питьевые системы",
+                  "slug": "filtry_i_pitevye_sistemy",
+                  "children": []
+                },
+                {
+                  "name": "Навигаторы",
+                  "slug": "navigatory",
+                  "children": []
+                },
+                {
+                  "name": "Чехлы",
+                  "slug": "chekhly",
+                  "children": []
+                },
+                {
+                  "name": "Души походные",
+                  "slug": "dushi_pokhodnye",
+                  "children": []
+                },
+                {
+                  "name": "Компасы и курвиметры",
+                  "slug": "kompasy_i_kurvimetry",
+                  "children": []
+                },
+                {
+                  "name": "Ножи, мультитулы, топоры",
+                  "slug": "nozhi_multituly_topory_turism",
+                  "children": []
+                },
+                {
+                  "name": "Карты",
+                  "slug": "karty",
+                  "children": []
+                },
+                {
+                  "name": "Сухпайки",
+                  "slug": "sukhpaiki",
+                  "children": []
+                },
+                {
+                  "name": "Аккумуляторы холода",
+                  "slug": "akkumulyatory_kholoda",
+                  "children": []
+                },
+                {
+                  "name": "Насосы походные",
+                  "slug": "nasosy_pokhodnye",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_turisticheskogo_snaryazheniya",
+                  "children": []
+                },
+                {
+                  "name": "Подушки и одеяла",
+                  "slug": "podushki_i_odeyala",
+                  "children": []
+                },
+                {
+                  "name": "Термосумки и боксы",
+                  "slug": "termosumki_i_boksy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Походная мебель",
+              "slug": "pokhodnaya_mebel_turizm",
+              "children": []
+            },
+            {
+              "name": "Рюкзаки и экипировка",
+              "slug": "ryukzaki_i_ekipirovka",
+              "children": [
+                {
+                  "name": "Сумки походные",
+                  "slug": "sumki_pokhodnye",
+                  "children": []
+                },
+                {
+                  "name": "Обувь",
+                  "slug": "obuv_turizm",
+                  "children": []
+                },
+                {
+                  "name": "Палки для скандинавской ходьбы",
+                  "slug": "palki_dlya_skandinavskoi_khodby",
+                  "children": []
+                },
+                {
+                  "name": "Рюкзаки туристические",
+                  "slug": "ryukzaki_turisticheskie",
+                  "children": []
+                },
+                {
+                  "name": "Головные уборы",
+                  "slug": "golovnye_ubory_turizm",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_turizm",
+                  "children": []
+                },
+                {
+                  "name": "Очки",
+                  "slug": "ochki_turizm",
+                  "children": []
+                },
+                {
+                  "name": "Одежда",
+                  "slug": "odezhda_turizm",
+                  "children": []
+                },
+                {
+                  "name": "Носки и гамаши",
+                  "slug": "noski_i_gamashi",
+                  "children": []
+                },
+                {
+                  "name": "Перчатки",
+                  "slug": "perchatki_turizm",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Палатки, тенты, шатры",
+              "slug": "palatki_tenty_shatry_turizm",
+              "children": [
+                {
+                  "name": "Печи и обогреватели",
+                  "slug": "pechi_i_obogrevateli",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие",
+                  "slug": "komplektuyushie_turizm",
+                  "children": []
+                },
+                {
+                  "name": "Палатки",
+                  "slug": "palatki",
+                  "children": []
+                },
+                {
+                  "name": "Шатры",
+                  "slug": "shatry_turizm",
+                  "children": []
+                },
+                {
+                  "name": "Сафари тенты",
+                  "slug": "safari_tenty",
+                  "children": []
+                },
+                {
+                  "name": "Тенты",
+                  "slug": "tenty",
+                  "children": []
+                },
+                {
+                  "name": "Пляжные и рыболовные зонты",
+                  "slug": "plyazhnye_i_rybolovnye_zonty",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Походная посуда",
+              "slug": "pokhodnaya_posuda",
+              "children": []
+            },
+            {
+              "name": "Фонари и лампы",
+              "slug": "fonari_i_lampy_turizm",
+              "children": []
+            },
+            {
+              "name": "Спальные мешки",
+              "slug": "spalnye_meshki",
+              "children": []
+            },
+            {
+              "name": "Мангалы, плитки, горелки",
+              "slug": "mangaly_plitki_gorelki",
+              "children": [
+                {
+                  "name": "Мангалы",
+                  "slug": "mangaly",
+                  "children": []
+                },
+                {
+                  "name": "Печи походные",
+                  "slug": "pechi_pokhodnye",
+                  "children": []
+                },
+                {
+                  "name": "Мангальные зоны",
+                  "slug": "mangalnye_zony_turizm",
+                  "children": []
+                },
+                {
+                  "name": "Газ и топливо",
+                  "slug": "gaz_i_toplivo",
+                  "children": []
+                },
+                {
+                  "name": "Плитки туристические",
+                  "slug": "plitki_turisticheskie",
+                  "children": []
+                },
+                {
+                  "name": "Грили и барбекю",
+                  "slug": "grili_i_barbekyu",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_dlya_mangalov",
+                  "children": []
+                },
+                {
+                  "name": "Горелки",
+                  "slug": "gorelki",
+                  "children": []
+                },
+                {
+                  "name": "Коптильни",
+                  "slug": "koptilni_turizm",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Металлоискатели",
+              "slug": "metalloiskateli",
+              "children": []
+            },
+            {
+              "name": "Альпинистское снаряжение",
+              "slug": "alpinistskoe_snaryazhenie",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Игры с мячом",
+          "slug": "igry_s_myachom",
+          "children": [
+            {
+              "name": "Футбол",
+              "slug": "futbol",
+              "children": [
+                {
+                  "name": "Щитки",
+                  "slug": "shitki",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "futbol_aksessuary",
+                  "children": []
+                },
+                {
+                  "name": "Сетки",
+                  "slug": "setki",
+                  "children": []
+                },
+                {
+                  "name": "Форма",
+                  "slug": "forma",
+                  "children": []
+                },
+                {
+                  "name": "Мячи",
+                  "slug": "myachi",
+                  "children": []
+                },
+                {
+                  "name": "Ворота",
+                  "slug": "futbol_vorota",
+                  "children": []
+                },
+                {
+                  "name": "Бутсы",
+                  "slug": "butsy",
+                  "children": []
+                },
+                {
+                  "name": "Гетры",
+                  "slug": "getry",
+                  "children": []
+                },
+                {
+                  "name": "Перчатки",
+                  "slug": "futbol_perchatki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Баскетбол",
+              "slug": "basketbol",
+              "children": []
+            },
+            {
+              "name": "Волейбол",
+              "slug": "voleibol",
+              "children": []
+            },
+            {
+              "name": "Гольф",
+              "slug": "golf",
+              "children": []
+            },
+            {
+              "name": "Бейсбол",
+              "slug": "beisbol",
+              "children": []
+            },
+            {
+              "name": "Регби, гандбол, американский футбол",
+              "slug": "regbi_gandbol_amerikanskii_futbol",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Зимний спорт",
+          "slug": "zimnii_sport",
+          "children": [
+            {
+              "name": "Фигурное катание",
+              "slug": "figurnoe_katanie",
+              "children": [
+                {
+                  "name": "Чехлы и запчасти для коньков",
+                  "slug": "chekhly_i_zapchasti_dlya_konkov",
+                  "children": []
+                },
+                {
+                  "name": "Коньки фигурные",
+                  "slug": "konki_figurnye",
+                  "children": []
+                },
+                {
+                  "name": "Коньки раздвижные",
+                  "slug": "konki_razdvizhnye",
+                  "children": []
+                },
+                {
+                  "name": "Одежда для фигуристов",
+                  "slug": "odezhda_dlya_figuristov",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_figurnoe_katanie",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Лыжи и сноуборды",
+              "slug": "lyzhi_i_snoubordy",
+              "children": [
+                {
+                  "name": "Ботинки и крепления",
+                  "slug": "botinki_i_krepleniya",
+                  "children": [
+                    {
+                      "name": "Ботинки горнолыжные",
+                      "slug": "botinki_gornolyzhnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Крепления горнолыжные",
+                      "slug": "krepleniya_gornolyzhnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Ботинки лыжные",
+                      "slug": "botinki_lyzhnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Крепления лыжные",
+                      "slug": "krepleniya_lyzhnye",
+                      "children": []
+                    },
+                    {
+                      "name": "Ботинки для сноуборда",
+                      "slug": "botinki_dlya_snouborda",
+                      "children": []
+                    },
+                    {
+                      "name": "Крепления для сноуборда",
+                      "slug": "krepleniya_dlya_snouborda",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Одежда",
+                  "slug": "odezhda_dlya_tennisa",
+                  "children": [
+                    {
+                      "name": "Костюмы и комбинезоны",
+                      "slug": "kostyumy_i_kombinezony_lyzi_i_snoubordy",
+                      "children": []
+                    },
+                    {
+                      "name": "Куртки",
+                      "slug": "kurtki_lyzi_i_snoubordy",
+                      "children": []
+                    },
+                    {
+                      "name": "Брюки и полукомбинезоны",
+                      "slug": "bryuki_i_polukombinezony_lyzi_i_snoubordy",
+                      "children": []
+                    },
+                    {
+                      "name": "Толстовки и флиски",
+                      "slug": "tolstovki_i_fliski_lyzi_i_snoubordy",
+                      "children": []
+                    },
+                    {
+                      "name": "Термобельё",
+                      "slug": "termobelyo_lyzi_i_snoubordy",
+                      "children": []
+                    },
+                    {
+                      "name": "Перчатки и варежки",
+                      "slug": "perchatki_i_varezhki_lyzi_i_snoubordy",
+                      "children": []
+                    },
+                    {
+                      "name": "Шапки и балаклавы",
+                      "slug": "shapki_i_balaklavy_lyzi_i_snoubordy",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Защита и экипировка",
+                  "slug": "zashita_i_ekipirovka_dlya_velosipedov",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "lyzhi_i_snoubordy_aksessuary",
+                  "children": []
+                },
+                {
+                  "name": "Беговые лыжи",
+                  "slug": "begovye_lyzhi",
+                  "children": []
+                },
+                {
+                  "name": "Горные лыжи",
+                  "slug": "gornye_lyzhi",
+                  "children": []
+                },
+                {
+                  "name": "Лыжные палки",
+                  "slug": "lyzhnye_palki",
+                  "children": []
+                },
+                {
+                  "name": "Сноуборды",
+                  "slug": "snoubordy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Сани, снегокаты и тюбинги",
+              "slug": "sani_snegokaty_i_tyubingi",
+              "children": [
+                {
+                  "name": "Сани",
+                  "slug": "sani",
+                  "children": []
+                },
+                {
+                  "name": "Снегокаты",
+                  "slug": "snegokaty",
+                  "children": []
+                },
+                {
+                  "name": "Тюбинги",
+                  "slug": "tyubingi",
+                  "children": []
+                },
+                {
+                  "name": "Ледянки",
+                  "slug": "ledyanki",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_sani_snegokaty",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Аксессуары и запчасти",
+              "slug": "aksessuary_i_zapchasti",
+              "children": []
+            },
+            {
+              "name": "Хоккей",
+              "slug": "khokkei",
+              "children": [
+                {
+                  "name": "Коньки",
+                  "slug": "konki",
+                  "children": []
+                },
+                {
+                  "name": "Клюшки",
+                  "slug": "klyushki",
+                  "children": []
+                },
+                {
+                  "name": "Форма и экипировка",
+                  "slug": "forma_i_ekipirovka",
+                  "children": []
+                },
+                {
+                  "name": "Шлемы",
+                  "slug": "shlemy",
+                  "children": []
+                },
+                {
+                  "name": "Перчатки",
+                  "slug": "perchatki",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "hokkey_aksessuary",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Дайвинг и водный спорт",
+          "slug": "daiving_i_vodnyi_sport",
+          "children": [
+            {
+              "name": "Сёрфы и сапборды",
+              "slug": "syorfy_i_sapbordy",
+              "children": [
+                {
+                  "name": "Кайтборды",
+                  "slug": "kaitbordy",
+                  "children": []
+                },
+                {
+                  "name": "Фойлборды",
+                  "slug": "foilbordy",
+                  "children": []
+                },
+                {
+                  "name": "Сёрфборды",
+                  "slug": "syorfbordy",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие",
+                  "slug": "komplektuyshie",
+                  "children": []
+                },
+                {
+                  "name": "Электросёрфы и электрофойлы",
+                  "slug": "elektrosyorfy_i_elektrofoily",
+                  "children": []
+                },
+                {
+                  "name": "Вейксёрфы",
+                  "slug": "veiksyorfy",
+                  "children": []
+                },
+                {
+                  "name": "Вейкборды",
+                  "slug": "veikbordy",
+                  "children": []
+                },
+                {
+                  "name": "Виндсёрфы",
+                  "slug": "vindsyorfy",
+                  "children": []
+                },
+                {
+                  "name": "Флайборды",
+                  "slug": "flaibordy",
+                  "children": []
+                },
+                {
+                  "name": "Сапборды",
+                  "slug": "sapbordy",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Гидрокостюмы",
+              "slug": "gidrokostyumy",
+              "children": [
+                {
+                  "name": "Гидрообувь и носки",
+                  "slug": "gidroobuv_i_noski",
+                  "children": []
+                },
+                {
+                  "name": "Комплектующие",
+                  "slug": "komplektuyushie_daiving",
+                  "children": []
+                },
+                {
+                  "name": "Гидроодежда взрослая",
+                  "slug": "gidroodezhda_vzroslaya",
+                  "children": []
+                },
+                {
+                  "name": "Гидроодежда детская",
+                  "slug": "gidroodezhda_detskaya",
+                  "children": []
+                },
+                {
+                  "name": "Перчатки",
+                  "slug": "perchatki_daiving",
+                  "children": []
+                },
+                {
+                  "name": "Шлемы",
+                  "slug": "shlemy_daiving",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Аксессуары для плавания",
+              "slug": "aksessuary_dlya_plavaniya",
+              "children": []
+            },
+            {
+              "name": "Инвентарь для водного спорта",
+              "slug": "inventar_dlya_vodnogo_sporta",
+              "children": [
+                {
+                  "name": "Дайвинг и подводная охота",
+                  "slug": "daiving_i_podvodnaya_okhota",
+                  "children": []
+                },
+                {
+                  "name": "Кайт и виндсёрфинг",
+                  "slug": "kait_i_vindsyorfing_i",
+                  "children": []
+                },
+                {
+                  "name": "Для вейкборда",
+                  "slug": "dlya_veikborda",
+                  "children": []
+                },
+                {
+                  "name": "Вёсла",
+                  "slug": "vyosla_",
+                  "children": []
+                },
+                {
+                  "name": "Жилеты",
+                  "slug": "zhilety_dlya_vodnogo_sporta",
+                  "children": []
+                },
+                {
+                  "name": "Водные лыжи",
+                  "slug": "vodnye_lyzhi",
+                  "children": []
+                },
+                {
+                  "name": "Чехлы и аквасумки",
+                  "slug": "chekhly_i_akvasumki",
+                  "children": []
+                },
+                {
+                  "name": "Насосы",
+                  "slug": "nasosy_dlya_vodnogo_sporta",
+                  "children": []
+                },
+                {
+                  "name": "Ватрушки и баллоны",
+                  "slug": "vatrushki_i_ballony",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти",
+                  "slug": "zapchasti_dlya_vodnogo_sporta",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_dlya_vodnogo_sporta",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Бассейны и комплектующие",
+              "slug": "basseiny_i_komplektuyushie_daiving",
+              "children": []
+            },
+            {
+              "name": "Вёсельные лодки",
+              "slug": "vyoselnye_lodki",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Спортивное питание",
+          "slug": "sportivnoe_pitanie",
+          "children": [
+            {
+              "name": "Предтрен и восстановление",
+              "slug": "predtren_i_vosstanovlenie",
+              "children": []
+            },
+            {
+              "name": "Аминокислоты",
+              "slug": "aminokisloty",
+              "children": []
+            },
+            {
+              "name": "Жиросжигатели",
+              "slug": "zhiroszhigateli",
+              "children": []
+            },
+            {
+              "name": "Фитнес питание",
+              "slug": "fitnes_pitanie",
+              "children": []
+            },
+            {
+              "name": "Изотоники и дренаж",
+              "slug": "izotoniki_i_drenazh",
+              "children": []
+            },
+            {
+              "name": "Шейкеры",
+              "slug": "sheikery",
+              "children": []
+            },
+            {
+              "name": "Протеины, гейнеры, углеводы",
+              "slug": "proteiny_geinery_uglevody",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Самокаты и гироскутеры",
+          "slug": "samokaty_i_giroskutery",
+          "children": [
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_samokaty_i_giroskutery",
+              "children": []
+            },
+            {
+              "name": "Электросамокаты",
+              "slug": "elektrosamokaty_samokaty_i_giroskutery",
+              "children": []
+            },
+            {
+              "name": "Городские самокаты",
+              "slug": "gorodskie_samokaty",
+              "children": []
+            },
+            {
+              "name": "Трюковые самокаты",
+              "slug": "tryukovye_samokaty_samokaty_i_giroskutery",
+              "children": []
+            },
+            {
+              "name": "Детские самокаты",
+              "slug": "detskie_samokaty_samokaty_i_giroskutery",
+              "children": []
+            },
+            {
+              "name": "Гироскутеры",
+              "slug": "giroskutery",
+              "children": []
+            },
+            {
+              "name": "Моноколёса и сигвеи",
+              "slug": "monokolyosa_i_sigvei",
+              "children": []
+            },
+            {
+              "name": "Запчасти",
+              "slug": "zapchasti_samokaty_i_giroskutery",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Бег",
+          "slug": "beg",
+          "children": []
+        },
+        {
+          "name": "Награды и кубки",
+          "slug": "nagrady_i_kubki",
+          "children": []
+        },
+        {
+          "name": "Гимнастика и танцы",
+          "slug": "gimnastika_i_tancy",
+          "children": [
+            {
+              "name": "Обувь",
+              "slug": "obuv_gimnastika",
+              "children": []
+            },
+            {
+              "name": "Наколенники",
+              "slug": "nakolenniki_gimnastika",
+              "children": []
+            },
+            {
+              "name": "Рюкзаки и сумки",
+              "slug": "ryukzaki_i_sumki_gimnastika",
+              "children": []
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_gimnastika",
+              "children": []
+            },
+            {
+              "name": "Художественная гимнастика",
+              "slug": "khudozhestvennaya_gimnastika",
+              "children": [
+                {
+                  "name": "Ленты",
+                  "slug": "lenty_hudozhestvennaya_gimnastika",
+                  "children": []
+                },
+                {
+                  "name": "Булавы",
+                  "slug": "bulavy",
+                  "children": []
+                },
+                {
+                  "name": "Обручи",
+                  "slug": "obruchi",
+                  "children": []
+                },
+                {
+                  "name": "Мячи",
+                  "slug": "myachi_hudozhestvennaya_gimnastika",
+                  "children": []
+                },
+                {
+                  "name": "Скакалки",
+                  "slug": "skakalki",
+                  "children": []
+                },
+                {
+                  "name": "Чехлы",
+                  "slug": "chekhly_hudozhestvennaya_gimnastika",
+                  "children": []
+                },
+                {
+                  "name": "Аксессуары",
+                  "slug": "aksessuary_hudozhestvennaya_gimnastika",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Спортивная гимнастика",
+              "slug": "sportivnaya_gimnastika",
+              "children": []
+            },
+            {
+              "name": "Балет и танцы",
+              "slug": "balet_i_tancy",
+              "children": []
+            },
+            {
+              "name": "Одежда",
+              "slug": "odezhda_gimnastika",
+              "children": [
+                {
+                  "name": "Костюмы",
+                  "slug": "kostyumy_gimnastika_i_tancy",
+                  "children": []
+                },
+                {
+                  "name": "Брюки и шорты",
+                  "slug": "bryuki_i_shorty_gimnastika_i_tancy",
+                  "children": []
+                },
+                {
+                  "name": "Рубашки и топы",
+                  "slug": "rubashki_i_topy",
+                  "children": []
+                },
+                {
+                  "name": "Юбки",
+                  "slug": "yubki_gimnastika_i_tancy",
+                  "children": []
+                },
+                {
+                  "name": "Колготки и гетры",
+                  "slug": "kolgotki_i_getry_gimnastika_i_tancy",
+                  "children": []
+                },
+                {
+                  "name": "Бельё",
+                  "slug": "belyo_gimnastika_i_tancy",
+                  "children": []
+                },
+                {
+                  "name": "Купальники",
+                  "slug": "kupalniki_gimnastika_i_tancy",
+                  "children": []
+                },
+                {
+                  "name": "Платья",
+                  "slug": "platya_gimnastika_i_tancy",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Конный спорт",
+          "slug": "konnyi_sport",
+          "children": []
+        }
+      ]
+    }
+  ]
+}

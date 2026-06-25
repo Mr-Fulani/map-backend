@@ -1,0 +1,281 @@
+{
+  "root": "Животные",
+  "domain": "zhivotnye",
+  "tree": [
+    {
+      "name": "Кошки",
+      "slug": "koshki",
+      "children": []
+    },
+    {
+      "name": "Птицы",
+      "slug": "ptitsy",
+      "children": []
+    },
+    {
+      "name": "Аквариум",
+      "slug": "akvarium",
+      "children": []
+    },
+    {
+      "name": "Другие животные",
+      "slug": "drugie_zhivotnye",
+      "children": []
+    },
+    {
+      "name": "Товары для животных",
+      "slug": "tovary_dlja_zhivotnyh",
+      "children": [
+        {
+          "name": "Собаки и кошки",
+          "slug": "sobaki_i_koshki",
+          "children": [
+            {
+              "name": "Для содержания и обустройства",
+              "slug": "dlya_soderzhaniya_i_obustroistva",
+              "children": [
+                {
+                  "name": "Лежанки и домики",
+                  "slug": "lezhanki_i_domiki",
+                  "children": []
+                },
+                {
+                  "name": "Когтеточки и игровые комплексы",
+                  "slug": "kogtetochki_i_igrovye_kompleksy",
+                  "children": []
+                },
+                {
+                  "name": "Клетки, вольеры и будки",
+                  "slug": "kletki_volery_i_budki",
+                  "children": [
+                    {
+                      "name": "Будки и укрытия",
+                      "slug": "budki_i_ukrytiya_2303749",
+                      "children": []
+                    },
+                    {
+                      "name": "Клетки",
+                      "slug": "kletki_2303751",
+                      "children": []
+                    },
+                    {
+                      "name": "Вольеры и манежи",
+                      "slug": "volery_i_manezhi_2303752",
+                      "children": []
+                    },
+                    {
+                      "name": "Другое",
+                      "slug": "drugoe_2303750",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Переноски, сумки и рюкзаки",
+                  "slug": "perenoski_sumki_i_ryukzaki",
+                  "children": []
+                },
+                {
+                  "name": "Миски и поилки",
+                  "slug": "miski_i_poilki",
+                  "children": []
+                },
+                {
+                  "name": "Игрушки",
+                  "slug": "igrushki",
+                  "children": []
+                },
+                {
+                  "name": "Одежда и обувь",
+                  "slug": "odezhda_i_obuv",
+                  "children": [
+                    {
+                      "name": "Верхняя одежда",
+                      "slug": "verkhnyaya_odezhda_2304197",
+                      "children": []
+                    },
+                    {
+                      "name": "Домашняя и повседневная одежда",
+                      "slug": "domashnyaya_i_povsednevnaya_odezhda_2304198",
+                      "children": []
+                    },
+                    {
+                      "name": "Обувь",
+                      "slug": "obuv_2304199",
+                      "children": []
+                    },
+                    {
+                      "name": "Костюмы",
+                      "slug": "kostyumy_2304200",
+                      "children": []
+                    },
+                    {
+                      "name": "Аксессуары",
+                      "slug": "aksessuary_2304201",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "Гигиена и уход",
+              "slug": "gigiena_i_ukhod",
+              "children": [
+                {
+                  "name": "Предметы туалета",
+                  "slug": "predmety_tualeta",
+                  "children": [
+                    {
+                      "name": "Лотки",
+                      "slug": "lotki",
+                      "children": []
+                    },
+                    {
+                      "name": "Наполнители",
+                      "slug": "napolniteli",
+                      "children": []
+                    },
+                    {
+                      "name": "Пелёнки и подгузники",
+                      "slug": "pelyonki_i_podguzniki",
+                      "children": []
+                    },
+                    {
+                      "name": "Спреи для приучения к туалету",
+                      "slug": "sprei_dlya_priucheniya_k_tualetu",
+                      "children": []
+                    },
+                    {
+                      "name": "Аксессуары для гигиены",
+                      "slug": "aksessuary_dlya_gigieny",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "name": "Уходовые средства",
+                  "slug": "ukhodovye_sredstva",
+                  "children": []
+                },
+                {
+                  "name": "Груминг",
+                  "slug": "gruming",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Амуниция",
+              "slug": "amuniciya",
+              "children": []
+            },
+            {
+              "name": "Для дрессировки",
+              "slug": "dlya_dressirovki",
+              "children": []
+            },
+            {
+              "name": "Корма и лакомства",
+              "slug": "korma_i_lakomstva",
+              "children": [
+                {
+                  "name": "Корма для собак",
+                  "slug": "korma_dlya_sobak",
+                  "children": []
+                },
+                {
+                  "name": "Корма для кошек",
+                  "slug": "korma_dlya_koshek",
+                  "children": []
+                },
+                {
+                  "name": "Лакомства для собак",
+                  "slug": "lakomstva_dlya_sobak",
+                  "children": []
+                },
+                {
+                  "name": "Лакомства для кошек",
+                  "slug": "lakomstva_dlya_koshek",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Фермерское хозяйство",
+          "slug": "fermerskoe_khozyaistvo",
+          "children": [
+            {
+              "name": "Скотоводство",
+              "slug": "skotovodstvo",
+              "children": []
+            },
+            {
+              "name": "Птицеводство",
+              "slug": "pticevodstvo",
+              "children": []
+            },
+            {
+              "name": "Пчеловодство",
+              "slug": "pchelovodstvo",
+              "children": []
+            },
+            {
+              "name": "Корма для животных",
+              "slug": "korma_dlya_zhivotnykh",
+              "children": [
+                {
+                  "name": "Сено",
+                  "slug": "seno",
+                  "children": []
+                },
+                {
+                  "name": "Солома",
+                  "slug": "soloma",
+                  "children": []
+                },
+                {
+                  "name": "Зерно и зерносмеси",
+                  "slug": "zerno_i_zernosmesi",
+                  "children": []
+                },
+                {
+                  "name": "Комбикорма",
+                  "slug": "kombikorma",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Оборудование",
+              "slug": "oborudovanie",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Птицы",
+          "slug": "pticy",
+          "children": []
+        },
+        {
+          "name": "Грызуны",
+          "slug": "gryzuny",
+          "children": []
+        },
+        {
+          "name": "Рыбы и рептилии",
+          "slug": "ryby_i_reptilii",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Собаки",
+      "slug": "sobaki",
+      "children": []
+    }
+  ]
+}

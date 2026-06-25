@@ -1,0 +1,842 @@
+{
+  "root": "Электроника",
+  "domain": "elektronika",
+  "tree": [
+    {
+      "name": "Ноутбуки",
+      "slug": "noutbuki",
+      "children": []
+    },
+    {
+      "name": "Фототехника",
+      "slug": "fototehnika",
+      "children": [
+        {
+          "name": "Оборудование и аксессуары",
+          "slug": "fototexnika_oborudovanie_i_aksessuary",
+          "children": [
+            {
+              "name": "Проявление и хранение фотографий",
+              "slug": "proyavlenie_i_khranenie_fotografii_2303927",
+              "children": []
+            },
+            {
+              "name": "Запчасти и комплектующие для фототехники",
+              "slug": "zapchasti_i_komplektuyushie_dlya_fototekhniki_2303928",
+              "children": []
+            },
+            {
+              "name": "Студийное оборудование",
+              "slug": "studiinoe_oborudovanie_2303929",
+              "children": []
+            },
+            {
+              "name": "Оптика",
+              "slug": "optika_2303930",
+              "children": []
+            },
+            {
+              "name": "Хранение и транспортировка",
+              "slug": "khranenie_i_transportirovka_2303931",
+              "children": []
+            },
+            {
+              "name": "Стабилизаторы и крепления",
+              "slug": "stabilizatory_i_krepleniya_2303932",
+              "children": []
+            },
+            {
+              "name": "Квадрокоптеры и аксессуары",
+              "slug": "kvadrokoptery_i_aksessuary_2303933",
+              "children": []
+            },
+            {
+              "name": "Аккумуляторы и питание",
+              "slug": "akkumulyatory_i_pitanie_2303934",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Бинокли и телескопы",
+          "slug": "binokli_i_teleskopy",
+          "children": []
+        },
+        {
+          "name": "Объективы",
+          "slug": "obieektivy",
+          "children": []
+        },
+        {
+          "name": "Плёночные фотоаппараты",
+          "slug": "plenocnye_fotoapparaty",
+          "children": []
+        },
+        {
+          "name": "Зеркальные фотоаппараты",
+          "slug": "zerkalnye_fotoapparaty",
+          "children": []
+        },
+        {
+          "name": "Компактные фотоаппараты",
+          "slug": "kompaktnye_fotoapparaty",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Телефоны",
+      "slug": "telefony",
+      "children": [
+        {
+          "name": "Рации",
+          "slug": "racii",
+          "children": []
+        },
+        {
+          "name": "Стационарные телефоны",
+          "slug": "stacionarnye_telefony",
+          "children": []
+        },
+        {
+          "name": "Аксессуары",
+          "slug": "aksessuary_413",
+          "children": [
+            {
+              "name": "Аккумуляторы",
+              "slug": "akkumulyatory_3729",
+              "children": []
+            },
+            {
+              "name": "Гарнитуры и наушники",
+              "slug": "garnitury_i_naushniki_3730",
+              "children": []
+            },
+            {
+              "name": "Зарядные устройства",
+              "slug": "zaryadnye_ustroistva_3731",
+              "children": [
+                {
+                  "name": "Сетевые зарядные устройства",
+                  "slug": "setevye_zaryadnye_ustroistva",
+                  "children": []
+                },
+                {
+                  "name": "Беспроводные зарядные устройства",
+                  "slug": "besprovodnye_zaryadnye_ustroistva",
+                  "children": []
+                },
+                {
+                  "name": "Автомобильные зарядные устройства",
+                  "slug": "avtomobilnye_zaryadnye_ustroistva",
+                  "children": []
+                },
+                {
+                  "name": "Повербанки",
+                  "slug": "poverbanki",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Кабели и адаптеры",
+              "slug": "kabeli_i_adaptery_3732",
+              "children": []
+            },
+            {
+              "name": "Модемы и роутеры",
+              "slug": "modemy_i_routery_3733",
+              "children": []
+            },
+            {
+              "name": "Запчасти",
+              "slug": "zapchasti_3728",
+              "children": []
+            },
+            {
+              "name": "Чехлы и плёнки",
+              "slug": "chekhly_i_plyonki_3734",
+              "children": [
+                {
+                  "name": "Чехлы",
+                  "slug": "chekhly_2303940",
+                  "children": []
+                },
+                {
+                  "name": "Стёкла",
+                  "slug": "styokla_2303941",
+                  "children": []
+                },
+                {
+                  "name": "Плёнки",
+                  "slug": "plyonki_2303942",
+                  "children": []
+                },
+                {
+                  "name": "Коробки",
+                  "slug": "korobki_2303943",
+                  "children": []
+                },
+                {
+                  "name": "Подставки и держатели",
+                  "slug": "podstavki_i_derzhateli_2303944",
+                  "children": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "name": "Мобильные телефоны",
+          "slug": "mobilnye_telefony",
+          "children": []
+        },
+        {
+          "name": "Смарт-часы и фитнес-браслеты",
+          "slug": "smart_chasy_i_fitnes_braslety",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Планшеты и электронные книги",
+      "slug": "planshety_i_elektronnye_knigi",
+      "children": [
+        {
+          "name": "Планшеты",
+          "slug": "plansety",
+          "children": []
+        },
+        {
+          "name": "Электронные книги",
+          "slug": "elektronnye_knigi",
+          "children": []
+        },
+        {
+          "name": "Аксессуары",
+          "slug": "aksessuary_571",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Оргтехника и расходники",
+      "slug": "orgtehnika_i_rashodniki",
+      "children": [
+        {
+          "name": "Принтеры",
+          "slug": "printery_576",
+          "children": [
+            {
+              "name": "Лазерные принтеры",
+              "slug": "lazernye_printery",
+              "children": []
+            },
+            {
+              "name": "Струйные принтеры",
+              "slug": "struinye_printery",
+              "children": []
+            },
+            {
+              "name": "3D-принтеры",
+              "slug": "3d_printery",
+              "children": []
+            },
+            {
+              "name": "Термопринтеры",
+              "slug": "termoprintery",
+              "children": []
+            },
+            {
+              "name": "Плоттеры",
+              "slug": "plottery",
+              "children": []
+            },
+            {
+              "name": "Запчасти",
+              "slug": "zapchasti_printery",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Расходные материалы",
+          "slug": "rasxodnye_materialy",
+          "children": [
+            {
+              "name": "Картриджи",
+              "slug": "kartridzhi",
+              "children": [
+                {
+                  "name": "Картриджи для лазерных принтеров",
+                  "slug": "kartridzhi_dlya_lazernykh_printerov",
+                  "children": []
+                },
+                {
+                  "name": "Картриджи для струйных принтеров",
+                  "slug": "kartridzhi_dlya_struinykh_printerov",
+                  "children": []
+                },
+                {
+                  "name": "Чернила и тонеры",
+                  "slug": "chernila_i_tonery",
+                  "children": []
+                },
+                {
+                  "name": "Материалы для 3D принтеров",
+                  "slug": "materialy_dlya_3d_printerov",
+                  "children": []
+                },
+                {
+                  "name": "Пленки и ленты для печати",
+                  "slug": "plenki_i_lenty_dlya_pechati",
+                  "children": []
+                },
+                {
+                  "name": "Чипы для картриджей",
+                  "slug": "chipy_dlya_kartridzhei",
+                  "children": []
+                },
+                {
+                  "name": "Фотобарабаны",
+                  "slug": "fotobarabany",
+                  "children": []
+                },
+                {
+                  "name": "Запчасти для картриджей",
+                  "slug": "zapchasti_dlya_kartridzhei",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Блоки питания и батареи",
+              "slug": "bloki_pitaniya_i_batarei",
+              "children": []
+            },
+            {
+              "name": "Бумага",
+              "slug": "bumaga",
+              "children": []
+            },
+            {
+              "name": "Болванки",
+              "slug": "bolvanki",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Канцелярия",
+          "slug": "kanceliariia",
+          "children": []
+        },
+        {
+          "name": "МФУ, копиры и сканеры",
+          "slug": "mfu_kopiry_i_skanery",
+          "children": []
+        },
+        {
+          "name": "Телефония",
+          "slug": "telefoniia",
+          "children": []
+        },
+        {
+          "name": "ИБП, сетевые фильтры",
+          "slug": "ibp_setevye_filtry",
+          "children": []
+        },
+        {
+          "name": "Уничтожители бумаг",
+          "slug": "unictoziteli_bumag",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Товары для компьютера",
+      "slug": "tovary_dlja_kompjutera",
+      "children": [
+        {
+          "name": "Мониторы и запчасти",
+          "slug": "monitory_i_zapchasti_",
+          "children": [
+            {
+              "name": "Мониторы",
+              "slug": "monitory_2300557",
+              "children": []
+            },
+            {
+              "name": "Запчасти",
+              "slug": "zapcasti_2300558",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Флэшки и карты памяти",
+          "slug": "fleshki_i_karty_pamyati",
+          "children": []
+        },
+        {
+          "name": "ТВ-тюнеры",
+          "slug": "tv_tyunery",
+          "children": []
+        },
+        {
+          "name": "Переносные жёсткие диски",
+          "slug": "perenosnye_zhyostkie_diski",
+          "children": []
+        },
+        {
+          "name": "Клавиатуры и мыши",
+          "slug": "klaviatury_i_myshi",
+          "children": [
+            {
+              "name": "Клавиатуры",
+              "slug": "klaviatury",
+              "children": []
+            },
+            {
+              "name": "Мыши",
+              "slug": "myshi",
+              "children": []
+            },
+            {
+              "name": "Комплекты",
+              "slug": "komplekty_klaviatury_i_myshi",
+              "children": []
+            },
+            {
+              "name": "Кейкапы и свитчи",
+              "slug": "keikapy_i_svitchi",
+              "children": []
+            },
+            {
+              "name": "Клавиатуры для ноутбуков",
+              "slug": "klaviatury_dlya_noutbukov",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Веб-камеры",
+          "slug": "veb_kamery",
+          "children": []
+        },
+        {
+          "name": "Джойстики и рули",
+          "slug": "dzhoistiki_i_ruli",
+          "children": []
+        },
+        {
+          "name": "Аксессуары",
+          "slug": "aksessuary",
+          "children": []
+        },
+        {
+          "name": "Комплектующие",
+          "slug": "komplektuyushie",
+          "children": [
+            {
+              "name": "CD, DVD и Blu-ray приводы",
+              "slug": "cd_dvd_i_blu_ray_privody",
+              "children": []
+            },
+            {
+              "name": "Блоки питания",
+              "slug": "bloki_pitaniya",
+              "children": []
+            },
+            {
+              "name": "Видеокарты",
+              "slug": "videokarty",
+              "children": []
+            },
+            {
+              "name": "Системы охлаждения",
+              "slug": "sistemy_okhlazhdeniya",
+              "children": []
+            },
+            {
+              "name": "Контроллеры",
+              "slug": "kontrollery",
+              "children": []
+            },
+            {
+              "name": "Процессоры",
+              "slug": "processory",
+              "children": []
+            },
+            {
+              "name": "Оперативная память",
+              "slug": "operativnaya_pamyat",
+              "children": []
+            },
+            {
+              "name": "Материнские платы",
+              "slug": "materinskie_platy",
+              "children": []
+            },
+            {
+              "name": "Корпуса",
+              "slug": "korpusa_",
+              "children": []
+            },
+            {
+              "name": "Звуковые карты",
+              "slug": "zvukovye_karty",
+              "children": []
+            },
+            {
+              "name": "Жёсткие диски",
+              "slug": "zhyostkie_diski",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Сетевое оборудование",
+          "slug": "setevoe_oborudovanie",
+          "children": []
+        },
+        {
+          "name": "Акустика",
+          "slug": "akustika",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Настольные компьютеры",
+      "slug": "nastolnye_kompjutery",
+      "children": [
+        {
+          "name": "Системные блоки",
+          "slug": "sistemnye_bloki",
+          "children": []
+        },
+        {
+          "name": "Моноблоки",
+          "slug": "monobloki",
+          "children": []
+        },
+        {
+          "name": "Другое",
+          "slug": "drugoe_2093776",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "Игры, приставки и программы",
+      "slug": "igry_pristavki_i_programmy",
+      "children": [
+        {
+          "name": "Программы",
+          "slug": "programmy",
+          "children": [
+            {
+              "name": "Программное обеспечение",
+              "slug": "programmnoe_obespechenie",
+              "children": [
+                {
+                  "name": "Офисные программы",
+                  "slug": "ofisnye_programmy",
+                  "children": []
+                },
+                {
+                  "name": "Мультимедиа и дизайн",
+                  "slug": "multimedia_i_dizain",
+                  "children": []
+                },
+                {
+                  "name": "Проектирование и черчение",
+                  "slug": "proektirovanie_i_cherchenie",
+                  "children": []
+                },
+                {
+                  "name": "Сервисы, мессенджеры и соцсети",
+                  "slug": "servisy_messendzhery_i_socseti",
+                  "children": []
+                }
+              ]
+            },
+            {
+              "name": "Операционные системы",
+              "slug": "operacionnye_sistemy",
+              "children": []
+            },
+            {
+              "name": "Нейросети",
+              "slug": "neiroseti",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Игры для приставок",
+          "slug": "igry_dlia_pristavok",
+          "children": []
+        },
+        {
+          "name": "Компьютерные игры",
+          "slug": "kompiuternye_igry",
+          "children": []
+        },
+        {
+          "name": "Игровые приставки и аксессуары",
+          "slug": "igrovye_pristavki_i_aksessuary",
+          "children": [
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_2278293",
+              "children": []
+            },
+            {
+              "name": "Запчасти",
+              "slug": "zapcasti_2278294",
+              "children": []
+            },
+            {
+              "name": "Игровые приставки",
+              "slug": "igrovye_pristavki",
+              "children": []
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Аудио и видео",
+      "slug": "audio_i_video",
+      "children": [
+        {
+          "name": "Аксессуары",
+          "slug": "aksessuary_282",
+          "children": []
+        },
+        {
+          "name": "Музыка и фильмы",
+          "slug": "muzyka_i_filmy",
+          "children": []
+        },
+        {
+          "name": "Видео, DVD и Blu-ray плееры",
+          "slug": "video_dvd_i_blu_ray_pleery",
+          "children": []
+        },
+        {
+          "name": "MP3-плееры",
+          "slug": "mp3_pleery",
+          "children": []
+        },
+        {
+          "name": "Усилители и ресиверы",
+          "slug": "usiliteli_i_resivery",
+          "children": [
+            {
+              "name": "Ресиверы",
+              "slug": "resivery",
+              "children": []
+            },
+            {
+              "name": "Усилители",
+              "slug": "usiliteli_audio",
+              "children": []
+            },
+            {
+              "name": "ТВ приставки",
+              "slug": "tv_pristavki",
+              "children": []
+            },
+            {
+              "name": "Аксессуары",
+              "slug": "aksessuary_audio",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Телевизоры и проекторы",
+          "slug": "televizory_i_proektory",
+          "children": [
+            {
+              "name": "Телевизоры",
+              "slug": "televizory_1147261",
+              "children": []
+            },
+            {
+              "name": "Проекторы",
+              "slug": "proektory",
+              "children": []
+            },
+            {
+              "name": "Другое",
+              "slug": "drugoe_1147263",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Видеокамеры",
+          "slug": "videokamery",
+          "children": [
+            {
+              "name": "Аналоговые камеры",
+              "slug": "analogovye_kamery",
+              "children": []
+            },
+            {
+              "name": "Цифровые камеры",
+              "slug": "cifrovye_kamery",
+              "children": []
+            },
+            {
+              "name": "Экшн-камеры",
+              "slug": "ekshn_kamery",
+              "children": []
+            },
+            {
+              "name": "Плёночные камеры",
+              "slug": "plyonochnye_kamery",
+              "children": []
+            },
+            {
+              "name": "Эндоскопы",
+              "slug": "endoskopy",
+              "children": []
+            },
+            {
+              "name": "Охранные системы и видеонаблюдение",
+              "slug": "okhrannye_sistemy_i_videonablyudenie",
+              "children": []
+            },
+            {
+              "name": "Квадрокоптеры",
+              "slug": "kvadrokoptery",
+              "children": []
+            },
+            {
+              "name": "Аксессуары для видеокамер",
+              "slug": "aksessuary_dlya_videokamer",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Акустика, колонки, сабвуферы",
+          "slug": "akustika_kolonki_sabvufery",
+          "children": [
+            {
+              "name": "Запчасти для акустики",
+              "slug": "zapchasti_dlya_akustiki_2304137",
+              "children": []
+            },
+            {
+              "name": "Аудиоколонки",
+              "slug": "audiokolonki_2304138",
+              "children": []
+            },
+            {
+              "name": "Портативные колонки",
+              "slug": "portativnye_kolonki_2304139",
+              "children": []
+            },
+            {
+              "name": "Умные колонки",
+              "slug": "umnye_kolonki_2304140",
+              "children": []
+            },
+            {
+              "name": "Профессиональная и концертная акустика",
+              "slug": "professionalnaya_i_koncertnaya_akustika_2304141",
+              "children": []
+            },
+            {
+              "name": "Сабвуферы",
+              "slug": "sabvufery_2304142",
+              "children": []
+            },
+            {
+              "name": "Акустика для домашнего кинотеатра",
+              "slug": "akustika_dlya_domashnego_kinoteatra_2304143",
+              "children": []
+            },
+            {
+              "name": "Встраиваемая и потолочная акустика",
+              "slug": "vstraivaemaya_i_potolochnaya_akustika_2304144",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Кабели и адаптеры",
+          "slug": "kabeli_i_adaptery",
+          "children": []
+        },
+        {
+          "name": "Микрофоны",
+          "slug": "mikrofony",
+          "children": []
+        },
+        {
+          "name": "Музыкальные центры, магнитолы",
+          "slug": "muzykalnye_centry_magnitoly",
+          "children": [
+            {
+              "name": "CD-проигрыватели",
+              "slug": "cd_proigryvateli",
+              "children": []
+            },
+            {
+              "name": "Hi-Fi - оборудование",
+              "slug": "hi_fi___oborudovanie",
+              "children": []
+            },
+            {
+              "name": "Запчасти и аксессуары для аудиотехники",
+              "slug": "zapchasti_i_aksessuary_dlya_audiotekhniki",
+              "children": []
+            },
+            {
+              "name": "Кассетные деки",
+              "slug": "kassetnye_deki",
+              "children": []
+            },
+            {
+              "name": "Магнитолы",
+              "slug": "magnitoly_2304333",
+              "children": []
+            },
+            {
+              "name": "Музыкальные центры",
+              "slug": "muzykalnye_centry",
+              "children": []
+            },
+            {
+              "name": "Проигрыватели виниловых пластинок",
+              "slug": "proigryvateli_vinilovykh_plastinok_vinilovykh",
+              "children": []
+            },
+            {
+              "name": "Радиоприёмники",
+              "slug": "radiopriyomniki",
+              "children": []
+            },
+            {
+              "name": "Системы караоке",
+              "slug": "sistemy_karaoke",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "Наушники",
+          "slug": "nausniki",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
