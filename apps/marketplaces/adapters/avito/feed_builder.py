@@ -257,11 +257,24 @@ def get_contact_fields(listing) -> tuple[str, str]:
 def _get_category_mapping(listing):
     try:
         from apps.marketplaces.models import CategoryMapping
-        return CategoryMapping.objects.filter(
+        qs = CategoryMapping.objects.filter(
             tenant=listing.tenant,
             marketplace=CategoryMapping.MARKETPLACE_AVITO,
-            category_source=listing.product.category_1c,
-        ).first()
+        )
+        # Приоритет — категория из источника (1С). Если по ней маппинга нет,
+        # пробуем по имени категории каталога: импортированные из дерева Avito
+        # маппинги ключуются именно по имени листа (см. AvitoCatalogImporter).
+        candidates = []
+        if listing.product.category_1c:
+            candidates.append(listing.product.category_1c)
+        catalog_category = getattr(listing.product, 'catalog_category', None)
+        if catalog_category is not None:
+            candidates.append(catalog_category.name)
+        for source in candidates:
+            mapping = qs.filter(category_source=source).first()
+            if mapping:
+                return mapping
+        return None
     except Exception:
         return None
 

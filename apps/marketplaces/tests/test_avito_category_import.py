@@ -1,3 +1,5 @@
+import types
+
 import pytest
 
 from apps.marketplaces.avito_category_import import AvitoCatalogImporter, load_avito_leaves
@@ -96,3 +98,37 @@ class TestAvitoCatalogImporter:
         assert result['mappings'] == len(unique_names)
         assert CategoryMapping.objects.filter(tenant=tenant).count() == len(unique_names)
         assert result['mappings'] > 150  # дерево Avito действительно большое
+
+
+@pytest.mark.django_db
+class TestCategoryMappingResolution:
+    """Импортированные маппинги ключуются по имени листа — фид должен находить их
+    по имени catalog_category, когда category_1c не сопоставлена."""
+
+    def test_resolves_by_catalog_category_name_when_no_category_1c(self):
+        from apps.marketplaces.adapters.avito.feed_builder import _get_category_mapping
+        _auto_parts_domain()
+        tenant = _make_tenant('map-resolve-co')
+        AvitoCatalogImporter(leaves=FAKE_LEAVES).import_for_tenant(tenant)
+
+        category = TenantCatalogCategory.objects.get(tenant=tenant, name='Двигатель')
+        product = types.SimpleNamespace(category_1c='', catalog_category=category)
+        listing = types.SimpleNamespace(tenant=tenant, product=product)
+
+        mapping = _get_category_mapping(listing)
+        assert mapping is not None
+        assert mapping.category_source == 'Двигатель'
+        assert mapping.attributes_map.get('GoodsType') == 'Запчасти'
+
+    def test_category_1c_takes_priority_over_catalog_category(self):
+        from apps.marketplaces.adapters.avito.feed_builder import _get_category_mapping
+        _auto_parts_domain()
+        tenant = _make_tenant('map-priority-co')
+        AvitoCatalogImporter(leaves=FAKE_LEAVES).import_for_tenant(tenant)
+
+        category = TenantCatalogCategory.objects.get(tenant=tenant, name='Двигатель')
+        product = types.SimpleNamespace(category_1c='Моторные масла', catalog_category=category)
+        listing = types.SimpleNamespace(tenant=tenant, product=product)
+
+        mapping = _get_category_mapping(listing)
+        assert mapping.category_source == 'Моторные масла'
