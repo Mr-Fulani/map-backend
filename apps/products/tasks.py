@@ -67,6 +67,10 @@ def import_from_datasource(self, connection_id: int):
             f'Импорт «{connection.name}»: создано {counts["created"]}, '
             f'обновлено {counts["updated"]}, без изменений {counts["unchanged"]}',
         )
+        # Авто-классификация: после импорта классифицируем новые/изменённые товары,
+        # чтобы не требовать ручного запуска (категория нужна для маппинга на Avito).
+        if counts['created'] or counts['updated']:
+            classify_tenant_products.delay(tenant.id)
         return counts
 
     except Exception as exc:
@@ -75,6 +79,31 @@ def import_from_datasource(self, connection_id: int):
         connection.save(update_fields=['last_sync_status', 'last_error'])
         _write_sync_log(tenant, 'datasource_import', 'error', str(exc))
         raise self.retry(exc=exc)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='sync_import')
+def classify_tenant_products(self, tenant_id: int):
+    """
+    Классифицирует домен и категорию каталога у ещё не классифицированных товаров тенанта.
+
+    Запускается автоматически после импорта из источника. Берёт только товары без
+    ProductCatalogClassification (новые/никогда не прогонявшиеся) — ручные привязки
+    (source=MANUAL) classify_product_catalog_domain не перетирает. Идемпотентна:
+    повторный запуск трогает только незаполненное.
+    """
+    qs = (
+        Product.objects
+        .filter(tenant_id=tenant_id, catalog_classification__isnull=True)
+        .select_related('catalog_category')
+    )
+    classified = 0
+    for product in qs.iterator():
+        try:
+            ProductEnrichmentService.classify_product_catalog_domain(product)
+            classified += 1
+        except Exception:
+            logger.exception('Не удалось классифицировать product=%s', product.pk)
+    return {'classified': classified}
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='sync_import')
