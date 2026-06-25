@@ -95,6 +95,63 @@ class TestCSVAdapter:
         wb.save(f.name)
         return f.name
 
+    def _write_xls(self, rows: list[list]) -> str:
+        import xlwt
+        wb = xlwt.Workbook()
+        ws = wb.add_sheet('Sheet1')
+        for r, row in enumerate(rows):
+            for c, value in enumerate(row):
+                ws.write(r, c, value)
+        f = tempfile.NamedTemporaryFile(suffix='.xls', delete=False)
+        f.close()
+        wb.save(f.name)
+        return f.name
+
+    def test_xls_parsing(self):
+        # Старый формат Excel 97-2003 — был источником 500 (openpyxl его не читает).
+        path = self._write_xls([
+            ['article', 'name', 'price', 'stock_qty'],
+            [12345, 'Болт', 99.9, 50],
+        ])
+        try:
+            adapter = CSVAdapter(connection=None)
+            items = adapter.process_uploaded_file(path)
+            assert len(items) == 1
+            assert items[0]['article'] == '12345'  # float→int→str, не '12345.0'
+            assert items[0]['stock_qty'] == 50
+        finally:
+            os.unlink(path)
+
+    def test_csv_cp1251_encoding(self):
+        f = tempfile.NamedTemporaryFile(mode='wb', suffix='.csv', delete=False)
+        f.write('article,name,price,stock_qty\nA100,Деталь,1500,10\n'.encode('cp1251'))
+        f.close()
+        try:
+            adapter = CSVAdapter(connection=None)
+            items = adapter.process_uploaded_file(f.name)
+            assert items[0]['name'] == 'Деталь'
+        finally:
+            os.unlink(f.name)
+
+    def test_csv_semicolon_delimiter(self):
+        path = self._write_csv('article;name;price;stock_qty\nA100;Деталь;1500;10\n')
+        try:
+            adapter = CSVAdapter(connection=None)
+            items = adapter.process_uploaded_file(path)
+            assert len(items) == 1
+            assert items[0]['article'] == 'A100'
+        finally:
+            os.unlink(path)
+
+    def test_unsupported_format_raises_clear_error(self):
+        path = self._write_csv('мусор', suffix='.pdf')
+        try:
+            adapter = CSVAdapter(connection=None)
+            with pytest.raises(CSVValidationError, match='не поддерживается'):
+                adapter.process_uploaded_file(path)
+        finally:
+            os.unlink(path)
+
     def test_valid_csv_parsed_correctly(self):
         path = self._write_csv('article,name,price,stock_qty\nA100,Деталь,1500.00,10\n')
         try:
