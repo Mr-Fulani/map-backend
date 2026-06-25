@@ -72,6 +72,7 @@ interface NotificationSettings {
 interface CatalogCategory {
   id: number;
   name: string;
+  parent: number | null;
   root_domain: number | null;
   root_domain_slug: string;
   root_domain_name: string;
@@ -705,6 +706,24 @@ export default function SettingsPage() {
       await loadCatalogCategories();
     } catch {
       toast.error('Не удалось изменить статус категории');
+    } finally {
+      setSavingCatalogCategoryId(null);
+    }
+  }
+
+  async function removeCatalogCategory(category: CatalogCategory) {
+    if (!window.confirm(`Удалить категорию «${category.name}» без возможности восстановления?`)) return;
+    setSavingCatalogCategoryId(category.id);
+    try {
+      await productApi.deleteCatalogCategory(category.id, true);
+      await loadCatalogCategories();
+      toast.success('Категория удалена');
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { status?: number; data?: { message?: string } } };
+      const message = axiosErr?.response?.status === 409
+        ? (axiosErr.response.data?.message || 'Категорию нельзя удалить: есть привязки.')
+        : 'Не удалось удалить категорию';
+      toast.error(message);
     } finally {
       setSavingCatalogCategoryId(null);
     }
@@ -1996,7 +2015,9 @@ export default function SettingsPage() {
                             <div className="min-w-0">
                               <p className="break-words font-medium">{category.name}</p>
                               <p className="text-xs text-muted-foreground">
-                                Корень: {category.root_domain_name || domainLabel(category.domain)}
+                                {category.parent
+                                  ? `Родитель: ${catalogCategories.find((c) => c.id === category.parent)?.name ?? '—'}`
+                                  : `Корень: ${category.root_domain_name || domainLabel(category.domain)}`}
                               </p>
                               {category.default_image_source_name && (
                                 <p className="text-xs text-muted-foreground">
@@ -2065,6 +2086,14 @@ export default function SettingsPage() {
                               >
                                 {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                 {category.is_active ? 'Отключить' : 'Включить'}
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => removeCatalogCategory(category)}
+                                disabled={isSaving}
+                              >
+                                Удалить
                               </Button>
                               <Badge variant={category.is_active ? 'default' : 'secondary'}>
                                 {category.is_active ? 'Активна' : 'Отключена'}

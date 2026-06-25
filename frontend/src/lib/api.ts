@@ -228,7 +228,8 @@ export const productApi = {
     api.post('/products/catalog-categories/', data),
   updateCatalogCategory: (id: number, data: Record<string, unknown>) =>
     api.put(`/products/catalog-categories/${id}/`, data),
-  deleteCatalogCategory: (id: number) => api.delete(`/products/catalog-categories/${id}/`),
+  deleteCatalogCategory: (id: number, hard = false) =>
+    api.delete(`/products/catalog-categories/${id}/${hard ? '?hard=true' : ''}`),
   assignCatalogCategory: (data: { product_ids: number[]; catalog_category: number | null }) =>
     api.post('/products/catalog-categories/assign/', data),
   excludeFromSync: (product_ids: number[], exclude: boolean) =>
