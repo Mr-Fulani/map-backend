@@ -1165,6 +1165,28 @@ class TestPollFeedResultsTask:
         assert 'не вернул ни ID объявления, ни ошибок' in listing.rejection_reason
         mock_notify.assert_called_once()
 
+    def test_keeps_pending_while_avito_upload_still_processing(self):
+        """Ретраи исчерпаны, но загрузка у Avito ещё processing — не отклоняем, ждём дальше."""
+        from apps.marketplaces.tasks import poll_feed_results_task
+
+        tenant = make_tenant('poll-still-processing-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks._notify_error') as mock_notify:
+            mock_cls.return_value.get_feed_results.return_value = [
+                {'ad_id': get_ad_id(listing), 'avito_id': None}
+            ]
+            mock_cls.return_value.get_feed_item_errors.return_value = {}
+            mock_cls.return_value.get_latest_upload.return_value = {'status': 'processing'}
+            poll_feed_results_task.apply(args=[account.pk], throw=True, retries=10)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_PENDING
+        mock_notify.assert_not_called()
+
     def test_rejection_uses_real_avito_report_messages_immediately(self):
         """Если в отчёте Avito есть ошибки — отклоняем сразу (retries=0) с их текстом, без ожидания ретраев."""
         from celery.exceptions import Retry

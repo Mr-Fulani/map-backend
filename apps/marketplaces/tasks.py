@@ -568,6 +568,12 @@ def poll_feed_results_task(self, account_id: int):
             countdown=300,
         )
     if truly_pending:
+        # Ретраи исчерпаны. Если загрузка у Avito ВСЁ ЕЩЁ обрабатывается
+        # (Autoload бывает медленным — часами), не отклоняем: оставляем PENDING,
+        # периодическая сверка check_moderation_status дожмёт опрос позже.
+        if AvitoAdapter(account).get_latest_upload().get('status') == 'processing':
+            _schedule_next_queued_publish(account)
+            return
         generic_reason = (
             'Avito обработал фид, но не вернул ни ID объявления, ни ошибок. '
             'Проверьте статус позже или в личном кабинете Avito Autoload.'
