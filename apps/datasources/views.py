@@ -1,3 +1,4 @@
+import hashlib
 import os
 import tempfile
 
@@ -75,24 +76,38 @@ class CSVUploadView(APIView):
             return Response({'detail': 'Файл обязателен.'}, status=status.HTTP_400_BAD_REQUEST)
 
         suffix = os.path.splitext(file_obj.name)[1]
+        hasher = hashlib.sha256()
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             for chunk in file_obj.chunks():
+                hasher.update(chunk)
                 tmp.write(chunk)
             tmp_path = tmp.name
+        content_hash = hasher.hexdigest()
+
+        preview = request.query_params.get('preview') == '1'
+        confirm = request.query_params.get('confirm') in ('1', 'true', 'True')
 
         try:
             adapter = CSVAdapter(connection=None)
-            preview = request.query_params.get('preview') == '1'
             if preview:
                 result = adapter.preview(tmp_path)
             else:
-                items = adapter.process_uploaded_file(tmp_path)
-                from apps.datasources.services import ConnectionService
+                if not confirm:
+                    duplicate = ConnectionService.find_duplicate_upload(
+                        request.tenant, content_hash, file_obj.name,
+                    )
+                    if duplicate:
+                        return Response(
+                            {'status': 'duplicate', **duplicate},
+                            status=status.HTTP_409_CONFLICT,
+                        )
 
+                items = adapter.process_uploaded_file(tmp_path)
                 result_data = ConnectionService.process_csv_upload(
                     tenant=request.tenant,
                     file_name=file_obj.name,
-                    items=items
+                    items=items,
+                    content_hash=content_hash,
                 )
 
                 result = {
