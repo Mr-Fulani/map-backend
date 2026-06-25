@@ -279,6 +279,19 @@ def _get_category_mapping(listing):
         return None
 
 
+def has_resolved_category(listing) -> bool:
+    """
+    True, если у листинга определена категория для Avito.
+
+    Категория считается определённой, если у товара задана catalog_category
+    (из неё берётся спецификация полей) либо нашёлся CategoryMapping. Иначе фид
+    уйдёт с дефолтной Avito-категорией и, скорее всего, будет отклонён.
+    """
+    if getattr(listing.product, 'catalog_category', None) is not None:
+        return True
+    return _get_category_mapping(listing) is not None
+
+
 def _add_placement(ad, listing) -> None:
     """Добавляет адрес и контактные поля из листинга, категории или аккаунта."""
     mapping = _get_category_mapping(listing)

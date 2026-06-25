@@ -132,3 +132,22 @@ class TestCategoryMappingResolution:
 
         mapping = _get_category_mapping(listing)
         assert mapping.category_source == 'Моторные масла'
+
+    def test_has_resolved_category_true_with_catalog_category(self):
+        from apps.marketplaces.adapters.avito.feed_builder import has_resolved_category
+        _auto_parts_domain()
+        tenant = _make_tenant('cat-resolved-co')
+        AvitoCatalogImporter(leaves=FAKE_LEAVES).import_for_tenant(tenant)
+        category = TenantCatalogCategory.objects.get(tenant=tenant, name='Двигатель')
+
+        product = types.SimpleNamespace(category_1c='', catalog_category=category)
+        listing = types.SimpleNamespace(tenant=tenant, product=product)
+        assert has_resolved_category(listing) is True
+
+    def test_has_resolved_category_false_when_undetermined(self):
+        from apps.marketplaces.adapters.avito.feed_builder import has_resolved_category
+        tenant = _make_tenant('cat-undetermined-co')
+
+        product = types.SimpleNamespace(category_1c='', catalog_category=None)
+        listing = types.SimpleNamespace(tenant=tenant, product=product)
+        assert has_resolved_category(listing) is False
