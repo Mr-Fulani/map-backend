@@ -300,6 +300,22 @@ class TenantCatalogCategoryDetailView(APIView):
 
     def delete(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
+        # ?hard=true — полное удаление; иначе мягкое отключение (is_active=False).
+        if request.query_params.get('hard') in ('1', 'true', 'True'):
+            if category.products.exists():
+                return Response(
+                    {'status': 'error',
+                     'message': 'К категории привязаны товары — сначала переназначьте их в другую категорию.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            if category.children.exists():
+                return Response(
+                    {'status': 'error',
+                     'message': 'У категории есть подкатегории — сначала удалите или перенесите их.'},
+                    status=status.HTTP_409_CONFLICT,
+                )
+            category.delete()
+            return Response(status=status.HTTP_204_NO_CONTENT)
         category.is_active = False
         category.save(update_fields=['is_active', 'updated_at'])
         return Response(status=status.HTTP_204_NO_CONTENT)
