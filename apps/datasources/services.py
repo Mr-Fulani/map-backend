@@ -77,6 +77,13 @@ class ConnectionService:
         connection.last_sync_status = DataSourceConnection.STATUS_OK
         connection.save(update_fields=['last_sync_at', 'last_sync_status'])
 
+        # Авто-классификация (домен + категория) загруженных товаров — как и при
+        # 1С-импорте. Без неё категория не определяется и маппинг на Avito не
+        # работает. Асинхронно, чтобы не блокировать ответ на загрузку файла.
+        if counts['created'] or counts['updated']:
+            from apps.products.tasks import classify_tenant_products
+            classify_tenant_products.delay(tenant.id)
+
         return {
             'id': connection.id,
             'rows_count': len(items),
