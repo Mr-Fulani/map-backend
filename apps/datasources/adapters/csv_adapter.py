@@ -1,4 +1,5 @@
 import csv
+import io
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
@@ -27,19 +28,10 @@ class CSVAdapter(BaseDataSourceAdapter):
         return 'CSV/Excel'
 
     def process_uploaded_file(self, file_path: str) -> list[dict]:
-        path = Path(file_path)
-        if path.suffix.lower() in ('.xlsx', '.xls'):
-            rows = self._read_xlsx(file_path)
-        else:
-            rows = self._read_csv(file_path)
-        return self._normalize(rows)
+        return self._normalize(self._read_rows(file_path))
 
     def preview(self, file_path: str, rows: int = 10) -> dict:
-        path = Path(file_path)
-        if path.suffix.lower() in ('.xlsx', '.xls'):
-            all_rows = self._read_xlsx(file_path)
-        else:
-            all_rows = self._read_csv(file_path)
+        all_rows = self._read_rows(file_path)
         headers = list(all_rows[0].keys()) if all_rows else []
         return {
             'headers': headers,
@@ -47,15 +39,84 @@ class CSVAdapter(BaseDataSourceAdapter):
             'total_rows': len(all_rows),
         }
 
+    def _read_rows(self, file_path: str) -> list[dict]:
+        """Выбирает парсер по расширению; неподдерживаемый формат → понятная ошибка (а не 500)."""
+        suffix = Path(file_path).suffix.lower()
+        if suffix == '.xlsx':
+            return self._read_xlsx(file_path)
+        if suffix == '.xls':
+            return self._read_xls(file_path)
+        if suffix in ('.csv', '.txt', ''):
+            return self._read_csv(file_path)
+        raise CSVValidationError(
+            f'Формат "{suffix}" не поддерживается. Загрузите файл .csv, .xls или .xlsx.'
+        )
+
     def _read_csv(self, file_path: str) -> list[dict]:
-        with open(file_path, newline='', encoding='utf-8-sig') as f:
-            return self._rows_to_dicts(list(csv.reader(f)))
+        with open(file_path, 'rb') as f:
+            raw = f.read()
+        text = None
+        for encoding in ('utf-8-sig', 'cp1251'):
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        if text is None:
+            raise CSVValidationError(
+                'Не удалось распознать кодировку файла. Сохраните CSV в UTF-8 или Windows-1251.'
+            )
+        delimiter = self._detect_delimiter(text)
+        return self._rows_to_dicts(list(csv.reader(io.StringIO(text), delimiter=delimiter)))
+
+    @staticmethod
+    def _detect_delimiter(text: str) -> str:
+        """Определяет разделитель CSV (',', ';' или таб) — русский Excel часто пишет ';'."""
+        lines = text.splitlines()
+        try:
+            return csv.Sniffer().sniff('\n'.join(lines[:10]), delimiters=',;\t').delimiter
+        except csv.Error:
+            first = lines[0] if lines else ''
+            counts = {d: first.count(d) for d in (',', ';', '\t')}
+            return max(counts, key=counts.get) if any(counts.values()) else ','
 
     def _read_xlsx(self, file_path: str) -> list[dict]:
-        wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        try:
+            wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+        except Exception as exc:
+            raise CSVValidationError(
+                'Файл повреждён или не является настоящим .xlsx. '
+                'Пересохраните его в Excel как «Книга Excel (.xlsx)».'
+            ) from exc
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
         wb.close()
+        return self._rows_to_dicts(rows)
+
+    def _read_xls(self, file_path: str) -> list[dict]:
+        try:
+            import xlrd
+        except ImportError as exc:  # pragma: no cover — xlrd объявлен в requirements
+            raise CSVValidationError('Чтение .xls временно недоступно. Сохраните файл как .xlsx.') from exc
+        try:
+            wb = xlrd.open_workbook(file_path)
+        except Exception as exc:
+            raise CSVValidationError(
+                'Файл повреждён или не является настоящим .xls. '
+                'Пересохраните его в Excel как «Книга Excel 97-2003 (.xls)».'
+            ) from exc
+        sheet = wb.sheet_by_index(0)
+        rows = []
+        for row_idx in range(sheet.nrows):
+            row = []
+            for col_idx in range(sheet.ncols):
+                value = sheet.cell_value(row_idx, col_idx)
+                # xlrd отдаёт все числа как float; целые приводим к int (12345.0 → 12345),
+                # чтобы артикулы/количества совпадали с поведением .xlsx и CSV.
+                if isinstance(value, float) and value.is_integer():
+                    value = int(value)
+                row.append(value)
+            rows.append(tuple(row))
         return self._rows_to_dicts(rows)
 
     def _rows_to_dicts(self, rows: list[tuple]) -> list[dict]:
