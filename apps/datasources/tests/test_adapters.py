@@ -245,3 +245,31 @@ class TestCSVAdapter:
             tenant=tenant,
             type=DataSourceConnection.TYPE_CSV,
         ).count() == 2
+
+    @pytest.mark.django_db
+    def test_find_duplicate_upload_by_hash(self):
+        tenant, _ = TenantService.create_tenant('csv-hash', 'csv-hash', 'hash@test.com', 'pass12345')
+        items = [{'article': 'A100', 'name': 'Деталь', 'price': '100', 'stock_qty': 1}]
+        ConnectionService.process_csv_upload(tenant, 'stock.xlsx', items, content_hash='abc123')
+
+        dup = ConnectionService.find_duplicate_upload(tenant, 'abc123', 'other-name.xlsx')
+        assert dup is not None
+        assert dup['reason'] == 'hash'
+
+    @pytest.mark.django_db
+    def test_find_duplicate_upload_by_name(self):
+        tenant, _ = TenantService.create_tenant('csv-name', 'csv-name', 'name@test.com', 'pass12345')
+        items = [{'article': 'A100', 'name': 'Деталь', 'price': '100', 'stock_qty': 1}]
+        ConnectionService.process_csv_upload(tenant, 'stock.xlsx', items, content_hash='hash-1')
+
+        dup = ConnectionService.find_duplicate_upload(tenant, 'hash-2', 'stock.xlsx')
+        assert dup is not None
+        assert dup['reason'] == 'name'
+
+    @pytest.mark.django_db
+    def test_find_duplicate_upload_none_for_new_file(self):
+        tenant, _ = TenantService.create_tenant('csv-new', 'csv-new', 'new@test.com', 'pass12345')
+        items = [{'article': 'A100', 'name': 'Деталь', 'price': '100', 'stock_qty': 1}]
+        ConnectionService.process_csv_upload(tenant, 'stock.xlsx', items, content_hash='hash-1')
+
+        assert ConnectionService.find_duplicate_upload(tenant, 'hash-2', 'fresh.xlsx') is None

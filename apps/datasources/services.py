@@ -56,7 +56,41 @@ class ConnectionService:
             return {'ok': False, 'error': str(exc)}
 
     @staticmethod
-    def process_csv_upload(tenant, file_name: str, items: list[dict]) -> dict:
+    def find_duplicate_upload(tenant, content_hash: str, file_name: str) -> dict | None:
+        """
+        Ищет ранее загруженный тем же тенантом CSV-файл с тем же содержимым или именем.
+
+        Нужно, чтобы предупредить о повторной загрузке и не плодить дубли товаров.
+        Возвращает данные о найденном источнике или None, если совпадений нет.
+        """
+        qs = DataSourceConnection.objects.filter(
+            tenant=tenant, type=DataSourceConnection.TYPE_CSV,
+        )
+        match = None
+        reason = None
+        if content_hash:
+            match = qs.filter(content_hash=content_hash).order_by('-created_at').first()
+            reason = 'hash'
+        if match is None:
+            match = qs.filter(name=file_name).order_by('-created_at').first()
+            reason = 'name'
+        if match is None:
+            return None
+
+        uploaded_at = match.created_at.strftime('%d.%m.%Y %H:%M')
+        if reason == 'hash':
+            message = f'Файл с таким же содержимым уже загружали {uploaded_at}. Загрузить повторно?'
+        else:
+            message = f'Файл с именем «{file_name}» уже загружали {uploaded_at}. Загрузить повторно?'
+        return {
+            'reason': reason,
+            'connection_id': match.id,
+            'uploaded_at': match.created_at.isoformat(),
+            'message': message,
+        }
+
+    @staticmethod
+    def process_csv_upload(tenant, file_name: str, items: list[dict], content_hash: str = '') -> dict:
         """Сохраняет загруженные из CSV товары и обновляет подключение."""
         from apps.products.services import ProductService
         from django.utils.timezone import now
@@ -66,6 +100,7 @@ class ConnectionService:
             type=DataSourceConnection.TYPE_CSV,
             name=file_name,
             credentials=encrypt({'file_name': file_name}),
+            content_hash=content_hash,
         )
 
         counts = {'created': 0, 'updated': 0, 'unchanged': 0}
