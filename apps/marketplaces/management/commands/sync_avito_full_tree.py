@@ -22,6 +22,8 @@ from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
 from apps.marketplaces.models import MarketplaceAccount
 
 DATA_DIR = Path(__file__).resolve().parents[2] / 'data'
+
+
 def _is_deep_tag(tag: str) -> bool:
     """Поле-вид: любой тег вида *SparePartType (Engine/Body/Transmission/… SparePartType)."""
     return bool(tag) and tag.endswith('SparePartType')
