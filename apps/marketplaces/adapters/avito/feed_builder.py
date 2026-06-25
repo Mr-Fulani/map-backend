@@ -257,13 +257,39 @@ def get_contact_fields(listing) -> tuple[str, str]:
 def _get_category_mapping(listing):
     try:
         from apps.marketplaces.models import CategoryMapping
-        return CategoryMapping.objects.filter(
+        qs = CategoryMapping.objects.filter(
             tenant=listing.tenant,
             marketplace=CategoryMapping.MARKETPLACE_AVITO,
-            category_source=listing.product.category_1c,
-        ).first()
+        )
+        # Приоритет — категория из источника (1С). Если по ней маппинга нет,
+        # пробуем по имени категории каталога: импортированные из дерева Avito
+        # маппинги ключуются именно по имени листа (см. AvitoCatalogImporter).
+        candidates = []
+        if listing.product.category_1c:
+            candidates.append(listing.product.category_1c)
+        catalog_category = getattr(listing.product, 'catalog_category', None)
+        if catalog_category is not None:
+            candidates.append(catalog_category.name)
+        for source in candidates:
+            mapping = qs.filter(category_source=source).first()
+            if mapping:
+                return mapping
+        return None
     except Exception:
         return None
+
+
+def has_resolved_category(listing) -> bool:
+    """
+    True, если у листинга определена категория для Avito.
+
+    Категория считается определённой, если у товара задана catalog_category
+    (из неё берётся спецификация полей) либо нашёлся CategoryMapping. Иначе фид
+    уйдёт с дефолтной Avito-категорией и, скорее всего, будет отклонён.
+    """
+    if getattr(listing.product, 'catalog_category', None) is not None:
+        return True
+    return _get_category_mapping(listing) is not None
 
 
 def _add_placement(ad, listing) -> None:

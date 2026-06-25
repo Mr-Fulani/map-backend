@@ -720,6 +720,21 @@ class TestPublishListingTask:
         assert 'контактное лицо' in listing.rejection_reason.lower()
         mock_cls.return_value.flush_feed.assert_not_called()
 
+    def test_validate_warns_when_category_not_resolved(self):
+        """Категория не определена → предупреждаем тенанта (но не блокируем)."""
+        from apps.marketplaces.tasks import _validate_feed_batch
+        from apps.sync.models import SyncLog
+        tenant = make_tenant('cat-warn-co')
+        account = make_account(tenant)
+        listing = make_listing(tenant, make_product(tenant), account)
+
+        result = _validate_feed_batch([listing])
+
+        assert result == [listing]
+        assert SyncLog.objects.filter(
+            tenant=tenant, message__icontains='не определена категория',
+        ).exists()
+
     def test_publish_does_not_serialize_behind_active_feed(self):
         """Новое объявление сразу «На модерации» (не висит «В очереди» за предыдущим фидом)."""
         from apps.marketplaces.tasks import publish_listing_task
