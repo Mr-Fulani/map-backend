@@ -151,3 +151,20 @@ class TestCategoryMappingResolution:
         product = types.SimpleNamespace(category_1c='', catalog_category=None)
         listing = types.SimpleNamespace(tenant=tenant, product=product)
         assert has_resolved_category(listing) is False
+
+
+@pytest.mark.django_db
+class TestSeedingWiresAvitoImport:
+    """Новый тенант при сидинге авто-домена должен получать дерево Avito + маппинги."""
+
+    def test_seeding_auto_parts_domain_imports_avito_tree(self):
+        from apps.products.services import ProductCategorySeedService
+        domain = _auto_parts_domain()
+        tenant = _make_tenant('seed-wires-co')
+
+        ProductCategorySeedService.seed_tenant_default_categories(tenant, domain)
+
+        assert TenantCatalogCategory.objects.filter(
+            tenant=tenant, external_source='avito',
+        ).exists()
+        assert CategoryMapping.objects.filter(tenant=tenant).count() > 150

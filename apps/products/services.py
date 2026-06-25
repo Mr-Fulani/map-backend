@@ -150,6 +150,14 @@ class ProductCategorySeedService:
                 created_count += int(child_created)
                 if not child_created:
                     cls._merge_aliases(child_category, aliases)
+
+        # Для авто-домена дополнительно заливаем полное дерево категорий Avito и
+        # маппинги, чтобы новые тенанты сразу получали ту же таксономию, что и
+        # существующие (см. import_avito_categories). Идемпотентно.
+        if root_domain.slug == TenantCatalogCategory.Domain.AUTO_PARTS:
+            from apps.marketplaces.avito_category_import import AvitoCatalogImporter
+            created_count += AvitoCatalogImporter().import_for_tenant(tenant)['categories']
+
         return created_count
 
 
