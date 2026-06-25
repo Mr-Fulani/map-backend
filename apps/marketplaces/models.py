@@ -82,6 +82,9 @@ class MarketplaceAccount(TimestampedModel):
     # При сбое связи статус не понижаем (показываем последнее известное).
     autoload_active = models.BooleanField(null=True, blank=True, verbose_name='Автозагрузка Avito активна')
     autoload_checked_at = models.DateTimeField(null=True, blank=True, verbose_name='Статус Автозагрузки проверен')
+    # Когда последний раз триггерили Autoload. Avito читает фид ~раз в час, поэтому
+    # изменения копятся в окне и уходят одним фидом (см. request_feed_flush).
+    last_feed_flush_at = models.DateTimeField(null=True, blank=True, verbose_name='Последняя автозагрузка фида')
 
     class Meta:
         verbose_name = 'Avito-аккаунт'

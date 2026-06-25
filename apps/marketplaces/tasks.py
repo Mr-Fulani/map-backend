@@ -81,20 +81,6 @@ def _reject_listing(listing: Listing, reason: str) -> None:
     _notify_error(listing.tenant, reason, listing=listing)
 
 
-def _queued_publish_listings(account, first_listing: Listing) -> list[Listing]:
-    """Возвращает партию queued-листингов аккаунта, начиная с текущего."""
-    queued = list(
-        Listing.objects.filter(
-            account=account,
-            status=Listing.STATUS_QUEUED,
-            external_id__isnull=True,
-        ).select_related('tenant', 'product', 'account').order_by('created_at', 'pk')
-    )
-    if first_listing.status == Listing.STATUS_QUEUED and first_listing not in queued:
-        queued.insert(0, first_listing)
-    return queued
-
-
 # Пауза перед повтором при лимите Avito «1 автозагрузка/час» (~11 минут).
 RATE_LIMIT_RETRY_COUNTDOWN = 660
 
@@ -132,29 +118,74 @@ def _flush_account_or_stop(account) -> None:
         adapter.flush_stop()
 
 
-def _has_active_feed(account) -> bool:
-    """У аккаунта уже есть feed, который ждёт ответа Avito."""
-    return Listing.objects.filter(
-        account=account,
-        status=Listing.STATUS_PENDING,
-        external_id__isnull=True,
-    ).exists()
+# Avito читает автозагрузку ~раз в час. Изменения тенанта между окнами копятся
+# и уходят одним фидом — см. request_feed_flush / coalesced_flush_task.
+FEED_WINDOW_SECONDS = 3600
 
 
-def _schedule_next_queued_publish(account) -> None:
-    """Запускает следующую queued-партию аккаунта, если она есть."""
-    next_listing_id = (
-        Listing.objects.filter(
-            account=account,
-            status=Listing.STATUS_QUEUED,
-            external_id__isnull=True,
-        )
-        .order_by('created_at', 'pk')
-        .values_list('pk', flat=True)
-        .first()
+def _feed_window_remaining(account) -> int:
+    """Секунд до открытия окна автозагрузки. 0 — окно открыто, можно слать фид."""
+    if not account.last_feed_flush_at:
+        return 0
+    elapsed = (now() - account.last_feed_flush_at).total_seconds()
+    return max(0, int(FEED_WINDOW_SECONDS - elapsed))
+
+
+def request_feed_flush(account) -> None:
+    """
+    Координатор часового окна автозагрузки (каденс «первый сразу, дальше копим»).
+
+    Окно открыто → flush сразу. Окно закрыто → копим: гарантируем, что ровно один
+    отложенный flush запланирован на момент открытия (debounce через cache-маркер,
+    чтобы десятки действий тенанта не наплодили задач).
+    """
+    remaining = _feed_window_remaining(account)
+    if remaining == 0:
+        coalesced_flush_task.delay(account.pk)
+        return
+    marker = f'avito:flush_scheduled:{account.pk}'
+    if cache.add(marker, 1, timeout=remaining + 60):
+        coalesced_flush_task.apply_async(args=[account.pk], countdown=remaining)
+
+
+def _validate_feed_batch(listings: list) -> list:
+    """
+    Отсеивает из партии объявления, которые Avito точно не примет, с понятным
+    пояснением тенанту; по «мягким» проблемам (нет OEM, незаполненные поля) только
+    предупреждает. Возвращает валидную часть партии.
+    """
+    from apps.marketplaces.adapters.avito.feed_builder import (
+        get_contact_fields, missing_required_avito_fields, product_has_oem,
     )
-    if next_listing_id:
-        publish_listing_task.delay(next_listing_id)
+    valid = []
+    for item in listings:
+        manager_name, contact_phone = get_contact_fields(item)
+        if not manager_name or not contact_phone:
+            _reject_listing(
+                item,
+                'Не указано контактное лицо и/или телефон. Заполните их в профиле '
+                'аккаунта Avito (Настройки → Маркетплейсы) или в самом листинге — '
+                'Avito не публикует объявления без контактов.',
+            )
+            continue
+        if not product_has_oem(item):
+            _write_log(
+                item.tenant, 'listing_publish', 'warn',
+                f'У «{item.title or item.product.name}» нет OEM-номера — в объявление '
+                f'подставлен артикул {item.product.article}. Укажите OEM вручную при необходимости.',
+                listing=item,
+            )
+        missing_fields = missing_required_avito_fields(item)
+        if missing_fields:
+            _write_log(
+                item.tenant, 'listing_publish', 'warn',
+                f'У «{item.title or item.product.name}» не заполнены поля Avito для его '
+                f'категории: {", ".join(missing_fields)}. Объявление может быть отклонено '
+                f'Avito — заполните их у товара.',
+                listing=item,
+            )
+        valid.append(item)
+    return valid
 
 
 @shared_task(bind=True, max_retries=6, queue='avito_publish')
@@ -202,122 +233,39 @@ def publish_listing_task(self, listing_id: int):
         if not VelocityController().is_allowed(listing.account, 'publish'):
             raise self.retry(exc=RuntimeError('Velocity limit exceeded'), countdown=300)
 
-        batch = [listing]
-        try:
-            if _has_active_feed(listing.account):
-                _write_log(
-                    listing.tenant, 'listing_publish', 'ok',
-                    f'«{listing.title or listing.product.name}»'
-                    ' поставлен в очередь Avito: ждём обработки предыдущего фида',
-                    listing=listing,
-                )
-                return
+        # Avito требует контакты — без них фид точно отклонят. Отсекаем сразу.
+        if not _validate_feed_batch([listing]):
+            return
 
-            batch = _queued_publish_listings(listing.account, listing)
-            # Avito требует контактное лицо и телефон. Не отправляем фид с пустыми
-            # контактами — отклоняем такие объявления с понятным пояснением.
-            from apps.marketplaces.adapters.avito.feed_builder import (
-                get_contact_fields, missing_required_avito_fields, product_has_oem,
-            )
-            valid_batch = []
-            for item in batch:
-                manager_name, contact_phone = get_contact_fields(item)
-                if not manager_name or not contact_phone:
-                    _reject_listing(
-                        item,
-                        'Не указано контактное лицо и/или телефон. Заполните их в '
-                        'профиле аккаунта Avito (Настройки → Маркетплейсы) или в самом '
-                        'листинге — Avito не публикует объявления без контактов.',
-                    )
-                    continue
-                # Нет настоящего OEM — публикуем с артикулом, но предупреждаем тенанта.
-                if not product_has_oem(item):
-                    _write_log(
-                        item.tenant, 'listing_publish', 'warn',
-                        f'У «{item.title or item.product.name}» нет OEM-номера — '
-                        f'в объявление подставлен артикул {item.product.article}. '
-                        f'Укажите OEM вручную при необходимости.',
-                        listing=item,
-                    )
-                # Не заполнены обязательные поля категории Avito (напр. размеры шин,
-                # вязкость масла) — публикуем, но предупреждаем: Avito может отклонить.
-                missing_fields = missing_required_avito_fields(item)
-                if missing_fields:
-                    _write_log(
-                        item.tenant, 'listing_publish', 'warn',
-                        f'У «{item.title or item.product.name}» не заполнены поля Avito '
-                        f'для его категории: {", ".join(missing_fields)}. '
-                        f'Объявление может быть отклонено Avito — заполните их у товара.',
-                        listing=item,
-                    )
-                valid_batch.append(item)
-            batch = valid_batch
-            if not batch:
-                return
-            adapter = AvitoAdapter(listing.account)
-            if not adapter.is_autoload_active():
-                for item in batch:
-                    _reject_listing(
-                        item,
-                        'Автозагрузка Avito не подключена или профиль Autoload недоступен. '
-                        'Подключите Автозагрузку в настройках Avito и повторите публикацию.',
-                    )
-                return
-            # Одна автозагрузка = полное состояние аккаунта (активные + Remove),
-            # чтобы не затирать другие объявления и не гоняться за лимитом.
-            adapter.flush_feed(_account_feed_listings(listing.account))
-            Listing.objects.filter(pk__in=[item.pk for item in batch]).update(status=Listing.STATUS_PENDING)
-            _write_log(
-                listing.tenant, 'listing_publish', 'ok',
-                f'Фид загружен для {len(batch)} объявлений {listing.account.name}, ожидаем Avito',
-                listing=listing,
-            )
-            # Запускаем polling результатов
-            poll_feed_results_task.apply_async(
-                args=[listing.account.pk],
-                countdown=300,
-            )
-        except RateLimitError as exc:
-            # Лимит 1/час — повторим после открытия окна, листинги остаются QUEUED.
-            raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
-        except FeedUploadError as exc:
-            listing.retry_count += 1
-            if self.request.retries >= self.max_retries:
-                for item in batch:
-                    item.retry_count += 1
-                    item.status = Listing.STATUS_REJECTED
-                    item.rejection_reason = str(exc)
-                    item.save(update_fields=['status', 'rejection_reason', 'retry_count'])
-                    _notify_error(item.tenant, str(exc), listing=item)
-                return
-            listing.save(update_fields=['retry_count'])
-            raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
-        except ServerError as exc:
-            listing.retry_count += 1
-            listing.save(update_fields=['retry_count'])
-            raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
+        # Помечаем «На модерации Авито» и отдаём фид координатору часового окна:
+        # сам триггер автозагрузки произойдёт в coalesced_flush_task (первый —
+        # сразу, последующие за час — копятся и уходят одним фидом).
+        listing.status = Listing.STATUS_PENDING
+        listing.save(update_fields=['status'])
+        _write_log(
+            listing.tenant, 'listing_publish', 'ok',
+            f'«{listing.title or listing.product.name}» принято к публикации — на модерации Avito',
+            listing=listing,
+        )
+
+    request_feed_flush(listing.account)
 
 
 @shared_task(bind=True, max_retries=6, queue='avito_update')
 def update_listing_task(self, listing_id: int):
-    """Обновляет содержимое объявления через перезагрузку фида."""
+    """Обновляет содержимое объявления — пересборка фида по часовому окну."""
     listing = _get_listing(listing_id)
     if not listing.external_id:
         publish_listing_task.delay(listing_id)
         return
-    try:
-        _flush_account_or_stop(listing.account)
-        listing.last_sync_at = now()
-        listing.save(update_fields=['last_sync_at'])
-        _write_log(
-            listing.tenant, 'listing_update', 'ok',
-            f'Фид обновлён для «{listing.title or listing.product.name}»',
-            listing=listing,
-        )
-    except RateLimitError as exc:
-        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
-    except (FeedUploadError, ServerError) as exc:
-        raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
+    listing.last_sync_at = now()
+    listing.save(update_fields=['last_sync_at'])
+    _write_log(
+        listing.tenant, 'listing_update', 'ok',
+        f'Изменения «{listing.title or listing.product.name}» уйдут в Avito ближайшим фидом',
+        listing=listing,
+    )
+    request_feed_flush(listing.account)
 
 
 @shared_task(bind=True, max_retries=5, queue='avito_price')
@@ -353,22 +301,16 @@ def unpublish_listing_task(self, listing_id: int):
         listing.save(update_fields=['status'])
         return
     # Промежуточный статус «Снимается» — в «В архиве» переведём после подтверждения.
+    # Снятие = отсутствие объявления в фиде; фид уйдёт ближайшим часовым окном,
+    # а check_moderation_status дожмёт подтверждение снятия (confirm_removal_task).
     listing.status = Listing.STATUS_ARCHIVING
     listing.save(update_fields=['status'])
-    try:
-        # Полный фид аккаунта без этого объявления → Avito его архивирует.
-        _flush_account_or_stop(listing.account)
-        _write_log(
-            listing.tenant, 'listing_unpublish', 'ok',
-            f'Запрос на снятие «{listing.title or listing.product.name}» отправлен в Avito',
-            listing=listing,
-        )
-        # Подтверждение снятия опросом статуса (Avito обрабатывает пакетно).
-        confirm_removal_task.apply_async(args=[listing.pk], countdown=300)
-    except RateLimitError as exc:
-        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
-    except (FeedUploadError, ServerError) as exc:
-        raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
+    _write_log(
+        listing.tenant, 'listing_unpublish', 'ok',
+        f'«{listing.title or listing.product.name}» будет снято с публикации ближайшим фидом Avito',
+        listing=listing,
+    )
+    request_feed_flush(listing.account)
 
 
 @shared_task(bind=True, max_retries=3, queue='avito_update')
@@ -409,27 +351,24 @@ def delete_listing_task(self, listing_id: int):
     listing.save(update_fields=['status'])
     if not listing.external_id:
         return
-    try:
-        # Полный фид аккаунта: Remove этого объявления + остальные активные.
-        _flush_account_or_stop(listing.account)
-        _write_log(
-            listing.tenant, 'listing_delete', 'ok',
-            f'Запрос на удаление «{listing.title or listing.product.name}» отправлен в Avito',
-            listing=listing,
-        )
-        poll_feed_results_task.apply_async(args=[listing.account.pk], countdown=300)
-    except RateLimitError as exc:
-        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
-    except (FeedUploadError, ServerError) as exc:
-        raise self.retry(exc=exc, countdown=backoff(listing.retry_count))
+    # Удаление = отсутствие в фиде; уйдёт ближайшим часовым окном.
+    _write_log(
+        listing.tenant, 'listing_delete', 'ok',
+        f'«{listing.title or listing.product.name}» будет удалено ближайшим фидом Avito',
+        listing=listing,
+    )
+    request_feed_flush(listing.account)
 
 
 @shared_task(bind=True, max_retries=5, queue='avito_publish')
-def flush_feed_task(self, account_id: int):
+def coalesced_flush_task(self, account_id: int):
     """
-    Собирает все PENDING листинги аккаунта и загружает один батч-фид.
+    Единый flush аккаунта по часовому окну Avito Autoload.
 
-    Запускается по расписанию (каждые 10 мин) или вручную после накопления изменений.
+    Собирает АКТУАЛЬНОЕ состояние аккаунта (последнее решение тенанта по каждому
+    объявлению) и загружает один фид. Все промежуточные действия между окнами
+    только меняли статус — здесь они коалесятся (publish→archive за час → в фид
+    объявление не попадёт). Запускается координатором request_feed_flush.
     """
     from apps.marketplaces.models import MarketplaceAccount
     try:
@@ -437,21 +376,51 @@ def flush_feed_task(self, account_id: int):
     except MarketplaceAccount.DoesNotExist:
         return
 
-    listings = list(
+    cache.delete(f'avito:flush_scheduled:{account_id}')
+
+    # Окно ещё закрыто (напр. вызвали раньше времени) — перепланируем на открытие.
+    if _feed_window_remaining(account) > 0:
+        request_feed_flush(account)
+        return
+
+    # Промотируем «в очереди» → «на модерации»: они входят в этот фид.
+    Listing.objects.filter(
+        account=account, status=Listing.STATUS_QUEUED, external_id__isnull=True,
+    ).update(status=Listing.STATUS_PENDING)
+
+    pending = list(
         Listing.objects.filter(
             account=account,
             status=Listing.STATUS_PENDING,
             external_id__isnull=True,
         ).select_related('tenant', 'product')
     )
-    if not listings:
+    feed_listings = _account_feed_listings(account)
+    # Есть что снять с публикации? (последнее активное ушло в архив/удаление —
+    # нужно отправить уменьшенный фид или STOP, даже если новых публикаций нет.)
+    has_removals = Listing.objects.filter(
+        account=account, external_id__isnull=False,
+        status__in=[Listing.STATUS_ARCHIVING, Listing.STATUS_DELETED],
+    ).exists()
+    if not pending and not feed_listings and not has_removals:
+        return
+
+    if pending and not AvitoAdapter(account).is_autoload_active():
+        for listing in pending:
+            _reject_listing(
+                listing,
+                'Автозагрузка Avito не подключена или профиль Autoload недоступен. '
+                'Подключите Автозагрузку в настройках Avito и повторите публикацию.',
+            )
         return
 
     try:
         _flush_account_or_stop(account)
+        account.last_feed_flush_at = now()
+        account.save(update_fields=['last_feed_flush_at'])
         _write_log(
             account.tenant, 'feed_flush', 'ok',
-            f'Фид загружен: {len(listings)} объявлений для {account.name}',
+            f'Фид загружен: {len(pending)} новых объявлений для {account.name}, ожидаем Avito',
         )
         poll_feed_results_task.apply_async(args=[account_id], countdown=300)
     except RateLimitError as exc:
@@ -459,7 +428,7 @@ def flush_feed_task(self, account_id: int):
     except (FeedUploadError, ServerError) as exc:
         if self.request.retries >= self.max_retries:
             reason = str(exc)
-            for listing in listings:
+            for listing in pending:
                 _reject_listing(listing, reason)
             return
         raise self.retry(exc=exc, countdown=backoff(self.request.retries))
@@ -473,7 +442,7 @@ def poll_feed_results_task(self, account_id: int):
     Сопоставляет ad_id (publish_idempotency_key) с avito_id и обновляет
     Listing.external_id + status='active' для опубликованных объявлений.
 
-    Запускается через 10 мин после flush_feed_task; при необходимости повторяет.
+    Запускается через 5 мин после coalesced_flush_task; при необходимости повторяет.
     """
     from apps.marketplaces.models import MarketplaceAccount
     try:
@@ -489,7 +458,6 @@ def poll_feed_results_task(self, account_id: int):
         ).select_related('tenant', 'product')
     )
     if not pending:
-        _schedule_next_queued_publish(account)
         return
 
     ad_ids = [get_ad_id(lst) for lst in pending]
@@ -499,7 +467,6 @@ def poll_feed_results_task(self, account_id: int):
         reason = str(exc)
         for listing in pending:
             _reject_listing(listing, reason)
-        _schedule_next_queued_publish(account)
         _write_log(
             account.tenant, 'feed_poll', 'error',
             f'Ошибка проверки Autoload для {len(pending)} объявлений {account.name}: {reason}',
@@ -568,6 +535,11 @@ def poll_feed_results_task(self, account_id: int):
             countdown=300,
         )
     if truly_pending:
+        # Ретраи исчерпаны. Если загрузка у Avito ВСЁ ЕЩЁ обрабатывается
+        # (Autoload бывает медленным — часами), не отклоняем: оставляем PENDING,
+        # периодическая сверка check_moderation_status дожмёт опрос позже.
+        if AvitoAdapter(account).get_latest_upload().get('status') == 'processing':
+            return
         generic_reason = (
             'Avito обработал фид, но не вернул ни ID объявления, ни ошибок. '
             'Проверьте статус позже или в личном кабинете Avito Autoload.'
@@ -581,7 +553,6 @@ def poll_feed_results_task(self, account_id: int):
             f'Не опубликовано {rejected_count + len(truly_pending)}/{len(pending)} '
             f'объявлений {account.name}',
         )
-    _schedule_next_queued_publish(account)
 
 
 @shared_task(bind=True, max_retries=3, queue='avito_update')
