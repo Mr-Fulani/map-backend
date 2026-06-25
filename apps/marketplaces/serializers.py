@@ -114,12 +114,26 @@ class ListingDetailSerializer(ListingSerializer):
     ai_confidence = serializers.FloatField(read_only=True)
     ai_confidence_display = serializers.SerializerMethodField()
     images = serializers.SerializerMethodField()
+    catalog_category = serializers.SerializerMethodField()
 
     class Meta(ListingSerializer.Meta):
         fields = ListingSerializer.Meta.fields + [
             'description_ai', 'ai_confidence', 'ai_confidence_display', 'images',
+            'catalog_category',
         ]
         read_only_fields = fields
+
+    def get_catalog_category(self, obj):
+        """Текущая категория каталога товара (для перепроверки/смены в дровере)."""
+        category = getattr(obj.product, 'catalog_category', None)
+        if not category:
+            return None
+        return {
+            'id': category.id,
+            'name': category.name,
+            'parent_id': category.parent_id,
+            'parent_name': category.parent.name if category.parent_id else None,
+        }
 
     def get_ai_confidence_display(self, obj) -> str:
         """Возвращает уверенность AI в виде строки с процентами."""
