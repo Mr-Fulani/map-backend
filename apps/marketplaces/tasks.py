@@ -155,7 +155,7 @@ def _validate_feed_batch(listings: list) -> list:
     предупреждает. Возвращает валидную часть партии.
     """
     from apps.marketplaces.adapters.avito.feed_builder import (
-        get_contact_fields, missing_required_avito_fields, product_has_oem,
+        get_contact_fields, has_resolved_category, missing_required_avito_fields, product_has_oem,
     )
     valid = []
     for item in listings:
@@ -168,6 +168,15 @@ def _validate_feed_batch(listings: list) -> list:
                 'Avito не публикует объявления без контактов.',
             )
             continue
+        # Категория не определена → фид уйдёт с дефолтной Avito-категорией и часто
+        # отклоняется («ошибка описания»). Раньше тут была тишина — предупреждаем.
+        if not has_resolved_category(item):
+            _write_log(
+                item.tenant, 'listing_publish', 'warn',
+                f'У «{item.title or item.product.name}» не определена категория — '
+                f'Avito может отклонить объявление («ошибка описания»). Укажите категорию у товара.',
+                listing=item,
+            )
         if not product_has_oem(item):
             _write_log(
                 item.tenant, 'listing_publish', 'warn',

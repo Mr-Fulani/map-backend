@@ -77,5 +77,7 @@ echo ""
 $COMPOSE ps
 
 echo ""
-echo "==> Live logs Docker Compose (tail=${LOG_TAIL}). Для выхода нажмите Ctrl+C, контейнеры продолжат работать."
-$COMPOSE logs --tail="$LOG_TAIL" -f "${COMPOSE_LOG_SERVICES[@]}"
+echo "==> Последние логи Docker Compose (tail=${LOG_TAIL}):"
+# Без -f: печатаем последние строки и выходим. Раньше здесь висел `logs -f`,
+# и каждый (особенно фоновый) запуск deploy.sh оставлял незавершённый процесс.
+$COMPOSE logs --tail="$LOG_TAIL" "${COMPOSE_LOG_SERVICES[@]}"
