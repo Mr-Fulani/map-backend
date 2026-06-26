@@ -26,6 +26,22 @@ from apps.products.source_policy import (
 from apps.tenants.models import CatalogDomain, TenantCatalogDomain
 
 
+# Латинские буквы-двойники → кириллица. В источниках (1С/CSV) названия часто
+# приходят с подменой: «Oпopa шapoвaя» = латинские O/o/p/a. Для матчинга категорий
+# приводим к кириллице (на отображение товара не влияет).
+_HOMOGLYPHS = str.maketrans({
+    'A': 'А', 'B': 'В', 'C': 'С', 'E': 'Е', 'H': 'Н', 'K': 'К', 'M': 'М',
+    'O': 'О', 'P': 'Р', 'T': 'Т', 'X': 'Х', 'Y': 'У',
+    'a': 'а', 'c': 'с', 'e': 'е', 'k': 'к', 'm': 'м', 'o': 'о', 'p': 'р',
+    'x': 'х', 'y': 'у',
+})
+
+
+def dehomoglyph(text: str) -> str:
+    """Приводит латинские буквы-двойники к кириллице (для матчинга категорий)."""
+    return (text or '').translate(_HOMOGLYPHS)
+
+
 def _compute_hash(data: dict) -> str:
     """SHA256-хэш ключевых полей товара — используется для обнаружения изменений."""
     payload = {
@@ -555,12 +571,12 @@ class ProductEnrichmentService:
 
     @classmethod
     def infer_product_tenant_category(cls, product: Product) -> TenantCatalogCategory | None:
-        text = ' '.join([
+        text = dehomoglyph(' '.join([
             product.name or '',
             product.category_1c or '',
             product.description_1c or '',
             product.brand or '',
-        ]).lower()
+        ])).lower()
         product_words = set(re.findall(r'[0-9a-zа-яё]+', text))
         normalized_text = normalize_category_name(text)
         if not product_words or not normalized_text:
@@ -589,11 +605,26 @@ class ProductEnrichmentService:
                 best_score = score
 
         if best_category is None or best_score < 2:
-            return None
+            # Фолбэк: не определили вид, но домен авто — ставим общий публикуемый
+            # узел Avito «Автомобиль на запчасти» (валидный SparePartType), чтобы
+            # товар всё равно публиковался без ошибки. Тенант уточнит позже.
+            best_category = cls._auto_parts_fallback_category(product, categories)
+            if best_category is None:
+                return None
 
         product.catalog_category = best_category
         product.save(update_fields=['catalog_category', 'updated_at'])
         return best_category
+
+    @staticmethod
+    def _auto_parts_fallback_category(product, categories) -> 'TenantCatalogCategory | None':
+        """Общий публикуемый узел Avito для авто-домена, если вид не определился."""
+        from apps.products.part_category_seed import normalize_category_name
+        target = normalize_category_name('Автомобиль на запчасти')
+        for category in categories:
+            if category.normalized_name == target and category.external_source == 'avito':
+                return category
+        return None
 
     @classmethod
     def ensure_product_auto_parts_eligible(cls, tenant, product: Product | None) -> None:
