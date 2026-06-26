@@ -83,6 +83,7 @@ interface Product {
 interface TenantCatalogCategory {
   id: number;
   name: string;
+  parent: number | null;
   domain: string;
   is_active: boolean;
 }
@@ -383,6 +384,24 @@ export default function ProductsPage() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Полный путь категории (Запчасти / Для автомобилей / Двигатель / …) — чтобы
+  // одноимённые категории из разных веток (база + дерево Avito) не сливались в кашу.
+  const categoryById = new Map(catalogCategories.map((c) => [c.id, c]));
+  const categoryPath = (c: TenantCatalogCategory): string => {
+    const parts: string[] = [];
+    let node: TenantCatalogCategory | undefined = c;
+    const seen = new Set<number>();
+    while (node && !seen.has(node.id)) {
+      seen.add(node.id);
+      parts.unshift(node.name);
+      node = node.parent ? categoryById.get(node.parent) : undefined;
+    }
+    return parts.join(' / ');
+  };
+  const sortedCategories = [...catalogCategories].sort(
+    (a, b) => categoryPath(a).localeCompare(categoryPath(b), 'ru'),
+  );
+
   const matchingCategories = categorySearch.trim()
     ? catalogCategories
         .filter((c) => c.name.toLowerCase().includes(categorySearch.toLowerCase()))
@@ -670,11 +689,11 @@ export default function ProductsPage() {
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
                       setCatalogCategoryFilter(String(c.id));
-                      setCategorySearch(c.name);
+                      setCategorySearch(categoryPath(c));
                       setCategoryDropdownOpen(false);
                     }}
                   >
-                    {c.name}
+                    {categoryPath(c)}
                   </button>
                 ))}
               </div>
@@ -689,9 +708,9 @@ export default function ProductsPage() {
             className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm"
           >
             <option value="">Все категории</option>
-            {catalogCategories.map((category) => (
+            {sortedCategories.map((category) => (
               <option key={category.id} value={category.id}>
-                {category.name}
+                {categoryPath(category)}
               </option>
             ))}
           </select>
@@ -735,9 +754,9 @@ export default function ProductsPage() {
                     disabled={categoryAssignLoading}
                   >
                     <option value="">Выбрать</option>
-                    {catalogCategories.map((category) => (
+                    {sortedCategories.map((category) => (
                       <option key={category.id} value={category.id}>
-                        {category.name}
+                        {categoryPath(category)}
                       </option>
                     ))}
                   </select>
