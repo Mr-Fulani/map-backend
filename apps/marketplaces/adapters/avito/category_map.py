@@ -20,6 +20,16 @@ def _specs() -> dict:
     return {leaf['slug']: leaf for leaf in data['leaves']}
 
 
+@lru_cache(maxsize=1)
+def leaf_spec_by_name() -> dict:
+    """Справочник листьев Avito по имени: {name: {slug, fixed, required}}.
+
+    Нужен для категорий из импортированного дерева Avito — у них имя совпадает с
+    именем листа Avito, поэтому спеку находим по имени (а не по курируемому маппингу).
+    """
+    return {leaf['name']: leaf for leaf in _specs().values()}
+
+
 # Корень нашей таксономии → slug листа Avito (значение по умолчанию для всех его листьев).
 ROOT_TO_AVITO = {
     'Тормозная система': 'tormoznaia_sistema_5539',

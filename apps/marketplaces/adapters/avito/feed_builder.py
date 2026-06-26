@@ -54,6 +54,11 @@ def build_feed(listings: list) -> bytes:
         spare_part_type = _get_spare_part_type(listing)
         if spare_part_type:
             ET.SubElement(ad, 'SparePartType').text = spare_part_type
+        # Под-вид (EngineSparePartType / BodySparePartType / …) — для категорий Avito,
+        # где он обязателен (Двигатель/Кузов/Трансмиссия). Берём из дерева Avito.
+        subtype_tag, subtype_value = _get_part_subtype(listing)
+        if subtype_tag and subtype_value:
+            ET.SubElement(ad, subtype_tag).text = subtype_value
         # Brand (Производитель) и OEM (Номер детали) — обязательны для запчастей.
         ET.SubElement(ad, 'Brand').text = _get_brand(listing)
         ET.SubElement(ad, 'OEM').text = _get_oem(listing)
@@ -97,12 +102,25 @@ def _avito_spec(listing) -> dict:
     Резолвит catalog_category товара в лист Avito через category_map и берёт
     фиксированные значения полей и список обязательных полей из справочника.
     """
-    from apps.marketplaces.adapters.avito.category_map import avito_spec_for
+    from apps.marketplaces.adapters.avito.category_map import avito_spec_for, leaf_spec_by_name
     category = getattr(listing.product, 'catalog_category', None)
     if not category:
         return {}
     parent = getattr(category, 'parent', None)
-    return avito_spec_for(getattr(category, 'name', ''), getattr(parent, 'name', ''))
+    # 1) Базовая таксономия — через курируемый маппинг category_map.
+    spec = avito_spec_for(getattr(category, 'name', ''), getattr(parent, 'name', ''))
+    if spec:
+        return spec
+    # 2) Категория из импортированного дерева Avito — поднимаемся к листу по имени.
+    by_name = leaf_spec_by_name()
+    node = category
+    while node is not None:
+        leaf = by_name.get(node.name)
+        if leaf:
+            return {'slug': leaf.get('slug'), 'fixed': leaf.get('fixed', {}),
+                    'required': leaf.get('required', [])}
+        node = getattr(node, 'parent', None)
+    return {}
 
 
 def _avito_fixed(listing, tag: str) -> str:
@@ -122,11 +140,38 @@ def _get_spare_part_type(listing) -> str:
 
 
 def _get_avito_category(listing) -> str:
-    """Ищет Avito-категорию через CategoryMapping; при отсутствии — дефолт."""
+    """Avito-категория: из спеки листа (fixed.Category) → маппинг → дефолт."""
+    fixed_category = _avito_fixed(listing, 'Category')
+    if fixed_category:
+        return fixed_category
     mapping = _get_category_mapping(listing)
     if mapping:
         return mapping.category_target
     return _DEFAULT_CATEGORY
+
+
+def _get_part_subtype(listing) -> tuple[str | None, str]:
+    """
+    Вид запчасти 2-го уровня (EngineSparePartType / BodySparePartType / …) и значение.
+
+    Если у листа Avito есть под-вид (в required) и товар стоит НИЖЕ листа в дереве
+    Avito, то значение под-вида = имя категории товара (напр. «Патрубки вентиляции»).
+    """
+    spec = _avito_spec(listing)
+    sub_tag = next(
+        (t for t in (spec.get('required') or []) if t.endswith('SparePartType') and t != 'SparePartType'),
+        None,
+    )
+    if not sub_tag:
+        return None, ''
+    category = getattr(listing.product, 'catalog_category', None)
+    if not category:
+        return sub_tag, ''
+    from apps.marketplaces.adapters.avito.category_map import leaf_spec_by_name
+    # Товар на самом листе Avito — вид не выбран; ниже листа — это и есть вид.
+    if category.name in leaf_spec_by_name():
+        return sub_tag, ''
+    return sub_tag, category.name
 
 
 def _get_goods_type(listing) -> str:
@@ -214,7 +259,11 @@ def missing_required_avito_fields(listing) -> list[str]:
     список тегов; пусто — если категория не сопоставлена или всё заполняется.
     """
     required = _avito_spec(listing).get('required') or []
-    return [tag for tag in required if tag not in _FEED_PROVIDED_TAGS]
+    provided = set(_FEED_PROVIDED_TAGS)
+    subtype_tag, subtype_value = _get_part_subtype(listing)
+    if subtype_tag and subtype_value:
+        provided.add(subtype_tag)  # под-вид заполнен из дерева — не считаем дырой
+    return [tag for tag in required if tag not in provided]
 
 
 def get_contact_fields(listing) -> tuple[str, str]:
