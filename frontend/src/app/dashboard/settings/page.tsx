@@ -185,6 +185,7 @@ export default function SettingsPage() {
   const [editingCatalogCategoryId, setEditingCatalogCategoryId] = useState<number | null>(null);
   const [newCatalogCategoryName, setNewCatalogCategoryName] = useState('');
   const [newCatalogCategoryDomain, setNewCatalogCategoryDomain] = useState('unknown');
+  const [newCatalogCategoryParent, setNewCatalogCategoryParent] = useState('');
   const [editCatalogCategoryName, setEditCatalogCategoryName] = useState('');
   const [editCatalogCategoryDomain, setEditCatalogCategoryDomain] = useState('unknown');
   const [categorySearch, setCategorySearch] = useState('');
@@ -655,17 +656,23 @@ export default function SettingsPage() {
     }
     setCreatingCatalogCategory(true);
     try {
-      await productApi.createCatalogCategory({
-        name: newCatalogCategoryName.trim(),
-        root_domain: rootDomain.id,
-        domain: rootDomain.slug,
-        aliases: [],
-        is_active: true,
-      });
+      // Если выбран родитель — создаём подкатегорию (root_domain выведет бэкенд),
+      // иначе — корневую категорию в выбранном домене.
+      const payload: Record<string, unknown> = newCatalogCategoryParent
+        ? { name: newCatalogCategoryName.trim(), parent: Number(newCatalogCategoryParent), aliases: [], is_active: true }
+        : {
+            name: newCatalogCategoryName.trim(),
+            root_domain: rootDomain.id,
+            domain: rootDomain.slug,
+            aliases: [],
+            is_active: true,
+          };
+      await productApi.createCatalogCategory(payload);
       setNewCatalogCategoryName('');
+      setNewCatalogCategoryParent('');
       setNewCatalogCategoryDomain(enabledDomainOptions[0]?.slug ?? '');
       await loadCatalogCategories();
-      toast.success('Категория создана');
+      toast.success(newCatalogCategoryParent ? 'Подкатегория создана' : 'Категория создана');
     } catch {
       toast.error('Не удалось создать категорию');
     } finally {
@@ -1929,7 +1936,7 @@ export default function SettingsPage() {
                   })}
                 </div>
               </div>
-              <form className="grid gap-3 md:grid-cols-[1fr_220px_auto]" onSubmit={createCatalogCategory}>
+              <form className="grid gap-3 md:grid-cols-[1fr_180px_240px_auto]" onSubmit={createCatalogCategory}>
                 <Input
                   placeholder="Например: Тормозные колодки"
                   value={newCatalogCategoryName}
@@ -1938,10 +1945,25 @@ export default function SettingsPage() {
                 <select
                   className="rounded-md border bg-background px-3 py-2 text-sm"
                   value={newCatalogCategoryDomain}
-                  onChange={(e) => setNewCatalogCategoryDomain(e.target.value)}
+                  onChange={(e) => { setNewCatalogCategoryDomain(e.target.value); setNewCatalogCategoryParent(''); }}
                 >
                   {enabledDomainOptions.map((domain) => (
                     <option key={domain.slug} value={domain.slug}>{domainLabel(domain.slug)}</option>
+                  ))}
+                </select>
+                <select
+                  className="rounded-md border bg-background px-3 py-2 text-sm"
+                  value={newCatalogCategoryParent}
+                  onChange={(e) => setNewCatalogCategoryParent(e.target.value)}
+                  title="Родительская категория (для подкатегории)"
+                >
+                  <option value="">— как корневую —</option>
+                  {buildCategoryTree(
+                    catalogCategories.filter((c) => c.root_domain_slug === newCatalogCategoryDomain),
+                  ).map(({ category, depth }) => (
+                    <option key={category.id} value={category.id}>
+                      {'   '.repeat(depth) + category.name}
+                    </option>
                   ))}
                 </select>
                 <Button disabled={creatingCatalogCategory || !newCatalogCategoryName.trim() || enabledDomainOptions.length === 0}>
