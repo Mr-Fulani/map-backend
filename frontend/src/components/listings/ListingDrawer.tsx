@@ -145,8 +145,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [editPrice, setEditPrice] = useState('');
   const [editAdType, setEditAdType] = useState(DEFAULT_AD_TYPE);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
-  const [editCategoryRootId, setEditCategoryRootId] = useState('');
-  const [editCategoryLeafId, setEditCategoryLeafId] = useState('');
+  const [editCategoryId, setEditCategoryId] = useState('');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [placementAddresses, setPlacementAddresses] = useState<PlacementAddress[]>([]);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
@@ -170,18 +169,8 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     setEditAccountId(String(data.account_id));
     setEditPrice(data.price_on_listing);
     setEditAdType(data.ad_type || DEFAULT_AD_TYPE);
-    // Категория может быть листом (есть parent_id) или корнем (parent_id отсутствует).
-    const cat = data.catalog_category;
-    if (cat && cat.parent_id) {
-      setEditCategoryRootId(String(cat.parent_id));
-      setEditCategoryLeafId(String(cat.id));
-    } else if (cat) {
-      setEditCategoryRootId(String(cat.id));
-      setEditCategoryLeafId('');
-    } else {
-      setEditCategoryRootId('');
-      setEditCategoryLeafId('');
-    }
+    // Храним выбранную категорию одним id; путь до корня строится по дереву.
+    setEditCategoryId(data.catalog_category ? String(data.catalog_category.id) : '');
   };
 
   useEffect(() => {
@@ -218,10 +207,29 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       .catch(() => setCategories([]));
   }, []);
 
-  const rootCategories = categories.filter((c) => c.parent === null);
-  const subCategories = categories.filter((c) => (
-    editCategoryRootId && c.parent === Number(editCategoryRootId)
-  ));
+  // Каскад произвольной глубины: путь от корня до выбранной категории + уровни выбора.
+  const categoryById = new Map(categories.map((c) => [c.id, c]));
+  const selectedAncestry = (() => {
+    const out: number[] = [];
+    let cur = editCategoryId ? categoryById.get(Number(editCategoryId)) : undefined;
+    while (cur) {
+      out.unshift(cur.id);
+      cur = cur.parent ? categoryById.get(cur.parent) : undefined;
+    }
+    return out;
+  })();
+  const categoryLevels: { options: CatalogCategory[]; selectedId: number | null; idx: number }[] = [];
+  {
+    let parentId: number | null = null;
+    for (let i = 0; ; i += 1) {
+      const options = categories.filter((c) => (c.parent ?? null) === parentId);
+      if (options.length === 0) break;
+      const selectedId = selectedAncestry[i] ?? null;
+      categoryLevels.push({ options, selectedId, idx: i });
+      if (selectedId === null) break;
+      parentId = selectedId;
+    }
+  }
 
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     !editAccountId || address.account === Number(editAccountId)
@@ -294,12 +302,8 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     contact_phone_override: editContactPhone,
   });
 
-  // Выбранная категория: подкатегория (лист) приоритетнее корня; null — снять.
-  const selectedCategoryId = () => {
-    if (editCategoryLeafId) return Number(editCategoryLeafId);
-    if (editCategoryRootId) return Number(editCategoryRootId);
-    return null;
-  };
+  // Выбранная категория = самый глубокий выбранный узел; null — снять.
+  const selectedCategoryId = () => (editCategoryId ? Number(editCategoryId) : null);
 
   // Категория хранится у товара, не у листинга — сохраняем отдельным вызовом,
   // только если изменилась. assign также закрепляет ручную классификацию.
@@ -696,47 +700,33 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                 </select>
               </div>
 
-              {/* Категория и подкатегория — проверить/изменить перед публикацией.
-                  По ним строится категория Avito (GoodsType/SparePartType). */}
+              {/* Категория и подкатегории любой глубины — проверить/изменить перед
+                  публикацией. По ним строится категория Avito (GoodsType/SparePartType). */}
               <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Категория</p>
-                  <select
-                    value={editCategoryRootId}
-                    onChange={(e) => {
-                      setEditCategoryRootId(e.target.value);
-                      setEditCategoryLeafId('');
-                    }}
-                    disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
-                    className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
-                  >
-                    <option value="">— не задана —</option>
-                    {rootCategories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-sm text-muted-foreground">Подкатегория</p>
-                  <select
-                    value={editCategoryLeafId}
-                    onChange={(e) => setEditCategoryLeafId(e.target.value)}
-                    disabled={
-                      !editCategoryRootId || subCategories.length === 0
-                      || listing.status === 'active' || listing.status === 'deleted' || busy
-                    }
-                    className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
-                  >
-                    <option value="">— вся категория —</option>
-                    {subCategories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                {categoryLevels.map(({ options, selectedId, idx }) => (
+                  <div className="space-y-1" key={idx}>
+                    <p className="text-sm text-muted-foreground">
+                      {idx === 0 ? 'Категория' : `Подкатегория ${idx}`}
+                    </p>
+                    <select
+                      value={selectedId ?? ''}
+                      onChange={(e) => {
+                        const v = e.target.value;
+                        if (v) setEditCategoryId(v);
+                        else setEditCategoryId(idx > 0 ? String(categoryLevels[idx - 1].selectedId) : '');
+                      }}
+                      disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                      className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
+                    >
+                      <option value="">{idx === 0 ? '— не задана —' : '— вся категория —'}</option>
+                      {options.map((category) => (
+                        <option key={category.id} value={category.id}>
+                          {category.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                ))}
               </div>
 
               <div className="space-y-2 rounded-md border p-3">
