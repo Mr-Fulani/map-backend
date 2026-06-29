@@ -175,7 +175,10 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     setEditPlacementAddressId(data.placement_address ? String(data.placement_address) : '');
     setEditAccountId(String(data.account_id));
     setEditPrice(data.price_on_listing);
-    setEditMarginPct(data.margin_pct ?? '');
+    // Если у листинга нет своей наценки — подтягиваем дефолт из категории
+    setEditMarginPct(
+      data.margin_pct ?? data.catalog_category?.default_margin_pct ?? '',
+    );
     setEditAdType(data.ad_type || DEFAULT_AD_TYPE);
     // Храним выбранную категорию одним id; путь до корня строится по дереву.
     setEditCategoryId(data.catalog_category ? String(data.catalog_category.id) : '');
