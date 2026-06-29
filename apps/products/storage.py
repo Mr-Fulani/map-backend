@@ -12,6 +12,43 @@ MAX_PHOTOS = 10
 MAX_DIMENSION = 1280
 THUMB_DIMENSION = 400
 DOWNLOAD_TIMEOUT = 15
+# Макс. расстояние Хэмминга между aHash, при котором изображения считаем одним
+# (одна фотография из разных источников: tachka/rossko/поиск). 0 — идентичны.
+PERCEPTUAL_DUP_DISTANCE = 6
+
+
+def perceptual_hash(img: Image.Image) -> str:
+    """64-битный average hash (aHash) в hex — для дедупа похожих изображений."""
+    try:
+        small = img.convert('L').resize((8, 8), Image.LANCZOS)
+        pixels = list(small.getdata())
+        avg = sum(pixels) / len(pixels)
+        bits = 0
+        for pixel in pixels:
+            bits = (bits << 1) | (1 if pixel >= avg else 0)
+        return f'{bits:016x}'
+    except Exception:
+        return ''
+
+
+def phash_distance(left: str, right: str) -> int:
+    """Расстояние Хэмминга между двумя aHash; 64 если один пустой/некорректный."""
+    if not left or not right or len(left) != len(right):
+        return 64
+    try:
+        return bin(int(left, 16) ^ int(right, 16)).count('1')
+    except ValueError:
+        return 64
+
+
+def find_perceptual_duplicate(product, phash: str) -> ProductImage | None:
+    """Существующее не-отклонённое фото товара, перцептивно совпадающее с phash."""
+    if not phash:
+        return None
+    for other in product.images.exclude(status=ProductImage.Status.REJECTED).exclude(phash=''):
+        if phash_distance(other.phash, phash) <= PERCEPTUAL_DUP_DISTANCE:
+            return other
+    return None
 
 
 def _key_part(value: object, fallback: str) -> str:
@@ -106,6 +143,15 @@ class PhotoUploadPipeline:
         except (UnidentifiedImageError, Exception):
             return None
 
+        # Дедуп по перцептивному хэшу: одна и та же фотография из разных источников
+        # (tachka/rossko/поиск) имеет разные байты (sha не совпадёт), но aHash близок.
+        # Возвращаем уже существующее фото, не плодим визуальные дубли в ревью.
+        phash = perceptual_hash(img)
+        if existing is None:
+            duplicate = find_perceptual_duplicate(product, phash)
+            if duplicate is not None:
+                return duplicate
+
         original_bytes = _to_jpeg_bytes(_resize(img.copy(), MAX_DIMENSION))
         thumb_bytes = _to_jpeg_bytes(_resize(img.copy(), THUMB_DIMENSION))
 
@@ -131,6 +177,9 @@ class PhotoUploadPipeline:
             if source_id and existing.source_id != source_id:
                 existing.source_id = source_id
                 update_fields.append('source_id')
+            if phash and not existing.phash:
+                existing.phash = phash
+                update_fields.append('phash')
             if update_fields:
                 existing.save(update_fields=update_fields)
             return existing
@@ -145,4 +194,5 @@ class PhotoUploadPipeline:
             position=position,
             source_id=source_id,
             status=status or ProductImage.Status.IMPORTED,
+            phash=phash,
         )
