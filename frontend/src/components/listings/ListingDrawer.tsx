@@ -41,6 +41,8 @@ interface ListingDetail {
   ai_confidence: number | null;
   ai_confidence_display: string;
   price_on_listing: string;
+  margin_pct: string | null;
+  base_price: string;
   ad_type: string;
   placement_address: number | null;
   address_override: string;
@@ -58,6 +60,7 @@ interface ListingDetail {
     name: string;
     parent_id: number | null;
     parent_name: string | null;
+    default_margin_pct?: string;
   } | null;
 }
 
@@ -65,6 +68,7 @@ interface CatalogCategory {
   id: number;
   name: string;
   parent: number | null;
+  default_margin_pct?: string;
 }
 
 interface Account {
@@ -143,6 +147,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [editPlacementAddressId, setEditPlacementAddressId] = useState('');
   const [editAccountId, setEditAccountId] = useState('');
   const [editPrice, setEditPrice] = useState('');
+  const [editMarginPct, setEditMarginPct] = useState<string>('');
   const [editAdType, setEditAdType] = useState(DEFAULT_AD_TYPE);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [editCategoryId, setEditCategoryId] = useState('');
@@ -170,6 +175,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     setEditPlacementAddressId(data.placement_address ? String(data.placement_address) : '');
     setEditAccountId(String(data.account_id));
     setEditPrice(data.price_on_listing);
+    setEditMarginPct(data.margin_pct ?? '');
     setEditAdType(data.ad_type || DEFAULT_AD_TYPE);
     // Храним выбранную категорию одним id; путь до корня строится по дереву.
     setEditCategoryId(data.catalog_category ? String(data.catalog_category.id) : '');
@@ -316,7 +322,8 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     title: editTitle,
     description_ai: editDesc,
     account_id: editAccountId ? Number(editAccountId) : undefined,
-    price_on_listing: editPrice,
+    price_on_listing: editMarginPct === '' ? editPrice : undefined,
+    margin_pct: editMarginPct !== '' ? editMarginPct : null,
     ad_type: editAdType,
     placement_address: editPlacementAddressId ? Number(editPlacementAddressId) : null,
     address_override: editAddress,
@@ -696,10 +703,46 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                   </select>
                 </div>
                 <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">
+                    Базовая цена (из товара)
+                  </p>
+                  <p className="h-9 flex items-center text-sm text-muted-foreground">
+                    {listing.base_price
+                      ? `${Number(listing.base_price).toLocaleString('ru-RU')} ₽`
+                      : '—'}
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <p className="text-sm text-muted-foreground">Наценка, %</p>
+                  <Input
+                    value={editMarginPct}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setEditMarginPct(v);
+                      const base = Number(listing.base_price);
+                      const pct = Number(v);
+                      if (base > 0 && v !== '' && !Number.isNaN(pct)) {
+                        setEditPrice(String((base * (1 + pct / 100)).toFixed(2)));
+                      }
+                    }}
+                    disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                    inputMode="decimal"
+                    placeholder={
+                      listing.catalog_category?.default_margin_pct
+                        ? `${listing.catalog_category.default_margin_pct}% (по категории)`
+                        : '0'
+                    }
+                    className="h-9 min-w-0 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">Цена объявления</p>
                   <Input
                     value={editPrice}
-                    onChange={(e) => setEditPrice(e.target.value)}
+                    onChange={(e) => {
+                      setEditPrice(e.target.value);
+                      setEditMarginPct('');
+                    }}
                     disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
                     inputMode="decimal"
                     className="h-9 min-w-0 text-sm"

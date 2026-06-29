@@ -115,11 +115,12 @@ class ListingDetailSerializer(ListingSerializer):
     ai_confidence_display = serializers.SerializerMethodField()
     images = serializers.SerializerMethodField()
     catalog_category = serializers.SerializerMethodField()
+    base_price = serializers.DecimalField(source='product.price', max_digits=12, decimal_places=2, read_only=True)
 
     class Meta(ListingSerializer.Meta):
         fields = ListingSerializer.Meta.fields + [
             'description_ai', 'ai_confidence', 'ai_confidence_display', 'images',
-            'catalog_category',
+            'catalog_category', 'margin_pct', 'base_price',
         ]
         read_only_fields = fields
 
@@ -208,6 +209,7 @@ class ListingPlacementSerializer(serializers.Serializer):
 class ListingFieldsSerializer(serializers.Serializer):
     account_id = serializers.IntegerField(required=False)
     price_on_listing = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, min_value=0)
+    margin_pct = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True, min_value=0)
     ad_type = serializers.ChoiceField(choices=Listing.AD_TYPE_CHOICES, required=False)
 
 

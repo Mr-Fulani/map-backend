@@ -177,6 +177,10 @@ class Listing(TimestampedModel):
     description_ai = models.TextField(blank=True, verbose_name='AI-описание')
     ai_confidence = models.FloatField(null=True, blank=True, verbose_name='Уверенность AI (0–1)')
     price_on_listing = models.DecimalField(max_digits=12, decimal_places=2, verbose_name='Цена на объявлении, ₽')
+    margin_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        verbose_name='Наценка листинга, % (override категории)',
+    )
     publish_idempotency_key = models.UUIDField(default=uuid.uuid4, unique=True, verbose_name='Ключ идемпотентности')
     ad_type = models.CharField(
         max_length=50, choices=AD_TYPE_CHOICES, default=AD_TYPE_RESALE,

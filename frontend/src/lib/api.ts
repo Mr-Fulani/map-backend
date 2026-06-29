@@ -228,6 +228,8 @@ export const productApi = {
     api.post('/products/catalog-categories/', data),
   updateCatalogCategory: (id: number, data: Record<string, unknown>) =>
     api.put(`/products/catalog-categories/${id}/`, data),
+  patchCatalogCategory: (id: number, data: Record<string, unknown>) =>
+    api.patch(`/products/catalog-categories/${id}/`, data),
   deleteCatalogCategory: (id: number, hard = false) =>
     api.delete(`/products/catalog-categories/${id}/${hard ? '?hard=true' : ''}`),
   assignCatalogCategory: (data: { product_ids: number[]; catalog_category: number | null }) =>
@@ -308,6 +310,7 @@ export const listingApi = {
     placement_address?: number | null;
     account_id?: number;
     price_on_listing?: string;
+    margin_pct?: string | null;
     ad_type?: string;
   }) =>
     api.patch(`/listings/${id}/`, data),

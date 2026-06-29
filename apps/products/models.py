@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
@@ -53,6 +55,10 @@ class TenantCatalogCategory(TimestampedModel):
         max_length=255, blank=True, verbose_name='Имя файла картинки по умолчанию',
     )
     is_active = models.BooleanField(default=True, verbose_name='Активна')
+    default_margin_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal('0.00'),
+        verbose_name='Наценка по умолчанию, %',
+    )
 
     class Meta:
         verbose_name = 'Категория каталога tenant-а'
