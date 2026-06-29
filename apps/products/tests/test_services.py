@@ -131,6 +131,75 @@ class TestPhotoUploadPipeline:
         assert img1.pk == img2.pk
         assert ProductImage.objects.filter(product=product).count() == 1
 
+    def _make_two_tone_bytes(self, size=(100, 100)) -> bytes:
+        """JPEG: левая половина чёрная, правая белая — заведомо другой aHash."""
+        from PIL import Image
+        img = Image.new('RGB', size, color=(0, 0, 0))
+        for x in range(size[0] // 2, size[0]):
+            for y in range(size[1]):
+                img.putpixel((x, y), (255, 255, 255))
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG')
+        return buf.getvalue()
+
+    def _mock_response(self, content):
+        resp = MagicMock()
+        resp.content = content
+        resp.raise_for_status = MagicMock()
+        return resp
+
+    def test_photo_perceptual_dedup_merges_same_image_across_sources(self):
+        """Одна фотография из разных источников (разные байты) → один ProductImage."""
+        from apps.products.storage import PhotoUploadPipeline
+
+        tenant = make_tenant('photo-phash-co')
+        ds = make_datasource(tenant)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+
+        # Один цвет, но разные размеры → разный sha, одинаковый aHash.
+        from_tachka = self._make_jpeg_bytes(size=(100, 100))
+        from_brave = self._make_jpeg_bytes(size=(130, 130))
+        mock_storage = MagicMock()
+        mock_storage.save = MagicMock(return_value='products/test/1.jpg')
+
+        with patch('apps.products.storage.requests.get') as mock_get:
+            mock_get.side_effect = [self._mock_response(from_tachka), self._mock_response(from_brave)]
+            pipeline = PhotoUploadPipeline(storage=mock_storage)
+            first = pipeline.process(
+                'http://e/a.jpg', product, source_id='tachka',
+                status=ProductImage.Status.NEEDS_REVIEW,
+            )
+            second = pipeline.process(
+                'http://e/b.jpg', product, source_id='brave',
+                status=ProductImage.Status.NEEDS_REVIEW,
+            )
+
+        assert first is not None
+        assert first.pk == second.pk
+        assert ProductImage.objects.filter(product=product).count() == 1
+
+    def test_photo_perceptual_keeps_distinct_images(self):
+        """Визуально разные фото не схлопываются в один."""
+        from apps.products.storage import PhotoUploadPipeline
+
+        tenant = make_tenant('photo-distinct-co')
+        ds = make_datasource(tenant)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+
+        solid = self._make_jpeg_bytes(size=(100, 100))
+        two_tone = self._make_two_tone_bytes(size=(100, 100))
+        mock_storage = MagicMock()
+        mock_storage.save = MagicMock(return_value='products/test/1.jpg')
+
+        with patch('apps.products.storage.requests.get') as mock_get:
+            mock_get.side_effect = [self._mock_response(solid), self._mock_response(two_tone)]
+            pipeline = PhotoUploadPipeline(storage=mock_storage)
+            first = pipeline.process('http://e/a.jpg', product, status=ProductImage.Status.NEEDS_REVIEW)
+            second = pipeline.process('http://e/b.jpg', product, status=ProductImage.Status.NEEDS_REVIEW)
+
+        assert first.pk != second.pk
+        assert ProductImage.objects.filter(product=product).count() == 2
+
     def test_photo_pipeline_saves_enrichment_metadata(self):
         from apps.products.storage import PhotoUploadPipeline
 
