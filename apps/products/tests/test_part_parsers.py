@@ -3,9 +3,11 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.products.models import GlobalPartRelation, Product, ProductCrossCode
+from apps.products.models import Product, ProductCrossCode
 from apps.products.part_fetchers import FetchedPage
-from apps.products.part_parsers import ParsedPart, RosskoPartParser, TachkaPartParser, parse_fitment_line
+from apps.products.part_parsers import (
+    ParsedPart, PartNotFound, RosskoPartParser, TachkaPartParser, parse_fitment_line,
+)
 from apps.products.services import ProductEnrichmentService, ProductService
 from apps.tenants.services import TenantService
 
@@ -27,30 +29,13 @@ SAMPLE_HTML = """
 </html>
 """
 
-SEARCH_HTML = """
-<html>
-  <body>
-    <h1>РЕЗУЛЬТАТЫ ПОИСКА: СТОЙКА (АЛЬТЕРНАТИВА 48510-80863) 485108Z460</h1>
-    <h2>Результаты по артикулу 48510-80863)</h2>
-    <div>
-      Aмортизатор Toyota. Артикул 4851080863
-      Toyota
-      Артикул: 4851080863
-    </div>
-    <h2>Аналоги по OEM коду 48510-80863)</h2>
-    <div>
-      Амортизатор Miles. Артикул DG211003
-      Miles
-      Артикул: DG211003
-    </div>
-    <div>
-      Амортизатор TOYOTA CAMRY 17- газ.пер.прав. (Kayaba) KYB. Артикул 3350048
-      KYB
-      Артикул: 3350048
-    </div>
-  </body>
-</html>
-"""
+# Ответ JSON-API smart-search-suggest: поиск по артикулу возвращает товар вместе
+# с брендом и канонической ссылкой даже без бренда в запросе.
+SUGGEST_JSON = (
+    '{"query":"P50136","parsed":{},"results":null,"products":['
+    '{"sku":"P 50 136","brand_name":"Brembo","price":1234,"in_stock":true,'
+    '"url":"brembo/P50136"}]}'
+)
 
 
 def make_tenant(slug, catalog_domain='auto_parts'):
@@ -106,24 +91,64 @@ def test_parse_fitment_line_keeps_uncertain_data_reviewable():
     assert fitment.needs_review is False
 
 
-def test_tachka_parser_extracts_related_parts_from_search_html():
-    parsed = TachkaPartParser().parse_search_html(
-        SEARCH_HTML,
-        brand='TOYOTA-LEXUS',
-        article='485108Z460',
-        source_url='https://tachka.ru/poisk?search=485108Z460',
-    )
+def test_tachka_direct_fetch_requires_brand():
+    """Без бренда прямой URL не строится — сразу PartNotFound (а не tachka.ru//article)."""
+    class FailFetcher:
+        def fetch(self, url):
+            raise AssertionError(f'fetch не должен вызываться без бренда: {url}')
 
-    assert parsed.normalized_article == '485108Z460'
-    assert [part.article for part in parsed.related_parts] == [
-        '4851080863',
-        'DG211003',
-        '3350048',
-    ]
-    assert parsed.related_parts[0].brand == 'Toyota'
-    assert parsed.related_parts[0].relation_type == GlobalPartRelation.RelationType.OEM
-    assert parsed.related_parts[1].relation_type == GlobalPartRelation.RelationType.ANALOGUE
-    assert parsed.cross_codes[0].code == '4851080863'
+    with pytest.raises(PartNotFound):
+        TachkaPartParser(fetcher=FailFetcher()).fetch('', 'P50136')
+
+
+def test_tachka_fetch_search_resolves_via_smart_suggest_and_recovers_brand():
+    """Поиск по артикулу без бренда: smart-search-suggest → карточка товара + бренд."""
+    class FakeFetcher:
+        def __init__(self):
+            self.calls = []
+
+        def fetch(self, url):
+            self.calls.append(url)
+            if 'smart-search-suggest' in url:
+                return FetchedPage(html=SUGGEST_JSON, url=url, status_code=200)
+            return FetchedPage(html=SAMPLE_HTML, url='https://tachka.ru/brembo/P50136', status_code=200)
+
+    parser = TachkaPartParser(fetcher=FakeFetcher())
+    html, source_url = parser.fetch_search('P 50 136')
+
+    assert html == SAMPLE_HTML
+    assert source_url == 'https://tachka.ru/brembo/P50136'
+    assert parser.fetcher.calls[0].startswith('https://tachka.ru/shop/api/smart-search-suggest')
+
+    # Бренд восстановлен из suggest и подставляется в parse_search_html.
+    parsed = parser.parse_search_html(html, brand='', article='P50136', source_url=source_url)
+    assert parsed.brand == 'BREMBO'
+
+
+def test_tachka_match_product_disambiguates_by_name_hint():
+    """Один артикул у разных брендов: выбираем товар по названию (hint)."""
+    data = {'products': [
+        {'sku': 'OC90', 'brand_name': 'Mahle', 'url': 'mahle/OC90',
+         'title': 'Масляный фильтр Mahle', 'in_stock': True},
+        {'sku': 'OC90', 'brand_name': 'AM Point', 'url': 'am-point/OC90',
+         'title': 'Воздушный фильтр AM Point', 'in_stock': True},
+    ]}
+    parser = TachkaPartParser(fetcher=object())
+    chosen = parser._match_product(data, 'OC90', hint='Фильтр воздушный для двигателя')
+    assert chosen['brand_name'] == 'AM Point'
+
+
+def test_tachka_fetch_search_not_found_when_sku_mismatch():
+    class FakeFetcher:
+        def fetch(self, url):
+            other = (
+                '{"products":[{"sku":"OTHER999","brand_name":"X","url":"x/OTHER999",'
+                '"in_stock":true}]}'
+            )
+            return FetchedPage(html=other, url=url, status_code=200)
+
+    with pytest.raises(PartNotFound):
+        TachkaPartParser(fetcher=FakeFetcher()).fetch_search('P50136')
 
 
 def test_tachka_parser_uses_injected_fetcher_without_network():
@@ -310,34 +335,35 @@ def test_schedule_ai_generation_uses_plain_ai_when_fitments_are_already_trusted(
 
 
 @pytest.mark.django_db
-def test_run_parse_job_falls_back_to_search_results(monkeypatch):
+def test_run_parse_job_falls_back_to_search_and_backfills_brand(monkeypatch):
+    """Прямой fetch 404 → fetch_search возвращает карточку товара; бренд бэкфилится."""
     tenant = make_tenant('job-search-fallback')
     product = Product.objects.create(
         tenant=tenant,
-        article='485108Z460',
-        brand='TOYOTA-LEXUS',
-        name='СТОЙКА 485108Z460',
+        article='P50136',
+        brand='',
+        name='Колодки P50136',
         price=Decimal('9997.00'),
         stock_qty=1,
     )
     job = ProductEnrichmentService.create_parse_job(
         tenant=tenant,
         product=product,
-        brand='TOYOTA-LEXUS',
-        article='485108Z460',
-        normalized_article='485108Z460',
+        brand='',
+        article='P50136',
+        normalized_article='P50136',
     )
 
     class FakeParser:
         def fetch(self, brand, article):
-            from apps.products.part_parsers import PartNotFound
-            raise PartNotFound('direct page not found')
+            raise PartNotFound('Tachka requires brand for direct fetch')
 
-        def fetch_search(self, article):
-            return SEARCH_HTML, 'https://tachka.ru/poisk?search=485108Z460'
+        def fetch_search(self, article, hint=''):
+            return SAMPLE_HTML, 'https://tachka.ru/brembo/P50136'
 
         def parse_search_html(self, html, brand, article, source_url=''):
-            return TachkaPartParser().parse_search_html(html, brand, article, source_url)
+            # Бренд восстановлен из suggest до этого вызова.
+            return TachkaPartParser().parse_html(html, brand or 'BREMBO', article, source_url)
 
     monkeypatch.setattr('apps.products.services.get_part_parser', lambda source_id: FakeParser())
 
@@ -345,10 +371,11 @@ def test_run_parse_job_falls_back_to_search_results(monkeypatch):
 
     job.refresh_from_db()
     product.refresh_from_db()
-    assert result['status'] == 'need_review'
-    assert job.status == 'need_review'
-    assert job.source_url == 'https://tachka.ru/poisk?search=485108Z460'
-    assert product.cross_codes.filter(normalized_code='4851080863').exists()
+    assert result['status'] == 'success'
+    assert job.status == 'success'
+    assert job.source_url == 'https://tachka.ru/brembo/P50136'
+    assert product.cross_codes.filter(normalized_code='A0004206000').exists()
+    assert product.brand == 'BREMBO'
 
 
 def test_parse_task_saves_enrichment_images_before_finishing():

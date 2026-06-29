@@ -21,10 +21,6 @@ CROSS_PAIR_RE = re.compile(
     r'(?P<manufacturer>[A-ZА-ЯЁ][A-ZА-ЯЁ0-9 /().-]{1,70}?)\s+-\s*'
     r'(?P<code>[A-Z0-9][A-Z0-9 ./-]{2,40}?)(?=\s+[A-ZА-ЯЁ][A-ZА-ЯЁ0-9 /().-]{1,70}?\s+-|$)'
 )
-PRODUCT_RESULT_RE = re.compile(
-    r'(?P<title>.+?)\s+Артикул:?\s*(?P<article>[A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9 ./-]{2,40})',
-    re.IGNORECASE,
-)
 
 
 @dataclass
@@ -108,22 +104,22 @@ class TachkaPartParser:
 
     def __init__(self, fetcher=None):
         self.fetcher = fetcher or get_part_fetcher(self.source_id)
+        # Бренд, восстановленный из smart-search-suggest при поиске по артикулу
+        # без бренда — используется parse_search_html для бэкфилла.
+        self._resolved_brand = ''
 
     def build_url(self, brand: str, article: str) -> str:
         brand_slug = slugify(brand).lower() or brand.strip().lower()
         return f'{self.base_url}/{brand_slug}/{normalize_part_code(article)}'
 
-    def build_search_urls(self, article: str) -> list[str]:
-        encoded = quote(article.strip())
-        normalized = quote(normalize_part_code(article))
-        return [
-            f'{self.base_url}/poisk?search={encoded}',
-            f'{self.base_url}/poisk?q={encoded}',
-            f'{self.base_url}/poisk?query={encoded}',
-            f'{self.base_url}/poisk?article={normalized}',
-        ]
+    def build_suggest_url(self, query: str) -> str:
+        return f'{self.base_url}/shop/api/smart-search-suggest?query={quote(query.strip())}'
 
     def fetch(self, brand: str, article: str) -> tuple[str, str]:
+        # Прямая карточка возможна только при известном бренде. Без бренда URL
+        # вырождается в tachka.ru//article (404) — пропускаем сразу к поиску.
+        if not (brand or '').strip():
+            raise PartNotFound(f'Tachka requires brand for direct fetch: {article}')
         url = self.build_url(brand, article)
         page = self.fetcher.fetch(url)
         if page.status_code == 404:
@@ -131,15 +127,60 @@ class TachkaPartParser:
         page.raise_for_status()
         return page.html, page.url
 
-    def fetch_search(self, article: str) -> tuple[str, str]:
-        for url in self.build_search_urls(article):
-            page = self.fetcher.fetch(url)
-            if page.status_code == 404:
-                continue
-            page.raise_for_status()
-            if self.search_html_has_results(page.html):
-                return page.html, page.url
-        raise PartNotFound(f'Part not found in tachka search: {article}')
+    def fetch_search(self, article: str, hint: str = '') -> tuple[str, str]:
+        """Ищет артикул через JSON-API smart-search-suggest и грузит карточку товара.
+
+        Работает и без бренда: API возвращает товар вместе с brand_name и
+        канонической ссылкой {brand}/{article}, которую парсит parse_html.
+        hint (название товара) разрешает неоднозначность, когда один артикул
+        принадлежит разным брендам/деталям.
+        """
+        product = self._match_product(self._smart_search(article), article, hint)
+        if not product:
+            raise PartNotFound(f'Артикул не найден в каталоге Тачка.ру: {article}')
+        self._resolved_brand = (product.get('brand_name') or '').strip()
+        relative_url = (product.get('url') or '').strip().lstrip('/')
+        if not relative_url:
+            raise PartNotFound(f'Артикул не найден в каталоге Тачка.ру: {article}')
+        product_url = f'{self.base_url}/{relative_url}'
+        page = self.fetcher.fetch(product_url)
+        if page.status_code == 404:
+            raise PartNotFound(f'Артикул не найден в каталоге Тачка.ру: {article}')
+        page.raise_for_status()
+        return page.html, page.url
+
+    def _smart_search(self, query: str) -> dict:
+        page = self.fetcher.fetch(self.build_suggest_url(query))
+        page.raise_for_status()
+        try:
+            return json.loads(page.html)
+        except (ValueError, TypeError):
+            return {}
+
+    def _match_product(self, data: dict, article: str, hint: str = '') -> dict | None:
+        """Выбирает товар с совпадающим артикулом.
+
+        Один артикул бывает у разных брендов/деталей, поэтому при нескольких
+        совпадениях выбираем по пересечению названия товара (hint) с title;
+        при равенстве — товар в наличии.
+        """
+        products = (data or {}).get('products') or []
+        target = normalize_part_code(article)
+        matched = [
+            product for product in products
+            if normalize_part_code(product.get('sku') or '') == target
+        ]
+        if not matched:
+            return None
+        hint_tokens = _name_tokens(hint)
+        matched.sort(
+            key=lambda product: (
+                len(_name_tokens(product.get('title') or '') & hint_tokens),
+                bool(product.get('in_stock')),
+            ),
+            reverse=True,
+        )
+        return matched[0]
 
     def parse_html(self, html: str, brand: str, article: str, source_url: str = '') -> ParsedPart:
         tree = HTMLParser(html)
@@ -165,98 +206,12 @@ class TachkaPartParser:
             parsed.title = f'{parsed.brand} {parsed.article}'
         return parsed
 
-    def search_html_has_results(self, html: str) -> bool:
-        tree = HTMLParser(html)
-        raw_text = _normalize_lines(tree.body.text(separator='\n')) if tree.body else ''
-        return bool(
-            raw_text
-            and 'товары не найдены' not in raw_text.lower()
-            and (
-                'результаты поиска' in raw_text.lower()
-                or 'аналоги по oem' in raw_text.lower()
-                or 'артикул:' in raw_text.lower()
-            )
-        )
-
     def parse_search_html(self, html: str, brand: str, article: str, source_url: str = '') -> ParsedPart:
-        tree = HTMLParser(html)
-        raw_text = _normalize_lines(tree.body.text(separator='\n')) if tree.body else ''
-        normalized_article = normalize_part_code(article)
-        parsed = ParsedPart(
-            brand=brand.strip().upper(),
-            article=normalized_article,
-            title=f'{brand} {article}'.strip(),
-            source_url=source_url,
-            raw_text=raw_text[:20000],
-            related_parts=self._parse_related_parts_from_search(raw_text, normalized_article),
-            description_facts=self._parse_search_description_facts(raw_text),
-        )
-        parsed.cross_codes = [
-            ParsedCrossCode(
-                manufacturer=related.brand,
-                code=related.article,
-                code_type=_relation_to_code_type(related.relation_type),
-            )
-            for related in parsed.related_parts
-            if related.relation_type in [
-                GlobalPartRelation.RelationType.OEM,
-                GlobalPartRelation.RelationType.CROSS,
-                GlobalPartRelation.RelationType.ANALOGUE,
-                GlobalPartRelation.RelationType.REPLACEMENT,
-            ]
-        ][:50]
-        return parsed
+        """Псевдоним parse_html — fetch_search возвращает сразу страницу товара.
 
-    def _parse_related_parts_from_search(
-        self, raw_text: str, normalized_article: str,
-    ) -> list[ParsedRelatedPart]:
-        related_parts = []
-        current_relation_type = GlobalPartRelation.RelationType.UNKNOWN
-        lines = raw_text.splitlines()
-        for line in lines:
-            lowered = line.lower()
-            if 'аналоги по oem' in lowered or 'аналоги' in lowered:
-                current_relation_type = GlobalPartRelation.RelationType.ANALOGUE
-                continue
-            if 'результаты по артикулу' in lowered:
-                current_relation_type = GlobalPartRelation.RelationType.OEM
-                continue
-
-            match = PRODUCT_RESULT_RE.search(line)
-            if not match:
-                continue
-            found_article = _normalize_spaces(match.group('article')).strip(' .,-)')
-            normalized_found_article = normalize_part_code(found_article)
-            if not normalized_found_article or normalized_found_article == normalized_article:
-                continue
-
-            title = _normalize_spaces(match.group('title'))
-            brand = _extract_brand_from_search_title(title)
-            if not brand:
-                continue
-            needs_review = current_relation_type == GlobalPartRelation.RelationType.UNKNOWN
-            related_parts.append(ParsedRelatedPart(
-                brand=brand,
-                article=found_article,
-                title=title,
-                relation_type=current_relation_type,
-                raw_text=line,
-                confidence=0.7 if needs_review else 0.9,
-                needs_review=needs_review,
-            ))
-        return _dedupe_related_parts(related_parts)
-
-    def _parse_search_description_facts(self, raw_text: str) -> dict[str, str]:
-        facts = {}
-        for line in raw_text.splitlines():
-            normalized = _normalize_spaces(line)
-            if not normalized:
-                continue
-            lowered = normalized.lower()
-            if any(marker in lowered for marker in ['toyota camry', 'hyundai', 'kia', 'mercedes']):
-                facts['search_hint'] = normalized[:3000]
-                break
-        return facts
+        brand берётся из smart-search-suggest, если у товара его не было.
+        """
+        return self.parse_html(html, brand or self._resolved_brand, article, source_url=source_url)
 
     def _first_text(self, tree: HTMLParser, selectors: list[str]) -> str:
         for selector in selectors:
@@ -406,6 +361,11 @@ def _normalize_lines(value: str) -> str:
     return '\n'.join(line for line in lines if line)
 
 
+def _name_tokens(text: str) -> set[str]:
+    """Значимые слова названия (>2 символов) для сопоставления товаров."""
+    return {token for token in re.findall(r'[0-9a-zа-яё]+', (text or '').lower()) if len(token) > 2}
+
+
 def _looks_like_cross_code(value: str) -> bool:
     if any(char in value for char in '{};=<>'):
         return False
@@ -437,20 +397,6 @@ def _guess_code_type(label: str) -> str:
     return ProductCrossCode.CodeType.UNKNOWN
 
 
-def _relation_to_code_type(relation_type: str) -> str:
-    if relation_type == GlobalPartRelation.RelationType.OEM:
-        return ProductCrossCode.CodeType.OEM
-    if relation_type == GlobalPartRelation.RelationType.TRADE:
-        return ProductCrossCode.CodeType.TRADE
-    if relation_type in [
-        GlobalPartRelation.RelationType.CROSS,
-        GlobalPartRelation.RelationType.ANALOGUE,
-        GlobalPartRelation.RelationType.REPLACEMENT,
-    ]:
-        return ProductCrossCode.CodeType.CROSS
-    return ProductCrossCode.CodeType.UNKNOWN
-
-
 def _looks_like_cross_label(label: str) -> bool:
     label = label.lower()
     markers = ('oem', 'oe', 'ориг', 'cross', 'аналог', 'замен', 'кросс')
@@ -467,43 +413,6 @@ def _dedupe_cross_codes(codes: list[ParsedCrossCode]) -> list[ParsedCrossCode]:
         seen.add(key)
         result.append(code)
     return result[:200]
-
-
-def _dedupe_related_parts(parts: list[ParsedRelatedPart]) -> list[ParsedRelatedPart]:
-    seen = set()
-    result = []
-    for part in parts:
-        key = (part.brand, normalize_part_code(part.article), part.relation_type)
-        if key in seen:
-            continue
-        seen.add(key)
-        result.append(part)
-    return result[:100]
-
-
-def _extract_brand_from_search_title(title: str) -> str:
-    normalized = _normalize_spaces(title)
-    if not normalized:
-        return ''
-
-    patterns = [
-        r'\([A-Za-zА-Яа-яЁё0-9 -]{2,40}\)\s+([A-Za-zА-Яа-яЁё0-9 -]{2,40})\.',
-        r'\b(?:Aмортизатор|Амортизатор|Стойка|Колодки|Диск|Рейка)\s+([A-Za-zА-Яа-яЁё0-9 -]{2,40})\.',
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, normalized)
-        if not match:
-            continue
-        candidate = _normalize_spaces(match.group(match.lastindex)).strip(' .,-()')
-        if _looks_like_manufacturer(candidate):
-            return candidate
-
-    chunks = normalized.split()
-    for chunk in reversed(chunks):
-        candidate = chunk.strip(' .,-()')
-        if candidate.isupper() and _looks_like_manufacturer(candidate):
-            return candidate
-    return ''
 
 
 def _extract_cross_sections(raw_text: str) -> list[str]:
@@ -583,21 +492,30 @@ class RosskoPartParser:
         """
         raise PartNotFound(f'Rossko does not support direct fetch for {brand} {article}')
 
-    def fetch_search(self, article: str) -> tuple[str, str]:
+    def fetch_search(self, article: str, hint: str = '') -> tuple[str, str]:
         """Ищет артикул, затем загружает страницу первого совпавшего товара."""
         search_url = self.build_search_url(article)
         search_page = self.fetcher.fetch(search_url)
         search_page.raise_for_status()
 
+        if self._is_bot_challenge(search_page.html):
+            raise PartNotFound('Каталог Росско временно недоступен (защита от ботов)')
+
         product_url = self._extract_product_url(search_page.html, article)
         if not product_url:
-            raise PartNotFound(f'Part not found in rossko: {article}')
+            raise PartNotFound(f'Артикул не найден в каталоге Росско: {article}')
 
         product_page = self.fetcher.fetch(product_url)
         if product_page.status_code == 404:
-            raise PartNotFound(f'Rossko product page not found: {product_url}')
+            raise PartNotFound(f'Артикул не найден в каталоге Росско: {article}')
         product_page.raise_for_status()
         return product_page.html, product_page.url
+
+    @staticmethod
+    def _is_bot_challenge(html: str) -> bool:
+        """Rossko отдаёт короткую JS-заглушку с noindex вместо результатов поиска."""
+        lowered = (html or '').lower()
+        return 'noindex, noarchive' in lowered and 'data-role="product.href"' not in lowered
 
     def parse_search_html(self, html: str, brand: str, article: str, source_url: str = '') -> ParsedPart:
         """Псевдоним parse_html — fetch_search возвращает сразу страницу товара."""
