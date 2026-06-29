@@ -134,6 +134,7 @@ class ListingDetailSerializer(ListingSerializer):
             'name': category.name,
             'parent_id': category.parent_id,
             'parent_name': category.parent.name if category.parent_id else None,
+            'default_margin_pct': str(category.default_margin_pct),
         }
 
     def get_ai_confidence_display(self, obj) -> str:

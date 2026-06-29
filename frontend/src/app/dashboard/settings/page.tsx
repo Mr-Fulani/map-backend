@@ -108,7 +108,7 @@ interface CatalogCategoryMapping {
 
 const SETTINGS_TABS = [
   'profile', 'organization', 'api-keys', 'marketplaces', 'datasources',
-  'catalog-categories', 'notifications',
+  'catalog-categories', 'pricing', 'notifications',
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
 
@@ -143,7 +143,7 @@ function buildCategoryTree(cats: CatalogCategory[]): { category: CatalogCategory
 }
 
 function MarginEditor({ categories }: { categories: CatalogCategory[] }) {
-  const tree = buildCategoryTree(categories);
+  const [search, setSearch] = useState('');
   const [values, setValues] = useState<Record<number, string>>(() =>
     Object.fromEntries(categories.map((c) => [c.id, c.default_margin_pct ?? '0.00'])),
   );
@@ -165,39 +165,74 @@ function MarginEditor({ categories }: { categories: CatalogCategory[] }) {
     }
   };
 
-  if (tree.length === 0) {
-    return <p className="text-sm text-muted-foreground">Категории не найдены.</p>;
-  }
+  const rows = search
+    ? categories
+        .filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
+        .map((c) => ({ category: c, depth: 0 }))
+    : buildCategoryTree(categories);
 
   return (
-    <div className="space-y-2">
-      {tree.map(({ category, depth }) => (
-        <div
-          key={category.id}
-          className="flex items-center gap-3"
-          style={depth ? { marginLeft: depth * 20 } : undefined}
-        >
-          <span className="flex-1 truncate text-sm">{category.name}</span>
-          <div className="flex items-center gap-1">
-            <Input
-              value={values[category.id] ?? '0.00'}
-              onChange={(e) => setValues((prev) => ({ ...prev, [category.id]: e.target.value }))}
-              inputMode="decimal"
-              className="h-8 w-24 text-sm"
-            />
-            <span className="text-sm text-muted-foreground">%</span>
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-8"
-              disabled={saving[category.id]}
-              onClick={() => handleSave(category.id)}
+    <div className="space-y-4">
+      <Input
+        placeholder="Поиск по категориям..."
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        className="max-w-sm"
+      />
+      {rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {search ? 'Ничего не найдено' : 'Категории не найдены.'}
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {rows.map(({ category, depth }) => (
+            <div
+              key={category.id}
+              style={depth ? { marginLeft: depth * 20 } : undefined}
+              className={`flex flex-col gap-3 rounded-lg border p-3 md:flex-row md:items-center md:justify-between${
+                depth ? ' border-l-2 border-l-primary/40 bg-muted/30' : ''
+              }`}
             >
-              {saving[category.id] ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Сохранить'}
-            </Button>
-          </div>
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-md border bg-muted">
+                  {category.default_image_url ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={category.default_image_url} alt="" className="h-full w-full object-cover" />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
+                      Нет фото
+                    </div>
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">{category.name}</p>
+                  {category.root_domain_name && (
+                    <p className="text-xs text-muted-foreground">{category.root_domain_name}</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+                <Input
+                  value={values[category.id] ?? '0.00'}
+                  onChange={(e) => setValues((prev) => ({ ...prev, [category.id]: e.target.value }))}
+                  inputMode="decimal"
+                  className="h-8 w-24 text-sm"
+                />
+                <span className="text-sm text-muted-foreground">%</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8"
+                  disabled={saving[category.id]}
+                  onClick={() => handleSave(category.id)}
+                >
+                  {saving[category.id] ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Сохранить'}
+                </Button>
+              </div>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
     </div>
   );
 }
@@ -1096,6 +1131,7 @@ export default function SettingsPage() {
             <TabsTrigger value="marketplaces">Маркетплейсы</TabsTrigger>
             <TabsTrigger value="datasources">Источники данных</TabsTrigger>
             <TabsTrigger value="catalog-categories">Категории</TabsTrigger>
+            <TabsTrigger value="pricing">Наценки</TabsTrigger>
             <TabsTrigger value="notifications">Уведомления</TabsTrigger>
           </TabsList>
         </div>
@@ -2280,12 +2316,15 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          {/* Наценки по категориям */}
+        </TabsContent>
+
+        {/* Наценки */}
+        <TabsContent value="pricing" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
               <CardTitle>Наценки по категориям</CardTitle>
               <CardDescription>
-                Процент наценки от базовой цены товара, который будет применяться при создании листинга. Можно скорректировать индивидуально в боковом меню листинга.
+                Процент наценки от базовой цены товара. Применяется при создании листинга. Можно скорректировать индивидуально в боковом меню листинга.
               </CardDescription>
             </CardHeader>
             <CardContent>
