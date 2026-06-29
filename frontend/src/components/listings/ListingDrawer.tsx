@@ -154,6 +154,8 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [publishing, setPublishing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const publishPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Листинг, для которого уже выполнена авто-подстановка адреса по умолчанию.
+  const placementInitRef = useRef<number | null>(null);
 
   const open = listingId !== null;
 
@@ -179,6 +181,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       setEditing(false);
       setActiveIdx(0);
       setPublishing(false);
+      placementInitRef.current = null;
       if (publishPollRef.current) clearInterval(publishPollRef.current);
       return;
     }
@@ -245,6 +248,14 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     visiblePlacementAddresses.map((a) => a.contact_phone).filter(Boolean),
   ));
 
+  // Дефолтный адрес аккаунта (is_default) — для авто-подстановки. '' если нет.
+  const defaultAddressIdForAccount = (accountId: string) => {
+    const found = placementAddresses.find(
+      (address) => address.account === Number(accountId) && address.is_default,
+    );
+    return found ? String(found.id) : '';
+  };
+
   useEffect(() => {
     if (!editPlacementAddressId) return;
     const selected = placementAddresses.find((address) => address.id === Number(editPlacementAddressId));
@@ -252,6 +263,18 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       setEditPlacementAddressId('');
     }
   }, [editAccountId, editPlacementAddressId, placementAddresses]);
+
+  // Авто-подстановка адреса по умолчанию при открытии листинга без явного адреса.
+  // Тенант может затем выбрать другой адрес или «адрес аккаунта». Выполняется
+  // один раз на листинг, чтобы не перетирать ручной выбор «без адреса».
+  useEffect(() => {
+    if (!listing || placementAddresses.length === 0) return;
+    if (placementInitRef.current === listing.id) return;
+    placementInitRef.current = listing.id;
+    if (listing.placement_address || listing.address_override || listing.seller_address_id_override) return;
+    const fallback = defaultAddressIdForAccount(String(listing.account_id));
+    if (fallback) setEditPlacementAddressId(fallback);
+  }, [listing, placementAddresses]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) onClose();
@@ -660,7 +683,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                     value={editAccountId}
                     onChange={(e) => {
                       setEditAccountId(e.target.value);
-                      setEditPlacementAddressId('');
+                      setEditPlacementAddressId(defaultAddressIdForAccount(e.target.value));
                     }}
                     disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
                     className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
@@ -702,32 +725,48 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
 
               {/* Категория и подкатегории любой глубины — проверить/изменить перед
                   публикацией. По ним строится категория Avito (GoodsType/SparePartType). */}
-              <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
-                {categoryLevels.map(({ options, selectedId, idx }) => (
-                  <div className="space-y-1" key={idx}>
-                    <p className="text-sm text-muted-foreground">
-                      {idx === 0 ? 'Категория' : `Подкатегория ${idx}`}
-                    </p>
-                    <select
-                      value={selectedId ?? ''}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        if (v) setEditCategoryId(v);
-                        else setEditCategoryId(idx > 0 ? String(categoryLevels[idx - 1].selectedId) : '');
-                      }}
-                      disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
-                      className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
-                    >
-                      <option value="">{idx === 0 ? '— не задана —' : '— вся категория —'}</option>
-                      {options.map((category) => (
-                        <option key={category.id} value={category.id}>
-                          {category.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ))}
-              </div>
+              {categoryLevels.length > 0 ? (
+                <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
+                  {categoryLevels.map(({ options, selectedId, idx }) => (
+                    <div className="space-y-1" key={idx}>
+                      <p className="text-sm text-muted-foreground">
+                        {idx === 0 ? 'Категория' : `Подкатегория ${idx}`}
+                      </p>
+                      <select
+                        value={selectedId ?? ''}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (v) setEditCategoryId(v);
+                          else setEditCategoryId(idx > 0 ? String(categoryLevels[idx - 1].selectedId) : '');
+                        }}
+                        disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                        className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
+                      >
+                        <option value="">{idx === 0 ? '— не задана —' : '— вся категория —'}</option>
+                        {options.map((category) => (
+                          <option key={category.id} value={category.id}>
+                            {category.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              ) : listing.catalog_category ? (
+                // Дерево категорий недоступно (домен каталога выключен), но категория
+                // у товара определена — показываем её read-only, чтобы тенант видел.
+                <div className="space-y-1 rounded-md border p-3">
+                  <p className="text-sm text-muted-foreground">Категория</p>
+                  <p className="font-medium">
+                    {listing.catalog_category.parent_name
+                      ? `${listing.catalog_category.parent_name} → ${listing.catalog_category.name}`
+                      : listing.catalog_category.name}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Чтобы изменить категорию, включите домен каталога в Настройках.
+                  </p>
+                </div>
+              ) : null}
 
               <div className="space-y-2 rounded-md border p-3">
                 <div className="flex items-center justify-between gap-2">
