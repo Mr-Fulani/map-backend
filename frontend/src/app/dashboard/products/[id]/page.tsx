@@ -186,19 +186,6 @@ function reviewStatusLabel(status: ReviewStatus, needsReview: boolean) {
   return REVIEW_STATUS_LABELS[status];
 }
 
-function getSourceImageUrls(product: ProductDetail) {
-  const urls = product.latest_parse_job?.parsed_data?.image_urls ?? [];
-  return urls.filter((url) => {
-    const lowered = url.toLowerCase();
-    return (
-      lowered.startsWith('http')
-      && !lowered.includes('placeholder')
-      && !lowered.includes('/brands/')
-      && !lowered.endsWith('.gif')
-    );
-  }).slice(0, 4);
-}
-
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="flex justify-between gap-4 py-2">
@@ -538,7 +525,6 @@ export default function ProductDetailPage() {
   }
 
   const busy = actionLoading !== null;
-  const sourceImageUrls = getSourceImageUrls(product);
 
   return (
     <div className="space-y-6">
@@ -839,35 +825,6 @@ export default function ProductDetailPage() {
                     </div>
                   )}
 
-                  {sourceImageUrls.length > 0 && (
-                    <div>
-                      <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
-                        Изображения из источника
-                      </p>
-                      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                        {sourceImageUrls.map((url) => (
-                          <a
-                            key={url}
-                            href={url}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="group overflow-hidden rounded-lg border bg-muted"
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img
-                              src={url}
-                              alt=""
-                              className="aspect-square h-full w-full object-cover transition group-hover:scale-105"
-                              loading="lazy"
-                            />
-                          </a>
-                        ))}
-                      </div>
-                      <p className="mt-2 text-xs text-muted-foreground">
-                        Это внешние URL из каталога. В блок «Фотографии» они попадут после подключения сохранения в хранилище.
-                      </p>
-                    </div>
-                  )}
                 </div>
               )}
             </CardContent>

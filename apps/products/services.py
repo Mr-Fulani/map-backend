@@ -774,7 +774,13 @@ class ProductEnrichmentService:
             ProductEnrichmentFact.objects.bulk_create(description_facts, ignore_conflicts=True)
 
             cls.refresh_product_denormalized_enrichment(product)
-            product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability'])
+            product_update_fields = ['oem_numbers', 'cross_numbers', 'applicability']
+            # Бэкфилл бренда: у CSV-товаров бренда часто нет, а поиск по артикулу
+            # его восстанавливает. Это включает быстрый прямой путь при ре-обогащении.
+            if parsed.brand and not (product.brand or '').strip():
+                product.brand = parsed.brand[:150]
+                product_update_fields.append('brand')
+            product.save(update_fields=product_update_fields)
             ProductKnowledgeGraphService.learn_from_parsed_part(
                 product=product,
                 parsed=parsed,
@@ -914,7 +920,10 @@ class ProductEnrichmentService:
             except PartNotFound:
                 if not hasattr(parser, 'fetch_search'):
                     raise
-                html, source_url = parser.fetch_search(job.article)
+                # Название товара помогает выбрать нужный товар, когда один
+                # артикул принадлежит разным брендам/деталям.
+                hint = ' '.join(filter(None, [getattr(product, 'name', ''), job.brand])).strip()
+                html, source_url = parser.fetch_search(job.article, hint=hint)
                 parsed = parser.parse_search_html(
                     html, job.brand, job.article, source_url=source_url,
                 )

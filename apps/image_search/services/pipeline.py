@@ -119,6 +119,15 @@ def run_for_product(product) -> list[ProductImage]:
                 rejected_urls.add(candidate.url)
                 continue
 
+            # Перцептивный/SHA-дубль уже одобренного, ручного или импортированного
+            # фото — не понижаем его статус и не перетираем источник поиском.
+            if pi.status in (
+                ProductImage.Status.AUTO_APPROVED,
+                ProductImage.Status.MANUALLY_SET,
+                ProductImage.Status.IMPORTED,
+            ):
+                continue
+
             status = ProductImage.Status.NEEDS_REVIEW
 
             pi.source_id = candidate.source_id

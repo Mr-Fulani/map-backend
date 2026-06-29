@@ -17,6 +17,7 @@ from apps.products.storage import (
     _product_media_keys,
     _resize,
     _to_jpeg_bytes,
+    perceptual_hash,
 )
 
 
@@ -112,6 +113,7 @@ def upload_image(product, raw_bytes: bytes) -> ProductImage | None:
     except (UnidentifiedImageError, Exception):
         return None
 
+    phash = perceptual_hash(img)
     original_bytes = _to_jpeg_bytes(_resize(img.copy(), MAX_DIMENSION))
     thumb_bytes = _to_jpeg_bytes(_resize(img.copy(), THUMB_DIMENSION))
 
@@ -130,4 +132,5 @@ def upload_image(product, raw_bytes: bytes) -> ProductImage | None:
         source_id='manual',
         status=ProductImage.Status.MANUALLY_SET,
         is_primary=(position == 0),
+        phash=phash,
     )

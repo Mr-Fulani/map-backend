@@ -391,7 +391,10 @@ if YC_S3_BUCKET:
                 'file_overwrite': False,
                 'default_acl': 'public-read',
                 # public-read: изображения товаров не являются приватными данными;
-                # presigned-URLs с custom_domain не работают — используем прямые публичные URL
+                # presigned-URLs с custom_domain не работают — используем прямые публичные URL.
+                # querystring_auth=False: .url() отдаёт постоянную ссылку без подписи и
+                # срока действия (иначе Avito не успеет скачать фото из фида за 1 час).
+                'querystring_auth': False,
                 'custom_domain': YC_CDN_DOMAIN or None,
             },
         },
