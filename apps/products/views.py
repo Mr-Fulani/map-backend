@@ -298,6 +298,14 @@ class TenantCatalogCategoryDetailView(APIView):
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
 
+    def patch(self, request, pk):
+        category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
+        serializer = TenantCatalogCategorySerializer(category, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        category = serializer.save()
+        serializer = TenantCatalogCategorySerializer(category, context={'request': request})
+        return Response({'status': 'ok', 'data': serializer.data})
+
     def delete(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         # ?hard=true — полное удаление; иначе мягкое отключение (is_active=False).

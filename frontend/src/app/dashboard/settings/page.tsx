@@ -81,6 +81,7 @@ interface CatalogCategory {
   default_image_url: string;
   default_image_source_name: string;
   is_active: boolean;
+  default_margin_pct: string;
 }
 
 interface CatalogDomain {
@@ -139,6 +140,66 @@ function buildCategoryTree(cats: CatalogCategory[]): { category: CatalogCategory
   };
   walk(null, 0);
   return result;
+}
+
+function MarginEditor({ categories }: { categories: CatalogCategory[] }) {
+  const tree = buildCategoryTree(categories);
+  const [values, setValues] = useState<Record<number, string>>(() =>
+    Object.fromEntries(categories.map((c) => [c.id, c.default_margin_pct ?? '0.00'])),
+  );
+  const [saving, setSaving] = useState<Record<number, boolean>>({});
+
+  useEffect(() => {
+    setValues(Object.fromEntries(categories.map((c) => [c.id, c.default_margin_pct ?? '0.00'])));
+  }, [categories]);
+
+  const handleSave = async (id: number) => {
+    setSaving((prev) => ({ ...prev, [id]: true }));
+    try {
+      await productApi.patchCatalogCategory(id, { default_margin_pct: values[id] });
+      toast.success('Наценка сохранена');
+    } catch {
+      toast.error('Не удалось сохранить наценку');
+    } finally {
+      setSaving((prev) => ({ ...prev, [id]: false }));
+    }
+  };
+
+  if (tree.length === 0) {
+    return <p className="text-sm text-muted-foreground">Категории не найдены.</p>;
+  }
+
+  return (
+    <div className="space-y-2">
+      {tree.map(({ category, depth }) => (
+        <div
+          key={category.id}
+          className="flex items-center gap-3"
+          style={depth ? { marginLeft: depth * 20 } : undefined}
+        >
+          <span className="flex-1 truncate text-sm">{category.name}</span>
+          <div className="flex items-center gap-1">
+            <Input
+              value={values[category.id] ?? '0.00'}
+              onChange={(e) => setValues((prev) => ({ ...prev, [category.id]: e.target.value }))}
+              inputMode="decimal"
+              className="h-8 w-24 text-sm"
+            />
+            <span className="text-sm text-muted-foreground">%</span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8"
+              disabled={saving[category.id]}
+              onClick={() => handleSave(category.id)}
+            >
+              {saving[category.id] ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Сохранить'}
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function SettingsPage() {
@@ -2216,6 +2277,19 @@ export default function SettingsPage() {
                   })}
                 </div>
               )}
+            </CardContent>
+          </Card>
+
+          {/* Наценки по категориям */}
+          <Card>
+            <CardHeader>
+              <CardTitle>Наценки по категориям</CardTitle>
+              <CardDescription>
+                Процент наценки от базовой цены товара, который будет применяться при создании листинга. Можно скорректировать индивидуально в боковом меню листинга.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <MarginEditor categories={catalogCategories} />
             </CardContent>
           </Card>
         </TabsContent>

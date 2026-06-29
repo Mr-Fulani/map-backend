@@ -34,7 +34,7 @@ class TenantCatalogCategorySerializer(serializers.ModelSerializer):
             'id', 'name', 'normalized_name', 'parent', 'root_domain',
             'root_domain_slug', 'root_domain_name', 'domain', 'aliases', 'external_source',
             'external_id', 'default_image_s3_key', 'default_image_source_name',
-            'default_image_url', 'is_active', 'created_at', 'updated_at',
+            'default_image_url', 'is_active', 'default_margin_pct', 'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'normalized_name', 'default_image_s3_key',

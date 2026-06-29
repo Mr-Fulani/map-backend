@@ -1,8 +1,10 @@
 import datetime
+from decimal import Decimal
 
 from django.db import IntegrityError, transaction
 
 from apps.marketplaces.models import CategoryMapping, Listing, ListingStats
+from apps.marketplaces.price_utils import compute_price, effective_margin
 
 
 class CategoryMappingService:
@@ -274,7 +276,13 @@ class ListingService:
                 listing.placement_address = None
                 update_fields.append('placement_address')
 
-        if 'price_on_listing' in data:
+        if 'margin_pct' in data:
+            listing.margin_pct = data['margin_pct']
+            update_fields.append('margin_pct')
+            # Пересчитываем цену от базовой цены товара
+            listing.price_on_listing = compute_price(listing.product.price, effective_margin(listing))
+            update_fields.append('price_on_listing')
+        elif 'price_on_listing' in data:
             listing.price_on_listing = data['price_on_listing']
             update_fields.append('price_on_listing')
 
@@ -534,12 +542,16 @@ class ListingService:
         (тенант публикует вручную из вкладки «Листинги»).
         Задача в Celery ставится через transaction.on_commit — не раньше коммита.
         """
+        cat = getattr(product, 'catalog_category', None)
+        cat_margin = cat.default_margin_pct if cat else Decimal('0')
+        default_price = compute_price(product.price, cat_margin)
+
         listing, created = Listing.objects.get_or_create(
             tenant=product.tenant,
             product=product,
             account=account,
             defaults={
-                'price_on_listing': product.price,
+                'price_on_listing': default_price,
                 'title': (product.title_ai or product.name)[:300],
                 'description_ai': product.description_ai,
                 'status': Listing.STATUS_DRAFT,
@@ -547,14 +559,15 @@ class ListingService:
         )
 
         if not created:
+            new_price = compute_price(product.price, effective_margin(listing))
             if change_type == 'price_only':
-                listing.price_on_listing = product.price
+                listing.price_on_listing = new_price
                 listing.save(update_fields=['price_on_listing'])
                 if auto_publish:
                     transaction.on_commit(lambda: _enqueue_price_update(listing.pk))
                 return listing
 
-            listing.price_on_listing = product.price
+            listing.price_on_listing = new_price
             listing.save(update_fields=['price_on_listing'])
 
         if auto_publish:
