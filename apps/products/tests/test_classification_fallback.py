@@ -65,3 +65,18 @@ class TestClassificationFallback:
 
         # Нет узла «Автомобиль на запчасти» (avito) → остаётся None (не выдумываем).
         assert ProductEnrichmentService.infer_product_tenant_category(product) is None
+
+    def test_alias_enables_match_on_two_word_category_without_full_name_overlap(self):
+        """Регрессия: категория «Фонари и фары» без единого совпадения по имени
+        товара всё равно находится, если у неё есть alias «Фонарь» — то есть
+        именно то, что восстанавливает backfill_avito_category_aliases."""
+        tenant, domain = _setup('cls-alias-match')
+        target = _cat(tenant, domain, 'Фонари и фары', source='avito', aliases=['Фонарь'])
+        fallback = _cat(tenant, domain, 'Автомобиль на запчасти', source='avito')
+
+        product = _product(tenant, 'Фонарь задний левый на крышку багажника VW Polo')
+
+        result = ProductEnrichmentService.infer_product_tenant_category(product)
+        assert result is not None
+        assert result.id == target.id
+        assert result.id != fallback.id
