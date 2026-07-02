@@ -1,5 +1,6 @@
 import datetime
 
+from django.db import transaction
 from django.db.models import Sum
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema
@@ -381,11 +382,13 @@ class ListingDetailView(APIView):
         fields_serializer = ListingFieldsSerializer(data=request.data, partial=True)
         fields_serializer.is_valid(raise_exception=True)
         try:
-            listing = ListingService.update_content(pk, request.tenant, title, description_ai)
-            listing = ListingService.update_listing_fields(pk, request.tenant, fields_serializer.validated_data)
-            listing = ListingService.update_placement(pk, request.tenant, placement_serializer.validated_data)
-        except ListingNotFound:
-            return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+            with transaction.atomic():
+                listing = ListingService.update_content(pk, request.tenant, title, description_ai)
+                listing = ListingService.update_listing_fields(pk, request.tenant, fields_serializer.validated_data)
+                listing = ListingService.update_placement(pk, request.tenant, placement_serializer.validated_data)
+        except ListingNotFound as exc:
+            return Response({'status': 'error', 'code': 'not_found', 'message': str(exc)},
+                            status=status.HTTP_404_NOT_FOUND)
         except ListingAccountConflict as exc:
             return Response({'status': 'error', 'code': 'account_conflict', 'message': str(exc)},
                             status=status.HTTP_409_CONFLICT)
