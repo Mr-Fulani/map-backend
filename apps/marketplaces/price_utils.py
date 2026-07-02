@@ -1,3 +1,4 @@
+import math
 from decimal import Decimal
 
 
@@ -15,5 +16,11 @@ def effective_margin(listing) -> Decimal:
 
 
 def compute_price(base_price: Decimal, margin_pct: Decimal) -> Decimal:
-    """Возвращает цену с учётом наценки: base_price * (1 + margin_pct / 100)."""
-    return (base_price * (1 + margin_pct / 100)).quantize(Decimal('0.01'))
+    """Возвращает цену с учётом наценки: base_price * (1 + margin_pct / 100).
+
+    Округляется вверх до целого рубля (3475.11 → 3476) — базовая цена товара
+    (из 1С и т.п.) при этом не трогается, округление применяется только к
+    итоговой цене листинга.
+    """
+    raw = base_price * (1 + margin_pct / 100)
+    return Decimal(math.ceil(raw))
