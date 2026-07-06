@@ -102,7 +102,9 @@ def _avito_spec(listing) -> dict:
     Резолвит catalog_category товара в лист Avito через category_map и берёт
     фиксированные значения полей и список обязательных полей из справочника.
     """
-    from apps.marketplaces.adapters.avito.category_map import avito_spec_for, leaf_spec_by_name
+    from apps.marketplaces.adapters.avito.category_map import (
+        avito_spec_for, leaf_spec_by_name, leaf_spec_by_slug,
+    )
     category = getattr(listing.product, 'catalog_category', None)
     if not category:
         return {}
@@ -111,7 +113,19 @@ def _avito_spec(listing) -> dict:
     spec = avito_spec_for(getattr(category, 'name', ''), getattr(parent, 'name', ''))
     if spec:
         return spec
-    # 2) Категория из импортированного дерева Avito — поднимаемся к листу по имени.
+    # 2) Категория из импортированного дерева Avito — поднимаемся к листу по slug
+    # (external_id). Slug уникален, имя — нет: «Тормозная система» есть и в
+    # легковой, и в грузовой ветках, поиск по имени уводил товар в грузовую.
+    by_slug = leaf_spec_by_slug()
+    node = category
+    while node is not None:
+        leaf = by_slug.get(getattr(node, 'external_id', '') or '')
+        if leaf:
+            return {'slug': leaf.get('slug'), 'fixed': leaf.get('fixed', {}),
+                    'required': leaf.get('required', [])}
+        node = getattr(node, 'parent', None)
+    # 3) Легаси-фолбэк для записей без external_id — по имени (с предпочтением
+    # легковой ветки при коллизии имён).
     by_name = leaf_spec_by_name()
     node = category
     while node is not None:
@@ -167,9 +181,14 @@ def _get_part_subtype(listing) -> tuple[str | None, str]:
     category = getattr(listing.product, 'catalog_category', None)
     if not category:
         return sub_tag, ''
-    from apps.marketplaces.adapters.avito.category_map import leaf_spec_by_name
+    from apps.marketplaces.adapters.avito.category_map import leaf_spec_by_slug
     # Товар на самом листе Avito — вид не выбран; ниже листа — это и есть вид.
-    if category.name in leaf_spec_by_name():
+    # На листе товар стоит, если slug (external_id) или имя категории совпадают
+    # с найденным листом; сравнение с конкретным листом, а не со словарём всех
+    # имён — имена листьев не уникальны между ветками.
+    leaf = leaf_spec_by_slug().get(spec.get('slug') or '') or {}
+    external_id = getattr(category, 'external_id', '') or ''
+    if external_id == spec.get('slug') or (not external_id and category.name == leaf.get('name')):
         return sub_tag, ''
     return sub_tag, category.name
 

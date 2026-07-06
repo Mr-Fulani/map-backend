@@ -380,6 +380,39 @@ class ProductService:
         return 'content'
 
 
+# Маркеры неосновных веток дерева Avito для авто-классификации категорий.
+# Ключ — normalized_name узла-ветки, значение — (префиксы слов, точные слова)
+# текста товара, при которых товар действительно относится к этой ветке.
+# Без таких признаков категории ветки получают штраф: имена узлов дублируются
+# между ветками («Тормозная система» есть у легковых и грузовиков), и без
+# штрафа легковые запчасти уходили в грузовую/мото ветки.
+_TRUCK_MARKERS = (
+    ('грузов', 'спецтехн'),
+    {'камаз', 'краз', 'зил', 'автобус', 'трактор', 'экскаватор', 'погрузчик', 'тягач', 'полуприцеп'},
+)
+_MOTO_MARKERS = (
+    ('мотоцикл', 'скутер', 'квадроцикл', 'мопед', 'снегоход', 'питбайк'),
+    {'мото'},
+)
+_WATER_MARKERS = (
+    ('лодочн', 'гидроцикл'),
+    {'лодка', 'лодки', 'катер', 'яхта'},
+)
+_SECONDARY_BRANCH_MARKERS = {
+    'длягрузовиковиспецтехники': _TRUCK_MARKERS,
+    'шиныдлягрузовиковиспецтехники': _TRUCK_MARKERS,
+    'длямототехники': _MOTO_MARKERS,
+    'мотошины': _MOTO_MARKERS,
+    'длямотоиводноготранспорта': (
+        _MOTO_MARKERS[0] + _WATER_MARKERS[0],
+        _MOTO_MARKERS[1] | _WATER_MARKERS[1],
+    ),
+    'дляводноготранспорта': _WATER_MARKERS,
+    'прицепы': (('прицеп',), set()),
+    'экипировка': (('экипир', 'мотошлем', 'мотоперчат'), {'шлем'}),
+}
+
+
 class ProductEnrichmentService:
     """Сервис tenant-scoped сохранения данных обогащения товара."""
 
@@ -428,6 +461,14 @@ class ProductEnrichmentService:
             needs_review = bool(
                 domain == ProductCatalogClassification.Domain.AUTO_PARTS and non_auto_matches
             )
+            if cls._is_auto_parts_fallback_category(tenant_category):
+                # Категория присвоена общим фолбэком, а не подобрана по тексту —
+                # тенант должен увидеть такой товар в очереди на проверку.
+                needs_review = True
+                reason = (
+                    'Вид запчасти не определён по названию товара — присвоен общий узел '
+                    '«Автомобиль на запчасти». Уточните категорию.'
+                )
         elif auto_matches:
             domain = ProductCatalogClassification.Domain.AUTO_PARTS
             confidence = 0.9 if len(auto_matches) > 1 else 0.75
@@ -539,13 +580,24 @@ class ProductEnrichmentService:
                 return True
         return False
 
+    # Слова без классифицирующего смысла: встречаются почти в каждом названии
+    # товара/категории 1С продавца запчастей и давали ложные полные совпадения
+    # узлам «Автомобиль на запчасти», «Для автомобилей», «Запчасти».
+    CATEGORY_TERM_STOP_WORDS = {
+        'для',
+        'авто', 'автомобиль', 'автомобиля', 'автомобилей', 'автомобили',
+        'запчасти', 'запчасть', 'автозапчасти',
+        'другое', 'другие', 'прочее', 'прочие',
+    }
+
     @staticmethod
     def _category_match_score(product_words: set[str], normalized_text: str, category: TenantCatalogCategory) -> float:
         score = 0.0
+        stop_words = ProductEnrichmentService.CATEGORY_TERM_STOP_WORDS
         terms = [category.name, *category.aliases]
         for index, term in enumerate(terms):
             words = re.findall(r'[0-9a-zа-яё]+', term.lower())
-            words = [word for word in words if len(word) > 2]
+            words = [word for word in words if len(word) > 2 and word not in stop_words]
             if not words:
                 continue
 
@@ -586,7 +638,7 @@ class ProductEnrichmentService:
             tenant=product.tenant,
             is_enabled=True,
         ).values_list('domain_id', flat=True)
-        categories = (
+        categories = list(
             TenantCatalogCategory.objects
             .filter(
                 tenant=product.tenant,
@@ -595,13 +647,29 @@ class ProductEnrichmentService:
             )
             .select_related('parent', 'root_domain')
         )
+        categories_by_id = {category.id: category for category in categories}
 
         best_category = None
+        best_key = None
         best_score = 0.0
         for category in categories:
             score = cls._category_match_score(product_words, normalized_text, category)
-            if score > best_score:
+            if score <= 0:
+                continue
+            branch_key = cls._secondary_branch_key(category, categories_by_id)
+            if branch_key is not None:
+                if cls._product_matches_branch(product_words, branch_key):
+                    # Признаки ветки в тексте товара — при равном счёте ветка
+                    # должна победить одноимённый узел легковой ветки.
+                    score += 0.05
+                else:
+                    score *= 0.3
+            # Tie-break детерминированный: счёт → глубина (специфичнее лучше)
+            # → меньший id; раньше победитель ничьей зависел от порядка выборки.
+            key = (score, cls._category_depth(category, categories_by_id), -category.id)
+            if best_key is None or key > best_key:
                 best_category = category
+                best_key = key
                 best_score = score
 
         if best_category is None or best_score < 2:
@@ -617,6 +685,38 @@ class ProductEnrichmentService:
         return best_category
 
     @staticmethod
+    def _secondary_branch_key(category, categories_by_id: dict) -> str | None:
+        """Нормализованное имя неосновной ветки Avito (грузовики/мото/…), в которой лежит категория."""
+        node = category
+        seen: set[int] = set()
+        while node is not None and node.id not in seen:
+            seen.add(node.id)
+            if node.normalized_name in _SECONDARY_BRANCH_MARKERS:
+                return node.normalized_name
+            node = categories_by_id.get(node.parent_id) if node.parent_id else None
+        return None
+
+    @staticmethod
+    def _product_matches_branch(product_words: set[str], branch_key: str) -> bool:
+        """Есть ли в тексте товара признаки принадлежности к неосновной ветке Avito."""
+        prefixes, exact_words = _SECONDARY_BRANCH_MARKERS[branch_key]
+        if exact_words & product_words:
+            return True
+        return any(word.startswith(prefix) for word in product_words for prefix in prefixes)
+
+    @staticmethod
+    def _category_depth(category, categories_by_id: dict) -> int:
+        """Глубина категории в дереве каталога (по загруженным категориям)."""
+        depth = 0
+        node = category
+        seen: set[int] = set()
+        while node is not None and node.parent_id and node.id not in seen:
+            seen.add(node.id)
+            depth += 1
+            node = categories_by_id.get(node.parent_id)
+        return depth
+
+    @staticmethod
     def _auto_parts_fallback_category(product, categories) -> 'TenantCatalogCategory | None':
         """Общий публикуемый узел Avito для авто-домена, если вид не определился."""
         from apps.products.part_category_seed import normalize_category_name
@@ -625,6 +725,17 @@ class ProductEnrichmentService:
             if category.normalized_name == target and category.external_source == 'avito':
                 return category
         return None
+
+    @staticmethod
+    def _is_auto_parts_fallback_category(category) -> bool:
+        """Является ли категория общим фолбэк-узлом «Автомобиль на запчасти»."""
+        if category is None:
+            return False
+        from apps.products.part_category_seed import normalize_category_name
+        return (
+            category.external_source == 'avito'
+            and category.normalized_name == normalize_category_name('Автомобиль на запчасти')
+        )
 
     @classmethod
     def ensure_product_auto_parts_eligible(cls, tenant, product: Product | None) -> None:

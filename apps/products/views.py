@@ -493,6 +493,19 @@ class ProductCatalogCategoryAssignView(APIView):
                 .filter(tenant=request.tenant, pk__in=valid_ids)
                 .select_related('tenant', 'catalog_category')
             )
+            if category is not None:
+                # Обучение на ручном исправлении: запоминаем «категория
+                # источника → категория каталога», чтобы следующий импорт
+                # с той же категорией 1С не гадал по названию товара.
+                source_categories = set(
+                    products.exclude(category_1c='').values_list('category_1c', flat=True)
+                )
+                for source_category in source_categories:
+                    TenantCategoryMapping.objects.update_or_create(
+                        tenant=request.tenant,
+                        source_category=source_category,
+                        defaults={'category': category},
+                    )
             for product in products:
                 ProductEnrichmentService.classify_product_catalog_domain(product, force=True)
 

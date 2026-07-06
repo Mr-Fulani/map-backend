@@ -56,6 +56,35 @@ class TestAvitoTreeImporter:
         assert first == 5  # Запчасти, Для автомобилей, Двигатель, 2 вида
         assert second == 0
 
+    def test_new_nodes_get_curated_aliases(self):
+        """Узлы дерева Avito при создании получают курируемые синонимы —
+        без них авто-классификация не находит узел по названию товара."""
+        _auto_parts_domain()
+        tenant = _make_tenant('tree-alias-co')
+
+        AvitoTreeImporter('auto_parts', tree=FAKE_TREE).import_for_tenant(tenant)
+
+        engine = TenantCatalogCategory.objects.get(tenant=tenant, name='Двигатель')
+        assert 'Фильтр масляный' in engine.aliases
+        pistons = TenantCatalogCategory.objects.get(tenant=tenant, name='Поршни, шатуны, кольца')
+        assert 'Поршень' in pistons.aliases
+
+    def test_reimport_heals_external_id_and_aliases(self):
+        """Повторный импорт дозаполняет slug и синонимы у ранее созданных записей."""
+        _auto_parts_domain()
+        tenant = _make_tenant('tree-heal-co')
+        importer = AvitoTreeImporter('auto_parts', tree=FAKE_TREE)
+        importer.import_for_tenant(tenant)
+
+        engine = TenantCatalogCategory.objects.get(tenant=tenant, name='Двигатель')
+        TenantCatalogCategory.objects.filter(pk=engine.pk).update(external_id='', aliases=[])
+
+        importer.import_for_tenant(tenant)
+
+        engine.refresh_from_db()
+        assert engine.external_id == 'dvigatel'
+        assert 'Фильтр масляный' in engine.aliases
+
     def test_real_auto_parts_tree_is_baked_in(self):
         assert has_tree('auto_parts')
         tree = load_tree('auto_parts')
