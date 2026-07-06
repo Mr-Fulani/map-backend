@@ -21,13 +21,43 @@ def _specs() -> dict:
 
 
 @lru_cache(maxsize=1)
+def leaf_spec_by_slug() -> dict:
+    """Справочник листьев Avito по slug: {slug: {name, path, fixed, required}}.
+
+    Основной способ резолва для категорий из импортированного дерева Avito —
+    у них external_id хранит slug узла, а slug в отличие от имени уникален.
+    """
+    return _specs()
+
+
+# Ветки Avito, которые проигрывают легковой при коллизии имён листьев
+# («Тормозная система» есть и у легковых, и у грузовиков — предпочитаем легковую).
+_SECONDARY_BRANCHES = (
+    'Для грузовиков и спецтехники',
+    'Для мототехники',
+    'Для водного транспорта',
+)
+
+
+def _is_secondary_branch(leaf: dict) -> bool:
+    """Лежит ли лист в неосновной (грузовой/мото/водной) ветке дерева Avito."""
+    return any(branch in (leaf.get('path') or []) for branch in _SECONDARY_BRANCHES)
+
+
+@lru_cache(maxsize=1)
 def leaf_spec_by_name() -> dict:
     """Справочник листьев Avito по имени: {name: {slug, fixed, required}}.
 
-    Нужен для категорий из импортированного дерева Avito — у них имя совпадает с
-    именем листа Avito, поэтому спеку находим по имени (а не по курируемому маппингу).
+    Легаси-фолбэк для категорий дерева Avito без external_id (slug). Имена
+    листьев не уникальны (например «Тормозная система» есть в легковой и
+    грузовой ветках) — при коллизии предпочитаем лист легковой ветки.
     """
-    return {leaf['name']: leaf for leaf in _specs().values()}
+    by_name: dict = {}
+    for leaf in _specs().values():
+        current = by_name.get(leaf['name'])
+        if current is None or (_is_secondary_branch(current) and not _is_secondary_branch(leaf)):
+            by_name[leaf['name']] = leaf
+    return by_name
 
 
 # Корень нашей таксономии → slug листа Avito (значение по умолчанию для всех его листьев).

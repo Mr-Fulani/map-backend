@@ -73,5 +73,11 @@ class AvitoTreeImporter:
             },
         )
         self._created += int(created)
+        # Лечим ранее созданные записи без slug: по external_id (а не имени)
+        # feed_builder резолвит лист Avito, имена листьев не уникальны.
+        slug = node.get('slug') or ''
+        if not created and slug and not category.external_id:
+            category.external_id = slug
+            category.save(update_fields=['external_id', 'updated_at'])
         for child in node.get('children', []):
             self._create(tenant, domain, child, parent=category)
