@@ -7,8 +7,10 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Пропускаем деплой если секреты сервера не настроены
-    if: ${{ secrets.PROD_HOST != '' }}
+    # Автодеплой включается repo-переменной PROD_DEPLOY_ENABLED=true
+    # (плюс секреты PROD_HOST/PROD_USER/PROD_SSH_KEY). Контекст secrets
+    # в job-level if недопустим — из-за этого воркфлоу падал на каждом пуше.
+    if: ${{ vars.PROD_DEPLOY_ENABLED == 'true' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -20,9 +22,5 @@ jobs:
           username: ${{ secrets.PROD_USER }}
           key: ${{ secrets.PROD_SSH_KEY }}
           script: |
-            cd /opt/map
-            git pull origin main
-            docker compose -f docker-compose.prod.yml pull
-            docker compose -f docker-compose.prod.yml up -d --build
-            docker compose -f docker-compose.prod.yml exec -T django python manage.py migrate --noinput
-            docker compose -f docker-compose.prod.yml exec -T django python manage.py collectstatic --noinput
+            cd /opt/saas_poster
+            ./deploy.sh
