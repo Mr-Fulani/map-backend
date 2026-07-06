@@ -823,6 +823,39 @@ def test_assign_catalog_category_to_selected_products():
 
 
 @pytest.mark.django_db
+def test_assign_catalog_category_creates_source_mapping():
+    """Ручное назначение категории запоминается как маппинг «категория 1С →
+    категория каталога»: следующий импорт с той же категорией источника
+    не будет гадать по названию товара."""
+    tenant, api_key = make_tenant('catalog-category-assign-map')
+    product = make_product(tenant, name='Амортизатор Toyota', category_1c='Ходовая часть 1С')
+    no_source_product = make_product(tenant, article='P50138', name='Колодки Brembo')
+    category = TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Амортизаторы',
+        root_domain=CatalogDomain.objects.get(slug='auto_parts'),
+        domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+    )
+    client = Client()
+
+    response = client.post(
+        '/api/v1/products/catalog-categories/assign/',
+        {
+            'product_ids': [product.pk, no_source_product.pk],
+            'catalog_category': category.pk,
+        },
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    mapping = TenantCategoryMapping.objects.get(tenant=tenant, source_category='Ходовая часть 1С')
+    assert mapping.category == category
+    # Для товаров без категории источника маппинг не создаётся.
+    assert TenantCategoryMapping.objects.filter(tenant=tenant).count() == 1
+
+
+@pytest.mark.django_db
 def test_bulk_action_endpoint_creates_throttled_tenant_job(django_capture_on_commit_callbacks):
     tenant, api_key = make_tenant('bulk-api')
     other_tenant, _ = make_tenant('bulk-other')
