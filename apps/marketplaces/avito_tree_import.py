@@ -11,6 +11,7 @@ from pathlib import Path
 
 from django.db import transaction
 
+from apps.products.avito_category_aliases import avito_aliases_by_normalized_name
 from apps.products.models import TenantCatalogCategory
 from apps.products.part_category_seed import normalize_category_name
 from apps.tenants.models import CatalogDomain
@@ -42,6 +43,7 @@ class AvitoTreeImporter:
         """Принимает готовое дерево (для тестов) либо читает avito_tree_<domain>.json."""
         self.domain_slug = domain_slug
         self.tree = tree if tree is not None else load_tree(domain_slug)
+        self._aliases_by_normalized_name = avito_aliases_by_normalized_name()
 
     @transaction.atomic
     def import_for_tenant(self, tenant) -> int:
@@ -59,25 +61,37 @@ class AvitoTreeImporter:
         name = node.get('name')
         if not name:
             return
+        normalized_name = normalize_category_name(name)
+        aliases = self._aliases_by_normalized_name.get(normalized_name, [])
         category, created = TenantCatalogCategory.objects.get_or_create(
             tenant=tenant,
             parent=parent,
-            normalized_name=normalize_category_name(name),
+            normalized_name=normalized_name,
             defaults={
                 'name': name,
                 'root_domain': domain,
                 'domain': domain.slug,
                 'external_source': EXTERNAL_SOURCE,
                 'external_id': node.get('slug') or '',
+                'aliases': aliases,
                 'is_active': True,
             },
         )
         self._created += int(created)
-        # Лечим ранее созданные записи без slug: по external_id (а не имени)
-        # feed_builder резолвит лист Avito, имена листьев не уникальны.
-        slug = node.get('slug') or ''
-        if not created and slug and not category.external_id:
-            category.external_id = slug
-            category.save(update_fields=['external_id', 'updated_at'])
+        if not created:
+            update_fields = []
+            # Лечим ранее созданные записи без slug: по external_id (а не имени)
+            # feed_builder резолвит лист Avito, имена листьев не уникальны.
+            slug = node.get('slug') or ''
+            if slug and not category.external_id:
+                category.external_id = slug
+                update_fields.append('external_id')
+            # Дозаполняем недостающие курируемые синонимы (нужны авто-классификации).
+            missing = [alias for alias in aliases if alias not in category.aliases]
+            if missing:
+                category.aliases = [*category.aliases, *missing]
+                update_fields.append('aliases')
+            if update_fields:
+                category.save(update_fields=[*update_fields, 'updated_at'])
         for child in node.get('children', []):
             self._create(tenant, domain, child, parent=category)

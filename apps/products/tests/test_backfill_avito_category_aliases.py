@@ -29,7 +29,9 @@ class TestBackfillAvitoCategoryAliases:
         call_command('backfill_avito_category_aliases')
 
         category.refresh_from_db()
-        assert category.aliases == ['Brakes', 'Тормоза', 'Тормоз']
+        # Синонимы старого дерева + курируемые для узлов Avito.
+        assert category.aliases[:3] == ['Brakes', 'Тормоза', 'Тормоз']
+        assert 'Тормозные колодки' in category.aliases
 
     def test_leaves_unknown_name_untouched(self):
         tenant = make_tenant('backfill-unknown-co')
@@ -41,7 +43,7 @@ class TestBackfillAvitoCategoryAliases:
         category.refresh_from_db()
         assert category.aliases == []
 
-    def test_does_not_overwrite_existing_aliases(self):
+    def test_merges_missing_aliases_keeping_existing(self):
         tenant = make_tenant('backfill-existing-co')
         domain = CatalogDomain.objects.filter(slug='auto_parts').first()
         category = make_category(tenant, domain, 'Тормозная система', aliases=['Уже заполнено'])
@@ -49,7 +51,9 @@ class TestBackfillAvitoCategoryAliases:
         call_command('backfill_avito_category_aliases')
 
         category.refresh_from_db()
-        assert category.aliases == ['Уже заполнено']
+        # Накопленное вручную не удаляется, недостающее дозаполняется.
+        assert category.aliases[0] == 'Уже заполнено'
+        assert 'Тормозные колодки' in category.aliases
 
     def test_dry_run_changes_nothing(self):
         tenant = make_tenant('backfill-dryrun-co')
