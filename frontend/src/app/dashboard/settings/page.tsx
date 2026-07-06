@@ -815,18 +815,19 @@ export default function SettingsPage() {
   async function toggleCatalogCategory(category: CatalogCategory) {
     setSavingCatalogCategoryId(category.id);
     try {
+      // Тоггл действует на всю ветку: авто-классификация рассматривает только
+      // активные категории, поэтому отключённые подкатегории тоже должны гаснуть.
+      const res = await productApi.toggleCatalogCategoryBranch(category.id, !category.is_active);
+      const data = res.data.data ?? {};
+      const affected = data.affected_categories ?? 1;
       if (category.is_active) {
-        await productApi.deleteCatalogCategory(category.id);
-        toast.success('Категория отключена');
+        toast.success(
+          affected > 1
+            ? `Отключена ветка: ${affected} категорий${data.affected_products ? `, товаров на переклассификацию: ${data.affected_products}` : ''}`
+            : 'Категория отключена',
+        );
       } else {
-        await productApi.updateCatalogCategory(category.id, {
-          name: category.name,
-          root_domain: category.root_domain,
-          domain: category.domain,
-          aliases: category.aliases ?? [],
-          is_active: true,
-        });
-        toast.success('Категория включена');
+        toast.success(affected > 1 ? `Включена ветка: ${affected} категорий` : 'Категория включена');
       }
       await loadCatalogCategories();
     } catch {
@@ -2009,6 +2010,8 @@ export default function SettingsPage() {
               <CardTitle>Категории каталога</CardTitle>
               <CardDescription>
                 Вы управляете категориями своего каталога. Тип категории помогает платформе безопасно включать подходящие инструменты обработки.
+                Отключите ненужные ветки (например «Для грузовиков и спецтехники» или «Автомобиль на запчасти»), чтобы авто-классификация
+                выбирала категории только из вашего ассортимента — отключение действует на всю ветку с подкатегориями.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -2228,6 +2231,9 @@ export default function SettingsPage() {
                                 variant="outline"
                                 onClick={() => toggleCatalogCategory(category)}
                                 disabled={isSaving}
+                                title={category.is_active
+                                  ? 'Отключить категорию со всеми подкатегориями — они перестанут участвовать в авто-классификации, товары будут переклассифицированы'
+                                  : 'Включить категорию со всеми подкатегориями'}
                               >
                                 {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                 {category.is_active ? 'Отключить' : 'Включить'}

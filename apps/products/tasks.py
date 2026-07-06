@@ -107,6 +107,36 @@ def classify_tenant_products(self, tenant_id: int):
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='sync_import')
+def reclassify_products_for_categories(self, tenant_id: int, category_ids: list[int]):
+    """
+    Переопределяет категорию товаров, привязанных к отключённым категориям каталога.
+
+    Запускается при отключении ветки категорий: товары не должны оставаться
+    в выключенной категории. Сбрасывает catalog_category и заново прогоняет
+    маппинг источника + авто-классификацию. Ручные классификации
+    (source=MANUAL) не трогает.
+    """
+    from apps.products.models import ProductCatalogClassification
+
+    qs = (
+        Product.objects
+        .filter(tenant_id=tenant_id, catalog_category_id__in=category_ids)
+        .exclude(catalog_classification__source=ProductCatalogClassification.Source.MANUAL)
+    )
+    reclassified = 0
+    for product in qs.iterator():
+        try:
+            product.catalog_category = None
+            product.save(update_fields=['catalog_category', 'updated_at'])
+            ProductEnrichmentService.get_product_tenant_category(product)
+            ProductEnrichmentService.classify_product_catalog_domain(product)
+            reclassified += 1
+        except Exception:
+            logger.exception('Не удалось переклассифицировать product=%s', product.pk)
+    return {'reclassified': reclassified}
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='sync_import')
 def sync_product_listings_task(self, product_id: int, change_type: str):
     """
     Распространяет изменение товара из источника данных на активные листинги.

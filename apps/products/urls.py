@@ -8,7 +8,7 @@ from apps.products.views import (
     ProductListView, ProductParseJobDetailView,
     ProductParseView, ProductPublishView, ProductRegenerateView, ProductReviewQueueActionView,
     ProductReviewQueueView, ProductSearchView,
-    ProductSyncView, TenantCatalogCategoryDefaultImageView,
+    ProductSyncView, TenantCatalogCategoryBranchToggleView, TenantCatalogCategoryDefaultImageView,
     TenantCatalogCategoryDetailView, TenantCatalogCategoryListView,
     TenantCategoryMappingDetailView,
     TenantCategoryMappingListView, TenantSourceCategoryListView,
@@ -42,6 +42,11 @@ urlpatterns = [
         'catalog-categories/<int:pk>/default-image/',
         TenantCatalogCategoryDefaultImageView.as_view(),
         name='tenant-catalog-category-default-image',
+    ),
+    path(
+        'catalog-categories/<int:pk>/toggle-branch/',
+        TenantCatalogCategoryBranchToggleView.as_view(),
+        name='tenant-catalog-category-toggle-branch',
     ),
     path(
         'catalog-category-mappings/',
