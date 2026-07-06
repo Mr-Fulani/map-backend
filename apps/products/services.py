@@ -552,7 +552,13 @@ class ProductEnrichmentService:
         mapping = (
             TenantCategoryMapping.objects
             .select_related('category')
-            .filter(tenant=product.tenant, source_category=product.category_1c)
+            .filter(
+                tenant=product.tenant,
+                source_category=product.category_1c,
+                # Маппинг на отключённую категорию не применяем — тенант
+                # выключил ветку, товары не должны в неё возвращаться.
+                category__is_active=True,
+            )
             .first()
         )
         if mapping is not None:

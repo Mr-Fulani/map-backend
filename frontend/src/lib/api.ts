@@ -232,6 +232,8 @@ export const productApi = {
     api.patch(`/products/catalog-categories/${id}/`, data),
   deleteCatalogCategory: (id: number, hard = false) =>
     api.delete(`/products/catalog-categories/${id}/${hard ? '?hard=true' : ''}`),
+  toggleCatalogCategoryBranch: (id: number, isActive: boolean) =>
+    api.post(`/products/catalog-categories/${id}/toggle-branch/`, { is_active: isActive }),
   assignCatalogCategory: (data: { product_ids: number[]; catalog_category: number | null }) =>
     api.post('/products/catalog-categories/assign/', data),
   excludeFromSync: (product_ids: number[], exclude: boolean) =>

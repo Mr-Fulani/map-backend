@@ -330,6 +330,67 @@ class TenantCatalogCategoryDetailView(APIView):
 
 
 @extend_schema(tags=['Catalog Categories'])
+class TenantCatalogCategoryBranchToggleView(APIView):
+    """POST /api/v1/products/catalog-categories/{id}/toggle-branch/ — вкл/выкл ветку категорий.
+
+    Меняет is_active у категории и всего её поддерева: авто-классификация
+    рассматривает только активные категории, поэтому отключение ветки
+    («Для грузовиков и спецтехники», «Автомобиль на запчасти» и т.п.)
+    повышает точность присвоения подкатегорий. При отключении товары ветки
+    ставятся в очередь на переклассификацию.
+    """
+
+    def post(self, request, pk):
+        category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
+        is_active = request.data.get('is_active')
+        if not isinstance(is_active, bool):
+            return Response(
+                {'status': 'error', 'code': 'validation_error', 'message': 'Передайте is_active: true/false'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        children_by_parent: dict[int, list[int]] = {}
+        for cat_id, parent_id in TenantCatalogCategory.objects.filter(
+            tenant=request.tenant,
+        ).values_list('id', 'parent_id'):
+            if parent_id is not None:
+                children_by_parent.setdefault(parent_id, []).append(cat_id)
+
+        branch_ids = [category.pk]
+        queue = [category.pk]
+        while queue:
+            node_id = queue.pop()
+            for child_id in children_by_parent.get(node_id, []):
+                branch_ids.append(child_id)
+                queue.append(child_id)
+
+        affected_products = 0
+        with transaction.atomic():
+            affected_categories = TenantCatalogCategory.objects.filter(
+                tenant=request.tenant, id__in=branch_ids,
+            ).update(is_active=is_active, updated_at=now())
+            if not is_active:
+                affected_products = Product.objects.filter(
+                    tenant=request.tenant, catalog_category_id__in=branch_ids,
+                ).count()
+                if affected_products:
+                    from apps.products.tasks import reclassify_products_for_categories
+                    tenant_id, ids = request.tenant.pk, list(branch_ids)
+                    transaction.on_commit(
+                        lambda: reclassify_products_for_categories.delay(tenant_id, ids)
+                    )
+
+        return Response({
+            'status': 'ok',
+            'data': {
+                'is_active': is_active,
+                'affected_categories': affected_categories,
+                'affected_products': affected_products,
+            },
+        })
+
+
+@extend_schema(tags=['Catalog Categories'])
 class TenantCatalogCategoryDefaultImageView(APIView):
     """POST /api/v1/products/catalog-categories/{id}/default-image/ — загрузить fallback-картинку."""
 
