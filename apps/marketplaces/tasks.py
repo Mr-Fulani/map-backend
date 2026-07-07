@@ -155,7 +155,8 @@ def _validate_feed_batch(listings: list) -> list:
     предупреждает. Возвращает валидную часть партии.
     """
     from apps.marketplaces.adapters.avito.feed_builder import (
-        get_contact_fields, has_resolved_category, missing_required_avito_fields, product_has_oem,
+        AVITO_SUBTYPE_LABELS, blocking_missing_avito_fields, get_contact_fields,
+        has_resolved_category, missing_required_avito_fields, product_has_oem,
     )
     valid = []
     for item in listings:
@@ -166,6 +167,21 @@ def _validate_feed_batch(listings: list) -> list:
                 'Не указано контактное лицо и/или телефон. Заполните их в профиле '
                 'аккаунта Avito (Настройки → Маркетплейсы) или в самом листинге — '
                 'Avito не публикует объявления без контактов.',
+            )
+            continue
+        # Под-вид детали (Подкатегория 3) обязателен для листьев Двигатель/Кузов/
+        # Трансмиссия — без него Avito отклоняет объявление. Отсекаем сразу
+        # с понятной причиной, а не постфактум из отчёта автозагрузки.
+        blocking = blocking_missing_avito_fields(item)
+        if blocking:
+            labels = ', '.join(f'«{AVITO_SUBTYPE_LABELS[tag]}»' for tag in blocking)
+            category = getattr(item.product, 'catalog_category', None)
+            category_name = getattr(category, 'name', '') or 'категории товара'
+            _reject_listing(
+                item,
+                f'Не выбран вид детали: {labels}. Для категории «{category_name}» '
+                f'Avito не публикует объявления без него. Откройте листинг, выберите '
+                f'«Подкатегорию 3» (вид детали) и опубликуйте снова.',
             )
             continue
         # Категория не определена → фид уйдёт с дефолтной Avito-категорией и часто

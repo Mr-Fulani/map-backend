@@ -116,13 +116,22 @@ class ListingDetailSerializer(ListingSerializer):
     images = serializers.SerializerMethodField()
     catalog_category = serializers.SerializerMethodField()
     base_price = serializers.DecimalField(source='product.price', max_digits=12, decimal_places=2, read_only=True)
+    avito_field_warnings = serializers.SerializerMethodField()
 
     class Meta(ListingSerializer.Meta):
         fields = ListingSerializer.Meta.fields + [
             'description_ai', 'ai_confidence', 'ai_confidence_display', 'images',
-            'catalog_category', 'margin_pct', 'base_price',
+            'catalog_category', 'margin_pct', 'base_price', 'avito_field_warnings',
         ]
         read_only_fields = fields
+
+    def get_avito_field_warnings(self, obj) -> list:
+        """Предупреждения о незаполненных обязательных полях Avito — видны тенанту до публикации."""
+        from apps.marketplaces.adapters.avito.feed_builder import avito_field_warnings
+        try:
+            return avito_field_warnings(obj)
+        except Exception:
+            return []
 
     def get_catalog_category(self, obj):
         """Текущая категория каталога товара (для перепроверки/смены в дровере)."""

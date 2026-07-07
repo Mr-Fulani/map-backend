@@ -720,6 +720,64 @@ class TestPublishListingTask:
         assert 'контактное лицо' in listing.rejection_reason.lower()
         mock_cls.return_value.flush_feed.assert_not_called()
 
+    def test_publish_rejects_when_required_subtype_missing(self):
+        """Категория требует под-вид (Подкатегория 3), он не выбран → отклоняем
+        сразу с понятной причиной, а не постфактум из отчёта Avito."""
+        from apps.marketplaces.tasks import _validate_feed_batch
+        tenant = make_tenant('subtype-block-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        category = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Трансмиссия и привод',
+            normalized_name='трансмиссияипривод',
+            domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+            external_source='avito',
+            external_id='transmissiia_i_privod',
+        )
+        product.catalog_category = category
+        product.save(update_fields=['catalog_category'])
+        listing = make_listing(tenant, product, account)
+
+        with patch('apps.marketplaces.tasks._notify_error'):
+            result = _validate_feed_batch([listing])
+
+        assert result == []
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_REJECTED
+        assert 'Тип детали трансмиссии' in listing.rejection_reason
+        assert 'Подкатегорию 3' in listing.rejection_reason
+
+    def test_publish_passes_when_subtype_selected(self):
+        """С выбранным под-видом (товар ниже листа) валидация пропускает объявление."""
+        from apps.marketplaces.tasks import _validate_feed_batch
+        tenant = make_tenant('subtype-ok-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        leaf = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Трансмиссия и привод',
+            normalized_name='трансмиссияипривод',
+            domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+            external_source='avito',
+            external_id='transmissiia_i_privod',
+        )
+        subtype = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Крепёж КПП',
+            normalized_name='крепёжкпп',
+            domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+            external_source='avito',
+            parent=leaf,
+        )
+        product.catalog_category = subtype
+        product.save(update_fields=['catalog_category'])
+        listing = make_listing(tenant, product, account)
+
+        result = _validate_feed_batch([listing])
+
+        assert result == [listing]
+
     def test_republish_from_limit_reached_after_subscription_renewal(self):
         """«Лимит достигнут» — не тупик: при активной подписке повторная публикация проходит."""
         from apps.marketplaces.tasks import publish_listing_task
