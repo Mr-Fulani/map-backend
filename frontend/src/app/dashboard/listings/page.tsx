@@ -396,7 +396,7 @@ export default function ListingsPage() {
                         <ExternalLink className="h-4 w-4" />
                       </a>
                     )}
-                    {['draft', 'rejected', 'archived'].includes(l.status) && (
+                    {['draft', 'rejected', 'archived', 'limit_reached'].includes(l.status) && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -535,7 +535,7 @@ export default function ListingsPage() {
                             <ExternalLink className="h-4 w-4" />
                           </a>
                         )}
-                        {['draft', 'rejected', 'archived'].includes(l.status) && (
+                        {['draft', 'rejected', 'archived', 'limit_reached'].includes(l.status) && (
                           <Button
                             size="sm"
                             variant="ghost"

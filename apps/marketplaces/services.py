@@ -129,7 +129,7 @@ class ListingService:
     @staticmethod
     def publish(listing_id: int, tenant) -> Listing:
         """
-        Публикует черновик, отклонённый или архивный листинг на Avito.
+        Публикует черновик, отклонённый, архивный или упёршийся в лимит листинг на Avito.
 
         Raises:
             ListingNotFound: листинг не принадлежит тенанту.
@@ -140,10 +140,13 @@ class ListingService:
             Listing.STATUS_DRAFT,
             Listing.STATUS_REJECTED,
             Listing.STATUS_ARCHIVED,
+            # «Лимит достигнут» — после продления подписки/апгрейда плана
+            # листинг должен публиковаться повторно, иначе статус тупиковый.
+            Listing.STATUS_LIMIT_REACHED,
         )
         if listing.status not in publishable:
             raise InvalidListingStatus(
-                f'Публикация доступна для draft/rejected/archived, '
+                f'Публикация доступна для draft/rejected/archived/limit_reached, '
                 f'текущий статус: {listing.status}'
             )
         listing.status = Listing.STATUS_QUEUED

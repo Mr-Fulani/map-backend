@@ -494,7 +494,8 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const isRejected = listing?.status === 'rejected';
   const isArchived = listing?.status === 'archived';
   const isPending = listing?.status === 'pending';
-  const canPublish = isDraft || isRejected || isArchived;
+  const isLimitReached = listing?.status === 'limit_reached';
+  const canPublish = isDraft || isRejected || isArchived || isLimitReached;
   const canRegenerate = isReview || isDraft || isRejected;
   const busy = actionLoading !== null;
 

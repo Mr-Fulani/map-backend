@@ -73,6 +73,29 @@ class TestPaymentSucceeded:
         assert call_args[0] == tenant.pk    # tenant_id
         assert call_args[1] == 'billing'    # level
 
+    def test_payment_succeeded_requeues_limit_reached_listings(
+        self, django_capture_on_commit_callbacks,
+    ):
+        """После активации подписки листинги «Лимит достигнут» уходят на перепубликацию."""
+        tenant, _ = make_tenant_with_subscription('yook-requeue')
+        Invoice.objects.create(
+            tenant=tenant,
+            amount=Decimal('990.00'),
+            status=Invoice.STATUS_PENDING,
+            yookassa_payment_id='pay_003',
+        )
+
+        with patch('apps.notifications.tasks.send_notification_task'), \
+             patch('apps.marketplaces.tasks.requeue_limit_reached_listings') as mock_requeue:
+            with django_capture_on_commit_callbacks(execute=True):
+                BillingService.handle_payment_success_webhook(
+                    payment_id='pay_003',
+                    amount='990.00',
+                    metadata={'plan_slug': 'business', 'period': 'monthly'},
+                )
+
+        mock_requeue.delay.assert_called_once_with(tenant.pk)
+
 
 @pytest.mark.django_db
 class TestPaymentFailed:
