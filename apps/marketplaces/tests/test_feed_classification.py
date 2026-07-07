@@ -77,6 +77,30 @@ def test_truck_leaf_resolves_by_own_slug():
     assert spec.get('fixed', {}).get('ProductType') == 'Для грузовиков и спецтехники'
 
 
+def test_blocking_missing_fields_for_leaf_requiring_subtype():
+    # Товар «на самом листе» «Трансмиссия и привод» без под-вида → блокирующее
+    # поле TransmissionSparePartType и человекочитаемое предупреждение.
+    from apps.marketplaces.adapters.avito.feed_builder import (
+        avito_field_warnings, blocking_missing_avito_fields,
+    )
+    transmission = _cat('Трансмиссия и привод', external_id='transmissiia_i_privod')
+    listing = _listing(transmission)
+
+    assert blocking_missing_avito_fields(listing) == ['TransmissionSparePartType']
+    warnings = avito_field_warnings(listing)
+    assert any('Тип детали трансмиссии' in w and 'Подкатегорию 3' in w for w in warnings)
+
+
+def test_no_blocking_fields_when_subtype_selected():
+    # Под-вид выбран (товар ниже листа) → блокирующих полей нет.
+    from apps.marketplaces.adapters.avito.feed_builder import blocking_missing_avito_fields
+    transmission = _cat('Трансмиссия и привод', external_id='transmissiia_i_privod')
+    mount = _cat('Крепёж КПП', parent=transmission)
+    listing = _listing(mount)
+
+    assert blocking_missing_avito_fields(listing) == []
+
+
 def test_name_fallback_prefers_passenger_branch_on_collision():
     # Легаси-запись без external_id: имя «Тормозная система» есть в легковой
     # и грузовой ветках — фолбэк по имени должен выбрать легковую.

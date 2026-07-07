@@ -285,6 +285,52 @@ def missing_required_avito_fields(listing) -> list[str]:
     return [tag for tag in required if tag not in provided]
 
 
+# Под-виды запчастей: обязательные поля, без которых Avito гарантированно
+# отклоняет объявление («Не заполнен обязательный параметр …», code 1000).
+# В карточке листинга это «Подкатегория 3» — вид детали ниже листа Avito.
+AVITO_SUBTYPE_LABELS = {
+    'TransmissionSparePartType': 'Тип детали трансмиссии',
+    'EngineSparePartType': 'Тип детали двигателя',
+    'BodySparePartType': 'Тип детали кузова',
+    'TechnicSparePartType': 'Тип детали',
+}
+
+
+def blocking_missing_avito_fields(listing) -> list[str]:
+    """Недостающие поля, из-за которых Avito гарантированно отклонит объявление.
+
+    В отличие от остального required-списка (CompatibleCars и т.п. Avito умеет
+    определять сам), под-вид детали реально блокирует публикацию — проверено
+    отчётами автозагрузки.
+    """
+    return [tag for tag in missing_required_avito_fields(listing) if tag in AVITO_SUBTYPE_LABELS]
+
+
+def avito_field_warnings(listing) -> list[str]:
+    """Человекочитаемые предупреждения о незаполненных обязательных полях Avito.
+
+    Показываются тенанту в карточке листинга ДО публикации, чтобы не ловить
+    отклонение Avito постфактум.
+    """
+    category = getattr(listing.product, 'catalog_category', None)
+    category_name = getattr(category, 'name', '') or 'категории товара'
+    warnings = []
+    for tag in missing_required_avito_fields(listing):
+        label = AVITO_SUBTYPE_LABELS.get(tag)
+        if label:
+            warnings.append(
+                f'Не выбран вид детали — «{label}» ({tag}). Для категории '
+                f'«{category_name}» Avito не опубликует объявление без него: '
+                f'выберите «Подкатегорию 3» в карточке листинга или уточните категорию товара.'
+            )
+        else:
+            warnings.append(
+                f'Не заполнено обязательное поле Avito «{tag}» — объявление может быть '
+                f'отклонено. Заполните его у товара или в маппинге категории.'
+            )
+    return warnings
+
+
 def get_contact_fields(listing) -> tuple[str, str]:
     """
     Возвращает (контактное лицо, телефон) по тем же приоритетам, что и фид.
