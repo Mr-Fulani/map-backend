@@ -234,8 +234,21 @@ class BillingService:
             tenant.pk, LEVEL_BILLING,
             f'Оплата {invoice.amount}₽ прошла успешно. Подписка активирована.',
         )
+        BillingService._requeue_limit_reached_listings(tenant)
         _write_billing_log(tenant, 'ok', f'Оплата {invoice.amount}₽ прошла успешно')
         logger.info('Вебхук payment.succeeded: tenant=%s, amount=%s', tenant.slug, amount)
+
+    @staticmethod
+    def _requeue_limit_reached_listings(tenant: Tenant) -> None:
+        """Ставит в очередь повторную публикацию листингов «Лимит достигнут».
+
+        Вызывается после активации подписки: без этого листинги, упёршиеся
+        в лимит во время неактивной подписки, остаются в тупиковом статусе.
+        """
+        from apps.marketplaces.tasks import requeue_limit_reached_listings
+
+        tenant_id = tenant.pk
+        transaction.on_commit(lambda: requeue_limit_reached_listings.delay(tenant_id))
 
     @staticmethod
     @transaction.atomic
@@ -315,6 +328,7 @@ class BillingService:
         sub.status = Subscription.STATUS_ACTIVE
         sub.save(update_fields=['status'])
 
+        BillingService._requeue_limit_reached_listings(tenant)
         logger.info('Платёж %s прошёл для тенанта %s', yookassa_payment_id, tenant.slug)
         return invoice
 

@@ -720,6 +720,56 @@ class TestPublishListingTask:
         assert 'контактное лицо' in listing.rejection_reason.lower()
         mock_cls.return_value.flush_feed.assert_not_called()
 
+    def test_republish_from_limit_reached_after_subscription_renewal(self):
+        """«Лимит достигнут» — не тупик: при активной подписке повторная публикация проходит."""
+        from apps.marketplaces.tasks import publish_listing_task
+        tenant = make_tenant('limit-recover-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account, status=Listing.STATUS_LIMIT_REACHED)
+
+        with patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
+            mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
+            mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
+            publish_listing_task(listing.pk)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_PENDING
+        mock_flush.delay.assert_called_once_with(account.pk)
+
+    def test_requeue_limit_reached_listings_targets_only_limit_reached(self):
+        """Задача перезапуска трогает только листинги «Лимит достигнут» своего тенанта."""
+        from apps.marketplaces.tasks import requeue_limit_reached_listings
+        tenant = make_tenant('requeue-co')
+        account = make_account(tenant)
+        limited = make_listing(
+            tenant, make_product(tenant), account, status=Listing.STATUS_LIMIT_REACHED,
+        )
+        make_listing(
+            tenant, make_product_with_article(tenant, 'ART-ACT'), account,
+            status=Listing.STATUS_ACTIVE,
+        )
+
+        with patch('apps.marketplaces.tasks.publish_listing_task') as mock_publish:
+            result = requeue_limit_reached_listings(tenant.pk)
+
+        assert result == {'requeued': 1}
+        mock_publish.delay.assert_called_once_with(limited.pk)
+
+    def test_listing_service_publish_allows_limit_reached(self):
+        """ListingService.publish принимает limit_reached и переводит в очередь."""
+        from apps.marketplaces.services import ListingService
+        tenant = make_tenant('svc-limit-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account, status=Listing.STATUS_LIMIT_REACHED)
+
+        with patch('apps.marketplaces.services.transaction'):
+            result = ListingService.publish(listing.pk, tenant)
+
+        assert result.status == Listing.STATUS_QUEUED
+
     def test_validate_warns_when_category_not_resolved(self):
         """Категория не определена → предупреждаем тенанта (но не блокируем)."""
         from apps.marketplaces.tasks import _validate_feed_batch

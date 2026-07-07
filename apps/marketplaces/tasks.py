@@ -212,7 +212,12 @@ def publish_listing_task(self, listing_id: int):
         listing.refresh_from_db()
         # Публикуем только из публикуемых статусов; активные/ожидающие отсекаются
         # здесь же (это и есть защита от повторной публикации живого объявления).
-        if listing.status not in (Listing.STATUS_QUEUED, Listing.STATUS_DRAFT, Listing.STATUS_REJECTED):
+        # limit_reached публикуем повторно: лимит перепроверяется ниже, а после
+        # продления подписки листинг не должен застревать в этом статусе.
+        if listing.status not in (
+            Listing.STATUS_QUEUED, Listing.STATUS_DRAFT,
+            Listing.STATUS_REJECTED, Listing.STATUS_LIMIT_REACHED,
+        ):
             return
         # Повторная публикация из архива: старый external_id неактуален (объявление
         # было снято). Сбрасываем его — иначе раньше задача молча выходила по
@@ -258,6 +263,25 @@ def publish_listing_task(self, listing_id: int):
         )
 
     request_feed_flush(listing.account)
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='avito_publish')
+def requeue_limit_reached_listings(self, tenant_id: int):
+    """
+    Повторно публикует листинги тенанта, упёршиеся в лимит подписки.
+
+    Запускается после активации/продления подписки: статус «Лимит достигнут»
+    сам по себе не рассасывается, а publish_listing_task заново проверит
+    лимиты — если план всё ещё не позволяет, листинг вернётся в limit_reached.
+    """
+    listing_ids = list(
+        Listing.objects.filter(
+            tenant_id=tenant_id, status=Listing.STATUS_LIMIT_REACHED,
+        ).values_list('pk', flat=True)
+    )
+    for listing_id in listing_ids:
+        publish_listing_task.delay(listing_id)
+    return {'requeued': len(listing_ids)}
 
 
 @shared_task(bind=True, max_retries=6, queue='avito_update')
