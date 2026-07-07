@@ -1,8 +1,10 @@
+from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
 
 import pytest
 import responses as responses_lib
+from django.utils.timezone import now
 
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
@@ -1341,6 +1343,11 @@ class TestPollFeedResultsTask:
             mock_cls.return_value.get_feed_item_errors.return_value = {
                 get_ad_id(listing): avito_message,
             }
+            # Загрузка Avito завершена и свежее нашего flush → ошибки актуальны.
+            mock_cls.return_value.get_latest_upload.return_value = {
+                'status': 'success_warning',
+                'started_at': (now() + timedelta(minutes=1)).isoformat(),
+            }
             # retries=0: при наличии ошибок задача НЕ должна уходить в retry
             try:
                 poll_feed_results_task.apply(args=[account.pk], throw=True, retries=0)
@@ -1350,6 +1357,69 @@ class TestPollFeedResultsTask:
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_REJECTED
         assert listing.rejection_reason == avito_message
+
+    def test_stale_report_errors_do_not_reject_republished_listing(self):
+        """Регрессия: перепубликация с тем же ad_id, свежий фид ещё обрабатывается —
+        ошибки из ПРЕДЫДУЩЕЙ загрузки не должны отклонять листинг устаревшей причиной."""
+        from celery.exceptions import Retry
+        from apps.marketplaces.tasks import poll_feed_results_task
+
+        tenant = make_tenant('poll-stale-report-co')
+        account = make_account(tenant)
+        account.last_feed_flush_at = now()
+        account.save(update_fields=['last_feed_flush_at'])
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks._notify_error') as mock_notify:
+            mock_cls.return_value.get_feed_results.return_value = [
+                {'ad_id': get_ad_id(listing), 'avito_id': None}
+            ]
+            # Старый отчёт содержит ошибку по тому же ad_id...
+            mock_cls.return_value.get_feed_item_errors.return_value = {
+                get_ad_id(listing): '• Старая ошибка из предыдущей загрузки.',
+            }
+            # ...но свежая загрузка ещё обрабатывается.
+            mock_cls.return_value.get_latest_upload.return_value = {'status': 'processing'}
+            with pytest.raises((Retry, RuntimeError)):
+                poll_feed_results_task(account.pk)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_PENDING
+        assert listing.rejection_reason == ''
+        mock_notify.assert_not_called()
+
+    def test_old_finished_upload_errors_do_not_reject_new_attempt(self):
+        """Ошибки завершённой загрузки, начавшейся ДО нашего flush, не применяются."""
+        from celery.exceptions import Retry
+        from apps.marketplaces.tasks import poll_feed_results_task
+
+        tenant = make_tenant('poll-old-upload-co')
+        account = make_account(tenant)
+        account.last_feed_flush_at = now()
+        account.save(update_fields=['last_feed_flush_at'])
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account, status=Listing.STATUS_PENDING)
+
+        with patch('apps.marketplaces.tasks.AvitoAdapter') as mock_cls, \
+             patch('apps.marketplaces.tasks._notify_error') as mock_notify:
+            mock_cls.return_value.get_feed_results.return_value = [
+                {'ad_id': get_ad_id(listing), 'avito_id': None}
+            ]
+            mock_cls.return_value.get_feed_item_errors.return_value = {
+                get_ad_id(listing): '• Старая ошибка.',
+            }
+            mock_cls.return_value.get_latest_upload.return_value = {
+                'status': 'success_warning',
+                'started_at': (now() - timedelta(hours=2)).isoformat(),
+            }
+            with pytest.raises((Retry, RuntimeError)):
+                poll_feed_results_task(account.pk)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_PENDING
+        mock_notify.assert_not_called()
 
     def test_rejects_pending_listings_when_feed_results_autoload_error(self):
         from apps.marketplaces.adapters.avito.adapter import FeedUploadError

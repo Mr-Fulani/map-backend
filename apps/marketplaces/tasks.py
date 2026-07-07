@@ -2,6 +2,7 @@ import datetime
 
 from celery import shared_task
 from django.core.cache import cache
+from django.utils.dateparse import parse_datetime
 from django.utils.timezone import now
 
 from apps.anti_ban.ramp_up import GradualRampUp
@@ -483,6 +484,25 @@ def coalesced_flush_task(self, account_id: int):
         raise self.retry(exc=exc, countdown=backoff(self.request.retries))
 
 
+def _feed_errors_are_current(account) -> bool:
+    """Актуальны ли ошибки last_successful-загрузки Avito для текущей попытки публикации.
+
+    False — если последняя загрузка ещё обрабатывается или началась раньше нашего
+    последнего flush (то есть отчёт относится к предыдущему фиду). Без данных для
+    сравнения тоже False: лучше подождать ретрая, чем отклонить по старому отчёту.
+    """
+    upload = AvitoAdapter(account).get_latest_upload()
+    if not upload or upload.get('status') == 'processing':
+        return False
+    started_at = parse_datetime(str(upload.get('started_at') or ''))
+    if started_at is None:
+        return False
+    flushed_at = account.last_feed_flush_at
+    if flushed_at is None:
+        return True
+    return started_at >= flushed_at - datetime.timedelta(minutes=5)
+
+
 @shared_task(bind=True, max_retries=10, queue='avito_publish')
 def poll_feed_results_task(self, account_id: int):
     """
@@ -559,13 +579,19 @@ def poll_feed_results_task(self, account_id: int):
 
     # Среди необработанных сразу отклоняем те, у кого Avito уже вернул
     # блокирующие ошибки (с реальным текстом) — не ждём 50 минут ретраев.
-    try:
-        raw_errors = AvitoAdapter(account).get_feed_item_errors(
-            [get_ad_id(lst) for lst in unresolved]
-        )
-        item_errors = raw_errors if isinstance(raw_errors, dict) else {}
-    except Exception:
-        item_errors = {}
+    # Но только если ошибки относятся к ТЕКУЩЕЙ загрузке: при перепубликации
+    # ad_id не меняется, и пока свежий фид обрабатывается, last_successful —
+    # это предыдущая загрузка; её старые ошибки отклоняли уже исправленные
+    # объявления устаревшей причиной.
+    item_errors = {}
+    if unresolved and _feed_errors_are_current(account):
+        try:
+            raw_errors = AvitoAdapter(account).get_feed_item_errors(
+                [get_ad_id(lst) for lst in unresolved]
+            )
+            item_errors = raw_errors if isinstance(raw_errors, dict) else {}
+        except Exception:
+            item_errors = {}
 
     truly_pending = []
     rejected_count = 0
