@@ -925,10 +925,16 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                 )}
               </div>
 
-              {/* Причина отклонения — только для реально отклонённых, иначе висит старый текст */}
+              {/* Причина отклонения/проверки — только для этих статусов, иначе висит старый текст */}
               {listing.status === 'rejected' && listing.rejection_reason && (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive whitespace-pre-line">
                   <span className="font-medium">Причина отклонения: </span>
+                  {listing.rejection_reason}
+                </div>
+              )}
+              {listing.status === 'requires_review' && listing.rejection_reason && (
+                <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-700 dark:text-yellow-400 whitespace-pre-line">
+                  <span className="font-medium">Требует проверки: </span>
                   {listing.rejection_reason}
                 </div>
               )}

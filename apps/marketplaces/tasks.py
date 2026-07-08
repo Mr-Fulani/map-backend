@@ -82,6 +82,19 @@ def _reject_listing(listing: Listing, reason: str) -> None:
     _notify_error(listing.tenant, reason, listing=listing)
 
 
+def _send_listing_to_review(listing: Listing, reason: str) -> None:
+    """Отправляет листинг на проверку (вкладка «Требуют проверки») с причиной.
+
+    В отличие от _reject_listing статус — requires_review: тенант исправляет
+    данные и жмёт «Одобрить и опубликовать» (ListingService.approve).
+    """
+    listing.status = Listing.STATUS_REQUIRES_REVIEW
+    listing.rejection_reason = reason
+    listing.last_sync_at = now()
+    listing.save(update_fields=['status', 'rejection_reason', 'last_sync_at'])
+    _notify_error(listing.tenant, reason, listing=listing)
+
+
 # Пауза перед повтором при лимите Avito «1 автозагрузка/час» (~11 минут).
 RATE_LIMIT_RETRY_COUNTDOWN = 660
 
@@ -158,7 +171,7 @@ def _validate_feed_batch(listings: list) -> list:
     from apps.marketplaces.adapters.avito.feed_builder import (
         AVITO_SUBTYPE_LABELS, blocking_missing_avito_fields, get_contact_fields,
         has_resolved_category, missing_required_avito_fields, product_brand_is_missing,
-        product_has_oem,
+        product_has_oem, unknown_brand_details,
     )
     valid = []
     for item in listings:
@@ -182,6 +195,31 @@ def _validate_feed_batch(listings: list) -> list:
                 'производителя в карточке товара и опубликуйте снова.',
             )
             continue
+        # Бренд, которого нет в каталоге Avito → на проверку тенанту, остальная
+        # партия публикуется без задержки. Если тенант уже видел это предупреждение
+        # и осознанно нажал «Одобрить и опубликовать» (причина не изменилась) —
+        # пропускаем в фид: финальный арбитр Avito, наш каталог может отставать.
+        unknown_brand = unknown_brand_details(item)
+        if unknown_brand is not None:
+            brand, suggestions = unknown_brand
+            marker = f'Производителя «{brand}» нет в каталоге Avito'
+            if (item.rejection_reason or '').startswith(marker):
+                _write_log(
+                    item.tenant, 'listing_publish', 'warn',
+                    f'«{item.title or item.product.name}»: бренд «{brand}» не найден в '
+                    f'каталоге Avito, но объявление одобрено тенантом — отправляем как есть.',
+                    listing=item,
+                )
+            else:
+                hint = f' Возможно, вы имели в виду: {", ".join(suggestions)}.' if suggestions else ''
+                _send_listing_to_review(
+                    item,
+                    f'{marker} — объявление не пройдёт модерацию, поле обязательное. '
+                    f'Исправьте бренд в карточке товара на каталожное написание вручную.{hint} '
+                    f'Затем нажмите «Одобрить и опубликовать». Остальные объявления партии '
+                    f'публикуются без задержки.',
+                )
+                continue
         # Под-вид детали (Подкатегория 3) обязателен для листьев Двигатель/Кузов/
         # Трансмиссия — без него Avito отклоняет объявление. Отсекаем сразу
         # с понятной причиной, а не постфактум из отчёта автозагрузки.
