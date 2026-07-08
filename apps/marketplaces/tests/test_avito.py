@@ -757,6 +757,71 @@ class TestPublishListingTask:
 
         assert result == [listing]
 
+    def test_unknown_brand_goes_to_review_rest_of_batch_passes(self):
+        """Бренд не из каталога Avito → листинг на проверку с понятной причиной,
+        остальная партия массового постинга публикуется без задержки."""
+        from apps.marketplaces.tasks import _validate_feed_batch
+        tenant = make_tenant('brand-review-co')
+        account = make_account(tenant)
+        bad_product = make_product(tenant)
+        bad_product.brand = 'НесуществующийБрендХYZ'
+        bad_product.save(update_fields=['brand'])
+        good_product = make_product_with_article(tenant, 'ART-GOOD')  # brand=Bosch
+        bad = make_listing(tenant, bad_product, account)
+        good = make_listing(tenant, good_product, account)
+
+        with patch('apps.marketplaces.tasks._notify_error') as mock_notify:
+            result = _validate_feed_batch([bad, good])
+
+        assert result == [good]
+        bad.refresh_from_db()
+        assert bad.status == Listing.STATUS_REQUIRES_REVIEW
+        assert 'нет в каталоге Avito' in bad.rejection_reason
+        assert 'Одобрить и опубликовать' in bad.rejection_reason
+        mock_notify.assert_called_once()
+
+    def test_acknowledged_unknown_brand_passes_to_feed(self):
+        """Тенант осознанно одобрил листинг с тем же предупреждением → пропускаем
+        в фид (финальный арбитр — Avito, локальный каталог может отставать)."""
+        from apps.marketplaces.tasks import _validate_feed_batch
+        tenant = make_tenant('brand-ack-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        product.brand = 'НесуществующийБрендХYZ'
+        product.save(update_fields=['brand'])
+        listing = make_listing(tenant, product, account)
+        listing.rejection_reason = (
+            'Производителя «НесуществующийБрендХYZ» нет в каталоге Avito — далее старый текст.'
+        )
+        listing.save(update_fields=['rejection_reason'])
+
+        result = _validate_feed_batch([listing])
+
+        assert result == [listing]
+        listing.refresh_from_db()
+        assert listing.status != Listing.STATUS_REQUIRES_REVIEW
+
+    def test_changed_brand_is_rechecked_after_review(self):
+        """Тенант исправил бренд на другой, тоже неизвестный → новая проверка
+        (маркер в причине относится к старому бренду)."""
+        from apps.marketplaces.tasks import _validate_feed_batch
+        tenant = make_tenant('brand-recheck-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        product.brand = 'ДругойНеизвестныйБренд'
+        product.save(update_fields=['brand'])
+        listing = make_listing(tenant, product, account)
+        listing.rejection_reason = 'Производителя «НесуществующийБрендХYZ» нет в каталоге Avito — старое.'
+        listing.save(update_fields=['rejection_reason'])
+
+        with patch('apps.marketplaces.tasks._notify_error'):
+            result = _validate_feed_batch([listing])
+
+        assert result == []
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_REQUIRES_REVIEW
+        assert 'ДругойНеизвестныйБренд' in listing.rejection_reason
+
     def test_publish_rejects_when_required_subtype_missing(self):
         """Категория требует под-вид (Подкатегория 3), он не выбран → отклоняем
         сразу с понятной причиной, а не постфактум из отчёта Avito."""

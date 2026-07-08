@@ -320,6 +320,25 @@ def product_brand_is_missing(listing) -> bool:
     return not str(getattr(listing.product, 'brand', '') or '').strip()
 
 
+def unknown_brand_details(listing) -> tuple[str, list[str]] | None:
+    """Бренд новой запчасти, которого нет в каталоге Avito, и похожие варианты.
+
+    None — если бренд известен каталогу, пуст (это отдельная проверка),
+    товар б/у либо локальный каталог брендов недоступен (fail-open).
+    """
+    from apps.marketplaces.adapters.avito.brand_catalog import lookup_brand
+    condition = str(getattr(listing.product, 'condition', '') or '')
+    if condition != 'new':
+        return None
+    brand = str(getattr(listing.product, 'brand', '') or '').strip()
+    if not brand:
+        return None
+    result = lookup_brand(brand)
+    if result['known']:
+        return None
+    return brand, result['suggestions']
+
+
 def avito_field_warnings(listing) -> list[str]:
     """Человекочитаемые предупреждения о незаполненных обязательных полях Avito.
 
@@ -334,6 +353,16 @@ def avito_field_warnings(listing) -> list[str]:
             'Не указан производитель (Brand). Для новых запчастей Avito требует '
             'его и принимает только бренды из своего каталога — укажите '
             'производителя в карточке товара.'
+        )
+    unknown_brand = unknown_brand_details(listing)
+    if unknown_brand is not None:
+        brand, suggestions = unknown_brand
+        hint = f' Возможно, вы имели в виду: {", ".join(suggestions)}.' if suggestions else ''
+        warnings.append(
+            f'Производителя «{brand}» нет в каталоге Avito — объявление НЕ пройдёт '
+            f'модерацию, поле обязательное. Исправьте бренд в карточке товара на '
+            f'каталожное написание вручную.{hint} Если бренда действительно нет в '
+            f'каталоге — запросите его добавление в поддержке Avito.'
         )
     for tag in missing_required_avito_fields(listing):
         label = AVITO_SUBTYPE_LABELS.get(tag)
