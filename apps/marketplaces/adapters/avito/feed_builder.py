@@ -306,6 +306,20 @@ def blocking_missing_avito_fields(listing) -> list[str]:
     return [tag for tag in missing_required_avito_fields(listing) if tag in AVITO_SUBTYPE_LABELS]
 
 
+def product_brand_is_missing(listing) -> bool:
+    """Пуст ли производитель у НОВОЙ запчасти — Avito гарантированно отклонит.
+
+    Brand обязателен при Condition='Новое' и принимает только значения из
+    каталога Avito: фолбэк на имя организации тенанта («Значение не найдено»)
+    приводил к отклонению с непонятной для тенанта причиной. Для б/у запчастей
+    Brand не обязателен — не блокируем.
+    """
+    condition = str(getattr(listing.product, 'condition', '') or '')
+    if condition != 'new':
+        return False
+    return not str(getattr(listing.product, 'brand', '') or '').strip()
+
+
 def avito_field_warnings(listing) -> list[str]:
     """Человекочитаемые предупреждения о незаполненных обязательных полях Avito.
 
@@ -315,6 +329,12 @@ def avito_field_warnings(listing) -> list[str]:
     category = getattr(listing.product, 'catalog_category', None)
     category_name = getattr(category, 'name', '') or 'категории товара'
     warnings = []
+    if product_brand_is_missing(listing):
+        warnings.append(
+            'Не указан производитель (Brand). Для новых запчастей Avito требует '
+            'его и принимает только бренды из своего каталога — укажите '
+            'производителя в карточке товара.'
+        )
     for tag in missing_required_avito_fields(listing):
         label = AVITO_SUBTYPE_LABELS.get(tag)
         if label:

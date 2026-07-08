@@ -157,7 +157,8 @@ def _validate_feed_batch(listings: list) -> list:
     """
     from apps.marketplaces.adapters.avito.feed_builder import (
         AVITO_SUBTYPE_LABELS, blocking_missing_avito_fields, get_contact_fields,
-        has_resolved_category, missing_required_avito_fields, product_has_oem,
+        has_resolved_category, missing_required_avito_fields, product_brand_is_missing,
+        product_has_oem,
     )
     valid = []
     for item in listings:
@@ -168,6 +169,17 @@ def _validate_feed_batch(listings: list) -> list:
                 'Не указано контактное лицо и/или телефон. Заполните их в профиле '
                 'аккаунта Avito (Настройки → Маркетплейсы) или в самом листинге — '
                 'Avito не публикует объявления без контактов.',
+            )
+            continue
+        # Производитель обязателен для новых запчастей и валидируется по каталогу
+        # Avito: пустой бренд уходил фолбэком «имя тенанта» и отклонялся с
+        # непонятным «Значение не найдено». Отсекаем сразу с понятной причиной.
+        if product_brand_is_missing(item):
+            _reject_listing(
+                item,
+                'Не указан производитель (Brand). Для новых запчастей Avito требует '
+                'его и принимает только бренды из своего каталога. Укажите '
+                'производителя в карточке товара и опубликуйте снова.',
             )
             continue
         # Под-вид детали (Подкатегория 3) обязателен для листьев Двигатель/Кузов/

@@ -101,6 +101,33 @@ def test_no_blocking_fields_when_subtype_selected():
     assert blocking_missing_avito_fields(listing) == []
 
 
+def test_brand_warning_for_new_product_without_brand():
+    # Новая запчасть без производителя → предупреждение (Avito валидирует Brand
+    # по своему каталогу, фолбэк на имя тенанта отклоняется «Значение не найдено»).
+    from apps.marketplaces.adapters.avito.feed_builder import (
+        avito_field_warnings, product_brand_is_missing,
+    )
+    category = _cat('Подвеска', external_id='podveska')
+    product = types.SimpleNamespace(
+        catalog_category=category, category_1c='', brand='', condition='new',
+    )
+    listing = types.SimpleNamespace(product=product)
+
+    assert product_brand_is_missing(listing) is True
+    assert any('производитель' in w.lower() for w in avito_field_warnings(listing))
+
+
+def test_no_brand_warning_for_used_product():
+    # Для б/у запчастей Brand у Avito не обязателен — не предупреждаем.
+    from apps.marketplaces.adapters.avito.feed_builder import product_brand_is_missing
+    product = types.SimpleNamespace(
+        catalog_category=None, category_1c='', brand='', condition='used',
+    )
+    listing = types.SimpleNamespace(product=product)
+
+    assert product_brand_is_missing(listing) is False
+
+
 def test_name_fallback_prefers_passenger_branch_on_collision():
     # Легаси-запись без external_id: имя «Тормозная система» есть в легковой
     # и грузовой ветках — фолбэк по имени должен выбрать легковую.
