@@ -722,6 +722,41 @@ class TestPublishListingTask:
         assert 'контактное лицо' in listing.rejection_reason.lower()
         mock_cls.return_value.flush_feed.assert_not_called()
 
+    def test_publish_rejects_new_product_without_brand(self):
+        """Новая запчасть без производителя отклоняется сразу с понятной причиной —
+        Avito валидирует Brand по каталогу, фолбэк на имя тенанта не проходит."""
+        from apps.marketplaces.tasks import _validate_feed_batch
+        tenant = make_tenant('brand-block-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        product.brand = ''
+        product.save(update_fields=['brand'])
+        listing = make_listing(tenant, product, account)
+
+        with patch('apps.marketplaces.tasks._notify_error'):
+            result = _validate_feed_batch([listing])
+
+        assert result == []
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_REJECTED
+        assert 'производитель' in listing.rejection_reason.lower()
+        assert 'карточке товара' in listing.rejection_reason
+
+    def test_publish_allows_used_product_without_brand(self):
+        """Для б/у запчастей пустой бренд не блокирует публикацию."""
+        from apps.marketplaces.tasks import _validate_feed_batch
+        tenant = make_tenant('brand-used-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        product.brand = ''
+        product.condition = 'used'
+        product.save(update_fields=['brand', 'condition'])
+        listing = make_listing(tenant, product, account)
+
+        result = _validate_feed_batch([listing])
+
+        assert result == [listing]
+
     def test_publish_rejects_when_required_subtype_missing(self):
         """Категория требует под-вид (Подкатегория 3), он не выбран → отклоняем
         сразу с понятной причиной, а не постфактум из отчёта Avito."""
