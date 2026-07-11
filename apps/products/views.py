@@ -15,7 +15,7 @@ from apps.core.pagination import MapPagination
 from apps.products.enrichment import normalize_part_code
 from apps.products.models import (
     Product, ProductBulkActionJob, ProductCatalogClassification, ProductEnrichmentFact,
-    ProductParseJob, ReviewStatus,
+    ProductBrand, ProductParseJob, ReviewStatus,
     TenantCatalogCategory, TenantCategoryMapping,
     VehicleFitment,
 )
@@ -27,11 +27,11 @@ from apps.products.serializers import (
     VehicleFitmentSerializer,
 )
 from apps.products.services import (
-    AutoPartsEnrichmentDisabled, ProductBulkActionService, ProductEnrichmentService,
-    ProductIsNotAutoPart, ProductService,
+    AutoPartsEnrichmentDisabled, ProductBrandService, ProductBulkActionService,
+    ProductEnrichmentService, ProductIsNotAutoPart, ProductService,
 )
 from apps.marketplaces.models import Listing
-from apps.products.tasks import import_from_datasource
+from apps.products.tasks import import_from_datasource, sync_product_listings_task
 from apps.products.source_policy import DEFAULT_PART_SOURCE, get_part_source_config, get_part_source_policies
 from apps.tenants.models import CatalogDomain, TenantCatalogDomain
 
@@ -232,6 +232,109 @@ class ProductDetailView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
         return Response({'status': 'ok', 'data': ProductDetailSerializer(product, context={'request': request}).data})
+
+    def patch(self, request, pk):
+        """Точечное редактирование товара тенантом. Пока поддерживается только brand.
+
+        Бренд нужен для публикации на Avito (обязателен для новых запчастей),
+        а из 1С/CSV часто приходит пустым — тенант дозаполняет его вручную.
+        Ручное значение не затирается последующими импортами (см.
+        ProductService.upsert_from_source).
+        """
+        try:
+            product = Product.objects.get(pk=pk, tenant=request.tenant)
+        except Product.DoesNotExist:
+            return Response(
+                {'status': 'error', 'code': 'not_found', 'message': 'Товар не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        if 'brand' not in request.data:
+            return Response(
+                {'status': 'error', 'code': 'validation_error', 'message': 'Передайте поле brand'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        brand = str(request.data.get('brand') or '').strip()[:200]
+        product.brand = brand
+        product.brand_ref = ProductBrandService.resolve_or_create_brand(
+            brand, source_id='manual',
+        ) if brand else None
+        product.save(update_fields=['brand', 'brand_ref', 'updated_at'])
+        # Для активных листингов Brand — часть XML-фида, поэтому ручную правку
+        # нужно распространить так же, как контентное изменение из импорта.
+        transaction.on_commit(lambda: sync_product_listings_task.delay(product.pk, 'content'))
+        return Response({'status': 'ok', 'data': ProductDetailSerializer(product, context={'request': request}).data})
+
+
+@extend_schema(tags=['Products'])
+class ProductBrandOptionsView(APIView):
+    """Подсказки брендов для товара: сначала по включённой корневой категории."""
+
+    def get(self, request):
+        product_id = request.query_params.get('product_id')
+        query = request.query_params.get('q', '').strip()
+        try:
+            product = Product.objects.select_related('catalog_category__root_domain').get(
+                pk=product_id, tenant=request.tenant,
+            )
+        except (Product.DoesNotExist, TypeError, ValueError):
+            return Response(
+                {'status': 'error', 'code': 'not_found', 'message': 'Товар не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        category = product.catalog_category
+        root_domain = category.root_domain if category and category.is_active else None
+        domain_enabled = bool(root_domain and TenantCatalogDomain.objects.filter(
+            tenant=request.tenant, domain=root_domain, is_enabled=True,
+        ).exists())
+
+        # ProductBrand.domains — единственная существующая в БД связь бренд ↔
+        # категория. Она задана для базового справочника и относится к корневому
+        # домену, а не к каждой подкатегории.
+        brands = ProductBrand.objects.filter(is_active=True)
+        if domain_enabled:
+            brands = brands.filter(domains=root_domain)
+        else:
+            brands = brands.none()
+        if query:
+            brands = brands.filter(name__icontains=query)
+        category_options = list(brands.order_by('name').values_list('name', flat=True).distinct()[:30])
+
+        # Справочник Avito плоский: текущий endpoint source_node не содержит
+        # привязки значений Brand к подкатегориям. Добавляем только совпадения по
+        # введённому тексту, чтобы дать валидные варианты и не отдавать 11k значений.
+        avito_options = []
+        catalog_loaded = False
+        if query:
+            from apps.marketplaces.adapters.avito.brand_catalog import _catalog_by_normalized_name
+            catalog = _catalog_by_normalized_name()
+            catalog_loaded = bool(catalog)
+            normalized_query = ''.join(char for char in query.lower() if char.isalnum())
+            avito_options = [
+                name for normalized, name in catalog.items()
+                if normalized_query in normalized
+            ][:30]
+
+        options = []
+        seen = set()
+        for name, source in (
+            *((name, 'category') for name in category_options),
+            *((name, 'avito') for name in avito_options),
+            *((product.brand, 'current') for _ in [None] if product.brand),
+        ):
+            key = name.casefold()
+            if key not in seen:
+                seen.add(key)
+                options.append({'name': name, 'source': source})
+
+        return Response({
+            'status': 'ok',
+            'data': {
+                'options': options,
+                'catalog_loaded': catalog_loaded,
+                'category_scope': root_domain.name if domain_enabled else None,
+            },
+        })
 
 
 class ProductSyncView(APIView):

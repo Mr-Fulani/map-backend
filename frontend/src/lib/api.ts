@@ -209,6 +209,9 @@ export const datasourceApi = {
 export const productApi = {
   list: (params?: Record<string, unknown>) => api.get('/products/', { params }),
   get: (id: number) => api.get(`/products/${id}/`),
+  updateBrand: (id: number, brand: string) => api.patch(`/products/${id}/`, { brand }),
+  brandOptions: (productId: number, q = '') =>
+    api.get('/products/brand-options/', { params: { product_id: productId, q } }),
   publish: (id: number) => api.post(`/products/${id}/publish/`),
   archive: (id: number) => api.post(`/products/${id}/archive/`),
   regenerate: (id: number) => api.post(`/products/${id}/regenerate/`),
