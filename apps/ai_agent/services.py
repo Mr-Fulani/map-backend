@@ -68,8 +68,6 @@ class DescriptionAgent:
             f'Бренд: {product.brand}' if product.brand else '',
             f'Категория: {product.category_1c}' if product.category_1c else '',
             f'Состояние: {product.get_condition_display()}',
-            f'Цена: {product.price} ₽',
-            f'Остаток: {product.stock_qty} шт.',
         ]
         if product.description_1c:
             lines.append(f'Описание из 1С: {product.description_1c}')

@@ -2,7 +2,7 @@ from django.urls import path
 
 from apps.products.views import (
     ProductArchiveView, ProductBulkActionDetailView, ProductBulkActionView,
-    ProductCatalogClassificationReviewView, ProductCrossCodesView, ProductDetailView,
+    ProductBrandOptionsView, ProductCatalogClassificationReviewView, ProductCrossCodesView, ProductDetailView,
     ProductEnrichmentFactReviewView, ProductEnrichmentFactsView, ProductFitmentReviewView, ProductFitmentsView,
     ProductBulkDeleteView, ProductCatalogCategoryAssignView, ProductExcludeView,
     ProductListView, ProductParseJobDetailView,
@@ -17,6 +17,7 @@ from apps.products.views import (
 urlpatterns = [
     path('', ProductListView.as_view(), name='product-list'),
     path('search/', ProductSearchView.as_view(), name='product-search'),
+    path('brand-options/', ProductBrandOptionsView.as_view(), name='product-brand-options'),
     path('parse/', ProductParseView.as_view(), name='product-parse'),
     path('parse-jobs/<int:pk>/', ProductParseJobDetailView.as_view(), name='product-parse-job-detail'),
     path('bulk-actions/', ProductBulkActionView.as_view(), name='product-bulk-action'),

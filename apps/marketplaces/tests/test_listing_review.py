@@ -319,6 +319,19 @@ class TestListingDetailAPI:
 
 @pytest.mark.django_db
 class TestListingDetailSerializer:
+    def test_detail_includes_product_brand(self):
+        """Дровер листинга получает бренд товара для отображения и редактирования."""
+        from apps.marketplaces.serializers import ListingDetailSerializer
+
+        tenant = make_tenant('detail-brand-co')
+        listing = make_listing(tenant)
+        listing.product.brand = 'Hyundai-KIA'
+        listing.product.save(update_fields=['brand'])
+
+        data = ListingDetailSerializer(listing).data
+
+        assert data['product_brand'] == 'Hyundai-KIA'
+
     def test_detail_includes_images(self):
         """ListingDetailSerializer возвращает список изображений товара."""
         from apps.marketplaces.serializers import ListingDetailSerializer

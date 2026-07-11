@@ -27,6 +27,11 @@ interface ListingImage {
   is_primary: boolean;
 }
 
+interface BrandOption {
+  name: string;
+  source: 'category' | 'avito' | 'current';
+}
+
 interface ListingDetail {
   id: number;
   status: string;
@@ -34,6 +39,7 @@ interface ListingDetail {
   product_id: number;
   product_article: string;
   product_name: string;
+  product_brand: string;
   account_id: number;
   account_name: string;
   title: string;
@@ -139,8 +145,15 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
+  const [editingBrand, setEditingBrand] = useState(false);
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
+  const [editBrand, setEditBrand] = useState('');
+  const [brandOptions, setBrandOptions] = useState<BrandOption[]>([]);
+  const [brandOptionsLoading, setBrandOptionsLoading] = useState(false);
+  const [brandInputFocused, setBrandInputFocused] = useState(false);
+  const [brandCategoryScope, setBrandCategoryScope] = useState<string | null>(null);
+  const [avitoBrandCatalogLoaded, setAvitoBrandCatalogLoaded] = useState(false);
   const [editAddress, setEditAddress] = useState('');
   const [editSellerAddressId, setEditSellerAddressId] = useState('');
   const [editManagerName, setEditManagerName] = useState('');
@@ -169,6 +182,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     setListing(data);
     setEditTitle(data.title);
     setEditDesc(data.description_ai);
+    setEditBrand(data.product_brand || '');
     setEditAddress(data.address_override || '');
     setEditSellerAddressId(data.seller_address_id_override || '');
     setEditManagerName(data.manager_name_override || '');
@@ -189,6 +203,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     if (listingId === null) {
       setListing(null);
       setEditing(false);
+      setEditingBrand(false);
       setActiveIdx(0);
       setPublishing(false);
       placementInitRef.current = null;
@@ -219,6 +234,32 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       .then((res) => setCategories(res.data.data ?? res.data))
       .catch(() => setCategories([]));
   }, []);
+
+  useEffect(() => {
+    if (!editingBrand || !listing) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      setBrandOptionsLoading(true);
+      productApi.brandOptions(listing.product_id, editBrand)
+        .then((res) => {
+          if (cancelled) return;
+          const data = res.data.data;
+          setBrandOptions(data.options ?? []);
+          setBrandCategoryScope(data.category_scope ?? null);
+          setAvitoBrandCatalogLoaded(Boolean(data.catalog_loaded));
+        })
+        .catch(() => {
+          if (!cancelled) setBrandOptions([]);
+        })
+        .finally(() => {
+          if (!cancelled) setBrandOptionsLoading(false);
+        });
+    }, 180);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [editingBrand, listing, editBrand]);
 
   // Каскад произвольной глубины: путь от корня до выбранной категории + уровни выбора.
   const categoryById = new Map(categories.map((c) => [c.id, c]));
@@ -350,6 +391,31 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       product_ids: [listing.product_id],
       catalog_category: selected,
     });
+  };
+
+  // Бренд принадлежит товару, поэтому не включаем его в PATCH листинга.
+  // Он загружается вместе с листингом и сохраняется отдельным API товара.
+  const saveBrandIfChanged = async () => {
+    if (!listing || editBrand.trim() === (listing.product_brand || '').trim()) return;
+    const response = await productApi.updateBrand(listing.product_id, editBrand.trim());
+    const brand = response.data.data.brand || '';
+    setListing((current) => current ? { ...current, product_brand: brand } : current);
+    setEditBrand(brand);
+  };
+
+  const handleSaveBrand = async () => {
+    if (!listing) return;
+    setActionLoading('brand');
+    try {
+      await saveBrandIfChanged();
+      setEditingBrand(false);
+      onActionDone();
+      toast.success('Бренд товара сохранён');
+    } catch {
+      toast.error('Не удалось сохранить бренд');
+    } finally {
+      setActionLoading(null);
+    }
   };
 
   const handlePublish = async () => {
@@ -687,6 +753,92 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                 )}
               </div>
 
+              {/* Бренд хранится у товара и используется в выгрузке Avito. */}
+              <div className="space-y-1">
+                <div className="flex items-center justify-between gap-2">
+                  <p className="text-sm text-muted-foreground">Бренд</p>
+                  {!editingBrand && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2"
+                      onClick={() => {
+                        setEditBrand(listing.product_brand || '');
+                        setEditingBrand(true);
+                      }}
+                      disabled={busy}
+                    >
+                      <Pencil className="mr-1 h-3.5 w-3.5" />
+                      Изменить
+                    </Button>
+                  )}
+                </div>
+                {editingBrand ? (
+                  <div className="relative">
+                    <Input
+                      value={editBrand}
+                      onChange={(e) => setEditBrand(e.target.value)}
+                      onFocus={() => setBrandInputFocused(true)}
+                      onBlur={() => setTimeout(() => setBrandInputFocused(false), 150)}
+                      placeholder="Начните вводить бренд"
+                      disabled={busy}
+                    />
+                    {brandInputFocused && (brandOptionsLoading || brandOptions.length > 0) && (
+                      <div className="absolute z-20 mt-1 max-h-52 w-full overflow-y-auto rounded-md border bg-popover p-1 text-sm shadow-md">
+                        {brandOptionsLoading ? (
+                          <p className="px-2 py-1.5 text-muted-foreground">Ищем бренды…</p>
+                        ) : brandOptions.map((option) => (
+                          <button
+                            type="button"
+                            key={`${option.source}-${option.name}`}
+                            className="flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-left hover:bg-muted"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setEditBrand(option.name);
+                              setBrandInputFocused(false);
+                            }}
+                          >
+                            <span>{option.name}</span>
+                            <span className="ml-3 shrink-0 text-xs text-muted-foreground">
+                              {option.source === 'category' ? 'по категории' : option.source === 'avito' ? 'каталог Avito' : 'текущее'}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <p className="font-medium">{listing.product_brand || '—'}</p>
+                )}
+                {editingBrand && (
+                  <div className="flex gap-2 pt-1">
+                    <Button size="sm" onClick={handleSaveBrand} disabled={busy}>
+                      {actionLoading === 'brand' ? 'Сохраняем…' : 'Сохранить бренд'}
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setEditBrand(listing.product_brand || '');
+                        setEditingBrand(false);
+                      }}
+                      disabled={busy}
+                    >
+                      Отмена
+                    </Button>
+                  </div>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  {brandCategoryScope
+                    ? `Сначала показаны бренды для категории «${brandCategoryScope}». `
+                    : ''}
+                  {avitoBrandCatalogLoaded
+                    ? 'При вводе доступны совпадения из каталога Avito.'
+                    : 'Подтягивается из товара и нужен для публикации на Avito.'}
+                </p>
+              </div>
+
               {/* Цена и аккаунт */}
               <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
                 <div className="space-y-1">
@@ -955,7 +1107,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
               <div className="flex flex-col gap-2 pt-2">
                 {editing ? (
                   <>
-                    <Button onClick={handleSaveEdit} disabled={busy} className="w-full">
+                    <Button onClick={handleSaveEdit} disabled={busy || editingBrand} className="w-full">
                       {actionLoading === 'save' ? 'Сохраняем...' : 'Сохранить'}
                     </Button>
                     <Button
@@ -964,6 +1116,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                         setEditing(false);
                         setEditTitle(listing.title);
                         setEditDesc(listing.description_ai);
+                        setEditBrand(listing.product_brand || '');
                         setEditAccountId(String(listing.account_id));
                         setEditPrice(listing.price_on_listing);
                         setEditAdType(listing.ad_type || DEFAULT_AD_TYPE);
@@ -973,7 +1126,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                         setEditContactPhone(listing.contact_phone_override || '');
                         setEditPlacementAddressId(listing.placement_address ? String(listing.placement_address) : '');
                       }}
-                      disabled={busy}
+                      disabled={busy || editingBrand}
                       className="w-full"
                     >
                       Отмена
@@ -981,13 +1134,13 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                   </>
                 ) : (
                   <>
-                    <Button onClick={handleSaveEdit} disabled={busy} className="w-full">
+                    <Button onClick={handleSaveEdit} disabled={busy || editingBrand} className="w-full">
                       {actionLoading === 'save' ? 'Сохраняем...' : 'Сохранить'}
                     </Button>
                     {isReview && (
                       <Button
                         onClick={handleApprove}
-                        disabled={busy}
+                        disabled={busy || editingBrand}
                         className="w-full bg-green-600 hover:bg-green-700 text-white"
                       >
                         <CheckCircle className="mr-2 h-4 w-4" />
@@ -997,7 +1150,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                     {(canPublish || publishing) && (
                       <Button
                         onClick={handlePublish}
-                        disabled={busy || publishing}
+                        disabled={busy || publishing || editingBrand}
                         className="w-full"
                       >
                         {publishing
@@ -1012,7 +1165,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                       <Button
                         variant="secondary"
                         onClick={handleCheckStatus}
-                        disabled={busy}
+                        disabled={busy || editingBrand}
                         className="w-full"
                       >
                         <RefreshCw className="mr-2 h-4 w-4" />
@@ -1023,7 +1176,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                       <Button
                         variant="secondary"
                         onClick={handleRegenerate}
-                        disabled={busy}
+                        disabled={busy || editingBrand}
                         className="w-full"
                       >
                         <RefreshCw className="mr-2 h-4 w-4" />
@@ -1033,7 +1186,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                     <Button
                       variant="outline"
                       onClick={() => setEditing(true)}
-                      disabled={busy}
+                      disabled={busy || editingBrand}
                       className="w-full"
                     >
                       <Pencil className="mr-2 h-4 w-4" />

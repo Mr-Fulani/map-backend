@@ -65,6 +65,7 @@ class ListingSerializer(serializers.ModelSerializer):
     product_id = serializers.IntegerField(source='product.pk', read_only=True)
     product_article = serializers.CharField(source='product.article', read_only=True)
     product_name = serializers.CharField(source='product.name', read_only=True)
+    product_brand = serializers.CharField(source='product.brand', read_only=True)
     account_id = serializers.IntegerField(source='account.pk', read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
@@ -73,7 +74,7 @@ class ListingSerializer(serializers.ModelSerializer):
         model = Listing
         fields = [
             'id', 'status', 'status_display',
-            'product_id', 'product_article', 'product_name', 'account_id', 'account_name',
+            'product_id', 'product_article', 'product_name', 'product_brand', 'account_id', 'account_name',
             'title', 'price_on_listing', 'external_id', 'external_url',
             'ad_type',
             'placement_address',

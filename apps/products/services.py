@@ -289,6 +289,12 @@ class ProductService:
         if existing and existing.sync_excluded:
             return existing, 'unchanged', None
 
+        # Источник не знает бренд, а у товара он есть (дозаполнен тенантом
+        # вручную для Avito) — не затираем пустотой при каждом импорте.
+        if existing and not defaults['brand'] and existing.brand:
+            defaults['brand'] = existing.brand
+            defaults['brand_ref'] = existing.brand_ref
+
         product, created = Product.objects.update_or_create(**lookup, defaults=defaults)
         if created:
             return product, 'created', None

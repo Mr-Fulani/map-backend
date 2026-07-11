@@ -19,12 +19,14 @@ import {
   Loader2,
   Package,
   ImageOff,
+  Pencil,
   Search,
   Crown,
   Check,
   X,
   Trash2,
 } from 'lucide-react';
+import { Input } from '@/components/ui/input';
 
 function isProductsListHref(value: string | null): value is string {
   return value === '/dashboard/products' || Boolean(value?.startsWith('/dashboard/products?'));
@@ -213,6 +215,10 @@ export default function ProductDetailPage() {
   const [imagesLoading, setImagesLoading] = useState(false);
   const [imageActionId, setImageActionId] = useState<number | null>(null);
 
+  const [editingBrand, setEditingBrand] = useState(false);
+  const [brandValue, setBrandValue] = useState('');
+  const [savingBrand, setSavingBrand] = useState(false);
+
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -241,6 +247,20 @@ export default function ProductDetailPage() {
     setProduct(nextProduct);
     setCategoryAssignValue(nextProduct.catalog_category?.id ? String(nextProduct.catalog_category.id) : '');
   }, [id]);
+
+  async function saveBrand() {
+    setSavingBrand(true);
+    try {
+      await productApi.updateBrand(Number(id), brandValue.trim());
+      await loadProduct();
+      setEditingBrand(false);
+      toast.success('Бренд сохранён — импорт из источника его не перезапишет');
+    } catch {
+      toast.error('Не удалось сохранить бренд');
+    } finally {
+      setSavingBrand(false);
+    }
+  }
 
   useEffect(() => {
     loadProduct()
@@ -556,7 +576,46 @@ export default function ProductDetailPage() {
             <CardContent>
               <Separator className="mb-4" />
               <div className="divide-y">
-                <Field label="Бренд" value={product.brand} />
+                <div className="flex items-center justify-between gap-4 py-2">
+                  <span className="text-sm text-muted-foreground">Бренд</span>
+                  {editingBrand ? (
+                    <div className="flex items-center gap-2">
+                      <Input
+                        className="h-8 w-48"
+                        value={brandValue}
+                        onChange={(e) => setBrandValue(e.target.value)}
+                        placeholder="Например: Hyundai-KIA"
+                        disabled={savingBrand}
+                        autoFocus
+                      />
+                      <Button size="sm" className="h-8" onClick={saveBrand} disabled={savingBrand}>
+                        {savingBrand ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8"
+                        onClick={() => setEditingBrand(false)}
+                        disabled={savingBrand}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <span className="flex items-center gap-2 text-right text-sm font-medium">
+                      {product.brand || '—'}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 w-7 p-0"
+                        title="Изменить бренд (нужен для публикации на Avito)"
+                        onClick={() => { setBrandValue(product.brand || ''); setEditingBrand(true); }}
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                    </span>
+                  )}
+                </div>
                 <Field label="Категория 1С" value={product.category_1c} />
                 <Field label="Состояние" value={CONDITION_LABELS[product.condition] ?? product.condition} />
                 <Field label="Склад" value={product.warehouse} />

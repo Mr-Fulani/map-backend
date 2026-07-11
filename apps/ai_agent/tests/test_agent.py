@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import anthropic
 import pytest
 
+from apps.ai_agent.prompts import SYSTEM_PROMPT
 from apps.ai_agent.services import AICreditsExhausted, DescriptionAgent
 from apps.ai_agent.tasks import generate_description_task
 from apps.ai_agent.validators import (
@@ -118,6 +119,17 @@ class TestValidators:
 
 @pytest.mark.django_db
 class TestDescriptionAgent:
+    def test_prompt_and_input_exclude_sales_terms(self):
+        tenant = make_tenant('agent-no-sales-co')
+        product = make_product(tenant)
+
+        message = DescriptionAgent()._build_message(product)
+
+        assert 'Цена:' not in message
+        assert 'Остаток:' not in message
+        assert 'Условия продажи' not in SYSTEM_PROMPT
+        assert 'Не указывай цену' in SYSTEM_PROMPT
+
     def test_generate_returns_valid_structure(self):
         tenant = make_tenant('gen-co')
         product = make_product(tenant)
