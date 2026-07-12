@@ -118,11 +118,14 @@ class ListingDetailSerializer(ListingSerializer):
     catalog_category = serializers.SerializerMethodField()
     base_price = serializers.DecimalField(source='product.price', max_digits=12, decimal_places=2, read_only=True)
     avito_field_warnings = serializers.SerializerMethodField()
+    avito_brand_valid = serializers.SerializerMethodField()
+    avito_brand_catalog_synced_at = serializers.SerializerMethodField()
 
     class Meta(ListingSerializer.Meta):
         fields = ListingSerializer.Meta.fields + [
             'description_ai', 'ai_confidence', 'ai_confidence_display', 'images',
             'catalog_category', 'margin_pct', 'base_price', 'avito_field_warnings',
+            'avito_brand_valid', 'avito_brand_catalog_synced_at',
         ]
         read_only_fields = fields
 
@@ -133,6 +136,15 @@ class ListingDetailSerializer(ListingSerializer):
             return avito_field_warnings(obj)
         except Exception:
             return []
+
+    def get_avito_brand_valid(self, obj) -> bool:
+        from apps.marketplaces.adapters.avito.feed_builder import unknown_brand_details
+        return unknown_brand_details(obj) is None
+
+    def get_avito_brand_catalog_synced_at(self, obj):
+        from apps.marketplaces.adapters.avito.brand_catalog import catalog_status
+        synced_at = catalog_status()['synced_at']
+        return synced_at.isoformat() if synced_at else None
 
     def get_catalog_category(self, obj):
         """Текущая категория каталога товара (для перепроверки/смены в дровере)."""

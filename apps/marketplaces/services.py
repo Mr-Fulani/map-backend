@@ -119,6 +119,12 @@ class ListingService:
                 f'Одобрить можно только листинг в статусе requires_review, '
                 f'текущий статус: {listing.status}'
             )
+        from apps.marketplaces.adapters.avito.feed_builder import unknown_brand_details
+        if unknown_brand_details(listing) is not None:
+            raise InvalidListingStatus(
+                'Неизвестный бренд нельзя отправить в Avito. Выберите значение из '
+                'справочника Avito или запросите добавление бренда в поддержке Avito.'
+            )
         listing.status = Listing.STATUS_QUEUED
         listing.save(update_fields=['status'])
 

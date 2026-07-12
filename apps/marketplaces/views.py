@@ -442,6 +442,31 @@ class ListingApproveView(APIView):
 
 
 @extend_schema(tags=['Listings'])
+class ListingRefreshBrandCatalogView(APIView):
+    """POST — внепланово обновить справочник Avito и повторно проверить бренд."""
+
+    def post(self, request, pk):
+        try:
+            listing = ListingService.get_for_tenant(pk, request.tenant)
+        except ListingNotFound:
+            return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            from apps.marketplaces.adapters.avito.brand_sync import sync_brand_catalog
+            sync_brand_catalog(listing.account)
+        except Exception as exc:
+            return Response({
+                'status': 'error',
+                'code': 'catalog_sync_failed',
+                'message': f'Не удалось обновить справочник Avito: {exc}',
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        listing = ListingService.get_for_tenant(pk, request.tenant)
+        return Response({
+            'status': 'ok',
+            'data': ListingDetailSerializer(listing, context={'request': request}).data,
+        })
+
+
+@extend_schema(tags=['Listings'])
 class ListingPublishView(APIView):
     """POST /api/v1/listings/{id}/publish/ — опубликовать черновик/отклонённый/архивный листинг."""
 

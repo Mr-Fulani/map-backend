@@ -300,6 +300,7 @@ export const listingApi = {
   list: (params?: Record<string, unknown>) => api.get('/listings/', { params }),
   get: (id: number) => api.get(`/listings/${id}/`),
   approve: (id: number) => api.post(`/listings/${id}/approve/`),
+  refreshBrandCatalog: (id: number) => api.post(`/listings/${id}/refresh-brand-catalog/`),
   publish: (id: number) => api.post(`/listings/${id}/publish/`),
   archive: (id: number) => api.post(`/listings/${id}/archive/`),
   delete: (id: number) => api.post(`/listings/${id}/delete/`),

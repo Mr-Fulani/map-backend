@@ -174,6 +174,7 @@ def _validate_feed_batch(listings: list) -> list:
         product_has_oem, unknown_brand_details,
     )
     valid = []
+    catalog_refresh_attempted = False
     for item in listings:
         manager_name, contact_phone = get_contact_fields(item)
         if not manager_name or not contact_phone:
@@ -196,30 +197,36 @@ def _validate_feed_batch(listings: list) -> list:
             )
             continue
         # Бренд, которого нет в каталоге Avito → на проверку тенанту, остальная
-        # партия публикуется без задержки. Если тенант уже видел это предупреждение
-        # и осознанно нажал «Одобрить и опубликовать» (причина не изменилась) —
-        # пропускаем в фид: финальный арбитр Avito, наш каталог может отставать.
+        # партия публикуется без задержки. Устаревший справочник один раз за партию
+        # обновляем вне расписания и затем проверяем бренд повторно.
         unknown_brand = unknown_brand_details(item)
+        if unknown_brand is not None and not catalog_refresh_attempted:
+            from apps.marketplaces.adapters.avito.brand_catalog import catalog_status
+            if catalog_status()['stale']:
+                catalog_refresh_attempted = True
+                try:
+                    from apps.marketplaces.adapters.avito.brand_sync import sync_brand_catalog
+                    sync_brand_catalog(item.account)
+                except Exception as exc:
+                    _write_log(
+                        item.tenant, 'listing_publish', 'warn',
+                        f'Не удалось обновить справочник брендов Avito: {exc}. '
+                        'Используется последняя рабочая версия.',
+                        listing=item,
+                    )
+                unknown_brand = unknown_brand_details(item)
         if unknown_brand is not None:
             brand, suggestions = unknown_brand
             marker = f'Производителя «{brand}» нет в каталоге Avito'
-            if (item.rejection_reason or '').startswith(marker):
-                _write_log(
-                    item.tenant, 'listing_publish', 'warn',
-                    f'«{item.title or item.product.name}»: бренд «{brand}» не найден в '
-                    f'каталоге Avito, но объявление одобрено тенантом — отправляем как есть.',
-                    listing=item,
-                )
-            else:
-                hint = f' Возможно, вы имели в виду: {", ".join(suggestions)}.' if suggestions else ''
-                _send_listing_to_review(
-                    item,
-                    f'{marker} — объявление не пройдёт модерацию, поле обязательное. '
-                    f'Исправьте бренд в карточке товара на каталожное написание вручную.{hint} '
-                    f'Затем нажмите «Одобрить и опубликовать». Остальные объявления партии '
-                    f'публикуются без задержки.',
-                )
-                continue
+            hint = f' Возможно, вы имели в виду: {", ".join(suggestions)}.' if suggestions else ''
+            _send_listing_to_review(
+                item,
+                f'{marker} — объявление не пройдёт модерацию, поле обязательное. '
+                f'Выберите бренд из справочника Avito.{hint} Если бренда действительно '
+                f'нет — запросите его добавление в поддержке Avito. Остальные объявления '
+                f'партии публикуются без задержки.',
+            )
+            continue
         # Под-вид детали (Подкатегория 3) обязателен для листьев Двигатель/Кузов/
         # Трансмиссия — без него Avito отклоняет объявление. Отсекаем сразу
         # с понятной причиной, а не постфактум из отчёта автозагрузки.
@@ -262,6 +269,14 @@ def _validate_feed_batch(listings: list) -> list:
             )
         valid.append(item)
     return valid
+
+
+@shared_task(name='apps.marketplaces.tasks.sync_avito_brand_catalog')
+def sync_avito_brand_catalog_task():
+    """Обновляет общий справочник; при ошибке старая версия остаётся в БД."""
+    from apps.marketplaces.adapters.avito.brand_sync import sync_brand_catalog
+    catalog = sync_brand_catalog()
+    return {'count': len(catalog.brands), 'synced_at': catalog.synced_at.isoformat()}
 
 
 @shared_task(bind=True, max_retries=6, queue='avito_publish')

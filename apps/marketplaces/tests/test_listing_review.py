@@ -113,6 +113,18 @@ class TestListingServiceApprove:
         with pytest.raises(ListingNotFound):
             ListingService.approve(listing.pk, tenant_b)
 
+    def test_approve_blocks_unknown_avito_brand(self):
+        tenant = make_tenant('approve-unknown-brand-co')
+        listing = make_listing(tenant)
+        listing.product.brand = 'НесуществующийБрендXYZ'
+        listing.product.save(update_fields=['brand'])
+
+        with pytest.raises(InvalidListingStatus, match='Неизвестный бренд'):
+            ListingService.approve(listing.pk, tenant)
+
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_REQUIRES_REVIEW
+
 
 @pytest.mark.django_db
 class TestListingServiceRegenerate:
