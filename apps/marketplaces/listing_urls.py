@@ -11,6 +11,7 @@ from apps.marketplaces.views import (
     ListingListView,
     ListingPublishView,
     ListingRegenerateView,
+    ListingRefreshBrandCatalogView,
 )
 
 urlpatterns = [
@@ -19,6 +20,11 @@ urlpatterns = [
     path('bulk-placement/', ListingBulkPlacementView.as_view(), name='listing-bulk-placement'),
     path('<int:pk>/', ListingDetailView.as_view(), name='listing-detail'),
     path('<int:pk>/approve/', ListingApproveView.as_view(), name='listing-approve'),
+    path(
+        '<int:pk>/refresh-brand-catalog/',
+        ListingRefreshBrandCatalogView.as_view(),
+        name='listing-refresh-brand-catalog',
+    ),
     path('<int:pk>/publish/', ListingPublishView.as_view(), name='listing-publish'),
     path('<int:pk>/archive/', ListingArchiveView.as_view(), name='listing-archive'),
     path('<int:pk>/delete/', ListingDeleteView.as_view(), name='listing-delete'),

@@ -61,6 +61,8 @@ interface ListingDetail {
   bulk_contact_phone: string;
   rejection_reason: string;
   avito_field_warnings?: string[];
+  avito_brand_valid: boolean;
+  avito_brand_catalog_synced_at: string | null;
   images: ListingImage[];
   catalog_category: {
     id: number;
@@ -154,6 +156,8 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [brandInputFocused, setBrandInputFocused] = useState(false);
   const [brandCategoryScope, setBrandCategoryScope] = useState<string | null>(null);
   const [avitoBrandCatalogLoaded, setAvitoBrandCatalogLoaded] = useState(false);
+  const [avitoBrandCatalogSyncedAt, setAvitoBrandCatalogSyncedAt] = useState<string | null>(null);
+  const [avitoBrandCatalogStale, setAvitoBrandCatalogStale] = useState(false);
   const [editAddress, setEditAddress] = useState('');
   const [editSellerAddressId, setEditSellerAddressId] = useState('');
   const [editManagerName, setEditManagerName] = useState('');
@@ -247,6 +251,8 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
           setBrandOptions(data.options ?? []);
           setBrandCategoryScope(data.category_scope ?? null);
           setAvitoBrandCatalogLoaded(Boolean(data.catalog_loaded));
+          setAvitoBrandCatalogSyncedAt(data.catalog_synced_at ?? null);
+          setAvitoBrandCatalogStale(Boolean(data.catalog_stale));
         })
         .catch(() => {
           if (!cancelled) setBrandOptions([]);
@@ -408,11 +414,29 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     setActionLoading('brand');
     try {
       await saveBrandIfChanged();
+      const refreshed = await listingApi.get(listing.id);
+      applyListingState(refreshed.data.data);
       setEditingBrand(false);
       onActionDone();
       toast.success('Бренд товара сохранён');
     } catch {
       toast.error('Не удалось сохранить бренд');
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const handleRefreshBrandCatalog = async () => {
+    if (!listing) return;
+    setActionLoading('brand-catalog');
+    try {
+      const response = await listingApi.refreshBrandCatalog(listing.id);
+      applyListingState(response.data.data);
+      toast.success(response.data.data.avito_brand_valid
+        ? 'Справочник обновлён — бренд найден в Avito'
+        : 'Справочник обновлён, но бренд по-прежнему не найден');
+    } catch {
+      toast.error('Не удалось обновить справочник Avito. Используется последняя рабочая версия');
     } finally {
       setActionLoading(null);
     }
@@ -837,6 +861,13 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                     ? 'При вводе доступны совпадения из каталога Avito.'
                     : 'Подтягивается из товара и нужен для публикации на Avito.'}
                 </p>
+                {(avitoBrandCatalogSyncedAt || listing.avito_brand_catalog_synced_at) && (
+                  <p className="text-xs text-muted-foreground">
+                    Справочник Avito обновлён{' '}
+                    {new Date(avitoBrandCatalogSyncedAt || listing.avito_brand_catalog_synced_at!).toLocaleDateString('ru-RU')}
+                    {avitoBrandCatalogStale ? ' — требуется обновление' : ''}.
+                  </p>
+                )}
               </div>
 
               {/* Цена и аккаунт */}
@@ -1137,7 +1168,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                     <Button onClick={handleSaveEdit} disabled={busy || editingBrand} className="w-full">
                       {actionLoading === 'save' ? 'Сохраняем...' : 'Сохранить'}
                     </Button>
-                    {isReview && (
+                    {isReview && listing.avito_brand_valid && (
                       <Button
                         onClick={handleApprove}
                         disabled={busy || editingBrand}
@@ -1146,6 +1177,24 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                         <CheckCircle className="mr-2 h-4 w-4" />
                         {actionLoading === 'approve' ? 'Публикация...' : 'Одобрить и опубликовать'}
                       </Button>
+                    )}
+                    {isReview && !listing.avito_brand_valid && (
+                      <div className="space-y-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="w-full"
+                          onClick={handleRefreshBrandCatalog}
+                          disabled={busy || editingBrand}
+                        >
+                          <RefreshCw className={`mr-2 h-4 w-4 ${actionLoading === 'brand-catalog' ? 'animate-spin' : ''}`} />
+                          Обновить справочник и проверить снова
+                        </Button>
+                        <p className="text-xs text-amber-700">
+                          Публикация заблокирована: выберите бренд из справочника Avito. Если бренда нет,
+                          запросите его добавление в поддержке Avito.
+                        </p>
+                      </div>
                     )}
                     {(canPublish || publishing) && (
                       <Button

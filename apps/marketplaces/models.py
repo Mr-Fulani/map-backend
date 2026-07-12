@@ -26,6 +26,28 @@ class AvitoCategory(models.Model):
         return f'{self.name} (id={self.avito_id})'
 
 
+class AvitoBrandCatalog(models.Model):
+    """Последняя успешно проверенная версия справочника Brand из Avito.
+
+    Запись глобальная для платформы (singleton с pk=1): справочник Avito не
+    зависит от тенанта. Хранение в БД делает одну версию доступной Django и
+    всем Celery-контейнерам и сохраняет её между деплоями.
+    """
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    source_node = models.CharField(max_length=100)
+    field_id = models.PositiveIntegerField()
+    brands = models.JSONField(default=list)
+    synced_at = models.DateTimeField()
+
+    class Meta:
+        verbose_name = 'Справочник брендов Avito'
+        verbose_name_plural = 'Справочник брендов Avito'
+
+    def __str__(self):
+        return f'Avito Brand: {len(self.brands)} значений ({self.synced_at:%d.%m.%Y})'
+
+
 class CategoryMapping(TimestampedModel):
     """Маппинг категорий источника данных на категории Avito."""
 

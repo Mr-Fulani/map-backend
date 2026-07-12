@@ -770,19 +770,20 @@ class TestPublishListingTask:
         bad = make_listing(tenant, bad_product, account)
         good = make_listing(tenant, good_product, account)
 
-        with patch('apps.marketplaces.tasks._notify_error') as mock_notify:
+        with patch('apps.marketplaces.tasks._notify_error') as mock_notify, \
+             patch('apps.marketplaces.adapters.avito.brand_catalog.catalog_status',
+                   return_value={'stale': False}):
             result = _validate_feed_batch([bad, good])
 
         assert result == [good]
         bad.refresh_from_db()
         assert bad.status == Listing.STATUS_REQUIRES_REVIEW
         assert 'нет в каталоге Avito' in bad.rejection_reason
-        assert 'Одобрить и опубликовать' in bad.rejection_reason
+        assert 'Выберите бренд из справочника Avito' in bad.rejection_reason
         mock_notify.assert_called_once()
 
-    def test_acknowledged_unknown_brand_passes_to_feed(self):
-        """Тенант осознанно одобрил листинг с тем же предупреждением → пропускаем
-        в фид (финальный арбитр — Avito, локальный каталог может отставать)."""
+    def test_acknowledged_unknown_brand_remains_blocked(self):
+        """Неизвестный бренд нельзя протолкнуть повторным одобрением."""
         from apps.marketplaces.tasks import _validate_feed_batch
         tenant = make_tenant('brand-ack-co')
         account = make_account(tenant)
@@ -795,11 +796,14 @@ class TestPublishListingTask:
         )
         listing.save(update_fields=['rejection_reason'])
 
-        result = _validate_feed_batch([listing])
+        with patch('apps.marketplaces.adapters.avito.brand_catalog.catalog_status',
+                   return_value={'stale': False}), \
+             patch('apps.marketplaces.tasks._notify_error'):
+            result = _validate_feed_batch([listing])
 
-        assert result == [listing]
+        assert result == []
         listing.refresh_from_db()
-        assert listing.status != Listing.STATUS_REQUIRES_REVIEW
+        assert listing.status == Listing.STATUS_REQUIRES_REVIEW
 
     def test_changed_brand_is_rechecked_after_review(self):
         """Тенант исправил бренд на другой, тоже неизвестный → новая проверка
@@ -814,7 +818,9 @@ class TestPublishListingTask:
         listing.rejection_reason = 'Производителя «НесуществующийБрендХYZ» нет в каталоге Avito — старое.'
         listing.save(update_fields=['rejection_reason'])
 
-        with patch('apps.marketplaces.tasks._notify_error'):
+        with patch('apps.marketplaces.tasks._notify_error'), \
+             patch('apps.marketplaces.adapters.avito.brand_catalog.catalog_status',
+                   return_value={'stale': False}):
             result = _validate_feed_batch([listing])
 
         assert result == []

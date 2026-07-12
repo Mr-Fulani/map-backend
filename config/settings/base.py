@@ -246,6 +246,11 @@ CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Europe/Moscow'
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 CELERY_BEAT_SCHEDULE = {
+    'sync-avito-brand-catalog-72h': {
+        'task': 'apps.marketplaces.tasks.sync_avito_brand_catalog',
+        'schedule': 60 * 60 * 72,
+        'options': {'queue': 'avito_update'},
+    },
     'cleanup-old-logs-daily': {
         'task': 'apps.notifications.tasks.cleanup_old_logs',
         'schedule': 60 * 60 * 24,

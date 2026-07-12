@@ -299,16 +299,25 @@ class ProductBrandOptionsView(APIView):
         if query:
             brands = brands.filter(name__icontains=query)
         category_options = list(brands.order_by('name').values_list('name', flat=True).distinct()[:30])
+        if product.condition == 'new':
+            from apps.marketplaces.adapters.avito.brand_catalog import lookup_brand
+            category_options = [name for name in category_options if lookup_brand(name)['known']]
 
         # Справочник Avito плоский: текущий endpoint source_node не содержит
         # привязки значений Brand к подкатегориям. Добавляем только совпадения по
         # введённому тексту, чтобы дать валидные варианты и не отдавать 11k значений.
         avito_options = []
         catalog_loaded = False
+        catalog_synced_at = None
+        catalog_stale = True
+        from apps.marketplaces.adapters.avito.brand_catalog import catalog_status
+        avito_catalog_status = catalog_status()
+        catalog_loaded = avito_catalog_status['loaded']
+        catalog_synced_at = avito_catalog_status['synced_at']
+        catalog_stale = avito_catalog_status['stale']
         if query:
             from apps.marketplaces.adapters.avito.brand_catalog import _catalog_by_normalized_name
             catalog = _catalog_by_normalized_name()
-            catalog_loaded = bool(catalog)
             normalized_query = ''.join(char for char in query.lower() if char.isalnum())
             avito_options = [
                 name for normalized, name in catalog.items()
@@ -332,6 +341,8 @@ class ProductBrandOptionsView(APIView):
             'data': {
                 'options': options,
                 'catalog_loaded': catalog_loaded,
+                'catalog_synced_at': catalog_synced_at.isoformat() if catalog_synced_at else None,
+                'catalog_stale': catalog_stale,
                 'category_scope': root_domain.name if domain_enabled else None,
             },
         })
