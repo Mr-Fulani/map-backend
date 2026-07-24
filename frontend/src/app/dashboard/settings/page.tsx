@@ -41,7 +41,37 @@ interface Account {
   default_contact_phone: string;
   autoload_active: boolean | null;
   autoload_checked_at: string | null;
+  avito_status: AvitoAccountHealth | null;
   created_at: string;
+}
+
+interface AvitoAccountHealth {
+  connection_status: 'unknown' | 'connected' | 'auth_error' | 'unavailable';
+  autoload_status: 'unknown' | 'enabled' | 'disabled' | 'missing' | 'forbidden';
+  feed_configured: boolean | null;
+  profile_checked_at: string | null;
+  profile_stale: boolean;
+  tariff_status: 'unknown' | 'active' | 'inactive' | 'not_found' | 'unavailable';
+  tariff_name: string;
+  tariff_started_at: string | null;
+  tariff_ends_at: string | null;
+  days_left: number | null;
+  tariff_price: string | null;
+  placements_remaining: number | null;
+  placements_total: number | null;
+  scheduled_tariff: { name?: string; starts_at?: string | null; price?: string | null };
+  tariff_checked_at: string | null;
+  tariff_stale: boolean;
+  last_attempted_at: string | null;
+  last_error_code: string;
+  last_error_message: string;
+}
+
+interface AutoloadCheck {
+  activated: boolean;
+  feed_url: string;
+  stale?: boolean;
+  status?: AvitoAccountHealth;
 }
 
 interface PlacementAddress {
@@ -272,7 +302,7 @@ export default function SettingsPage() {
   const [togglingAccountId, setTogglingAccountId] = useState<number | null>(null);
   const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
   const [editAccountName, setEditAccountName] = useState('');
-  const [autoloadStatus, setAutoloadStatus] = useState<Record<number, { activated: boolean; feed_url: string } | null>>({});
+  const [autoloadStatus, setAutoloadStatus] = useState<Record<number, AutoloadCheck | null>>({});
   const [checkingAutoloadId, setCheckingAutoloadId] = useState<number | null>(null);
   const [copiedFeedId, setCopiedFeedId] = useState<number | null>(null);
   const [savingPlacementAccountId, setSavingPlacementAccountId] = useState<number | null>(null);
@@ -416,8 +446,15 @@ export default function SettingsPage() {
         setAutoloadStatus((prev) => {
           const seeded = { ...prev };
           for (const acc of list) {
-            if (acc.autoload_active !== null && acc.autoload_active !== undefined) {
-              seeded[acc.id] = { activated: acc.autoload_active, feed_url: '' };
+            if (acc.avito_status || (acc.autoload_active !== null && acc.autoload_active !== undefined)) {
+              seeded[acc.id] = {
+                activated: acc.avito_status
+                  ? acc.avito_status.autoload_status === 'enabled'
+                  : Boolean(acc.autoload_active),
+                feed_url: '',
+                stale: acc.avito_status?.profile_stale,
+                status: acc.avito_status ?? undefined,
+              };
             }
           }
           return seeded;
@@ -726,8 +763,9 @@ export default function SettingsPage() {
     try {
       const { data } = await accountApi.checkAutoload(id);
       setAutoloadStatus((prev) => ({ ...prev, [id]: data }));
-      if (data.activated) toast.success('Автозагрузка активирована!');
-      else toast.error('Автозагрузка ещё не активирована');
+      if (data.stale) toast.warning('Avito временно недоступен — показаны последние данные');
+      else if (data.activated) toast.success('Данные Avito обновлены');
+      else toast.error('Автозагрузка не активирована');
     } catch {
       toast.error('Не удалось проверить статус');
     } finally {
@@ -1403,7 +1441,7 @@ export default function SettingsPage() {
                       <div>
                         <p className="font-medium text-amber-600">Требуется Avito Автозагрузка</p>
                         <p className="text-xs text-muted-foreground mt-0.5">
-                          Для публикации объявлений через API нужна платная услуга Avito Автозагрузка (3 000 ₽/мес).
+                          Для публикации объявлений через API нужен активный тариф Avito с Автозагрузкой.
                           Активируйте её в{' '}
                           <a
                             href="https://www.avito.ru/autoload/settings"
@@ -1492,6 +1530,7 @@ export default function SettingsPage() {
                 <div className="space-y-3">
                   {accounts.map((acc) => {
                     const al = autoloadStatus[acc.id];
+                    const health = al?.status ?? acc.avito_status;
                     const accAddresses = placementAddresses.filter((item) => item.account === acc.id && item.is_active);
                     const addressDraft = addressDrafts[acc.id] || {
                       name: '',
@@ -1567,9 +1606,16 @@ export default function SettingsPage() {
 
                       {/* Статус Avito Автозагрузки */}
                       {al?.activated ? (
-                        <div className="flex items-center gap-2 rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-sm">
-                          <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
-                          <span className="text-green-600 font-medium">Автозагрузка активирована</span>
+                        <div className="rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-sm">
+                          <div className="flex items-center gap-2">
+                            <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
+                            <span className="font-medium text-green-600">Автозагрузка активирована</span>
+                          </div>
+                          {health?.feed_configured === false && (
+                            <p className="mt-1 pl-6 text-xs text-amber-600">
+                              Фид MAP не найден в профиле Автозагрузки.
+                            </p>
+                          )}
                         </div>
                       ) : (
                         <div className="rounded-md border border-amber-500/20 bg-amber-500/5 p-3 space-y-2">
@@ -1580,7 +1626,7 @@ export default function SettingsPage() {
                                 {al === undefined ? 'Статус Автозагрузки неизвестен' : 'Автозагрузка не активирована'}
                               </p>
                               <p className="text-xs text-muted-foreground mt-0.5">
-                                Для публикации объявлений нужно активировать Avito Автозагрузку (3 000 ₽/мес).
+                                Для публикации объявлений нужно активировать тариф Avito с Автозагрузкой.
                               </p>
                             </div>
                           </div>
@@ -1616,22 +1662,88 @@ export default function SettingsPage() {
                               </div>
                             )}
                           </div>
-                          <div className="flex gap-2 sm:pl-6">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              className="h-7 text-xs"
-                              onClick={() => checkAutoloadStatus(acc.id)}
-                              disabled={checkingAutoloadId === acc.id}
+                        </div>
+                      )}
+
+                      {health && (
+                        <div className="rounded-md border bg-muted/20 p-3 text-sm">
+                          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                            <div className="space-y-1">
+                              <p className="font-medium">
+                                {health.tariff_status === 'active'
+                                  ? health.tariff_name || 'Активный тариф Avito'
+                                  : health.tariff_status === 'inactive'
+                                    ? 'Тариф Avito неактивен'
+                                    : health.tariff_status === 'not_found'
+                                      ? 'Avito не предоставил данные тарифа'
+                                      : 'Данные тарифа ещё не получены'}
+                              </p>
+                              {health.tariff_ends_at && (
+                                <p className={health.days_left !== null && health.days_left <= 7
+                                  ? 'text-xs font-medium text-amber-600'
+                                  : 'text-xs text-muted-foreground'}
+                                >
+                                  До {new Date(health.tariff_ends_at).toLocaleDateString('ru-RU')}
+                                  {health.days_left !== null ? ` · осталось ${health.days_left} дн.` : ''}
+                                </p>
+                              )}
+                              {health.placements_remaining !== null && health.placements_total !== null && (
+                                <p className="text-xs text-muted-foreground">
+                                  Размещений осталось: {health.placements_remaining.toLocaleString('ru-RU')}
+                                  {' '}из {health.placements_total.toLocaleString('ru-RU')}
+                                </p>
+                              )}
+                              {health.tariff_price && (
+                                <p className="text-xs text-muted-foreground">
+                                  Стоимость тарифа: {Number(health.tariff_price).toLocaleString('ru-RU')} ₽
+                                </p>
+                              )}
+                              {health.scheduled_tariff?.name && (
+                                <p className="text-xs text-muted-foreground">
+                                  Следующий: {health.scheduled_tariff.name}
+                                </p>
+                              )}
+                              {(health.profile_stale || health.tariff_stale) && (
+                                <p className="text-xs text-amber-600">
+                                  Данные устарели — выполните повторную проверку.
+                                </p>
+                              )}
+                              {health.last_error_message && (
+                                <p className="text-xs text-amber-600">{health.last_error_message}</p>
+                              )}
+                              {health.last_attempted_at && (
+                                <p className="text-xs text-muted-foreground">
+                                  Проверено {new Date(health.last_attempted_at).toLocaleString('ru-RU')}
+                                </p>
+                              )}
+                            </div>
+                            <a
+                              href="https://www.avito.ru/paid-services/listing-fees"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex shrink-0 items-center gap-1 text-xs text-primary hover:underline"
                             >
-                              {checkingAutoloadId === acc.id
-                                ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
-                                : null}
-                              {al === undefined ? 'Проверить статус' : 'Проверить снова'}
-                            </Button>
+                              Управление тарифом
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
                           </div>
                         </div>
                       )}
+
+                      <div className="flex">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => checkAutoloadStatus(acc.id)}
+                          disabled={checkingAutoloadId === acc.id}
+                        >
+                          {checkingAutoloadId === acc.id
+                            ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                            : null}
+                          {al === undefined ? 'Проверить Avito' : 'Обновить данные Avito'}
+                        </Button>
+                      </div>
 
                       <div className="rounded-md border bg-muted/20 p-3">
                         <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
