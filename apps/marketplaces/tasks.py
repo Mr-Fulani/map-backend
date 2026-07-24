@@ -863,7 +863,7 @@ def fetch_stats_for_account_task(self, account_id: int, date_from_str: str, date
 
 
 @shared_task(bind=True, max_retries=3, queue='avito_publish')
-def setup_autoload_profile_task(self, account_id: int):
+def setup_autoload_profile_task(self, account_id: int, tenant_id: int):
     """
     Регистрирует feed URL тенанта в профиле Avito Autoload.
 
@@ -875,7 +875,10 @@ def setup_autoload_profile_task(self, account_id: int):
     from apps.tenants.models import TenantUser
 
     try:
-        account = MarketplaceAccount.objects.select_related('tenant').get(pk=account_id)
+        account = MarketplaceAccount.objects.select_related('tenant').get(
+            pk=account_id,
+            tenant_id=tenant_id,
+        )
     except MarketplaceAccount.DoesNotExist:
         return
 
@@ -889,9 +892,60 @@ def setup_autoload_profile_task(self, account_id: int):
 
     try:
         AvitoAdapter(account).setup_autoload_profile(report_email)
+        from apps.marketplaces.services import AvitoAccountStatusService
+        AvitoAccountStatusService.refresh(account)
         _write_log(
             account.tenant, 'autoload_profile_setup', 'ok',
             f'Autoload профиль Avito настроен для {account.name}',
         )
     except Exception as exc:
         raise self.retry(exc=exc, countdown=backoff(self.request.retries))
+
+
+@shared_task(queue='avito_update')
+def refresh_avito_account_statuses():
+    """Ставит проверку состояния для всех активных Avito-аккаунтов."""
+    from apps.marketplaces.models import MarketplaceAccount
+    from apps.tenants.models import Tenant
+
+    queued = 0
+    tenant_ids = Tenant.objects.filter(is_active=True).values_list('pk', flat=True)
+    for tenant_id in tenant_ids.iterator():
+        accounts = MarketplaceAccount.objects.filter(
+            tenant_id=tenant_id,
+            marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+            is_active=True,
+        ).values_list('pk', flat=True)
+        for account_id in accounts.iterator():
+            refresh_avito_account_status_task.delay(account_id, tenant_id)
+            queued += 1
+    return {'queued': queued}
+
+
+@shared_task(queue='avito_update')
+def refresh_avito_account_status_task(account_id: int, tenant_id: int):
+    """Идемпотентно обновляет один tenant-scoped снимок состояния Avito."""
+    from apps.marketplaces.models import MarketplaceAccount
+    from apps.marketplaces.services import AvitoAccountStatusService
+
+    lock_key = f'avito:account-status:{tenant_id}:{account_id}'
+    lock = cache.lock(lock_key, timeout=120)
+    if not lock.acquire(blocking=False):
+        return {'status': 'locked'}
+    try:
+        try:
+            account = MarketplaceAccount.objects.select_related('tenant').get(
+                pk=account_id,
+                tenant_id=tenant_id,
+                marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+            )
+        except MarketplaceAccount.DoesNotExist:
+            return {'status': 'not_found'}
+        status_obj = AvitoAccountStatusService.refresh(account)
+        return {
+            'status': 'ok',
+            'autoload_status': status_obj.autoload_status,
+            'tariff_status': status_obj.tariff_status,
+        }
+    finally:
+        lock.release()

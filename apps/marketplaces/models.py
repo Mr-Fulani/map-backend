@@ -117,6 +117,121 @@ class MarketplaceAccount(TimestampedModel):
         return f'{self.tenant.slug} / {self.name}'
 
 
+class AvitoAccountStatus(TimestampedModel):
+    """Последний подтверждённый снимок подключения и тарифа Avito-аккаунта."""
+
+    CONNECTION_UNKNOWN = 'unknown'
+    CONNECTION_CONNECTED = 'connected'
+    CONNECTION_AUTH_ERROR = 'auth_error'
+    CONNECTION_UNAVAILABLE = 'unavailable'
+    CONNECTION_CHOICES = [
+        (CONNECTION_UNKNOWN, 'Не проверено'),
+        (CONNECTION_CONNECTED, 'Подключено'),
+        (CONNECTION_AUTH_ERROR, 'Ошибка авторизации'),
+        (CONNECTION_UNAVAILABLE, 'Avito временно недоступен'),
+    ]
+
+    AUTOLOAD_UNKNOWN = 'unknown'
+    AUTOLOAD_ENABLED = 'enabled'
+    AUTOLOAD_DISABLED = 'disabled'
+    AUTOLOAD_MISSING = 'missing'
+    AUTOLOAD_FORBIDDEN = 'forbidden'
+    AUTOLOAD_CHOICES = [
+        (AUTOLOAD_UNKNOWN, 'Не проверено'),
+        (AUTOLOAD_ENABLED, 'Включена'),
+        (AUTOLOAD_DISABLED, 'Выключена'),
+        (AUTOLOAD_MISSING, 'Профиль отсутствует'),
+        (AUTOLOAD_FORBIDDEN, 'Нет доступа'),
+    ]
+
+    TARIFF_UNKNOWN = 'unknown'
+    TARIFF_ACTIVE = 'active'
+    TARIFF_INACTIVE = 'inactive'
+    TARIFF_NOT_FOUND = 'not_found'
+    TARIFF_UNAVAILABLE = 'unavailable'
+    TARIFF_CHOICES = [
+        (TARIFF_UNKNOWN, 'Не проверено'),
+        (TARIFF_ACTIVE, 'Активен'),
+        (TARIFF_INACTIVE, 'Неактивен'),
+        (TARIFF_NOT_FOUND, 'Данные недоступны для аккаунта'),
+        (TARIFF_UNAVAILABLE, 'Avito временно недоступен'),
+    ]
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE,
+        related_name='avito_account_statuses', verbose_name='Тенант',
+    )
+    account = models.OneToOneField(
+        MarketplaceAccount, on_delete=models.CASCADE,
+        related_name='avito_status', verbose_name='Аккаунт Avito',
+    )
+    connection_status = models.CharField(
+        max_length=20, choices=CONNECTION_CHOICES,
+        default=CONNECTION_UNKNOWN, verbose_name='Состояние подключения',
+    )
+    autoload_status = models.CharField(
+        max_length=20, choices=AUTOLOAD_CHOICES,
+        default=AUTOLOAD_UNKNOWN, verbose_name='Состояние Автозагрузки',
+    )
+    feed_configured = models.BooleanField(
+        null=True, blank=True, verbose_name='Фид MAP настроен',
+    )
+    profile_checked_at = models.DateTimeField(
+        null=True, blank=True, verbose_name='Профиль проверен',
+    )
+    tariff_status = models.CharField(
+        max_length=20, choices=TARIFF_CHOICES,
+        default=TARIFF_UNKNOWN, verbose_name='Состояние тарифа',
+    )
+    tariff_name = models.CharField(max_length=200, blank=True, verbose_name='Тариф')
+    tariff_started_at = models.DateTimeField(
+        null=True, blank=True, verbose_name='Тариф начался',
+    )
+    tariff_ends_at = models.DateTimeField(
+        null=True, blank=True, verbose_name='Тариф заканчивается',
+    )
+    tariff_price = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        verbose_name='Стоимость тарифа',
+    )
+    placement_packages = models.JSONField(
+        default=list, verbose_name='Пакеты размещений',
+    )
+    scheduled_tariff = models.JSONField(
+        default=dict, verbose_name='Следующий тариф',
+    )
+    tariff_checked_at = models.DateTimeField(
+        null=True, blank=True, verbose_name='Тариф проверен',
+    )
+    last_attempted_at = models.DateTimeField(
+        null=True, blank=True, verbose_name='Последняя попытка проверки',
+    )
+    last_error_code = models.CharField(max_length=50, blank=True, verbose_name='Код последней ошибки')
+    last_error_message = models.CharField(
+        max_length=500, blank=True, verbose_name='Последняя ошибка',
+    )
+    notification_state = models.JSONField(
+        default=dict, verbose_name='Отправленные пороги уведомлений',
+    )
+
+    class Meta:
+        verbose_name = 'Состояние Avito-аккаунта'
+        verbose_name_plural = 'Состояния Avito-аккаунтов'
+        indexes = [
+            models.Index(
+                fields=['tenant', 'tariff_status'],
+                name='mkt_avito_tenant_tariff_idx',
+            ),
+            models.Index(
+                fields=['tenant', 'autoload_status'],
+                name='mkt_avito_tenant_autoload_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.account}: {self.autoload_status} / {self.tariff_status}'
+
+
 class MarketplacePlacementAddress(TimestampedModel):
     """Сохранённый адрес размещения для аккаунта маркетплейса."""
 

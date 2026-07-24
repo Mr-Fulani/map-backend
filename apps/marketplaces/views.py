@@ -2,7 +2,6 @@ import datetime
 
 from django.db import transaction
 from django.db.models import Sum
-from django.utils import timezone
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.response import Response
@@ -18,6 +17,7 @@ from apps.marketplaces.models import (
 from apps.marketplaces.serializers import (
     CategoryMappingSerializer,
     CategoryMappingWriteSerializer,
+    AvitoAccountStatusSerializer,
     ListingDetailSerializer,
     ListingFieldsSerializer,
     ListingBulkPlacementSerializer,
@@ -32,6 +32,7 @@ from apps.marketplaces.serializers import (
 from apps.core.pagination import MapPagination
 from apps.marketplaces.services import (
     AccountAlreadyExists,
+    AvitoAccountStatusService,
     CategoryMappingService,
     InvalidMarketplaceCredentials,
     ListingAccountConflict,
@@ -48,7 +49,9 @@ class MarketplaceAccountListView(APIView):
 
     def get(self, request):
         """Возвращает аккаунты маркетплейсов текущего тенанта."""
-        qs = MarketplaceAccount.objects.filter(tenant=request.tenant)
+        qs = MarketplaceAccount.objects.filter(
+            tenant=request.tenant,
+        ).select_related('avito_status')
         return Response(MarketplaceAccountSerializer(qs, many=True).data)
 
     def post(self, request):
@@ -75,7 +78,9 @@ class MarketplaceAccountDetailView(APIView):
     def _get_account(self, pk, tenant):
         """Возвращает аккаунт тенанта или 404."""
         try:
-            return MarketplaceAccount.objects.get(pk=pk, tenant=tenant)
+            return MarketplaceAccount.objects.select_related(
+                'avito_status',
+            ).get(pk=pk, tenant=tenant)
         except MarketplaceAccount.DoesNotExist:
             return None
 
@@ -153,43 +158,16 @@ class AutoloadStatusView(APIView):
             return Response(status=status.HTTP_404_NOT_FOUND)
 
         from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
-        import requests as req
-        from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 
-        adapter = AvitoAdapter(account)
-        feed_url = adapter._feed_public_url()
-
-        status_code = None
-        try:
-            token = AvitoAuthManager().get_token(account)
-            resp = req.get(
-                'https://api.avito.ru/autoload/v2/profile',
-                headers={'Authorization': f'Bearer {token}'},
-                timeout=10,
-            )
-            status_code = resp.status_code
-        except Exception:
-            status_code = None
-
-        # Определённый ответ: 200 → активна, 403/404 → не активна.
-        # Всё остальное (таймаут, троттлинг, 5xx) — не понижаем статус,
-        # отдаём последнее известное значение со stale=True.
-        if status_code == 200:
-            activated = True
-        elif status_code in (403, 404):
-            activated = False
-        else:
-            activated = None
-
-        stale = activated is None
-        if not stale:
-            account.autoload_active = activated
-            account.autoload_checked_at = timezone.now()
-            account.save(update_fields=['autoload_active', 'autoload_checked_at'])
-        else:
-            activated = account.autoload_active  # последнее известное (может быть None)
-
-        payload = {'activated': bool(activated), 'feed_url': feed_url, 'stale': stale}
+        status_obj = AvitoAccountStatusService.refresh(account)
+        snapshot = AvitoAccountStatusSerializer(status_obj).data
+        activated = status_obj.autoload_status == status_obj.AUTOLOAD_ENABLED
+        payload = {
+            'activated': activated,
+            'feed_url': AvitoAdapter(account)._feed_public_url(),
+            'stale': snapshot['profile_stale'],
+            'status': snapshot,
+        }
         if not activated:
             payload['activate_url'] = 'https://www.avito.ru/autoload/settings'
         return Response(payload)

@@ -1,9 +1,15 @@
 import datetime
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 
-from apps.marketplaces.models import CategoryMapping, Listing, ListingStats
+from apps.marketplaces.models import (
+    AvitoAccountStatus,
+    CategoryMapping,
+    Listing,
+    ListingStats,
+)
 from apps.marketplaces.price_utils import (
     compute_price,
     effective_category_margin,
@@ -647,7 +653,11 @@ class MarketplaceAccountService:
         # Регистрируем feed URL в Avito Autoload после коммита транзакции
         if account.marketplace == MarketplaceAccount.MARKETPLACE_AVITO:
             from apps.marketplaces.tasks import setup_autoload_profile_task
-            transaction.on_commit(lambda: setup_autoload_profile_task.delay(account.pk))
+            transaction.on_commit(
+                lambda: setup_autoload_profile_task.delay(
+                    account.pk, account.tenant_id,
+                )
+            )
 
         return account
 
@@ -691,6 +701,309 @@ class MarketplaceAccountService:
         if update_fields:
             account.save(update_fields=update_fields)
         return account
+
+
+class AvitoAccountStatusService:
+    """Синхронизирует подтверждённое состояние профиля и тарифа Avito."""
+
+    @staticmethod
+    def _timestamp(value):
+        """Преобразует Unix timestamp Avito в timezone-aware datetime."""
+        if value in (None, ''):
+            return None
+        try:
+            return datetime.datetime.fromtimestamp(
+                int(value), tz=datetime.timezone.utc,
+            )
+        except (TypeError, ValueError, OverflowError):
+            return None
+
+    @staticmethod
+    def _price(contract: dict):
+        """Возвращает стоимость тарифа как Decimal либо None."""
+        value = (contract.get('price') or {}).get('price')
+        if value in (None, ''):
+            return None
+        try:
+            return Decimal(str(value))
+        except (InvalidOperation, TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _packages(contract: dict) -> list[dict]:
+        """Оставляет только безопасные tenant-facing поля пакетов размещений."""
+        result = []
+        for package in contract.get('packages') or []:
+            if not isinstance(package, dict):
+                continue
+            result.append({
+                'categories': package.get('categories') or [],
+                'locations': package.get('locations') or [],
+                'remain': package.get('remain'),
+                'total': package.get('total'),
+            })
+        return result
+
+    @classmethod
+    def _apply_tariff(cls, status_obj: AvitoAccountStatus, payload: dict, checked_at) -> None:
+        """Сохраняет нормализованный текущий и следующий тариф."""
+        current = payload.get('current') or {}
+        if current:
+            status_obj.tariff_status = (
+                AvitoAccountStatus.TARIFF_ACTIVE
+                if current.get('isActive')
+                else AvitoAccountStatus.TARIFF_INACTIVE
+            )
+            status_obj.tariff_name = str(current.get('level') or '')[:200]
+            status_obj.tariff_started_at = cls._timestamp(current.get('startTime'))
+            status_obj.tariff_ends_at = cls._timestamp(current.get('closeTime'))
+            status_obj.tariff_price = cls._price(current)
+            status_obj.placement_packages = cls._packages(current)
+        else:
+            status_obj.tariff_status = AvitoAccountStatus.TARIFF_NOT_FOUND
+            status_obj.tariff_name = ''
+            status_obj.tariff_started_at = None
+            status_obj.tariff_ends_at = None
+            status_obj.tariff_price = None
+            status_obj.placement_packages = []
+
+        scheduled = payload.get('scheduled') or {}
+        status_obj.scheduled_tariff = {
+            'name': str(scheduled.get('level') or '')[:200],
+            'starts_at': (
+                cls._timestamp(scheduled.get('startTime')).isoformat()
+                if cls._timestamp(scheduled.get('startTime'))
+                else None
+            ),
+            'price': (
+                str(cls._price(scheduled))
+                if cls._price(scheduled) is not None
+                else None
+            ),
+        } if scheduled else {}
+        status_obj.tariff_checked_at = checked_at
+
+    @staticmethod
+    def _days_left(status_obj: AvitoAccountStatus) -> int | None:
+        """Возвращает округлённое вверх число суток до окончания тарифа."""
+        if not status_obj.tariff_ends_at:
+            return None
+        seconds_left = (status_obj.tariff_ends_at - timezone.now()).total_seconds()
+        if seconds_left <= 0:
+            return 0
+        return int((seconds_left + 86399) // 86400)
+
+    @staticmethod
+    def _queue_notification(status_obj: AvitoAccountStatus, level: str, message: str) -> None:
+        """Отправляет уведомление после фиксации снимка в транзакции."""
+        from apps.notifications.tasks import send_notification_task
+
+        transaction.on_commit(
+            lambda: send_notification_task.delay(
+                status_obj.tenant_id, level, message,
+                {'account_id': status_obj.account_id},
+            )
+        )
+
+    @classmethod
+    def _notify_thresholds(cls, status_obj: AvitoAccountStatus) -> None:
+        """Дедуплицированно уведомляет о сроке, лимите и отключении Autoload."""
+        from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR
+
+        state = dict(status_obj.notification_state or {})
+        period_key = (
+            status_obj.tariff_ends_at.isoformat()
+            if status_obj.tariff_ends_at
+            else ''
+        )
+        if state.get('period') != period_key:
+            state = {'period': period_key}
+
+        if (
+            status_obj.connection_status
+            == AvitoAccountStatus.CONNECTION_AUTH_ERROR
+            and state.get('connection') != AvitoAccountStatus.CONNECTION_AUTH_ERROR
+        ):
+            cls._queue_notification(
+                status_obj,
+                LEVEL_CRITICAL,
+                f'Avito ({status_obj.account.name}): ключи доступа отклонены. '
+                'Переподключите аккаунт.',
+            )
+            state['connection'] = AvitoAccountStatus.CONNECTION_AUTH_ERROR
+        elif status_obj.connection_status == AvitoAccountStatus.CONNECTION_CONNECTED:
+            state.pop('connection', None)
+
+        days_left = cls._days_left(status_obj)
+        if status_obj.tariff_status == AvitoAccountStatus.TARIFF_ACTIVE and days_left is not None:
+            expiry_threshold = next(
+                (threshold for threshold in (0, 1, 3, 7, 14) if days_left <= threshold),
+                None,
+            )
+            if expiry_threshold is not None and state.get('expiry') != expiry_threshold:
+                level = LEVEL_CRITICAL if days_left <= 1 else LEVEL_ERROR
+                cls._queue_notification(
+                    status_obj,
+                    level,
+                    f'Avito ({status_obj.account.name}): до окончания тарифа '
+                    f'осталось {days_left} дн.',
+                )
+                state['expiry'] = expiry_threshold
+
+        if (
+            status_obj.tariff_status == AvitoAccountStatus.TARIFF_INACTIVE
+            and state.get('tariff') != AvitoAccountStatus.TARIFF_INACTIVE
+        ):
+            cls._queue_notification(
+                status_obj,
+                LEVEL_CRITICAL,
+                f'Avito ({status_obj.account.name}): тариф неактивен.',
+            )
+            state['tariff'] = AvitoAccountStatus.TARIFF_INACTIVE
+        elif status_obj.tariff_status == AvitoAccountStatus.TARIFF_ACTIVE:
+            state.pop('tariff', None)
+
+        remaining: list[int] = []
+        totals: list[int] = []
+        for package in status_obj.placement_packages:
+            if not isinstance(package, dict):
+                continue
+            remain = package.get('remain')
+            total = package.get('total')
+            if isinstance(remain, int):
+                remaining.append(remain)
+            if isinstance(total, int):
+                totals.append(total)
+        if remaining and totals and sum(totals) > 0:
+            percent_left = int(sum(remaining) * 100 / sum(totals))
+            limit_threshold = next(
+                (threshold for threshold in (0, 10, 20) if percent_left <= threshold),
+                None,
+            )
+            if limit_threshold is not None and state.get('placements') != limit_threshold:
+                cls._queue_notification(
+                    status_obj,
+                    LEVEL_CRITICAL if percent_left == 0 else LEVEL_ERROR,
+                    f'Avito ({status_obj.account.name}): осталось '
+                    f'{sum(remaining)} размещений из {sum(totals)}.',
+                )
+                state['placements'] = limit_threshold
+
+        if status_obj.autoload_status in {
+            AvitoAccountStatus.AUTOLOAD_DISABLED,
+            AvitoAccountStatus.AUTOLOAD_MISSING,
+            AvitoAccountStatus.AUTOLOAD_FORBIDDEN,
+        } and state.get('autoload') != status_obj.autoload_status:
+            cls._queue_notification(
+                status_obj,
+                LEVEL_CRITICAL,
+                f'Avito ({status_obj.account.name}): Автозагрузка недоступна '
+                f'({dict(AvitoAccountStatus.AUTOLOAD_CHOICES).get(status_obj.autoload_status)}).',
+            )
+            state['autoload'] = status_obj.autoload_status
+        elif status_obj.autoload_status == AvitoAccountStatus.AUTOLOAD_ENABLED:
+            state.pop('autoload', None)
+
+        if state != status_obj.notification_state:
+            status_obj.notification_state = state
+            status_obj.save(update_fields=['notification_state', 'updated_at'])
+
+    @classmethod
+    def refresh(cls, account) -> AvitoAccountStatus:
+        """
+        Обновляет снимок аккаунта, не стирая подтверждённые данные при временном сбое.
+
+        Отсутствие тарифа и профиля — подтверждённые ответы Avito. Таймауты,
+        rate limit и 5xx сохраняются только как ошибка последней попытки.
+        """
+        from requests import RequestException
+
+        from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
+        from apps.marketplaces.adapters.avito.error_handler import (
+            ForbiddenError,
+            NotFoundError,
+            ServerError,
+            TokenExpiredError,
+        )
+        from apps.marketplaces.adapters.avito.rate_limiter import RateLimitError
+
+        status_obj, _ = AvitoAccountStatus.objects.get_or_create(
+            tenant=account.tenant,
+            account=account,
+        )
+        checked_at = timezone.now()
+        status_obj.last_attempted_at = checked_at
+        errors = []
+        adapter = AvitoAdapter(account)
+
+        try:
+            profile = adapter.get_autoload_profile()
+            status_obj.connection_status = AvitoAccountStatus.CONNECTION_CONNECTED
+            status_obj.autoload_status = (
+                AvitoAccountStatus.AUTOLOAD_ENABLED
+                if profile.get('autoload_enabled')
+                else AvitoAccountStatus.AUTOLOAD_DISABLED
+            )
+            expected_feed_url = adapter._feed_public_url()
+            status_obj.feed_configured = any(
+                feed.get('feed_url') == expected_feed_url
+                for feed in (profile.get('feeds_data') or [])
+                if isinstance(feed, dict)
+            )
+            status_obj.profile_checked_at = checked_at
+        except NotFoundError:
+            status_obj.connection_status = AvitoAccountStatus.CONNECTION_CONNECTED
+            status_obj.autoload_status = AvitoAccountStatus.AUTOLOAD_MISSING
+            status_obj.feed_configured = False
+            status_obj.profile_checked_at = checked_at
+        except ForbiddenError:
+            status_obj.connection_status = AvitoAccountStatus.CONNECTION_CONNECTED
+            status_obj.autoload_status = AvitoAccountStatus.AUTOLOAD_FORBIDDEN
+            status_obj.feed_configured = None
+            status_obj.profile_checked_at = checked_at
+        except TokenExpiredError:
+            status_obj.connection_status = AvitoAccountStatus.CONNECTION_AUTH_ERROR
+            errors.append(('auth_error', 'Avito отклонил ключи доступа'))
+        except (RateLimitError, ServerError, RequestException):
+            status_obj.connection_status = AvitoAccountStatus.CONNECTION_UNAVAILABLE
+            errors.append(('profile_unavailable', 'Не удалось обновить профиль Автозагрузки'))
+        except Exception:
+            status_obj.connection_status = AvitoAccountStatus.CONNECTION_UNAVAILABLE
+            errors.append(('profile_unavailable', 'Не удалось обновить профиль Автозагрузки'))
+
+        if status_obj.connection_status != AvitoAccountStatus.CONNECTION_AUTH_ERROR:
+            try:
+                cls._apply_tariff(status_obj, adapter.get_tariff_info(), checked_at)
+            except NotFoundError:
+                cls._apply_tariff(status_obj, {}, checked_at)
+            except ForbiddenError:
+                cls._apply_tariff(status_obj, {}, checked_at)
+            except TokenExpiredError:
+                status_obj.connection_status = AvitoAccountStatus.CONNECTION_AUTH_ERROR
+                errors.append(('auth_error', 'Avito отклонил ключи доступа'))
+            except (RateLimitError, ServerError, RequestException):
+                errors.append(('tariff_unavailable', 'Не удалось обновить тариф Avito'))
+            except Exception:
+                errors.append(('tariff_unavailable', 'Не удалось обновить тариф Avito'))
+
+        if errors:
+            status_obj.last_error_code, status_obj.last_error_message = errors[-1]
+        else:
+            status_obj.last_error_code = ''
+            status_obj.last_error_message = ''
+        status_obj.save()
+
+        account.autoload_active = {
+            AvitoAccountStatus.AUTOLOAD_ENABLED: True,
+            AvitoAccountStatus.AUTOLOAD_DISABLED: False,
+            AvitoAccountStatus.AUTOLOAD_MISSING: False,
+            AvitoAccountStatus.AUTOLOAD_FORBIDDEN: False,
+        }.get(status_obj.autoload_status)
+        if status_obj.profile_checked_at:
+            account.autoload_checked_at = status_obj.profile_checked_at
+        account.save(update_fields=['autoload_active', 'autoload_checked_at'])
+        cls._notify_thresholds(status_obj)
+        return status_obj
 
 
 def _enqueue_publish_or_update(listing_id: int, is_new: bool) -> None:

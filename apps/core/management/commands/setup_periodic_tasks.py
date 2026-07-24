@@ -24,6 +24,7 @@ class Command(BaseCommand):
         every_15m = self._get_interval(15, IntervalSchedule.MINUTES)
         every_30m = self._get_interval(30, IntervalSchedule.MINUTES)
         every_1h = self._get_interval(60, IntervalSchedule.MINUTES)
+        every_6h = self._get_interval(6, IntervalSchedule.HOURS)
 
         # Cron расписания (время UTC → Moscow UTC+3)
         daily_02 = self._get_crontab(minute=0, hour=23)   # 02:00 MSK = 23:00 UTC
@@ -53,6 +54,12 @@ class Command(BaseCommand):
                 'name': 'refresh_avito_stats',
                 'task': 'apps.marketplaces.tasks.refresh_avito_stats',
                 'schedule': every_1h,
+                'queue': 'avito_update',
+            },
+            {
+                'name': 'refresh_avito_account_statuses',
+                'task': 'apps.marketplaces.tasks.refresh_avito_account_statuses',
+                'schedule': every_6h,
                 'queue': 'avito_update',
             },
             {
