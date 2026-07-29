@@ -239,13 +239,12 @@ class AIWalletService:
             )
         grant_amount = Decimal('0') if amount is None else max(Decimal('0'), Decimal(amount))
         wallet.included_balance = grant_amount
-        wallet.reserved_balance = Decimal('0')
         wallet.included_expires_at = (
             timezone.make_aware(datetime.combine(period_end, time.max))
             if period_end else None
         )
         wallet.save(update_fields=[
-            'included_balance', 'reserved_balance', 'included_expires_at', 'updated_at',
+            'included_balance', 'included_expires_at', 'updated_at',
         ])
         AICreditTransaction.objects.create(
             wallet=wallet,

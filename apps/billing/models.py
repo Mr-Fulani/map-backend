@@ -84,6 +84,16 @@ class Subscription(TimestampedModel):
     )
     current_period_start = models.DateField(verbose_name='Начало периода')
     current_period_end = models.DateField(verbose_name='Конец периода')
+    ai_period_start = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name='Начало периода AI-кредитов',
+    )
+    ai_period_end = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name='Конец периода AI-кредитов',
+    )
     yookassa_subscription_id = models.CharField(
         max_length=200, blank=True, verbose_name='ID подписки ЮKassa',
     )

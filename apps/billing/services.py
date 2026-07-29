@@ -34,13 +34,16 @@ GRACE_PERIOD_DAYS = settings.BILLING_GRACE_PERIOD_DAYS
 
 def add_billing_month(start: date) -> date:
     """Возвращает дату через месяц, сохраняя день или последний день месяца."""
-    month = start.month + 1
-    year = start.year
-    if month > 12:
-        month = 1
-        year += 1
+    return add_billing_months(start, 1)
+
+
+def add_billing_months(anchor: date, months: int) -> date:
+    """Сдвигает дату от исходного anchor без дрейфа после короткого месяца."""
+    absolute_month = anchor.year * 12 + anchor.month - 1 + months
+    year, zero_based_month = divmod(absolute_month, 12)
+    month = zero_based_month + 1
     last_day = calendar.monthrange(year, month)[1]
-    return start.replace(year=year, month=month, day=min(start.day, last_day))
+    return anchor.replace(year=year, month=month, day=min(anchor.day, last_day))
 
 
 def add_billing_year(start: date) -> date:
@@ -49,6 +52,32 @@ def add_billing_year(start: date) -> date:
         return start.replace(year=start.year + 1)
     except ValueError:
         return start.replace(year=start.year + 1, month=2, day=28)
+
+
+def ai_credit_period_for_date(
+    subscription: Subscription,
+    target_date: date,
+) -> tuple[date, date] | None:
+    """Возвращает месячный AI-период внутри оплаченного периода подписки."""
+    subscription_start = subscription.current_period_start
+    subscription_end = subscription.current_period_end
+    if target_date < subscription_start or target_date >= subscription_end:
+        return None
+    if subscription.billing_period != Subscription.PERIOD_YEARLY:
+        return subscription_start, subscription_end
+
+    period_start = subscription_start
+    for month_index in range(1, 13):
+        period_end = min(
+            add_billing_months(subscription_start, month_index),
+            subscription_end,
+        )
+        if target_date < period_end:
+            return period_start, period_end
+        period_start = period_end
+        if period_end >= subscription_end:
+            break
+    return None
 
 
 class LimitChecker:
@@ -416,16 +445,18 @@ class BillingService:
             billing_period=Subscription.PERIOD_MONTHLY,
             current_period_start=today,
             current_period_end=trial_end,
+            ai_period_start=today,
+            ai_period_end=trial_end,
         )
         BillingService.sync_tenant_trial_end(subscription)
         from apps.billing.ai_wallet import AIWalletService
         AIWalletService.grant_included(
             tenant,
             plan.limit_ai_credits,
-            period_end=subscription.current_period_end,
+            period_end=subscription.ai_period_end,
             idempotency_key=(
                 f'subscription-grant:{subscription.pk}:'
-                f'{subscription.current_period_start}:{subscription.current_period_end}'
+                f'{subscription.ai_period_start}:{subscription.ai_period_end}'
             ),
         )
         logger.info('Trial запущен для тенанта %s, план %s', tenant.slug, plan.slug)
@@ -448,9 +479,12 @@ class BillingService:
         sub.status = Subscription.STATUS_TRIAL
         sub.current_period_start = today
         sub.current_period_end = base + timedelta(days=extension_days)
+        sub.ai_period_start = today
+        sub.ai_period_end = sub.current_period_end
         sub.cancelled_at = None
         sub.save(update_fields=[
-            'status', 'current_period_start', 'current_period_end', 'cancelled_at',
+            'status', 'current_period_start', 'current_period_end',
+            'ai_period_start', 'ai_period_end', 'cancelled_at',
         ])
         BillingService.sync_tenant_trial_end(sub)
         return sub
@@ -473,6 +507,12 @@ class BillingService:
         sub.status = Subscription.STATUS_ACTIVE
         sub.current_period_start = today
         sub.current_period_end = end
+        sub.ai_period_start = today
+        sub.ai_period_end = (
+            min(add_billing_months(today, 1), end)
+            if period == Subscription.PERIOD_YEARLY
+            else end
+        )
         sub.cancelled_at = None
         sub.save()
         BillingService.sync_tenant_trial_end(sub)
@@ -483,15 +523,49 @@ class BillingService:
         AIWalletService.grant_included(
             tenant,
             plan.limit_ai_credits,
-            period_end=sub.current_period_end,
+            period_end=sub.ai_period_end,
             idempotency_key=(
                 f'subscription-grant:{sub.pk}:'
-                f'{sub.current_period_start}:{sub.current_period_end}'
+                f'{sub.ai_period_start}:{sub.ai_period_end}'
             ),
         )
 
         logger.info('Тенант %s перешёл на план %s', tenant.slug, plan.slug)
         return sub
+
+    @staticmethod
+    @transaction.atomic
+    def refresh_ai_credit_period(subscription_id: int, target_date: date | None = None) -> bool:
+        """Начисляет пакет текущего AI-месяца ровно один раз."""
+        sub = Subscription.objects.select_for_update().select_related(
+            'tenant', 'plan',
+        ).get(pk=subscription_id)
+        today = target_date or timezone.localdate()
+        if sub.status != Subscription.STATUS_ACTIVE:
+            return False
+
+        period = ai_credit_period_for_date(sub, today)
+        if period is None:
+            return False
+        period_start, period_end = period
+        if sub.ai_period_start == period_start and sub.ai_period_end == period_end:
+            return False
+
+        sub.ai_period_start = period_start
+        sub.ai_period_end = period_end
+        sub.save(update_fields=['ai_period_start', 'ai_period_end', 'updated_at'])
+
+        Tenant.objects.filter(pk=sub.tenant_id).update(ai_credits_used=0)
+        from apps.billing.ai_wallet import AIWalletService
+        AIWalletService.grant_included(
+            sub.tenant,
+            sub.plan.limit_ai_credits,
+            period_end=period_end,
+            idempotency_key=(
+                f'subscription-grant:{sub.pk}:{period_start}:{period_end}'
+            ),
+        )
+        return True
 
     @staticmethod
     @transaction.atomic

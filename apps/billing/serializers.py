@@ -42,6 +42,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'plan', 'status', 'effective_status', 'access_mode', 'billing_period',
             'current_period_start', 'current_period_end',
+            'ai_period_start', 'ai_period_end',
             'created_at',
         ]
 

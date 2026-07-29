@@ -38,6 +38,7 @@ class SubscriptionAdmin(ModelAdmin):
     list_display = [
         'tenant', 'plan', 'status', 'get_effective_status',
         'billing_period', 'current_period_start', 'current_period_end',
+        'ai_period_start', 'ai_period_end',
     ]
     list_filter = ['status', 'plan', 'billing_period']
     search_fields = ['tenant__name', 'tenant__slug']
@@ -48,6 +49,9 @@ class SubscriptionAdmin(ModelAdmin):
         }),
         ('Период подписки', {
             'fields': ['current_period_start', 'current_period_end'],
+        }),
+        ('Период AI-кредитов', {
+            'fields': ['ai_period_start', 'ai_period_end'],
         }),
         ('Интеграция ЮKassa', {
             'fields': ['yookassa_subscription_id'],
@@ -74,13 +78,18 @@ class SubscriptionAdmin(ModelAdmin):
 class InvoiceAdmin(ModelAdmin):
     """Администрирование счетов на оплату."""
 
-    list_display = ['tenant', 'purchase_type', 'amount', 'status', 'paid_at', 'created_at']
+    list_display = [
+        'tenant', 'purchase_type', 'amount', 'currency',
+        'status', 'paid_at', 'created_at',
+    ]
     list_filter = ['status', 'purchase_type']
     search_fields = ['tenant__name', 'yookassa_payment_id']
     readonly_fields = ['yookassa_payment_id', 'pdf_s3_key', 'paid_at', 'created_at', 'updated_at']
     fieldsets = [
         ('Основное', {
-            'fields': ['tenant', 'purchase_type', 'amount', 'status', 'paid_at'],
+            'fields': [
+                'tenant', 'purchase_type', 'amount', 'currency', 'status', 'paid_at',
+            ],
         }),
         ('Интеграция ЮKassa', {
             'fields': ['yookassa_payment_id', 'pdf_s3_key', 'metadata'],

@@ -31,6 +31,8 @@ interface Subscription {
   billing_period: string;
   current_period_start: string;
   current_period_end: string | null;
+  ai_period_start: string | null;
+  ai_period_end: string | null;
 }
 
 interface Invoice {
