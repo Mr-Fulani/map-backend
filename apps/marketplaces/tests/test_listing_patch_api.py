@@ -11,8 +11,9 @@ from django.test import Client
 
 from apps.datasources.encryption import encrypt
 from apps.marketplaces.models import Listing, MarketplaceAccount, MarketplacePlacementAddress
-from apps.marketplaces.price_utils import compute_price
-from apps.products.models import Product
+from apps.marketplaces.price_utils import compute_price, effective_margin
+from apps.marketplaces.services import ListingService
+from apps.products.models import Product, TenantCatalogCategory
 from apps.tenants.services import TenantService
 
 
@@ -112,6 +113,37 @@ class TestListingPatchAPI:
 class TestComputePriceRounding:
     def test_rounds_up_to_whole_ruble(self):
         assert compute_price(Decimal('3475.11'), Decimal('0')) == Decimal('3476')
+
+
+@pytest.mark.django_db
+def test_listing_inherits_margin_from_nearest_category_parent():
+    tenant, _ = make_tenant('inherited-margin-co')
+    account = make_account(tenant)
+    parent = TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Двигатель',
+        default_margin_pct=Decimal('15.00'),
+    )
+    child = TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Головка блока цилиндров',
+        parent=parent,
+        default_margin_pct=None,
+    )
+    product = make_product(tenant)
+    product.catalog_category = child
+    product.price = Decimal('1000.00')
+    product.save(update_fields=['catalog_category', 'price'])
+
+    listing = ListingService.create_or_update(product, account, auto_publish=False)
+
+    assert listing.price_on_listing == Decimal('1150')
+    assert effective_margin(listing) == Decimal('15.00')
+
+    child.default_margin_pct = Decimal('0')
+    child.save(update_fields=['default_margin_pct'])
+    listing.refresh_from_db()
+    assert effective_margin(listing) == Decimal('0')
 
     def test_no_rounding_needed_when_already_whole(self):
         assert compute_price(Decimal('100'), Decimal('0')) == Decimal('100')

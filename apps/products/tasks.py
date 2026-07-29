@@ -34,6 +34,15 @@ def import_from_datasource(self, connection_id: int):
         return {'error': f'Connection {connection_id} not found'}
 
     tenant = connection.tenant
+    from apps.billing.services import LimitChecker
+    can_import, reason = LimitChecker().can_import_sku(tenant, count=0)
+    if not can_import:
+        connection.last_sync_status = DataSourceConnection.STATUS_ERROR
+        connection.last_error = reason
+        connection.save(update_fields=['last_sync_status', 'last_error'])
+        _write_sync_log(tenant, 'datasource_import', 'warn', reason)
+        return {'skipped': True, 'reason': reason}
+
     adapter = get_adapter(connection)
     since = connection.last_sync_at or (now() - timedelta(days=30))
 

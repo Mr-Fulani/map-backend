@@ -170,8 +170,9 @@ def _validate_feed_batch(listings: list) -> list:
     """
     from apps.marketplaces.adapters.avito.feed_builder import (
         AVITO_SUBTYPE_LABELS, blocking_missing_avito_fields, get_contact_fields,
-        has_resolved_category, missing_required_avito_fields, product_brand_is_missing,
-        product_has_oem, unknown_brand_details,
+        format_avito_field_requirements, has_resolved_category,
+        missing_required_avito_fields, product_brand_is_missing, product_has_oem,
+        unknown_brand_details,
     )
     valid = []
     catalog_refresh_attempted = False
@@ -191,9 +192,10 @@ def _validate_feed_batch(listings: list) -> list:
         if product_brand_is_missing(item):
             _reject_listing(
                 item,
-                'Не указан производитель (Brand). Для новых запчастей Avito требует '
-                'его и принимает только бренды из своего каталога. Укажите '
-                'производителя в карточке товара и опубликуйте снова.',
+                'У товара не указан производитель. Для новой запчасти это обязательное '
+                'поле: без него Avito отклонит объявление. Укажите производителя '
+                'в карточке товара, проверьте написание по справочнику Avito и '
+                'опубликуйте объявление снова.',
             )
             continue
         # Бренд, которого нет в каталоге Avito → на проверку тенанту, остальная
@@ -217,14 +219,20 @@ def _validate_feed_batch(listings: list) -> list:
                 unknown_brand = unknown_brand_details(item)
         if unknown_brand is not None:
             brand, suggestions = unknown_brand
-            marker = f'Производителя «{brand}» нет в каталоге Avito'
-            hint = f' Возможно, вы имели в виду: {", ".join(suggestions)}.' if suggestions else ''
+            hint = ''
+            if suggestions:
+                variants = ', '.join(f'«{suggestion}»' for suggestion in suggestions)
+                hint = (
+                    f' В справочнике есть похожее название: {variants}. Выбирайте его '
+                    'только в том случае, если это действительно тот же производитель.'
+                )
             _send_listing_to_review(
                 item,
-                f'{marker} — объявление не пройдёт модерацию, поле обязательное. '
-                f'Выберите бренд из справочника Avito.{hint} Если бренда действительно '
-                f'нет — запросите его добавление в поддержке Avito. Остальные объявления '
-                f'партии публикуются без задержки.',
+                f'Avito не распознал производителя «{brand}». Для новой запчасти '
+                f'объявление с таким значением будет отклонено. Проверьте написание '
+                f'производителя в карточке товара.{hint} Если название указано верно, '
+                f'обратитесь в поддержку Avito с просьбой добавить производителя '
+                f'в справочник. Остальные объявления продолжают публиковаться.',
             )
             continue
         # Под-вид детали (Подкатегория 3) обязателен для листьев Двигатель/Кузов/
@@ -237,9 +245,10 @@ def _validate_feed_batch(listings: list) -> list:
             category_name = getattr(category, 'name', '') or 'категории товара'
             _reject_listing(
                 item,
-                f'Не выбран вид детали: {labels}. Для категории «{category_name}» '
-                f'Avito не публикует объявления без него. Откройте листинг, выберите '
-                f'«Подкатегорию 3» (вид детали) и опубликуйте снова.',
+                f'Для категории «{category_name}» нужно точнее указать вид детали: '
+                f'{labels}. Без этого Avito отклонит объявление. Откройте листинг, '
+                f'в поле «Категория Avito» выберите конечную подкатегорию и '
+                f'опубликуйте объявление снова.',
             )
             continue
         # Категория не определена → фид уйдёт с дефолтной Avito-категорией и часто
@@ -260,11 +269,13 @@ def _validate_feed_batch(listings: list) -> list:
             )
         missing_fields = missing_required_avito_fields(item)
         if missing_fields:
+            readable_fields = format_avito_field_requirements(missing_fields)
             _write_log(
                 item.tenant, 'listing_publish', 'warn',
-                f'У «{item.title or item.product.name}» не заполнены поля Avito для его '
-                f'категории: {", ".join(missing_fields)}. Объявление может быть отклонено '
-                f'Avito — заполните их у товара.',
+                f'Для товара «{item.title or item.product.name}» Avito требует '
+                f'дополнительные характеристики: {readable_fields}. Без них объявление '
+                f'может быть отклонено. Передайте значения администратору или в '
+                f'поддержку MAP для настройки выгрузки.',
                 listing=item,
             )
         valid.append(item)

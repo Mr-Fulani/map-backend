@@ -91,6 +91,16 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
+    if (
+      error.response?.status === 402
+      && error.response?.data?.code === 'subscription_inactive'
+      && typeof window !== 'undefined'
+      && !window.location.pathname.startsWith('/dashboard/billing')
+    ) {
+      window.location.assign('/dashboard/billing?subscription=inactive');
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {
@@ -226,7 +236,8 @@ export const productApi = {
     pause_seconds?: number;
   }) => api.post('/products/bulk-actions/', data),
   bulkActionStatus: (id: number) => api.get(`/products/bulk-actions/${id}/`),
-  catalogCategories: () => api.get('/products/catalog-categories/'),
+  catalogCategories: (params?: { assignable?: boolean }) =>
+    api.get('/products/catalog-categories/', { params }),
   createCatalogCategory: (data: Record<string, unknown>) =>
     api.post('/products/catalog-categories/', data),
   updateCatalogCategory: (id: number, data: Record<string, unknown>) =>

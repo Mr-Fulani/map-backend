@@ -28,11 +28,13 @@ class PlanSerializer(serializers.ModelSerializer):
 
 class SubscriptionSerializer(serializers.ModelSerializer):
     plan = PlanSerializer(read_only=True)
+    effective_status = serializers.CharField(read_only=True)
+    access_mode = serializers.CharField(read_only=True)
 
     class Meta:
         model = Subscription
         fields = [
-            'id', 'plan', 'status', 'billing_period',
+            'id', 'plan', 'status', 'effective_status', 'access_mode', 'billing_period',
             'current_period_start', 'current_period_end',
             'created_at',
         ]

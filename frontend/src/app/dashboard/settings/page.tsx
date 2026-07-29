@@ -16,6 +16,10 @@ import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store, Search } from 'lucide-react';
 import { profileApi, datasourceApi } from '@/lib/api';
+import {
+  CatalogCategoryPicker,
+  type CatalogCategoryOption,
+} from '@/components/products/catalog-category-picker';
 
 interface ApiKey {
   id: number;
@@ -69,19 +73,9 @@ interface NotificationSettings {
   notify_on_critical: boolean;
 }
 
-interface CatalogCategory {
-  id: number;
-  name: string;
-  parent: number | null;
-  root_domain: number | null;
-  root_domain_slug: string;
-  root_domain_name: string;
-  domain: string;
-  aliases: string[];
+interface CatalogCategory extends CatalogCategoryOption {
   default_image_url: string;
   default_image_source_name: string;
-  is_active: boolean;
-  default_margin_pct: string;
 }
 
 interface CatalogDomain {
@@ -142,21 +136,30 @@ function buildCategoryTree(cats: CatalogCategory[]): { category: CatalogCategory
   return result;
 }
 
-function MarginEditor({ categories }: { categories: CatalogCategory[] }) {
+function MarginEditor({
+  categories,
+  onSaved,
+}: {
+  categories: CatalogCategory[];
+  onSaved: () => Promise<void>;
+}) {
   const [search, setSearch] = useState('');
   const [values, setValues] = useState<Record<number, string>>(() =>
-    Object.fromEntries(categories.map((c) => [c.id, c.default_margin_pct ?? '0.00'])),
+    Object.fromEntries(categories.map((c) => [c.id, c.default_margin_pct ?? ''])),
   );
   const [saving, setSaving] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
-    setValues(Object.fromEntries(categories.map((c) => [c.id, c.default_margin_pct ?? '0.00'])));
+    setValues(Object.fromEntries(categories.map((c) => [c.id, c.default_margin_pct ?? ''])));
   }, [categories]);
 
   const handleSave = async (id: number) => {
     setSaving((prev) => ({ ...prev, [id]: true }));
     try {
-      await productApi.patchCatalogCategory(id, { default_margin_pct: values[id] });
+      await productApi.patchCatalogCategory(id, {
+        default_margin_pct: values[id] === '' ? null : values[id],
+      });
+      await onSaved();
       toast.success('Наценка сохранена');
     } catch {
       toast.error('Не удалось сохранить наценку');
@@ -213,9 +216,10 @@ function MarginEditor({ categories }: { categories: CatalogCategory[] }) {
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 <Input
-                  value={values[category.id] ?? '0.00'}
+                  value={values[category.id] ?? ''}
                   onChange={(e) => setValues((prev) => ({ ...prev, [category.id]: e.target.value }))}
                   inputMode="decimal"
+                  placeholder="Наследовать"
                   className="h-8 w-24 text-sm"
                 />
                 <span className="text-sm text-muted-foreground">%</span>
@@ -229,6 +233,14 @@ function MarginEditor({ categories }: { categories: CatalogCategory[] }) {
                   {saving[category.id] ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Сохранить'}
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground md:w-56 md:text-right">
+                Итог: {category.effective_margin_pct}%
+                {category.margin_inherited_from_name
+                  ? ` · от «${category.margin_inherited_from_name}»`
+                  : category.default_margin_pct == null
+                    ? ' · без наценки'
+                    : ' · собственная'}
+              </p>
             </div>
           ))}
         </div>
@@ -2291,19 +2303,15 @@ export default function SettingsPage() {
                             {mapping ? `Привязана к: ${mapping.category_name}` : 'Категория из 1С/CSV'}
                           </p>
                         </div>
-                        <select
-                          className="rounded-md border bg-background px-3 py-2 text-sm"
+                        <CatalogCategoryPicker
+                          categories={catalogCategories}
                           value={selectedValue}
                           disabled={isSaving}
-                          onChange={(e) => saveCatalogCategoryMapping(source.source_category, e.target.value)}
-                        >
-                          <option value="">Не привязана</option>
-                          {catalogCategories.filter((category) => category.is_active).map((category) => (
-                            <option key={category.id} value={category.id}>
-                              {category.name} · {category.root_domain_name || domainLabel(category.domain)}
-                            </option>
-                          ))}
-                        </select>
+                          onValueChange={(value) => {
+                            saveCatalogCategoryMapping(source.source_category, value);
+                          }}
+                          placeholder="Не привязана"
+                        />
                         <Button
                           size="sm"
                           type="button"
@@ -2334,7 +2342,10 @@ export default function SettingsPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <MarginEditor categories={catalogCategories} />
+              <MarginEditor
+                categories={catalogCategories.filter((category) => category.is_active)}
+                onSaved={loadCatalogCategories}
+              />
             </CardContent>
           </Card>
         </TabsContent>

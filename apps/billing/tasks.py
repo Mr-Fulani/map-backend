@@ -1,6 +1,8 @@
 import logging
+from datetime import timedelta
 
 from celery import shared_task
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -19,12 +21,27 @@ def billing_check_expired():
     from apps.notifications.services import LEVEL_BILLING, LEVEL_CRITICAL
     from apps.notifications.tasks import send_notification_task
 
+    today = timezone.localdate()
+    past_due_ids = list(
+        Subscription.objects.filter(
+            status__in=(Subscription.STATUS_TRIAL, Subscription.STATUS_ACTIVE),
+            current_period_end__lt=today,
+        ).values_list('pk', flat=True)
+    )
+    grace_deadline = today - timedelta(days=GRACE_PERIOD_DAYS)
+    cancelled_ids = list(
+        Subscription.objects.filter(
+            status=Subscription.STATUS_PAST_DUE,
+            current_period_end__lt=grace_deadline,
+        ).values_list('pk', flat=True)
+    )
+
     past_due_count = BillingService.check_expired_trials()
     cancelled_count = BillingService.check_grace_period_expired()
 
     # Уведомляем тенантов, чьи подписки переведены в past_due
     if past_due_count:
-        for sub in Subscription.objects.filter(status=Subscription.STATUS_PAST_DUE).select_related('tenant'):
+        for sub in Subscription.objects.filter(pk__in=past_due_ids).select_related('tenant'):
             send_notification_task.delay(
                 sub.tenant.pk,
                 LEVEL_BILLING,
@@ -34,7 +51,7 @@ def billing_check_expired():
     # Уведомляем тенантов, чьи подписки отменены
     if cancelled_count:
         for sub in Subscription.objects.filter(
-            status=Subscription.STATUS_CANCELLED,
+            pk__in=cancelled_ids,
         ).select_related('tenant'):
             send_notification_task.delay(
                 sub.tenant.pk,
@@ -56,11 +73,10 @@ def reset_monthly_ai_credits():
     Запускается ежедневно. Сбрасывает кредиты тем тенантам, у которых сегодня
     совпадает день начала расчётного периода (current_period_start.day == today.day).
     """
-    from datetime import date
     from apps.billing.models import Subscription
     from apps.tenants.models import Tenant
 
-    today = date.today()
+    today = timezone.localdate()
     reset_count = 0
 
     active_subs = Subscription.objects.filter(

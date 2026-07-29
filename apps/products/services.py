@@ -111,8 +111,19 @@ class ProductCategorySeedService:
             defaults={'is_enabled': True},
         )
         if seed_templates:
-            return cls.seed_tenant_default_categories(tenant, domain)
+            return cls.seed_tenant_primary_categories(tenant, domain)
         return 0
+
+    @classmethod
+    def seed_tenant_primary_categories(cls, tenant, root_domain: CatalogDomain) -> int:
+        """Создаёт внутренний справочник и приоритетное дерево выбора категорий."""
+        created_count = cls.seed_tenant_default_categories(tenant, root_domain)
+        if root_domain.slug == TenantCatalogCategory.Domain.AUTO_PARTS:
+            from apps.marketplaces.avito_tree_import import AvitoTreeImporter, has_tree
+
+            if has_tree(root_domain.slug):
+                created_count += AvitoTreeImporter(root_domain.slug).import_for_tenant(tenant)
+        return created_count
 
     @classmethod
     def seed_tenant_default_categories(cls, tenant, root_domain: CatalogDomain | None = None) -> int:
@@ -659,6 +670,27 @@ class ProductEnrichmentService:
             )
             .select_related('parent', 'root_domain')
         )
+        # Полное дерево Avito оптимально для ручного выбора и публикации, но его
+        # широкие узлы («Автосвет», «Тормозная система») уступают компактному
+        # внутреннему справочнику в точности автоопределения. Когда справочник
+        # доступен, Avito-категории не участвуют в автоматическом матчинге.
+        has_internal_auto_parts_tree = any(
+            category.root_domain_id
+            and category.root_domain.slug == TenantCatalogCategory.Domain.AUTO_PARTS
+            and category.external_source == ProductCategorySeedService.SEED_SOURCE
+            and category.external_id
+            for category in categories
+        )
+        if has_internal_auto_parts_tree:
+            categories = [
+                category
+                for category in categories
+                if not (
+                    category.root_domain_id
+                    and category.root_domain.slug == TenantCatalogCategory.Domain.AUTO_PARTS
+                    and category.external_source == 'avito'
+                )
+            ]
         categories_by_id = {category.id: category for category in categories}
 
         best_category = None

@@ -7,7 +7,7 @@ import pytest
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
 from apps.products.models import Product, ProductBrandAlias, ProductImage, TenantCatalogCategory
-from apps.products.services import ProductBrandService, ProductService
+from apps.products.services import ProductBrandService, ProductCategorySeedService, ProductService
 from apps.tenants.models import CatalogDomain
 from apps.tenants.services import TenantService
 
@@ -36,6 +36,30 @@ SAMPLE_DATA = {
     'category': 'Кузов',
     'condition': 'new',
 }
+
+
+@pytest.mark.django_db
+def test_auto_parts_primary_seed_uses_avito_tree():
+    tenant = make_tenant('primary-avito-tree')
+    domain = CatalogDomain.objects.get(slug='auto_parts')
+
+    with (
+        patch.object(
+            ProductCategorySeedService,
+            'seed_tenant_default_categories',
+            return_value=3,
+        ) as default_seed,
+        patch('apps.marketplaces.avito_tree_import.has_tree', return_value=True),
+        patch('apps.marketplaces.avito_tree_import.AvitoTreeImporter') as importer_class,
+    ):
+        importer_class.return_value.import_for_tenant.return_value = 7
+
+        created = ProductCategorySeedService.seed_tenant_primary_categories(tenant, domain)
+
+    assert created == 10
+    default_seed.assert_called_once_with(tenant, domain)
+    importer_class.assert_called_once_with('auto_parts')
+    importer_class.return_value.import_for_tenant.assert_called_once_with(tenant)
 
 
 @pytest.mark.django_db

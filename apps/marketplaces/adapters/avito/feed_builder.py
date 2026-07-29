@@ -295,6 +295,134 @@ AVITO_SUBTYPE_LABELS = {
     'TechnicSparePartType': 'Тип детали',
 }
 
+# Технические XML-теги Avito нельзя показывать тенанту без расшифровки.
+# Справочник покрывает все обязательные теги из текущего avito_field_specs.json,
+# которые MAP пока не формирует самостоятельно.
+AVITO_FIELD_LABELS = {
+    'ACEA': 'класс моторного масла по ACEA',
+    'API': 'класс моторного масла по API',
+    'ASTM': 'стандарт охлаждающей жидкости ASTM',
+    'ATF': 'тип трансмиссионной жидкости ATF',
+    'AccessorySubType': 'подтип аксессуара',
+    'AccessoryType': 'тип аксессуара',
+    'Age': 'возрастная группа',
+    'AmplifierType': 'тип усилителя',
+    'AndroidOS': 'версия Android',
+    'AudioType': 'тип аудиоустройства',
+    'Axles': 'количество осей',
+    'BackRimDiameter': 'диаметр заднего диска',
+    'BackTireAspectRatio': 'профиль задней шины',
+    'BackTireSectionWidth': 'ширина задней шины',
+    'BodySparePartType': 'тип кузовной детали',
+    'BoreDiameter': 'диаметр отверстия',
+    'BrushLength': 'длина щётки',
+    'BrushType': 'тип щётки стеклоочистителя',
+    'CPU': 'процессор',
+    'CamsNumber': 'количество камер',
+    'Capacity': 'ёмкость аккумулятора',
+    'ChannelsNumber': 'количество каналов',
+    'ClothingType': 'тип одежды',
+    'Color': 'цвет',
+    'CoolingType': 'тип охлаждения',
+    'CoverType': 'тип чехла',
+    'DCL': 'пусковой ток аккумулятора',
+    'DOT': 'класс тормозной жидкости DOT',
+    'Design': 'конструкция',
+    'DeviceType': 'тип устройства',
+    'DumpTruckFunction': 'назначение самосвала',
+    'EngineSparePartType': 'тип детали двигателя',
+    'EquipmentBrand': 'марка оборудования',
+    'EquipmentType': 'тип оборудования',
+    'FuelType': 'тип топлива',
+    'Gender': 'назначение по полу',
+    'GoodsSubType': 'подтип товара',
+    'GrossVehicleWeight': 'разрешённая полная масса',
+    'HeatingEquipmentType': 'тип отопительного оборудования',
+    'HelmetType': 'тип шлема',
+    'HydraulicDistributorType': 'тип гидрораспределителя',
+    'HydraulicStroke': 'ход гидроцилиндра',
+    'Impedance': 'сопротивление',
+    'InstallationLocation': 'место установки',
+    'InstallationType': 'способ установки',
+    'Make': 'марка техники',
+    'MatType': 'тип коврика',
+    'Material': 'материал',
+    'Model': 'модель',
+    'MountingType': 'тип крепления',
+    'NumberOfSections': 'количество секций',
+    'OEMOil': 'допуск производителя автомобиля',
+    'OtherDefects': 'другие повреждения',
+    'PartsHindcarriageType': 'тип детали ходовой части',
+    'Polarity': 'полярность аккумулятора',
+    'PowerType': 'тип питания',
+    'ProductSubType': 'подтип товара',
+    'ProtectionType': 'тип защиты',
+    'Quantity': 'количество в комплекте',
+    'RAM': 'объём оперативной памяти',
+    'RMS': 'номинальная мощность',
+    'RMSfour': 'мощность при сопротивлении 4 Ом',
+    'RMStwo': 'мощность при сопротивлении 2 Ом',
+    'ROM': 'объём встроенной памяти',
+    'ResidualTread': 'остаточная глубина протектора',
+    'Resolution': 'разрешение экрана или камеры',
+    'RimBolts': 'количество крепёжных отверстий диска',
+    'RimBoltsDiameter': 'диаметр расположения крепёжных отверстий',
+    'RimDIA': 'диаметр центрального отверстия диска',
+    'RimDiameter': 'диаметр диска',
+    'RimOffset': 'вылет диска',
+    'RimType': 'тип диска',
+    'RimWidth': 'ширина диска',
+    'RodDiameter': 'диаметр штока',
+    'SAE': 'вязкость масла по SAE',
+    'SecondBrushLength': 'длина второй щётки',
+    'Set': 'состав комплекта',
+    'ShoeType': 'тип обуви',
+    'Size': 'размер',
+    'Technic': 'вид техники',
+    'TechnicAddOnType': 'тип навесного оборудования',
+    'TechnicHeight': 'высота детали',
+    'TechnicLength': 'длина детали',
+    'TechnicSparePartType': 'тип детали спецтехники',
+    'TechnicWidth': 'ширина детали',
+    'TireAspectRatio': 'профиль шины',
+    'TireRuptureQuantity': 'количество проколов протектора',
+    'TireSectionWidth': 'ширина шины',
+    'TireSideRepairQuantity': 'количество ремонтов боковины',
+    'TireType': 'тип шины',
+    'TransmissionSparePartType': 'тип детали трансмиссии',
+    'TransportType': 'тип транспорта',
+    'VehicleType': 'тип транспортного средства',
+    'VoiceCoil': 'количество звуковых катушек',
+    'Voltage': 'напряжение аккумулятора',
+    'Volume': 'объём',
+    'WheelAxle': 'ось установки колеса',
+}
+
+AVITO_FIELD_EXAMPLES = {
+    'Voltage': 'например, 12 В',
+    'Capacity': 'например, 60 А·ч',
+    'DCL': 'например, 540 А',
+    'Polarity': 'прямая или обратная',
+    'TechnicLength': 'в миллиметрах',
+    'TechnicWidth': 'в миллиметрах',
+    'TechnicHeight': 'в миллиметрах',
+}
+
+
+def avito_field_label(tag: str) -> str:
+    """Возвращает понятное пользователю название обязательной характеристики."""
+    return AVITO_FIELD_LABELS.get(tag, 'дополнительная характеристика товара')
+
+
+def format_avito_field_requirements(tags: list[str]) -> str:
+    """Форматирует список полей без технических XML-тегов."""
+    formatted = []
+    for tag in tags:
+        label = avito_field_label(tag)
+        example = AVITO_FIELD_EXAMPLES.get(tag)
+        formatted.append(f'{label} ({example})' if example else label)
+    return '; '.join(formatted)
+
 
 def blocking_missing_avito_fields(listing) -> list[str]:
     """Недостающие поля, из-за которых Avito гарантированно отклонит объявление.
@@ -350,33 +478,45 @@ def avito_field_warnings(listing) -> list[str]:
     warnings = []
     if product_brand_is_missing(listing):
         warnings.append(
-            'Не указан производитель (Brand). Для новых запчастей Avito требует '
-            'его и принимает только бренды из своего каталога — укажите '
-            'производителя в карточке товара.'
+            'У товара не указан производитель. Для новой запчасти это обязательное '
+            'поле: без него Avito отклонит объявление. Укажите производителя '
+            'в карточке товара и убедитесь, что написание совпадает со справочником Avito.'
         )
     unknown_brand = unknown_brand_details(listing)
     if unknown_brand is not None:
         brand, suggestions = unknown_brand
-        hint = f' Возможно, вы имели в виду: {", ".join(suggestions)}.' if suggestions else ''
+        hint = ''
+        if suggestions:
+            variants = ', '.join(f'«{suggestion}»' for suggestion in suggestions)
+            hint = (
+                f' В справочнике есть похожее название: {variants}. '
+                'Выбирайте его только в том случае, если это действительно тот же производитель.'
+            )
         warnings.append(
-            f'Производителя «{brand}» нет в каталоге Avito — объявление НЕ пройдёт '
-            f'модерацию, поле обязательное. Исправьте бренд в карточке товара на '
-            f'каталожное написание вручную.{hint} Если бренда действительно нет в '
-            f'каталоге — запросите его добавление в поддержке Avito.'
+            f'Avito не распознал производителя «{brand}». Для новой запчасти объявление '
+            f'с таким значением будет отклонено. Проверьте написание производителя '
+            f'в карточке товара.{hint} Если название указано верно, обратитесь в '
+            f'поддержку Avito с просьбой добавить производителя в справочник.'
         )
-    for tag in missing_required_avito_fields(listing):
+    missing_fields = missing_required_avito_fields(listing)
+    for tag in missing_fields:
         label = AVITO_SUBTYPE_LABELS.get(tag)
         if label:
             warnings.append(
-                f'Не выбран вид детали — «{label}» ({tag}). Для категории '
-                f'«{category_name}» Avito не опубликует объявление без него: '
-                f'выберите «Подкатегорию 3» в карточке листинга или уточните категорию товара.'
+                f'Для категории «{category_name}» нужно точнее указать вид детали '
+                f'({label.lower()}). Без этого Avito отклонит объявление. В поле '
+                f'«Категория Avito» выберите конечную подкатегорию, которая лучше всего '
+                f'описывает товар.'
             )
-        else:
-            warnings.append(
-                f'Не заполнено обязательное поле Avito «{tag}» — объявление может быть '
-                f'отклонено. Заполните его у товара или в маппинге категории.'
-            )
+    other_fields = [tag for tag in missing_fields if tag not in AVITO_SUBTYPE_LABELS]
+    if other_fields:
+        requirements = format_avito_field_requirements(other_fields)
+        warnings.append(
+            f'Для категории «{category_name}» Avito требует дополнительные характеристики: '
+            f'{requirements}. Без них объявление может быть отклонено. Сейчас эти данные '
+            f'нельзя заполнить в обычной карточке MAP: передайте значения администратору '
+            f'или в поддержку MAP для настройки выгрузки и пока не публикуйте объявление.'
+        )
     return warnings
 
 

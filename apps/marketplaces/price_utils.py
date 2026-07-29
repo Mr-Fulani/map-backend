@@ -2,16 +2,28 @@ import math
 from decimal import Decimal
 
 
+def effective_category_margin(category) -> Decimal:
+    """Возвращает собственную либо ближайшую родительскую наценку категории."""
+    node = category
+    seen: set[int] = set()
+    while node is not None and node.pk not in seen:
+        seen.add(node.pk)
+        if node.default_margin_pct is not None:
+            return node.default_margin_pct
+        node = node.parent
+    return Decimal('0')
+
+
 def effective_margin(listing) -> Decimal:
     """Возвращает актуальную наценку для листинга.
 
-    Приоритет: listing.margin_pct → category.default_margin_pct → 0.
+    Приоритет: listing.margin_pct → категория/ближайший родитель → 0.
     """
     if listing.margin_pct is not None:
         return listing.margin_pct
     cat = getattr(listing.product, 'catalog_category', None)
     if cat is not None:
-        return cat.default_margin_pct
+        return effective_category_margin(cat)
     return Decimal('0')
 
 

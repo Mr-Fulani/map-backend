@@ -32,21 +32,10 @@ class SubscriptionView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        from django.utils import timezone
-        from apps.billing.models import Subscription as Sub
-
         try:
             sub = request.tenant.subscription
         except Exception:
             return Response({'status': 'ok', 'data': None})
-
-        # Пересчитываем статус в реальном времени — Celery Beat мог ещё не запуститься
-        if (
-            sub.status == Sub.STATUS_TRIAL
-            and sub.current_period_end
-            and sub.current_period_end < timezone.now().date()
-        ):
-            sub.status = Sub.STATUS_PAST_DUE
 
         return Response({
             'status': 'ok',
