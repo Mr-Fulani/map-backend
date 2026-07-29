@@ -740,6 +740,7 @@ export default function ProductsPage() {
                     onValueChange={setCategoryAssignValue}
                     disabled={categoryAssignLoading}
                     placeholder="Выбрать конечную подкатегорию"
+                    dropdownClassName="min-w-0 sm:min-w-0"
                   />
                   <Button
                     size="sm"
