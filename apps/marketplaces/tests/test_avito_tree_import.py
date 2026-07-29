@@ -100,3 +100,54 @@ class TestAvitoTreeImporter:
         walk(tree)
         assert 'Двигатель' in flat
         assert 'Патрубки вентиляции' in flat
+
+    def test_reconcile_soft_disables_removed_avito_nodes(self):
+        """Узлы, пропавшие из нового снимка, сохраняются, но скрываются."""
+        domain = _auto_parts_domain()
+        tenant = _make_tenant('tree-reconcile-co')
+        stale = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            root_domain=domain,
+            domain='auto_parts',
+            name='Старая категория',
+            normalized_name='старая категория',
+            external_source='avito',
+            is_active=True,
+        )
+
+        importer = AvitoTreeImporter('auto_parts', tree=FAKE_TREE)
+        importer.import_for_tenant(tenant, reconcile=True)
+
+        stale.refresh_from_db()
+        assert stale.is_active is False
+        assert importer.last_result['deactivated'] == 1
+
+    def test_new_child_inherits_disabled_parent_state(self):
+        """Обновление дерева не включает ветку, которую тенант выключил."""
+        _auto_parts_domain()
+        tenant = _make_tenant('tree-disabled-parent-co')
+        importer = AvitoTreeImporter('auto_parts', tree=FAKE_TREE)
+        importer.import_for_tenant(tenant)
+        engine = TenantCatalogCategory.objects.get(tenant=tenant, name='Двигатель')
+        engine.is_active = False
+        engine.save(update_fields=['is_active'])
+        updated_tree = [{
+            'name': 'Запчасти', 'slug': 'zapchasti', 'children': [{
+                'name': 'Для автомобилей', 'slug': 'dlya_avto', 'children': [{
+                    'name': 'Двигатель', 'slug': 'dvigatel', 'children': [
+                        *FAKE_TREE[0]['children'][0]['children'][0]['children'],
+                        {'name': 'Новый вид', 'slug': 'new-kind', 'children': []},
+                    ],
+                }],
+            }],
+        }]
+
+        AvitoTreeImporter('auto_parts', tree=updated_tree).import_for_tenant(
+            tenant,
+            reconcile=True,
+        )
+
+        assert TenantCatalogCategory.objects.get(
+            tenant=tenant,
+            name='Новый вид',
+        ).is_active is False

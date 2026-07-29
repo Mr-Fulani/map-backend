@@ -949,3 +949,23 @@ def refresh_avito_account_status_task(account_id: int, tenant_id: int):
         }
     finally:
         lock.release()
+
+
+@shared_task(bind=True, max_retries=2, queue='avito_update')
+def sync_avito_category_tree(self):
+    """Еженедельно обновляет проверенный снимок дерева и мягко применяет его."""
+    from apps.marketplaces.avito_tree_sync import AvitoCategoryTreeSyncService
+
+    lock = cache.lock('avito:category-tree-sync:auto_parts', timeout=3300)
+    if not lock.acquire(blocking=False):
+        return {'status': 'locked'}
+    try:
+        try:
+            return {
+                'status': 'ok',
+                **AvitoCategoryTreeSyncService.sync_auto_parts(),
+            }
+        except Exception as exc:
+            raise self.retry(exc=exc, countdown=300 * (self.request.retries + 1))
+    finally:
+        lock.release()

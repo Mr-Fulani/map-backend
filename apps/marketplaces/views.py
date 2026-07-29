@@ -122,6 +122,7 @@ class MarketplaceAccountDetailView(APIView):
                 'default_seller_address_id',
                 'default_manager_name',
                 'default_contact_phone',
+                'autoload_subscription_ends_at',
             )
             if field in request.data
         }

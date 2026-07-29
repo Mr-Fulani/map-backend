@@ -104,6 +104,15 @@ class MarketplaceAccount(TimestampedModel):
     # При сбое связи статус не понижаем (показываем последнее известное).
     autoload_active = models.BooleanField(null=True, blank=True, verbose_name='Автозагрузка Avito активна')
     autoload_checked_at = models.DateTimeField(null=True, blank=True, verbose_name='Статус Автозагрузки проверен')
+    autoload_subscription_ends_at = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name='Дата окончания Автозагрузки',
+        help_text=(
+            'Заполняется вручную, когда Avito Autoload API не возвращает срок подписки. '
+            'Тариф API категории «Транспорт», если доступен, имеет приоритет.'
+        ),
+    )
     # Когда последний раз триггерили Autoload. Avito читает фид ~раз в час, поэтому
     # изменения копятся в окне и уходят одним фидом (см. request_feed_flush).
     last_feed_flush_at = models.DateTimeField(null=True, blank=True, verbose_name='Последняя автозагрузка фида')
@@ -230,6 +239,53 @@ class AvitoAccountStatus(TimestampedModel):
 
     def __str__(self):
         return f'{self.account}: {self.autoload_status} / {self.tariff_status}'
+
+
+class AvitoCategoryTreeSnapshot(TimestampedModel):
+    """Последний проверенный снимок дерева категорий из Avito Autoload API."""
+
+    STATUS_READY = 'ready'
+    STATUS_ERROR = 'error'
+    STATUS_CHOICES = [
+        (STATUS_READY, 'Готово'),
+        (STATUS_ERROR, 'Ошибка'),
+    ]
+
+    domain_slug = models.CharField(
+        max_length=50,
+        unique=True,
+        verbose_name='Домен каталога',
+    )
+    root_name = models.CharField(max_length=200, verbose_name='Корень Avito')
+    tree = models.JSONField(default=list, verbose_name='Дерево')
+    checksum = models.CharField(max_length=64, blank=True, verbose_name='Контрольная сумма')
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_READY,
+        verbose_name='Статус',
+    )
+    node_count = models.PositiveIntegerField(default=0, verbose_name='Количество узлов')
+    change_count = models.PositiveIntegerField(default=0, verbose_name='Изменённых путей')
+    fetched_at = models.DateTimeField(null=True, blank=True, verbose_name='Получено из Avito')
+    applied_at = models.DateTimeField(null=True, blank=True, verbose_name='Применено к тенантам')
+    last_error = models.CharField(max_length=500, blank=True, verbose_name='Последняя ошибка')
+    metadata = models.JSONField(default=dict, verbose_name='Метаданные синхронизации')
+    source_account = models.ForeignKey(
+        MarketplaceAccount,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='category_tree_snapshots',
+        verbose_name='Аккаунт-источник',
+    )
+
+    class Meta:
+        verbose_name = 'Снимок дерева категорий Avito'
+        verbose_name_plural = 'Снимки дерева категорий Avito'
+
+    def __str__(self):
+        return f'{self.domain_slug}: {self.status} ({self.node_count})'
 
 
 class MarketplacePlacementAddress(TimestampedModel):

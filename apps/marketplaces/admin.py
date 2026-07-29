@@ -4,6 +4,7 @@ from unfold.admin import ModelAdmin
 from apps.marketplaces.models import (
     AvitoAccountStatus,
     AvitoCategory,
+    AvitoCategoryTreeSnapshot,
     CategoryMapping,
     Listing,
     MarketplaceAccount,
@@ -69,6 +70,22 @@ class AvitoAccountStatusAdmin(ModelAdmin):
         'tariff_price', 'placement_packages', 'scheduled_tariff',
         'tariff_checked_at', 'last_attempted_at', 'last_error_code',
         'last_error_message', 'notification_state', 'created_at', 'updated_at',
+    ]
+
+
+@admin.register(AvitoCategoryTreeSnapshot)
+class AvitoCategoryTreeSnapshotAdmin(ModelAdmin):
+    """Диагностика автоматического обновления дерева категорий Avito."""
+
+    list_display = [
+        'domain_slug', 'status', 'node_count', 'change_count',
+        'fetched_at', 'applied_at', 'source_account',
+    ]
+    list_filter = ['status', 'domain_slug']
+    readonly_fields = [
+        'domain_slug', 'root_name', 'tree', 'checksum', 'status',
+        'node_count', 'change_count', 'fetched_at', 'applied_at',
+        'last_error', 'metadata', 'source_account', 'created_at', 'updated_at',
     ]
 
 

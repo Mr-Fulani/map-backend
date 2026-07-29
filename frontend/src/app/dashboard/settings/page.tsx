@@ -41,6 +41,7 @@ interface Account {
   default_contact_phone: string;
   autoload_active: boolean | null;
   autoload_checked_at: string | null;
+  autoload_subscription_ends_at: string | null;
   avito_status: AvitoAccountHealth | null;
   created_at: string;
 }
@@ -55,6 +56,8 @@ interface AvitoAccountHealth {
   tariff_name: string;
   tariff_started_at: string | null;
   tariff_ends_at: string | null;
+  subscription_ends_at: string | null;
+  subscription_source: 'avito_tariff' | 'manual' | 'unavailable';
   days_left: number | null;
   tariff_price: string | null;
   placements_remaining: number | null;
@@ -306,6 +309,7 @@ export default function SettingsPage() {
   const [checkingAutoloadId, setCheckingAutoloadId] = useState<number | null>(null);
   const [copiedFeedId, setCopiedFeedId] = useState<number | null>(null);
   const [savingPlacementAccountId, setSavingPlacementAccountId] = useState<number | null>(null);
+  const [savingSubscriptionAccountId, setSavingSubscriptionAccountId] = useState<number | null>(null);
   const [placementAddresses, setPlacementAddresses] = useState<PlacementAddress[]>([]);
   const [savingAddressAccountId, setSavingAddressAccountId] = useState<number | null>(null);
   const [addressDrafts, setAddressDrafts] = useState<Record<number, {
@@ -671,6 +675,35 @@ export default function SettingsPage() {
       toast.error('Не удалось сохранить настройки размещения');
     } finally {
       setSavingPlacementAccountId(null);
+    }
+  }
+
+  async function saveAutoloadSubscriptionEnd(account: Account) {
+    setSavingSubscriptionAccountId(account.id);
+    try {
+      const res = await accountApi.patch(account.id, {
+        autoload_subscription_ends_at: account.autoload_subscription_ends_at || null,
+      });
+      const updated: Account = res.data.data ?? res.data;
+      setAccounts((prev) => prev.map((item) => item.id === account.id ? updated : item));
+      setAutoloadStatus((prev) => ({
+        ...prev,
+        [account.id]: {
+          activated: updated.avito_status?.autoload_status === 'enabled',
+          feed_url: prev[account.id]?.feed_url || '',
+          stale: updated.avito_status?.profile_stale,
+          status: updated.avito_status ?? undefined,
+        },
+      }));
+      toast.success(
+        updated.autoload_subscription_ends_at
+          ? 'Дата окончания Автозагрузки сохранена'
+          : 'Ручная дата удалена',
+      );
+    } catch {
+      toast.error('Не удалось сохранить дату окончания Автозагрузки');
+    } finally {
+      setSavingSubscriptionAccountId(null);
     }
   }
 
@@ -1668,23 +1701,27 @@ export default function SettingsPage() {
                       {health && (
                         <div className="rounded-md border bg-muted/20 p-3 text-sm">
                           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                            <div className="space-y-1">
+                            <div className="min-w-0 flex-1 space-y-1">
                               <p className="font-medium">
                                 {health.tariff_status === 'active'
                                   ? health.tariff_name || 'Активный тариф Avito'
                                   : health.tariff_status === 'inactive'
                                     ? 'Тариф Avito неактивен'
-                                    : health.tariff_status === 'not_found'
-                                      ? 'Avito не предоставил данные тарифа'
-                                      : 'Данные тарифа ещё не получены'}
+                                    : 'Подписка Avito Автозагрузка'}
                               </p>
-                              {health.tariff_ends_at && (
+                              {health.subscription_ends_at ? (
                                 <p className={health.days_left !== null && health.days_left <= 7
                                   ? 'text-xs font-medium text-amber-600'
                                   : 'text-xs text-muted-foreground'}
                                 >
-                                  До {new Date(health.tariff_ends_at).toLocaleDateString('ru-RU')}
+                                  До {new Date(`${health.subscription_ends_at}T12:00:00`).toLocaleDateString('ru-RU')}
                                   {health.days_left !== null ? ` · осталось ${health.days_left} дн.` : ''}
+                                  {health.subscription_source === 'manual' ? ' · дата указана вручную' : ''}
+                                </p>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">
+                                  Avito API подтверждает статус Автозагрузки, но не передаёт дату её окончания.
+                                  Укажите дату продления ниже, чтобы видеть остаток дней.
                                 </p>
                               )}
                               {health.placements_remaining !== null && health.placements_total !== null && (
@@ -1703,7 +1740,8 @@ export default function SettingsPage() {
                                   Следующий: {health.scheduled_tariff.name}
                                 </p>
                               )}
-                              {(health.profile_stale || health.tariff_stale) && (
+                              {(health.profile_stale
+                                || (health.subscription_source === 'avito_tariff' && health.tariff_stale)) && (
                                 <p className="text-xs text-amber-600">
                                   Данные устарели — выполните повторную проверку.
                                 </p>
@@ -1715,6 +1753,36 @@ export default function SettingsPage() {
                                 <p className="text-xs text-muted-foreground">
                                   Проверено {new Date(health.last_attempted_at).toLocaleString('ru-RU')}
                                 </p>
+                              )}
+                              {health.subscription_source !== 'avito_tariff' && (
+                                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
+                                  <div className="space-y-1">
+                                    <Label htmlFor={`autoload-expiry-${acc.id}`} className="text-xs">
+                                      Дата окончания или следующего продления
+                                    </Label>
+                                    <Input
+                                      id={`autoload-expiry-${acc.id}`}
+                                      type="date"
+                                      value={acc.autoload_subscription_ends_at || ''}
+                                      onChange={(event) => updateAccountDraft(acc.id, {
+                                        autoload_subscription_ends_at: event.target.value || null,
+                                      })}
+                                      className="h-8 w-full text-xs sm:w-48"
+                                    />
+                                  </div>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    className="h-8"
+                                    onClick={() => saveAutoloadSubscriptionEnd(acc)}
+                                    disabled={savingSubscriptionAccountId === acc.id}
+                                  >
+                                    {savingSubscriptionAccountId === acc.id && (
+                                      <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                                    )}
+                                    Сохранить дату
+                                  </Button>
+                                </div>
                               )}
                             </div>
                             <a

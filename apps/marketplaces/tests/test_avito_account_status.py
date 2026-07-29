@@ -242,6 +242,43 @@ class TestAvitoAccountStatusSerializer:
         assert data['profile_stale'] is False
         assert data['tariff_stale'] is False
 
+    def test_uses_manual_autoload_date_when_tariff_api_is_unavailable(self):
+        """Для Autoload без Transport-тарифа считаем дни по указанной дате."""
+        tenant, _ = make_tenant('avito-manual-expiry')
+        account = make_account(tenant)
+        account.autoload_subscription_ends_at = timezone.localdate() + timedelta(days=12)
+        account.save(update_fields=['autoload_subscription_ends_at'])
+        status_obj = AvitoAccountStatus.objects.create(
+            tenant=tenant,
+            account=account,
+            autoload_status=AvitoAccountStatus.AUTOLOAD_ENABLED,
+            tariff_status=AvitoAccountStatus.TARIFF_NOT_FOUND,
+        )
+
+        data = AvitoAccountStatusSerializer(status_obj).data
+
+        assert data['days_left'] == 12
+        assert data['subscription_source'] == 'manual'
+        assert data['subscription_ends_at'] == account.autoload_subscription_ends_at.isoformat()
+
+    def test_tariff_api_date_has_priority_over_manual_date(self):
+        """Подтверждённый Avito Transport-тариф приоритетнее ручной даты."""
+        tenant, _ = make_tenant('avito-api-expiry-priority')
+        account = make_account(tenant)
+        account.autoload_subscription_ends_at = timezone.localdate() + timedelta(days=40)
+        account.save(update_fields=['autoload_subscription_ends_at'])
+        status_obj = AvitoAccountStatus.objects.create(
+            tenant=tenant,
+            account=account,
+            tariff_status=AvitoAccountStatus.TARIFF_ACTIVE,
+            tariff_ends_at=timezone.now() + timedelta(days=5),
+        )
+
+        data = AvitoAccountStatusSerializer(status_obj).data
+
+        assert data['days_left'] == 5
+        assert data['subscription_source'] == 'avito_tariff'
+
 
 @pytest.mark.django_db
 class TestAvitoAccountStatusAPI:

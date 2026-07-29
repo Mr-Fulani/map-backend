@@ -5,7 +5,10 @@
 изоляцию тенантов, защиту credentials.
 """
 import pytest
+from datetime import timedelta
 from unittest.mock import patch
+
+from django.utils import timezone
 
 from apps.datasources.encryption import decrypt
 from apps.marketplaces.services import InvalidMarketplaceCredentials
@@ -214,6 +217,32 @@ class TestMarketplaceAccountAPI:
             HTTP_AUTHORIZATION=f'Bearer {k2}',
         )
         assert resp.status_code == 404
+
+    def test_tenant_can_save_manual_autoload_subscription_end(self):
+        """PATCH сохраняет ручную дату, когда Autoload API не отдаёт срок."""
+        from django.test import Client
+        from apps.datasources.encryption import encrypt
+
+        tenant, key = make_tenant('acc-autoload-expiry')
+        account = MarketplaceAccount.objects.create(
+            tenant=tenant,
+            name='Private',
+            external_id='autoload-expiry',
+            credentials_enc=encrypt({'client_id': 'x', 'client_secret': 'y'}),
+        )
+        end_date = timezone.localdate() + timedelta(days=30)
+
+        response = Client().patch(
+            f'/api/v1/accounts/{account.pk}/',
+            {'autoload_subscription_ends_at': end_date.isoformat()},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {key}',
+        )
+
+        assert response.status_code == 200
+        assert response.json()['autoload_subscription_ends_at'] == end_date.isoformat()
+        assert response.json()['avito_status']['days_left'] == 30
+        assert response.json()['avito_status']['subscription_source'] == 'manual'
 
     def test_create_account_schedules_autoload_profile_setup(self):
         """После создания аккаунта Avito планируется задача настройки Autoload профиля."""

@@ -698,6 +698,9 @@ class MarketplaceAccountService:
             if field in data:
                 setattr(account, field, str(data[field] or '').strip())
                 update_fields.append(field)
+        if 'autoload_subscription_ends_at' in data:
+            account.autoload_subscription_ends_at = data['autoload_subscription_ends_at']
+            update_fields.append('autoload_subscription_ends_at')
         if update_fields:
             account.save(update_fields=update_fields)
         return account
@@ -785,13 +788,24 @@ class AvitoAccountStatusService:
 
     @staticmethod
     def _days_left(status_obj: AvitoAccountStatus) -> int | None:
-        """Возвращает округлённое вверх число суток до окончания тарифа."""
-        if not status_obj.tariff_ends_at:
+        """Возвращает дни по API-тарифу или по ручной дате Autoload."""
+        if status_obj.tariff_ends_at:
+            seconds_left = (status_obj.tariff_ends_at - timezone.now()).total_seconds()
+            if seconds_left <= 0:
+                return 0
+            return int((seconds_left + 86399) // 86400)
+        manual_end = status_obj.account.autoload_subscription_ends_at
+        if not manual_end:
             return None
-        seconds_left = (status_obj.tariff_ends_at - timezone.now()).total_seconds()
-        if seconds_left <= 0:
-            return 0
-        return int((seconds_left + 86399) // 86400)
+        return max((manual_end - timezone.localdate()).days, 0)
+
+    @staticmethod
+    def _period_key(status_obj: AvitoAccountStatus) -> str:
+        if status_obj.tariff_ends_at:
+            return f'api:{status_obj.tariff_ends_at.isoformat()}'
+        if status_obj.account.autoload_subscription_ends_at:
+            return f'manual:{status_obj.account.autoload_subscription_ends_at.isoformat()}'
+        return ''
 
     @staticmethod
     def _queue_notification(status_obj: AvitoAccountStatus, level: str, message: str) -> None:
@@ -811,11 +825,7 @@ class AvitoAccountStatusService:
         from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR
 
         state = dict(status_obj.notification_state or {})
-        period_key = (
-            status_obj.tariff_ends_at.isoformat()
-            if status_obj.tariff_ends_at
-            else ''
-        )
+        period_key = cls._period_key(status_obj)
         if state.get('period') != period_key:
             state = {'period': period_key}
 
@@ -835,7 +845,10 @@ class AvitoAccountStatusService:
             state.pop('connection', None)
 
         days_left = cls._days_left(status_obj)
-        if status_obj.tariff_status == AvitoAccountStatus.TARIFF_ACTIVE and days_left is not None:
+        if (
+            status_obj.autoload_status == AvitoAccountStatus.AUTOLOAD_ENABLED
+            and days_left is not None
+        ):
             expiry_threshold = next(
                 (threshold for threshold in (0, 1, 3, 7, 14) if days_left <= threshold),
                 None,
