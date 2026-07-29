@@ -18,6 +18,7 @@ from apps.billing.ai_wallet import AIWalletService, InsufficientAICredits
 from apps.billing.services import LimitChecker
 
 MAX_VALIDATION_RETRIES = 2
+ZERO_CREDITS = Decimal('0')
 
 
 class AICreditsExhausted(Exception):
@@ -197,7 +198,7 @@ class DescriptionAgent:
         input_tokens=0,
         cached_input_tokens=0,
         output_tokens=0,
-        charged_credits=Decimal('0'),
+        charged_credits=ZERO_CREDITS,
         error_code='',
         error_message='',
     ) -> None:
