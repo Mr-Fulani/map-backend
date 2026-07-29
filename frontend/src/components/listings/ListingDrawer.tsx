@@ -566,7 +566,10 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   return (
     <>
       <Sheet open={open} onOpenChange={handleOpenChange}>
-        <SheetContent side="right" className="w-full sm:max-w-[520px] overflow-y-auto">
+        <SheetContent
+          side="right"
+          className="w-full overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable] sm:max-w-[520px]"
+        >
           {loading || !listing ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               Загрузка...
@@ -937,6 +940,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                     onValueChange={setEditCategoryId}
                     disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
                     placeholder="Выберите категорию автозапчасти"
+                    dropdownClassName="min-w-0 sm:min-w-0"
                   />
                 </div>
               ) : listing.catalog_category ? (

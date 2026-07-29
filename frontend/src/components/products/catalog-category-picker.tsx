@@ -36,6 +36,7 @@ interface CatalogCategoryPickerProps {
   disabled?: boolean;
   placeholder?: string;
   className?: string;
+  dropdownClassName?: string;
 }
 
 function sourcePriority(category: CatalogCategoryOption): number {
@@ -55,6 +56,7 @@ export function CatalogCategoryPicker({
   disabled = false,
   placeholder = 'Выберите категорию',
   className,
+  dropdownClassName,
 }: CatalogCategoryPickerProps) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -134,7 +136,12 @@ export function CatalogCategoryPicker({
       )}
 
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-full min-w-[20rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md sm:min-w-[34rem]">
+        <div
+          className={cn(
+            'absolute left-0 top-full z-50 mt-1 w-full min-w-[20rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md sm:min-w-[34rem]',
+            dropdownClassName,
+          )}
+        >
           <div className="border-b p-2">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
