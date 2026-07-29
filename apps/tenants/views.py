@@ -115,7 +115,7 @@ class CatalogDomainListView(APIView):
         )
         if is_enabled:
             from apps.products.services import ProductCategorySeedService
-            ProductCategorySeedService.seed_tenant_default_categories(request.tenant, domain)
+            ProductCategorySeedService.seed_tenant_primary_categories(request.tenant, domain)
 
         return Response({
             'status': 'ok',

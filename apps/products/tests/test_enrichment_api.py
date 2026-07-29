@@ -252,6 +252,14 @@ def test_review_queue_lists_tenant_scoped_pending_items():
 def test_review_queue_lists_pending_classifications():
     tenant, api_key = make_tenant('review-queue-classification-list')
     product = make_product(tenant, name='Колодки BREMBO P50136')
+    category = TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Ручная категория очереди',
+        root_domain=CatalogDomain.objects.get(slug='auto_parts'),
+        domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+    )
+    product.catalog_category = category
+    product.save(update_fields=['catalog_category', 'updated_at'])
     classification = ProductCatalogClassification.objects.create(
         tenant=tenant,
         product=product,
@@ -273,6 +281,7 @@ def test_review_queue_lists_pending_classifications():
     assert data[0]['id'] == f'classification:{classification.pk}'
     assert data[0]['title'] == 'Автозапчасть'
     assert data[0]['reason'] == 'Найдены признаки автозапчасти.'
+    assert data[0]['product']['catalog_category_id'] == category.pk
 
 
 @pytest.mark.django_db
