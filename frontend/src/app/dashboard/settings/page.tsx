@@ -1710,14 +1710,39 @@ export default function SettingsPage() {
                                     : 'Подписка Avito Автозагрузка'}
                               </p>
                               {health.subscription_ends_at ? (
-                                <p className={health.days_left !== null && health.days_left <= 7
-                                  ? 'text-xs font-medium text-amber-600'
-                                  : 'text-xs text-muted-foreground'}
-                                >
-                                  До {new Date(`${health.subscription_ends_at}T12:00:00`).toLocaleDateString('ru-RU')}
-                                  {health.days_left !== null ? ` · осталось ${health.days_left} дн.` : ''}
-                                  {health.subscription_source === 'manual' ? ' · дата указана вручную' : ''}
-                                </p>
+                                <div className="space-y-2 pt-1">
+                                  <div className="flex min-w-0 flex-wrap gap-2">
+                                    <div className="min-w-[8.5rem] flex-1 rounded-md border bg-background px-3 py-2 sm:flex-none">
+                                      <span className="block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                                        Действует до
+                                      </span>
+                                      <span className="block whitespace-nowrap text-base font-bold tabular-nums tracking-tight sm:text-lg">
+                                        {new Date(`${health.subscription_ends_at}T12:00:00`).toLocaleDateString('ru-RU')}
+                                      </span>
+                                    </div>
+                                    {health.days_left !== null && (
+                                      <div className={`min-w-[7.5rem] flex-1 rounded-md border px-3 py-2 sm:flex-none ${
+                                        health.days_left <= 7
+                                          ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400'
+                                          : 'border-primary/20 bg-primary/5 text-foreground'
+                                      }`}
+                                      >
+                                        <span className="block text-[11px] font-medium uppercase tracking-wide opacity-70">
+                                          Осталось
+                                        </span>
+                                        <span className="block whitespace-nowrap text-base font-bold tabular-nums tracking-tight sm:text-lg">
+                                          {health.days_left}{' '}
+                                          <span className="text-sm font-semibold">дн.</span>
+                                        </span>
+                                      </div>
+                                    )}
+                                  </div>
+                                  {health.subscription_source === 'manual' && (
+                                    <Badge variant="outline" className="max-w-full whitespace-normal text-[11px] font-normal text-muted-foreground">
+                                      Дата указана вручную
+                                    </Badge>
+                                  )}
+                                </div>
                               ) : (
                                 <p className="text-xs text-muted-foreground">
                                   Avito API подтверждает статус Автозагрузки, но не передаёт дату её окончания.
@@ -1755,8 +1780,8 @@ export default function SettingsPage() {
                                 </p>
                               )}
                               {health.subscription_source !== 'avito_tariff' && (
-                                <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-end">
-                                  <div className="space-y-1">
+                                <div className="mt-4 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-end">
+                                  <div className="min-w-0 flex-1 space-y-1 sm:max-w-56">
                                     <Label htmlFor={`autoload-expiry-${acc.id}`} className="text-xs">
                                       Дата окончания или следующего продления
                                     </Label>
@@ -1767,13 +1792,13 @@ export default function SettingsPage() {
                                       onChange={(event) => updateAccountDraft(acc.id, {
                                         autoload_subscription_ends_at: event.target.value || null,
                                       })}
-                                      className="h-8 w-full text-xs sm:w-48"
+                                      className="h-9 w-full min-w-0 text-sm font-semibold tabular-nums"
                                     />
                                   </div>
                                   <Button
                                     size="sm"
                                     variant="outline"
-                                    className="h-8"
+                                    className="h-9 w-full sm:w-auto"
                                     onClick={() => saveAutoloadSubscriptionEnd(acc)}
                                     disabled={savingSubscriptionAccountId === acc.id}
                                   >
