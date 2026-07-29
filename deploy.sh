@@ -56,6 +56,9 @@ done
 echo "==> Применение миграций..."
 $COMPOSE exec -T django python manage.py migrate
 
+echo "==> Настройка периодических задач..."
+$COMPOSE exec -T django python manage.py setup_periodic_tasks
+
 echo "==> Сбор статики..."
 $COMPOSE exec -T django python manage.py collectstatic --noinput > /dev/null
 

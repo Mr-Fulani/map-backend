@@ -9,7 +9,11 @@ from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 
 from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
-from apps.marketplaces.adapters.avito.error_handler import handle_avito_error
+from apps.marketplaces.adapters.avito.error_handler import (
+    ForbiddenError,
+    NotFoundError,
+    handle_avito_error,
+)
 from apps.marketplaces.adapters.avito.feed_builder import build_feed, build_stop_feed
 from apps.marketplaces.adapters.avito.rate_limiter import AvitoRateLimiter, RateLimitError
 from apps.marketplaces.base import BaseMarketplaceAdapter
@@ -159,26 +163,21 @@ class AvitoAdapter(BaseMarketplaceAdapter):
 
     def is_autoload_active(self) -> bool:
         """Проверяет, доступен ли профиль Avito Autoload для аккаунта."""
-        token = self._auth.get_token(self.account)
-        resp = requests.get(
-            f'{AVITO_API_BASE}/autoload/v2/profile',
-            headers={'Authorization': f'Bearer {token}'},
-            timeout=10,
-        )
-        if resp.status_code == 401:
-            self._auth.invalidate(self.account)
-            token = self._auth.get_token(self.account)
-            resp = requests.get(
-                f'{AVITO_API_BASE}/autoload/v2/profile',
-                headers={'Authorization': f'Bearer {token}'},
-                timeout=10,
-            )
-        if resp.status_code == 200:
-            return True
-        if resp.status_code in (403, 404):
+        try:
+            profile = self.get_autoload_profile()
+        except (ForbiddenError, NotFoundError):
             return False
-        handle_avito_error(resp)
-        return False
+        return bool(profile.get('autoload_enabled'))
+
+    def get_autoload_profile(self) -> dict:
+        """Возвращает настройки профиля Автозагрузки Avito."""
+        resp = self._request('get', '/autoload/v2/profile', operation='status')
+        return resp.json()
+
+    def get_tariff_info(self) -> dict:
+        """Возвращает текущий и запланированный тариф категории «Транспорт»."""
+        resp = self._request('get', '/tariff/info/1', operation='status')
+        return resp.json()
 
     def get_category_tree(self) -> list:
         """
@@ -452,34 +451,41 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         """
         Создаёт или обновляет профиль Avito Autoload для аккаунта.
 
-        Устанавливает feed_url = публичный URL нашего S3-файла.
+        Добавляет feed_url нашего S3-файла, сохраняя чужие фиды, расписание
+        и явное состояние выключенного профиля.
         Вызывается один раз при подключении аккаунта (онбординг).
         """
-        token = self._auth.get_token(self.account)
+        own_feed = {
+            'feed_name': f'MAP feed — {self.account.name}',
+            'feed_url': self._feed_public_url(),
+        }
+        try:
+            current = self.get_autoload_profile()
+        except NotFoundError:
+            current = {}
+
+        # Существующие фиды и расписание принадлежат клиенту: добавляем только
+        # фид MAP и не включаем отключённый профиль без явного действия.
+        feeds = [
+            feed for feed in (current.get('feeds_data') or [])
+            if (
+                isinstance(feed, dict)
+                and feed.get('feed_url') != own_feed['feed_url']
+            )
+        ]
+        feeds.append(own_feed)
         payload = {
             'agreement': True,
-            'autoload_enabled': True,
-            'report_email': report_email,
-            'feeds_data': [
-                {
-                    'feed_name': f'MAP feed — {self.account.name}',
-                    'feed_url': self._feed_public_url(),
-                }
-            ],
-            # Каждый день в 3:00 и 12:00 МСК, до 50 000 объявлений за период
-            'schedule': [
+            'autoload_enabled': current.get('autoload_enabled', True),
+            'report_email': current.get('report_email') or report_email,
+            'feeds_data': feeds,
+            'schedule': current.get('schedule') or [
                 {'rate': 50000, 'weekdays': [0, 1, 2, 3, 4, 5, 6], 'time_slots': [3, 12]},
             ],
         }
-        resp = requests.post(
-            f'{AVITO_API_BASE}/autoload/v2/profile',
-            headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
+        self._request(
+            'post',
+            '/autoload/v2/profile',
+            operation='status',
             json=payload,
-            timeout=30,
         )
-        if not resp.ok:
-            logger.error(
-                'Не удалось настроить Autoload профиль для account=%s: %s %s',
-                self.account.pk, resp.status_code, resp.text[:200],
-            )
-            resp.raise_for_status()

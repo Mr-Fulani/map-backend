@@ -1,12 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { billingApi, imageApi, logApi } from '@/lib/api';
+import { accountApi, billingApi, imageApi, logApi } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
-  AlertTriangle, Image as ImageIcon, ListOrdered, Package, Sparkles, TrendingUp, XCircle,
+  AlertTriangle,
+  Image as ImageIcon,
+  ListOrdered,
+  Package,
+  Sparkles,
+  TrendingUp,
+  XCircle,
 } from 'lucide-react';
 
 interface UsageData {
@@ -112,24 +118,59 @@ interface BraveQuota {
   is_paused: boolean | null;
 }
 
+interface AvitoWarning {
+  accountName: string;
+  message: string;
+}
+
 export default function DashboardPage() {
   const [usage, setUsage] = useState<UsageData | null>(null);
   const [errorsCount, setErrorsCount] = useState(0);
   const [braveQuota, setBraveQuota] = useState<BraveQuota>({ used: null, soft_cap: null, is_paused: null });
+  const [avitoWarnings, setAvitoWarnings] = useState<AvitoWarning[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     async function load() {
       try {
         const today = new Date().toISOString().slice(0, 10);
-        const [usageRes, logsRes, quotaRes] = await Promise.all([
+        const [usageRes, logsRes, quotaRes, accountsRes] = await Promise.all([
           billingApi.getUsage(),
           logApi.list({ status: 'error', date: today }),
           imageApi.getQuota(),
+          accountApi.list(),
         ]);
         setUsage(usageRes.data.data);
         setErrorsCount(logsRes.data.meta?.total ?? 0);
         setBraveQuota(quotaRes.data.data);
+        const accounts = accountsRes.data.data ?? accountsRes.data;
+        const warnings: AvitoWarning[] = [];
+        for (const account of accounts) {
+          const health = account.avito_status;
+          if (!health) continue;
+          if (health.connection_status === 'auth_error') {
+            warnings.push({ accountName: account.name, message: 'Avito отклонил ключи доступа' });
+          } else if (health.autoload_status !== 'enabled' && health.autoload_status !== 'unknown') {
+            warnings.push({ accountName: account.name, message: 'Автозагрузка не активирована' });
+          } else if (health.tariff_status === 'inactive') {
+            warnings.push({ accountName: account.name, message: 'Тариф Avito неактивен' });
+          } else if (health.days_left !== null && health.days_left <= 7) {
+            warnings.push({
+              accountName: account.name,
+              message: `до окончания тарифа осталось ${health.days_left} дн.`,
+            });
+          } else if (
+            health.placements_remaining !== null
+            && health.placements_total
+            && health.placements_remaining / health.placements_total <= 0.2
+          ) {
+            warnings.push({
+              accountName: account.name,
+              message: `осталось ${health.placements_remaining} размещений из ${health.placements_total}`,
+            });
+          }
+        }
+        setAvitoWarnings(warnings);
       } catch {
         // показываем нули вместо крэша
       } finally {
@@ -188,6 +229,27 @@ export default function DashboardPage() {
           </div>
           <a href="/dashboard/billing" className="shrink-0 font-semibold underline underline-offset-2">
             Оплатить
+          </a>
+        </div>
+      )}
+
+      {!loading && avitoWarnings.length > 0 && (
+        <div className="flex flex-col gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <p className="font-semibold text-amber-700">Требуется внимание к Avito</p>
+            <ul className="mt-1 space-y-0.5 text-muted-foreground">
+              {avitoWarnings.slice(0, 3).map((warning) => (
+                <li key={`${warning.accountName}-${warning.message}`}>
+                  {warning.accountName}: {warning.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+          <a
+            href="/dashboard/settings#marketplaces"
+            className="shrink-0 font-semibold text-amber-700 underline underline-offset-2"
+          >
+            Открыть настройки
           </a>
         </div>
       )}
