@@ -1085,7 +1085,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
               {/* Незаполненные обязательные поля Avito — предупреждаем ДО публикации */}
               {(listing.avito_field_warnings?.length ?? 0) > 0 && (
                 <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-700 dark:text-yellow-400">
-                  <p className="font-medium">Заполните перед публикацией:</p>
+                  <p className="font-medium">Перед публикацией проверьте данные:</p>
                   <ul className="mt-1 list-disc space-y-1 pl-4">
                     {listing.avito_field_warnings!.map((warning, i) => (
                       <li key={i}>{warning}</li>

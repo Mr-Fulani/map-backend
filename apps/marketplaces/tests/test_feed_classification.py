@@ -1,4 +1,5 @@
 import types
+from unittest.mock import patch
 
 from apps.marketplaces.adapters.avito.feed_builder import (
     _avito_spec, _get_avito_category, _get_part_subtype,
@@ -88,7 +89,12 @@ def test_blocking_missing_fields_for_leaf_requiring_subtype():
 
     assert blocking_missing_avito_fields(listing) == ['TransmissionSparePartType']
     warnings = avito_field_warnings(listing)
-    assert any('Тип детали трансмиссии' in w and 'Подкатегорию 3' in w for w in warnings)
+    assert any(
+        'тип детали трансмиссии' in w
+        and 'Категория Avito' in w
+        and 'Подкатегорию 3' not in w
+        for w in warnings
+    )
 
 
 def test_no_blocking_fields_when_subtype_selected():
@@ -126,6 +132,69 @@ def test_no_brand_warning_for_used_product():
     listing = types.SimpleNamespace(product=product)
 
     assert product_brand_is_missing(listing) is False
+
+
+def test_battery_warning_uses_plain_russian_names_and_groups_fields():
+    from apps.marketplaces.adapters.avito.feed_builder import avito_field_warnings
+
+    category = _cat('Аккумуляторы', external_id='akkumuliatory_5530')
+    warnings = avito_field_warnings(_listing(category))
+
+    assert len(warnings) == 1
+    warning = warnings[0]
+    assert 'напряжение аккумулятора (например, 12 В)' in warning
+    assert 'ёмкость аккумулятора (например, 60 А·ч)' in warning
+    assert 'пусковой ток аккумулятора (например, 540 А)' in warning
+    assert 'полярность аккумулятора (прямая или обратная)' in warning
+    assert 'длина детали (в миллиметрах)' in warning
+    assert 'ширина детали (в миллиметрах)' in warning
+    assert 'высота детали (в миллиметрах)' in warning
+    assert 'поддержку MAP' in warning
+    for technical_tag in (
+        'Voltage', 'Capacity', 'DCL', 'Polarity',
+        'TechnicLength', 'TechnicWidth', 'TechnicHeight',
+    ):
+        assert technical_tag not in warning
+
+
+def test_unknown_brand_suggestion_warns_not_to_replace_brand_blindly():
+    from apps.marketplaces.adapters.avito.feed_builder import avito_field_warnings
+
+    category = _cat('Аккумуляторы', external_id='akkumuliatory_5530')
+    product = types.SimpleNamespace(
+        catalog_category=category,
+        category_1c='',
+        brand='AKOM',
+        condition='new',
+    )
+    listing = types.SimpleNamespace(product=product)
+
+    with patch(
+        'apps.marketplaces.adapters.avito.brand_catalog.lookup_brand',
+        return_value={'known': False, 'suggestions': ['TAKOMA']},
+    ):
+        warnings = avito_field_warnings(listing)
+
+    brand_warning = warnings[0]
+    assert 'Avito не распознал производителя «AKOM»' in brand_warning
+    assert '«TAKOMA»' in brand_warning
+    assert 'только в том случае, если это действительно тот же производитель' in brand_warning
+
+
+def test_every_current_avito_required_field_has_a_user_friendly_name():
+    from apps.marketplaces.adapters.avito.category_map import leaf_spec_by_slug
+    from apps.marketplaces.adapters.avito.feed_builder import (
+        AVITO_FIELD_LABELS, AVITO_SUBTYPE_LABELS, _FEED_PROVIDED_TAGS,
+    )
+
+    required_tags = {
+        tag
+        for spec in leaf_spec_by_slug().values()
+        for tag in (spec.get('required') or [])
+    }
+    warning_tags = required_tags - _FEED_PROVIDED_TAGS - set(AVITO_SUBTYPE_LABELS)
+
+    assert warning_tags <= set(AVITO_FIELD_LABELS)
 
 
 def test_name_fallback_prefers_passenger_branch_on_collision():
