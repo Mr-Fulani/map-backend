@@ -192,8 +192,23 @@ export const billingApi = {
   getSubscription: () => api.get('/billing/subscription/'),
   getUsage: () => api.get('/billing/usage/'),
   getInvoices: () => api.get('/billing/invoices/'),
+  getAIPackages: () => api.get('/billing/ai-packages/'),
   checkout: (plan_slug: string, period: string) =>
     api.post('/billing/checkout/', { plan_slug, period }),
+  topupAI: (package_id: number) =>
+    api.post('/billing/ai-topup/', { package_id }),
+};
+
+// AI models and tenant routing
+export const aiApi = {
+  getModels: () => api.get('/ai/models/'),
+  getSettings: () => api.get('/ai/settings/'),
+  updateSettings: (data: {
+    default_model: number;
+    use_task_overrides: boolean;
+    task_models: Record<string, number>;
+  }) => api.patch('/ai/settings/', data),
+  getUsage: () => api.get('/ai/usage/'),
 };
 
 // Datasources

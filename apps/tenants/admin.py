@@ -77,7 +77,8 @@ class TenantAdmin(ModelAdmin):
 
     list_display = [
         'name', 'slug', 'get_enabled_domains', 'is_active', 'get_plan',
-        'get_access_status', 'active_listings_count', 'sku_count', 'created_at',
+        'get_access_status', 'active_listings_count', 'sku_count',
+        'ai_credit_limit_override', 'created_at',
     ]
     list_filter = ['is_active']
     search_fields = ['name', 'slug']
@@ -97,8 +98,11 @@ class TenantAdmin(ModelAdmin):
             'description': 'Email владельца — в инлайне пользователей ниже.',
         }),
         ('Подписка', {
-            'fields': ['get_subscription_info'],
-            'description': 'Управление подпиской — в разделе Биллинг → Подписки.',
+            'fields': ['get_subscription_info', 'ai_credit_limit_override'],
+            'description': (
+                'Управление подпиской — в разделе Биллинг → Подписки. '
+                'Пустой AI-лимит использует значение тарифного плана.'
+            ),
         }),
         ('Счётчики', {
             'fields': ['get_sku_count', 'get_active_listings_count', 'ai_credits_used', 'get_brave_quota'],
@@ -109,6 +113,12 @@ class TenantAdmin(ModelAdmin):
             'classes': ['collapse'],
         }),
     ]
+
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if change and 'ai_credit_limit_override' in form.changed_data:
+            from apps.billing.ai_wallet import AIWalletService
+            AIWalletService.sync_included_limit(obj)
 
     @admin.display(description='Brave запросов (месяц, платформа)')
     def get_brave_quota(self, obj):

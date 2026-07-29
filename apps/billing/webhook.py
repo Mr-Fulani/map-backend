@@ -11,8 +11,6 @@ YOOKASSA_IP_RANGES = [
     '77.75.153.0/25',
     '77.75.156.11/32',
     '77.75.156.35/32',
-    '77.75.156.207/32',
-    '77.75.159.0/25',
     '2a02:5180::/32',
 ]
 
@@ -27,7 +25,9 @@ def is_yookassa_ip(request) -> bool:
     """
     forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
     if forwarded_for:
-        remote_ip = forwarded_for.split(',')[0].strip()
+        # nginx добавляет реальный адрес клиента в конец цепочки через
+        # $proxy_add_x_forwarded_for; левую часть клиент может подделать.
+        remote_ip = forwarded_for.split(',')[-1].strip()
     else:
         remote_ip = request.META.get('REMOTE_ADDR', '')
 

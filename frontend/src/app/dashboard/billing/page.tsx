@@ -5,6 +5,7 @@ import { billingApi } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
@@ -16,6 +17,7 @@ interface Plan {
   slug: string;
   price_monthly: string;
   price_yearly: string;
+  price_yearly_monthly_equivalent: string;
   limit_listings: number | null;
   limit_sku: number | null;
   limit_ai_credits: number | null;
@@ -30,20 +32,52 @@ interface Subscription {
   billing_period: string;
   current_period_start: string;
   current_period_end: string | null;
+  ai_period_start: string | null;
+  ai_period_end: string | null;
 }
 
 interface Invoice {
   id: number;
+  purchase_type: 'subscription' | 'ai_topup';
   amount: string;
+  currency: string;
   status: string;
   paid_at: string | null;
+  refunded_amount: string;
+  refund_review_required: boolean;
   created_at: string;
+}
+
+interface AIUsage {
+  ai_credits: {
+    used: string;
+    limit: string;
+    included_balance: string;
+    included_percent_used: string;
+    purchased_balance: string;
+    reserved_balance: string;
+    available_balance: string;
+    unlimited: boolean;
+    individual_limit: boolean;
+    overage_active: boolean;
+    threshold: 'normal' | 'warning' | 'critical' | 'exhausted';
+  };
+}
+
+interface AICreditPackage {
+  id: number;
+  name: string;
+  credits: string;
+  price_rub: string;
 }
 
 const INVOICE_STATUS: Record<string, string> = {
   pending: 'Ожидает',
   paid: 'Оплачен',
   failed: 'Ошибка',
+  partially_refunded: 'Частичный возврат',
+  refunded: 'Возвращён',
+  manual_review: 'Ручная проверка',
 };
 
 const SUBSCRIPTION_STATUS: Record<string, string> = {
@@ -51,6 +85,11 @@ const SUBSCRIPTION_STATUS: Record<string, string> = {
   active: 'Активна',
   past_due: 'Истекла — доступ только для чтения',
   cancelled: 'Отменена — доступ только для чтения',
+};
+
+const INVOICE_TYPE: Record<string, string> = {
+  subscription: 'Подписка',
+  ai_topup: 'AI-кредиты',
 };
 
 function fmt(n: number | null) {
@@ -61,18 +100,25 @@ export default function BillingPage() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [usage, setUsage] = useState<AIUsage | null>(null);
+  const [aiPackages, setAIPackages] = useState<AICreditPackage[]>([]);
   const [loading, setLoading] = useState(true);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [topupLoading, setTopupLoading] = useState<number | null>(null);
 
   useEffect(() => {
     Promise.all([
       billingApi.getSubscription(),
       billingApi.getPlans(),
       billingApi.getInvoices(),
-    ]).then(([subRes, plansRes, invRes]) => {
+      billingApi.getUsage(),
+      billingApi.getAIPackages(),
+    ]).then(([subRes, plansRes, invRes, usageRes, packagesRes]) => {
       setSubscription(subRes.data.data);
       setPlans(plansRes.data.data);
       setInvoices(invRes.data.data);
+      setUsage(usageRes.data.data);
+      setAIPackages(packagesRes.data.data);
     }).catch(() => {
       toast.error('Не удалось загрузить данные биллинга');
     }).finally(() => setLoading(false));
@@ -88,6 +134,19 @@ export default function BillingPage() {
       toast.error('Ошибка создания платежа');
     } finally {
       setCheckoutLoading(null);
+    }
+  }
+
+  async function topupAI(packageId: number) {
+    setTopupLoading(packageId);
+    try {
+      const res = await billingApi.topupAI(packageId);
+      const url = res.data.data?.payment_url;
+      if (url) window.open(url, '_blank');
+    } catch {
+      toast.error('Не удалось создать платёж на пополнение');
+    } finally {
+      setTopupLoading(null);
     }
   }
 
@@ -108,6 +167,10 @@ export default function BillingPage() {
     ? (subscription.effective_status ?? subscription.status)
     : null;
   const hasFullAccess = subscription?.access_mode === 'full';
+  const aiPercentUsed = Math.min(
+    100,
+    Number(usage?.ai_credits.included_percent_used ?? 0),
+  );
 
   return (
     <div className="space-y-6">
@@ -164,7 +227,7 @@ export default function BillingPage() {
                   <div className="space-y-1 text-sm text-muted-foreground">
                     <p>• {fmt(plan.limit_listings)} объявлений</p>
                     <p>• {fmt(plan.limit_sku)} SKU</p>
-                    <p>• {fmt(plan.limit_ai_credits)} AI-генераций</p>
+                    <p>• {fmt(plan.limit_ai_credits)} AI-кредитов</p>
                   </div>
                   <Separator />
                   <div className="space-y-2">
@@ -180,17 +243,23 @@ export default function BillingPage() {
                         : canRenewCurrent ? 'Продлить (мес)' : isCurrent ? 'Текущий план' : 'Выбрать (мес)'}
                     </Button>
                     {(!isCurrent || canRenewCurrent) && (
-                      <Button
-                        className="w-full"
-                        size="sm"
-                        variant="outline"
-                        disabled={checkoutLoading !== null}
-                        onClick={() => checkout(plan.slug, 'yearly')}
-                      >
-                        {checkoutLoading === `${plan.slug}-yearly`
-                          ? <Loader2 className="h-4 w-4 animate-spin" />
-                          : `Год (−20%) — ${Number(plan.price_yearly).toLocaleString('ru-RU')} ₽`}
-                      </Button>
+                      <div className="space-y-1">
+                        <Button
+                          className="w-full"
+                          size="sm"
+                          variant="outline"
+                          disabled={checkoutLoading !== null}
+                          onClick={() => checkout(plan.slug, 'yearly')}
+                        >
+                          {checkoutLoading === `${plan.slug}-yearly`
+                            ? <Loader2 className="h-4 w-4 animate-spin" />
+                            : `Оплатить год — ${Number(plan.price_yearly).toLocaleString('ru-RU')} ₽`}
+                        </Button>
+                        <p className="text-center text-xs text-muted-foreground">
+                          {Number(plan.price_yearly_monthly_equivalent).toLocaleString('ru-RU')} ₽/мес
+                          · скидка 20%
+                        </p>
+                      </div>
                     )}
                   </div>
                 </CardContent>
@@ -198,6 +267,99 @@ export default function BillingPage() {
             );
           })}
         </div>
+      </div>
+
+      {/* AI-кредиты */}
+      <div id="ai-credits" className="scroll-mt-6">
+        <h2 className="mb-3 text-lg font-semibold">AI-кредиты</h2>
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Баланс</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-5">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span>
+                  Использовано{' '}
+                  {Number(usage?.ai_credits.used ?? 0).toLocaleString('ru-RU')} из{' '}
+                  {Number(usage?.ai_credits.limit ?? 0).toLocaleString('ru-RU')}
+                </span>
+                <div className="flex gap-2">
+                  {usage?.ai_credits.individual_limit && (
+                    <Badge variant="outline">Индивидуальный лимит</Badge>
+                  )}
+                  {usage?.ai_credits.overage_active && (
+                    <Badge variant="destructive">Расходуется купленный баланс</Badge>
+                  )}
+                  {usage?.ai_credits.threshold === 'warning' && (
+                    <Badge variant="secondary">Использовано 80%+</Badge>
+                  )}
+                  {usage?.ai_credits.threshold === 'critical' && (
+                    <Badge variant="destructive">Использовано 90%+</Badge>
+                  )}
+                  {usage?.ai_credits.threshold === 'exhausted' && (
+                    <Badge variant="destructive">Пакет исчерпан</Badge>
+                  )}
+                </div>
+              </div>
+              <Progress value={aiPercentUsed} />
+              <p className="text-xs text-muted-foreground">
+                Уведомления отправляются при достижении 80%, 90% и 100%.
+              </p>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border p-4">
+                <p className="text-xs text-muted-foreground">Доступно</p>
+                <p className="mt-1 text-2xl font-bold">
+                  {Number(usage?.ai_credits.available_balance ?? 0).toLocaleString('ru-RU')}
+                </p>
+              </div>
+              <div className="rounded-lg border p-4">
+                <p className="text-xs text-muted-foreground">Включено в тариф</p>
+                <p className="mt-1 text-xl font-semibold">
+                  {Number(usage?.ai_credits.included_balance ?? 0).toLocaleString('ru-RU')}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">Обновляется каждый период</p>
+              </div>
+              <div className="rounded-lg border p-4">
+                <p className="text-xs text-muted-foreground">Куплено отдельно</p>
+                <p className="mt-1 text-xl font-semibold">
+                  {Number(usage?.ai_credits.purchased_balance ?? 0).toLocaleString('ru-RU')}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">Не сгорает при продлении</p>
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-3 text-sm font-medium">Пополнить баланс</p>
+              <div className="grid gap-3 md:grid-cols-3">
+                {aiPackages.map((item) => (
+                  <div key={item.id} className="rounded-lg border p-4">
+                    <p className="font-semibold">{item.name}</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {Number(item.credits).toLocaleString('ru-RU')} кредитов
+                    </p>
+                    <Button
+                      className="mt-4 w-full"
+                      size="sm"
+                      disabled={topupLoading !== null}
+                      onClick={() => topupAI(item.id)}
+                    >
+                      {topupLoading === item.id
+                        ? <Loader2 className="h-4 w-4 animate-spin" />
+                        : `${Number(item.price_rub).toLocaleString('ru-RU')} ₽`}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <p className="mt-3 text-xs text-muted-foreground">
+                Перед AI-запросом система резервирует ожидаемую стоимость, затем списывает
+                фактическую по использованным токенам. При ошибке резерв возвращается.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* История платежей */}
@@ -217,6 +379,14 @@ export default function BillingPage() {
                         <p className="text-sm font-medium">
                           {Number(inv.amount).toLocaleString('ru-RU')} ₽
                         </p>
+                        <p className="text-xs text-muted-foreground">
+                          {INVOICE_TYPE[inv.purchase_type] ?? inv.purchase_type}
+                        </p>
+                        {Number(inv.refunded_amount) > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            Возвращено: {Number(inv.refunded_amount).toLocaleString('ru-RU')} ₽
+                          </p>
+                        )}
                         <p className="mt-1 text-xs text-muted-foreground">
                           {new Date(inv.created_at).toLocaleDateString('ru-RU')}
                         </p>
@@ -233,6 +403,7 @@ export default function BillingPage() {
                 <thead>
                   <tr className="border-b bg-muted/50 text-left text-muted-foreground">
                     <th className="px-4 py-3 font-medium">Дата</th>
+                    <th className="px-4 py-3 font-medium">Назначение</th>
                     <th className="px-4 py-3 font-medium">Сумма</th>
                     <th className="px-4 py-3 font-medium">Статус</th>
                   </tr>
@@ -243,8 +414,16 @@ export default function BillingPage() {
                       <td className="px-4 py-3 text-muted-foreground">
                         {new Date(inv.created_at).toLocaleDateString('ru-RU')}
                       </td>
+                      <td className="px-4 py-3">
+                        {INVOICE_TYPE[inv.purchase_type] ?? inv.purchase_type}
+                      </td>
                       <td className="px-4 py-3 font-medium">
                         {Number(inv.amount).toLocaleString('ru-RU')} ₽
+                        {Number(inv.refunded_amount) > 0 && (
+                          <span className="block text-xs font-normal text-muted-foreground">
+                            Возвращено {Number(inv.refunded_amount).toLocaleString('ru-RU')} ₽
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <Badge variant={inv.status === 'paid' ? 'default' : 'secondary'}>

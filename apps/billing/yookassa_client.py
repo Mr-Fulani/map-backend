@@ -4,6 +4,7 @@ from decimal import Decimal
 from django.conf import settings
 from yookassa import Configuration
 from yookassa import Payment as YkPayment
+from yookassa import Refund as YkRefund
 
 
 def _configure() -> None:
@@ -36,3 +37,26 @@ def create_payment(
         str(uuid.uuid4()),
     )
     return payment.id, payment.confirmation.confirmation_url
+
+
+def create_refund(
+    *,
+    payment_id: str,
+    amount: Decimal,
+    currency: str = 'RUB',
+    description: str = '',
+    idempotency_key: str | None = None,
+) -> tuple[str, str]:
+    """Создаёт полный или частичный возврат с повторяемым ключом идемпотентности."""
+    _configure()
+    payload = {
+        'payment_id': payment_id,
+        'amount': {'value': f'{amount:.2f}', 'currency': currency},
+    }
+    if description:
+        payload['description'] = description
+    refund = YkRefund.create(
+        payload,
+        idempotency_key or str(uuid.uuid4()),
+    )
+    return refund.id, refund.status

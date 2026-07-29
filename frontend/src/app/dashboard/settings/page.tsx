@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { tenantApi, accountApi, notificationApi, productApi } from '@/lib/api';
+import { tenantApi, accountApi, notificationApi, productApi, aiApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -133,9 +133,41 @@ interface CatalogCategoryMapping {
   category_domain: string;
 }
 
+interface AIModelOption {
+  id: number;
+  provider: string;
+  provider_display: string;
+  display_name: string;
+  description: string;
+  quality_display: string;
+  speed_display: string;
+  supported_tasks: string[];
+  minimum_credits: string;
+  estimated_description_credits: string | null;
+  is_active: boolean;
+  is_pricing_verified: boolean;
+  is_configured: boolean;
+  is_selectable: boolean;
+  availability_reason: string;
+}
+
+interface AISettings {
+  default_model: number | null;
+  use_task_overrides: boolean;
+  task_models: Record<string, number>;
+  tasks: { value: string; label: string; implemented: boolean }[];
+  wallet: {
+    included: string;
+    purchased: string;
+    reserved: string;
+    available: string;
+    unlimited: boolean;
+  };
+}
+
 const SETTINGS_TABS = [
   'profile', 'organization', 'api-keys', 'marketplaces', 'datasources',
-  'catalog-categories', 'pricing', 'notifications',
+  'catalog-categories', 'pricing', 'ai', 'notifications',
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
 
@@ -283,7 +315,7 @@ function MarginEditor({
 }
 
 export default function SettingsPage() {
-  const { user, tenant } = useAuth();
+  const { user, tenant, role } = useAuth();
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -332,6 +364,10 @@ export default function SettingsPage() {
   const [editCatalogCategoryDomain, setEditCatalogCategoryDomain] = useState('unknown');
   const [categorySearch, setCategorySearch] = useState('');
   const [savingMappingSource, setSavingMappingSource] = useState<string | null>(null);
+  const [aiModels, setAIModels] = useState<AIModelOption[]>([]);
+  const [aiSettings, setAISettings] = useState<AISettings | null>(null);
+  const [loadingAI, setLoadingAI] = useState(true);
+  const [savingAI, setSavingAI] = useState(false);
   
   // File upload state
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -489,7 +525,35 @@ export default function SettingsPage() {
       })
       .catch(() => {})
       .finally(() => setLoadingNotif(false));
+
+    Promise.all([aiApi.getModels(), aiApi.getSettings()])
+      .then(([modelsRes, settingsRes]) => {
+        setAIModels(modelsRes.data.data ?? modelsRes.data);
+        setAISettings(settingsRes.data.data ?? settingsRes.data);
+      })
+      .catch(() => toast.error('Не удалось загрузить настройки AI'))
+      .finally(() => setLoadingAI(false));
   }, [loadDatasources]);
+
+  async function saveAISettings() {
+    if (!aiSettings?.default_model) return;
+    setSavingAI(true);
+    try {
+      const res = await aiApi.updateSettings({
+        default_model: aiSettings.default_model,
+        use_task_overrides: aiSettings.use_task_overrides,
+        task_models: aiSettings.task_models,
+      });
+      setAISettings(res.data.data ?? res.data);
+      toast.success('Настройки AI сохранены');
+    } catch (err: unknown) {
+      const message = (err as { response?: { data?: { message?: string } } })
+        ?.response?.data?.message;
+      toast.error(message ?? 'Не удалось сохранить настройки AI');
+    } finally {
+      setSavingAI(false);
+    }
+  }
 
   async function loadCatalogCategories() {
     setLoadingCatalogCategories(true);
@@ -1216,6 +1280,7 @@ export default function SettingsPage() {
             <TabsTrigger value="datasources">Источники данных</TabsTrigger>
             <TabsTrigger value="catalog-categories">Категории</TabsTrigger>
             <TabsTrigger value="pricing">Наценки</TabsTrigger>
+            <TabsTrigger value="ai">AI-модели</TabsTrigger>
             <TabsTrigger value="notifications">Уведомления</TabsTrigger>
           </TabsList>
         </div>
@@ -2553,6 +2618,208 @@ export default function SettingsPage() {
               />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {/* AI-модели */}
+        <TabsContent value="ai" className="mt-4 space-y-4">
+          {loadingAI || !aiSettings ? (
+            <div className="space-y-4">
+              <Skeleton className="h-32 w-full rounded-xl" />
+              <Skeleton className="h-72 w-full rounded-xl" />
+            </div>
+          ) : (
+            <>
+              <Card>
+                <CardHeader>
+                  <CardTitle>AI-баланс</CardTitle>
+                  <CardDescription>
+                    Включённые кредиты обновляются вместе с тарифом, купленные сохраняются.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid gap-3 sm:grid-cols-3">
+                    <div className="rounded-lg border p-4">
+                      <p className="text-xs text-muted-foreground">Доступно</p>
+                      <p className="mt-1 text-2xl font-bold">
+                        {aiSettings.wallet.unlimited
+                          ? '∞'
+                          : Number(aiSettings.wallet.available).toLocaleString('ru-RU')}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border p-4">
+                      <p className="text-xs text-muted-foreground">В тарифе</p>
+                      <p className="mt-1 text-xl font-semibold">
+                        {Number(aiSettings.wallet.included).toLocaleString('ru-RU')}
+                      </p>
+                    </div>
+                    <div className="rounded-lg border p-4">
+                      <p className="text-xs text-muted-foreground">Куплено отдельно</p>
+                      <p className="mt-1 text-xl font-semibold">
+                        {Number(aiSettings.wallet.purchased).toLocaleString('ru-RU')}
+                      </p>
+                    </div>
+                  </div>
+                  <Button className="mt-4" variant="outline" asChild>
+                    <a href="/dashboard/billing#ai-credits">Пополнить AI-баланс</a>
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Выбор модели</CardTitle>
+                  <CardDescription>
+                    Одна модель используется для всех задач. При необходимости можно назначить
+                    отдельную модель на каждый тип работы.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="space-y-2">
+                    <Label htmlFor="default-ai-model">Модель по умолчанию</Label>
+                    <select
+                      id="default-ai-model"
+                      value={aiSettings.default_model ?? ''}
+                      disabled={!['owner', 'admin'].includes(role ?? '')}
+                      onChange={(event) => setAISettings({
+                        ...aiSettings,
+                        default_model: Number(event.target.value),
+                      })}
+                      className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {aiModels.map((model) => (
+                        <option
+                          key={model.id}
+                          value={model.id}
+                          disabled={!model.is_selectable}
+                        >
+                          {model.display_name}
+                          {model.estimated_description_credits
+                            ? ` · ~${Number(model.estimated_description_credits).toLocaleString('ru-RU')} кр./описание`
+                            : ' · стоимость уточняется'}
+                          {!model.is_selectable ? ' · недоступна' : ''}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="flex items-start justify-between gap-4 rounded-lg border p-4">
+                    <div>
+                      <p className="text-sm font-medium">Разные модели для разных задач</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Например, быстрая модель для классификации и более точная для описаний.
+                      </p>
+                    </div>
+                    <Switch
+                      checked={aiSettings.use_task_overrides}
+                      disabled={!['owner', 'admin'].includes(role ?? '')}
+                      onCheckedChange={(checked) => setAISettings({
+                        ...aiSettings,
+                        use_task_overrides: checked,
+                      })}
+                    />
+                  </div>
+
+                  {aiSettings.use_task_overrides && (
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      {aiSettings.tasks.map((task) => (
+                        <div key={task.value} className="space-y-2">
+                          <div className="flex items-center gap-2">
+                            <Label>{task.label}</Label>
+                            <Badge variant={task.implemented ? 'default' : 'secondary'}>
+                              {task.implemented ? 'AI подключён' : 'Сейчас без AI'}
+                            </Badge>
+                          </div>
+                          <select
+                            value={aiSettings.task_models[task.value] ?? aiSettings.default_model ?? ''}
+                            disabled={
+                              !task.implemented || !['owner', 'admin'].includes(role ?? '')
+                            }
+                            onChange={(event) => setAISettings({
+                              ...aiSettings,
+                              task_models: {
+                                ...aiSettings.task_models,
+                                [task.value]: Number(event.target.value),
+                              },
+                            })}
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                          >
+                            {aiModels
+                              .filter((model) => model.supported_tasks.includes(task.value))
+                              .map((model) => (
+                                <option
+                                  key={model.id}
+                                  value={model.id}
+                                  disabled={!model.is_selectable}
+                                >
+                                  {model.display_name}
+                                  {!model.is_selectable ? ' · недоступна' : ''}
+                                </option>
+                              ))}
+                          </select>
+                          {!task.implemented && (
+                            <p className="text-xs text-muted-foreground">
+                              Этот процесс пока работает по правилам и парсерам, без обращения к модели.
+                            </p>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {['owner', 'admin'].includes(role ?? '') ? (
+                    <Button
+                      onClick={saveAISettings}
+                      disabled={
+                        savingAI
+                        || !aiSettings.default_model
+                        || !aiModels.some(
+                          (model) => model.id === aiSettings.default_model && model.is_selectable,
+                        )
+                      }
+                    >
+                      {savingAI && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                      Сохранить настройки
+                    </Button>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      Изменять модели может владелец или администратор организации.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div>
+                <h2 className="mb-3 text-lg font-semibold">Каталог моделей</h2>
+                <div className="grid gap-4 md:grid-cols-3">
+                  {aiModels.map((model) => (
+                    <Card key={model.id}>
+                      <CardHeader className="pb-3">
+                        <div className="flex items-start justify-between gap-3">
+                          <CardTitle className="text-base">{model.display_name}</CardTitle>
+                          <Badge variant="secondary">{model.provider_display}</Badge>
+                        </div>
+                        <CardDescription>{model.description}</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-2 text-sm">
+                        <p>Качество: <span className="font-medium">{model.quality_display}</span></p>
+                        <p>Скорость: <span className="font-medium">{model.speed_display}</span></p>
+                        <p>
+                          Ориентир: <span className="font-medium">
+                            {model.estimated_description_credits
+                              ? `~${Number(model.estimated_description_credits).toLocaleString('ru-RU')} кредитов`
+                              : 'стоимость уточняется'}
+                          </span> за описание
+                        </p>
+                        <Badge variant={model.is_selectable ? 'default' : 'secondary'}>
+                          {model.is_selectable ? 'Доступна' : model.availability_reason}
+                        </Badge>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            </>
+          )}
         </TabsContent>
 
         {/* Уведомления */}

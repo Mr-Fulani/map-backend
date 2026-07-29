@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.billing.models import Invoice, Plan, Subscription
+from apps.billing.models import AICreditPackage, Invoice, Plan, Subscription
 
 
 class CheckoutSerializer(serializers.Serializer):
@@ -17,11 +17,17 @@ class CheckoutSerializer(serializers.Serializer):
 
 
 class PlanSerializer(serializers.ModelSerializer):
+    price_yearly_monthly_equivalent = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        read_only=True,
+    )
+
     class Meta:
         model = Plan
         fields = [
             'id', 'name', 'slug',
-            'price_monthly', 'price_yearly',
+            'price_monthly', 'price_yearly', 'price_yearly_monthly_equivalent',
             'limit_listings', 'limit_sku', 'limit_ai_credits',
         ]
 
@@ -36,6 +42,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'plan', 'status', 'effective_status', 'access_mode', 'billing_period',
             'current_period_start', 'current_period_end',
+            'ai_period_start', 'ai_period_end',
             'created_at',
         ]
 
@@ -43,4 +50,19 @@ class SubscriptionSerializer(serializers.ModelSerializer):
 class InvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invoice
-        fields = ['id', 'amount', 'status', 'paid_at', 'created_at']
+        fields = [
+            'id', 'purchase_type', 'amount', 'currency',
+            'status', 'paid_at', 'refunded_amount',
+            'refund_review_required', 'created_at',
+        ]
+
+
+class AICreditPackageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AICreditPackage
+        fields = ['id', 'name', 'credits', 'price_rub']
+
+
+class AITopupCheckoutSerializer(serializers.Serializer):
+    package_id = serializers.IntegerField(min_value=1)
+    return_url = serializers.URLField(required=False)

@@ -81,6 +81,12 @@ class Tenant(TimestampedModel):
     active_listings_count = models.PositiveIntegerField(default=0, verbose_name='Активных листингов')
     sku_count = models.PositiveIntegerField(default=0, verbose_name='SKU (товаров)')
     ai_credits_used = models.PositiveIntegerField(default=0, verbose_name='Использовано AI-кредитов')
+    ai_credit_limit_override = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Индивидуальный месячный лимит AI-кредитов',
+        help_text='Пусто — использовать лимит тарифного плана.',
+    )
 
     class Meta:
         verbose_name = 'Тенант'

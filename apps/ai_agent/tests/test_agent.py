@@ -1,10 +1,10 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-import anthropic
 import pytest
 
 from apps.ai_agent.prompts import SYSTEM_PROMPT
+from apps.ai_agent.providers import AIProviderError, AIProviderResult
 from apps.ai_agent.services import AICreditsExhausted, DescriptionAgent
 from apps.ai_agent.tasks import generate_description_task
 from apps.ai_agent.validators import (
@@ -52,10 +52,14 @@ VALID_RESPONSE = json.dumps({
 })
 
 
-def _mock_claude_response(text: str):
-    msg = MagicMock()
-    msg.content = [MagicMock(text=text)]
-    return msg
+def _provider_response(text: str):
+    return AIProviderResult(
+        text=text,
+        input_tokens=500,
+        output_tokens=250,
+        cached_input_tokens=0,
+        response_model='test-model',
+    )
 
 
 class TestValidators:
@@ -134,8 +138,7 @@ class TestDescriptionAgent:
         tenant = make_tenant('gen-co')
         product = make_product(tenant)
 
-        with patch('apps.ai_agent.services.anthropic.Anthropic') as mock_cls:
-            mock_cls.return_value.messages.create.return_value = _mock_claude_response(VALID_RESPONSE)
+        with patch('apps.ai_agent.services.call_model', return_value=_provider_response(VALID_RESPONSE)):
             result = DescriptionAgent().generate(product, tenant)
 
         assert 'title' in result
@@ -149,8 +152,7 @@ class TestDescriptionAgent:
         product = make_product(tenant)
         initial = tenant.ai_credits_used
 
-        with patch('apps.ai_agent.services.anthropic.Anthropic') as mock_cls:
-            mock_cls.return_value.messages.create.return_value = _mock_claude_response(VALID_RESPONSE)
+        with patch('apps.ai_agent.services.call_model', return_value=_provider_response(VALID_RESPONSE)):
             DescriptionAgent().generate(product, tenant)
 
         tenant.refresh_from_db()
@@ -166,14 +168,14 @@ class TestDescriptionAgent:
             'confidence': 0.9,
         })
 
-        with patch('apps.ai_agent.services.anthropic.Anthropic') as mock_claude, \
-             patch('apps.ai_agent.services.DescriptionAgent._call_openai') as mock_openai:
-            mock_claude.return_value.messages.create.return_value = _mock_claude_response(banned_response)
-            mock_openai.return_value = json.loads(VALID_RESPONSE)
+        with patch(
+            'apps.ai_agent.services.call_model',
+            side_effect=[_provider_response(banned_response), _provider_response(VALID_RESPONSE)],
+        ) as mock_provider:
             result = DescriptionAgent().generate(product, tenant)
 
         assert result['title'] == json.loads(VALID_RESPONSE)['title']
-        mock_openai.assert_called_once()
+        assert mock_provider.call_count == 2
 
     def test_vague_fitment_triggers_retry(self):
         tenant = make_tenant('vague-fitment-co')
@@ -185,29 +187,33 @@ class TestDescriptionAgent:
             'confidence': 0.7,
         })
 
-        with patch('apps.ai_agent.services.anthropic.Anthropic') as mock_claude, \
-             patch('apps.ai_agent.services.DescriptionAgent._call_openai') as mock_openai:
-            mock_claude.return_value.messages.create.return_value = _mock_claude_response(vague_response)
-            mock_openai.return_value = json.loads(VALID_RESPONSE)
+        with patch(
+            'apps.ai_agent.services.call_model',
+            side_effect=[_provider_response(vague_response), _provider_response(VALID_RESPONSE)],
+        ) as mock_provider:
             result = DescriptionAgent().generate(product, tenant)
 
         assert result['title'] == json.loads(VALID_RESPONSE)['title']
-        mock_openai.assert_called_once()
+        assert mock_provider.call_count == 2
 
     def test_fallback_to_openai_when_claude_fails(self):
         tenant = make_tenant('fallback-co')
         product = make_product(tenant)
 
-        with patch('apps.ai_agent.services.anthropic.Anthropic') as mock_claude, \
-             patch('apps.ai_agent.services.DescriptionAgent._call_openai') as mock_openai:
-            mock_claude.return_value.messages.create.side_effect = anthropic.APIConnectionError(
-                request=MagicMock()
-            )
-            mock_openai.return_value = json.loads(VALID_RESPONSE)
+        with patch(
+            'apps.ai_agent.services.call_model',
+            side_effect=[
+                AIProviderError('Primary failed', code='provider_unavailable'),
+                _provider_response(VALID_RESPONSE),
+            ],
+        ) as mock_provider:
             result = DescriptionAgent().generate(product, tenant)
 
         assert result['confidence'] == 0.87
-        mock_openai.assert_called_once()
+        assert mock_provider.call_count == 2
+        assert mock_provider.call_args_list[0].args[0].external_id != (
+            mock_provider.call_args_list[1].args[0].external_id
+        )
 
     def test_credits_exhausted_raises(self):
         tenant = make_tenant('exhausted-co')
@@ -333,12 +339,14 @@ class TestDescriptionAgent:
             source_id='tachka',
         )
 
-        with patch('apps.ai_agent.services.anthropic.Anthropic') as mock_cls:
-            mock_cls.return_value.messages.create.return_value = _mock_claude_response(VALID_RESPONSE)
+        with patch(
+            'apps.ai_agent.services.call_model',
+            return_value=_provider_response(VALID_RESPONSE),
+        ) as mock_provider:
             result = generate_description_task(product.pk)
 
         product.refresh_from_db()
         assert result['fitments_count'] == 1
         assert product.fitments.filter(make='MERCEDES-BENZ', model='E-CLASS', generation='W213').exists()
-        message = mock_cls.return_value.messages.create.call_args.kwargs['messages'][0]['content']
+        message = mock_provider.call_args.args[2]
         assert 'MERCEDES-BENZ E-CLASS W213' in message
