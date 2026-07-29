@@ -68,12 +68,12 @@ def billing_check_expired():
 @shared_task(queue='billing')
 def reset_monthly_ai_credits():
     """
-    Сбрасывает AI-кредиты для активных подписчиков в начале нового расчётного периода.
+    Идемпотентно начисляет включённый AI-баланс для текущего расчётного периода.
 
-    Запускается ежедневно. Сбрасывает кредиты тем тенантам, у которых сегодня
-    совпадает день начала расчётного периода (current_period_start.day == today.day).
+    Купленный баланс не сбрасывается.
     """
     from apps.billing.models import Subscription
+    from apps.billing.ai_wallet import AIWalletService
     from apps.tenants.models import Tenant
 
     today = timezone.localdate()
@@ -87,6 +87,15 @@ def reset_monthly_ai_credits():
     for sub in active_subs:
         if sub.current_period_start.day == today.day:
             Tenant.objects.filter(pk=sub.tenant_id).update(ai_credits_used=0)
+            AIWalletService.grant_included(
+                sub.tenant,
+                sub.plan.limit_ai_credits,
+                period_end=sub.current_period_end,
+                idempotency_key=(
+                    f'subscription-grant:{sub.pk}:'
+                    f'{sub.current_period_start}:{sub.current_period_end}'
+                ),
+            )
             reset_count += 1
 
     if reset_count:

@@ -24,6 +24,7 @@ urlpatterns = [
     path('api/v1/analytics/', include('apps.marketplaces.analytics_urls')),
     path('api/v1/', include('apps.sync.urls')),
     path('api/v1/', include('apps.notifications.urls')),
+    path('api/v1/', include('apps.ai_agent.urls')),
 ]
 
 if settings.DEBUG:

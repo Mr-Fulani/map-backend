@@ -6,7 +6,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
-from apps.billing.models import Invoice, Plan, Subscription
+from apps.billing.models import AICreditPackage, Invoice, Plan, Subscription
 from apps.tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
@@ -71,14 +71,16 @@ class LimitChecker:
         return True, ''
 
     def can_generate_ai(self, tenant: Tenant) -> tuple[bool, str]:
-        """Проверяет, остались ли AI-кредиты."""
+        """Проверяет активность подписки и доступный AI-баланс."""
         sub = self._get_subscription(tenant)
         if sub is None or not sub.is_active:
             return False, 'Подписка неактивна.'
-
-        plan = sub.plan
-        if plan.limit_ai_credits is not None and tenant.ai_credits_used >= plan.limit_ai_credits:
-            return False, f'AI-кредиты исчерпаны ({tenant.ai_credits_used}/{plan.limit_ai_credits}).'
+        from apps.billing.ai_wallet import AIWalletService
+        if AIWalletService.is_unlimited(tenant):
+            return True, ''
+        wallet = AIWalletService.summary(tenant)
+        if wallet['available'] < 1:
+            return False, 'AI-баланс исчерпан. Пополните баланс или обновите тариф.'
         return True, ''
 
     def get_usage_summary(self, tenant: Tenant) -> dict:
@@ -118,6 +120,9 @@ class LimitChecker:
                 0, (sub.current_period_end - timezone.localdate()).days,
             )
 
+        from apps.billing.ai_wallet import AIWalletService
+        wallet = AIWalletService.summary(tenant)
+
         return {
             'listings': {
                 'used': active_listings_count,
@@ -130,6 +135,11 @@ class LimitChecker:
             'ai_credits': {
                 'used': tenant.ai_credits_used,
                 'limit': plan.limit_ai_credits if plan else None,
+                'included_balance': wallet['included'],
+                'purchased_balance': wallet['purchased'],
+                'reserved_balance': wallet['reserved'],
+                'available_balance': wallet['available'],
+                'unlimited': wallet['unlimited'],
             },
             'rejected_listings': rejected_count,
             'subscription_status': effective_status,
@@ -209,6 +219,34 @@ class BillingService:
             amount=amount,
             status=Invoice.STATUS_PENDING,
             yookassa_payment_id=payment_id,
+            purchase_type=Invoice.TYPE_SUBSCRIPTION,
+            metadata={'plan_slug': plan_slug, 'period': period},
+        )
+        return confirmation_url
+
+    @staticmethod
+    def create_ai_topup_payment(tenant: Tenant, package_id: int, return_url: str) -> str:
+        from apps.billing.yookassa_client import create_payment as yk_create
+
+        package = AICreditPackage.objects.get(pk=package_id, is_active=True)
+        metadata = {
+            'tenant_id': str(tenant.pk),
+            'purchase_type': Invoice.TYPE_AI_TOPUP,
+            'package_id': str(package.pk),
+        }
+        payment_id, confirmation_url = yk_create(
+            amount=package.price_rub,
+            description=f'MAP — {package.name}',
+            return_url=return_url,
+            metadata=metadata,
+        )
+        Invoice.objects.create(
+            tenant=tenant,
+            amount=package.price_rub,
+            status=Invoice.STATUS_PENDING,
+            yookassa_payment_id=payment_id,
+            purchase_type=Invoice.TYPE_AI_TOPUP,
+            metadata=metadata,
         )
         return confirmation_url
 
@@ -235,8 +273,33 @@ class BillingService:
         invoice.save(update_fields=['status', 'paid_at'])
 
         tenant = invoice.tenant
-        plan_slug = metadata.get('plan_slug')
-        period = metadata.get('period', Subscription.PERIOD_MONTHLY)
+        stored_metadata = invoice.metadata or metadata
+        if invoice.purchase_type == Invoice.TYPE_AI_TOPUP:
+            package = AICreditPackage.objects.filter(
+                pk=stored_metadata.get('package_id'),
+            ).first()
+            if package is None:
+                logger.error('Пакет AI-кредитов для invoice=%s не найден', invoice.pk)
+                return
+            from apps.billing.ai_wallet import AIWalletService
+            AIWalletService.topup(
+                tenant,
+                package.credits,
+                idempotency_key=f'yookassa-topup:{payment_id}',
+                reference=payment_id,
+            )
+            send_notification_task.delay(
+                tenant.pk, LEVEL_BILLING,
+                f'AI-баланс пополнен на {package.credits} кредитов.',
+            )
+            _write_billing_log(
+                tenant, 'ok',
+                f'AI-баланс пополнен на {package.credits} кредитов',
+            )
+            return
+
+        plan_slug = stored_metadata.get('plan_slug')
+        period = stored_metadata.get('period', Subscription.PERIOD_MONTHLY)
 
         if plan_slug:
             BillingService.upgrade_plan(tenant, plan_slug, period)
@@ -297,6 +360,16 @@ class BillingService:
             current_period_end=trial_end,
         )
         BillingService.sync_tenant_trial_end(subscription)
+        from apps.billing.ai_wallet import AIWalletService
+        AIWalletService.grant_included(
+            tenant,
+            plan.limit_ai_credits,
+            period_end=subscription.current_period_end,
+            idempotency_key=(
+                f'subscription-grant:{subscription.pk}:'
+                f'{subscription.current_period_start}:{subscription.current_period_end}'
+            ),
+        )
         logger.info('Trial запущен для тенанта %s, план %s', tenant.slug, plan.slug)
         return subscription
 
@@ -346,8 +419,18 @@ class BillingService:
         sub.save()
         BillingService.sync_tenant_trial_end(sub)
 
-        # Новый расчётный период — сбрасываем счётчик AI-кредитов
+        # Новый расчётный период — начисляем включённый AI-баланс.
         Tenant.objects.filter(pk=tenant.pk).update(ai_credits_used=0)
+        from apps.billing.ai_wallet import AIWalletService
+        AIWalletService.grant_included(
+            tenant,
+            plan.limit_ai_credits,
+            period_end=sub.current_period_end,
+            idempotency_key=(
+                f'subscription-grant:{sub.pk}:'
+                f'{sub.current_period_start}:{sub.current_period_end}'
+            ),
+        )
 
         logger.info('Тенант %s перешёл на план %s', tenant.slug, plan.slug)
         return sub

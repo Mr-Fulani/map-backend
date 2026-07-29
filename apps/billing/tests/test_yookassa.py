@@ -5,7 +5,8 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.billing.models import Invoice, Subscription
+from apps.billing.ai_wallet import AIWalletService
+from apps.billing.models import AICreditPackage, Invoice, Subscription
 from apps.billing.services import BillingService, GRACE_PERIOD_DAYS
 from apps.billing.tasks import billing_check_expired
 from apps.tenants.services import TenantService
@@ -95,6 +96,36 @@ class TestPaymentSucceeded:
                 )
 
         mock_requeue.delay.assert_called_once_with(tenant.pk)
+
+    def test_ai_topup_webhook_adds_purchased_credits_once(self):
+        tenant, _sub = make_tenant_with_subscription('yook-ai-topup')
+        package = AICreditPackage.objects.filter(is_active=True).first()
+        invoice = Invoice.objects.create(
+            tenant=tenant,
+            amount=package.price_rub,
+            status=Invoice.STATUS_PENDING,
+            yookassa_payment_id='pay_ai_001',
+            purchase_type=Invoice.TYPE_AI_TOPUP,
+            metadata={'package_id': str(package.pk)},
+        )
+        before = AIWalletService.summary(tenant)['purchased']
+
+        with patch('apps.notifications.tasks.send_notification_task'):
+            BillingService.handle_payment_success_webhook(
+                payment_id='pay_ai_001',
+                amount=str(package.price_rub),
+                metadata={},
+            )
+            BillingService.handle_payment_success_webhook(
+                payment_id='pay_ai_001',
+                amount=str(package.price_rub),
+                metadata={},
+            )
+
+        invoice.refresh_from_db()
+        after = AIWalletService.summary(tenant)['purchased']
+        assert invoice.status == Invoice.STATUS_PAID
+        assert after == before + package.credits
 
 
 @pytest.mark.django_db

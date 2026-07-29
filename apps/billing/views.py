@@ -5,8 +5,11 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.billing.models import Invoice, Plan
-from apps.billing.serializers import CheckoutSerializer, InvoiceSerializer, PlanSerializer, SubscriptionSerializer
+from apps.billing.models import AICreditPackage, Invoice, Plan
+from apps.billing.serializers import (
+    AICreditPackageSerializer, AITopupCheckoutSerializer, CheckoutSerializer,
+    InvoiceSerializer, PlanSerializer, SubscriptionSerializer,
+)
 from apps.billing.services import BillingService, LimitChecker
 from apps.billing.webhook import is_yookassa_ip
 
@@ -66,6 +69,43 @@ class InvoiceListView(APIView):
             'status': 'ok',
             'data': InvoiceSerializer(invoices, many=True).data,
         })
+
+
+@extend_schema(tags=['Billing'])
+class AICreditPackageListView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        packages = AICreditPackage.objects.filter(is_active=True)
+        return Response({
+            'status': 'ok',
+            'data': AICreditPackageSerializer(packages, many=True).data,
+        })
+
+
+@extend_schema(tags=['Billing'])
+class AITopupCheckoutView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = AITopupCheckoutSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        return_url = serializer.validated_data.get(
+            'return_url',
+            f'{settings.SITE_URL}/dashboard/billing?topup=success',
+        )
+        try:
+            confirmation_url = BillingService.create_ai_topup_payment(
+                tenant=request.tenant,
+                package_id=serializer.validated_data['package_id'],
+                return_url=return_url,
+            )
+        except AICreditPackage.DoesNotExist:
+            return Response(
+                {'status': 'error', 'code': 'package_not_found'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response({'status': 'ok', 'data': {'payment_url': confirmation_url}})
 
 
 @extend_schema(tags=['Billing'])

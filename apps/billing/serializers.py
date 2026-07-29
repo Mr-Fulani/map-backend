@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.billing.models import Invoice, Plan, Subscription
+from apps.billing.models import AICreditPackage, Invoice, Plan, Subscription
 
 
 class CheckoutSerializer(serializers.Serializer):
@@ -43,4 +43,15 @@ class SubscriptionSerializer(serializers.ModelSerializer):
 class InvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invoice
-        fields = ['id', 'amount', 'status', 'paid_at', 'created_at']
+        fields = ['id', 'purchase_type', 'amount', 'status', 'paid_at', 'created_at']
+
+
+class AICreditPackageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AICreditPackage
+        fields = ['id', 'name', 'credits', 'price_rub']
+
+
+class AITopupCheckoutSerializer(serializers.Serializer):
+    package_id = serializers.IntegerField(min_value=1)
+    return_url = serializers.URLField(required=False)

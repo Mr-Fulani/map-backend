@@ -425,6 +425,9 @@ WEBHOOK_SIGNING_SECRET = os.environ.get('WEBHOOK_SIGNING_SECRET', '')
 # --- AI ---
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+DEEPSEEK_API_KEY = os.environ.get('DEEPSEEK_API_KEY', '')
+MOONSHOT_API_KEY = os.environ.get('MOONSHOT_API_KEY', '')
 
 # --- Image Search ---
 BRAVE_SEARCH_API_KEY = os.environ.get('BRAVE_SEARCH_API_KEY', '')

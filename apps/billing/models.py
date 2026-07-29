@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import models
 from django.utils import timezone
 
@@ -120,10 +122,22 @@ class Invoice(TimestampedModel):
         (STATUS_FAILED, 'Ошибка оплаты'),
     ]
 
+    TYPE_SUBSCRIPTION = 'subscription'
+    TYPE_AI_TOPUP = 'ai_topup'
+    TYPE_CHOICES = [
+        (TYPE_SUBSCRIPTION, 'Подписка'),
+        (TYPE_AI_TOPUP, 'Пополнение AI-баланса'),
+    ]
+
     tenant = models.ForeignKey(
         Tenant, on_delete=models.CASCADE, related_name='invoices', verbose_name='Тенант',
     )
     amount = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Сумма, ₽')
+    purchase_type = models.CharField(
+        max_length=20, choices=TYPE_CHOICES, default=TYPE_SUBSCRIPTION,
+        verbose_name='Тип покупки',
+    )
+    metadata = models.JSONField(default=dict, blank=True, verbose_name='Метаданные')
     status = models.CharField(
         choices=STATUS_CHOICES, default=STATUS_PENDING, max_length=10, verbose_name='Статус',
     )
@@ -155,3 +169,113 @@ class AIUsageLog(TimestampedModel):
 
     def __str__(self):
         return f'{self.tenant.slug} — {self.date}: {self.credits_used} кредитов'
+
+
+class AIWallet(TimestampedModel):
+    """AI-баланс тенанта: включённые и отдельно купленные кредиты."""
+
+    tenant = models.OneToOneField(
+        Tenant, on_delete=models.CASCADE, related_name='ai_wallet',
+    )
+    included_balance = models.DecimalField(
+        max_digits=16, decimal_places=4, default=Decimal('0'),
+    )
+    purchased_balance = models.DecimalField(
+        max_digits=16, decimal_places=4, default=Decimal('0'),
+    )
+    reserved_balance = models.DecimalField(
+        max_digits=16, decimal_places=4, default=Decimal('0'),
+    )
+    included_expires_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'AI-кошелёк'
+        verbose_name_plural = 'AI-кошельки'
+
+    @property
+    def total_balance(self):
+        return self.included_balance + self.purchased_balance
+
+    @property
+    def available_balance(self):
+        return max(Decimal('0'), self.total_balance - self.reserved_balance)
+
+    def __str__(self):
+        return f'{self.tenant.slug}: {self.available_balance} AI-кредитов'
+
+
+class AICreditTransaction(TimestampedModel):
+    """Неизменяемая проводка AI-кредитов."""
+
+    KIND_GRANT = 'grant'
+    KIND_TOPUP = 'topup'
+    KIND_RESERVE = 'reserve'
+    KIND_RELEASE = 'release'
+    KIND_CHARGE = 'charge'
+    KIND_EXPIRE = 'expire'
+    KIND_ADJUSTMENT = 'adjustment'
+    KIND_CHOICES = [
+        (KIND_GRANT, 'Начисление по подписке'),
+        (KIND_TOPUP, 'Покупка кредитов'),
+        (KIND_RESERVE, 'Резерв'),
+        (KIND_RELEASE, 'Возврат резерва'),
+        (KIND_CHARGE, 'Списание'),
+        (KIND_EXPIRE, 'Сгорание'),
+        (KIND_ADJUSTMENT, 'Корректировка'),
+    ]
+
+    BALANCE_INCLUDED = 'included'
+    BALANCE_PURCHASED = 'purchased'
+    BALANCE_RESERVED = 'reserved'
+    BALANCE_CHOICES = [
+        (BALANCE_INCLUDED, 'Включённый баланс'),
+        (BALANCE_PURCHASED, 'Купленный баланс'),
+        (BALANCE_RESERVED, 'Резерв'),
+    ]
+
+    wallet = models.ForeignKey(
+        AIWallet, on_delete=models.CASCADE, related_name='transactions',
+    )
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE, related_name='ai_credit_transactions',
+    )
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    balance_type = models.CharField(max_length=20, choices=BALANCE_CHOICES)
+    amount = models.DecimalField(max_digits=16, decimal_places=4)
+    idempotency_key = models.CharField(max_length=160, blank=True)
+    reference = models.CharField(max_length=160, blank=True)
+    details = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        verbose_name = 'Проводка AI-кредитов'
+        verbose_name_plural = 'Проводки AI-кредитов'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['tenant', '-created_at']),
+            models.Index(fields=['tenant', 'idempotency_key']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'idempotency_key'],
+                condition=~models.Q(idempotency_key=''),
+                name='unique_tenant_ai_credit_idempotency_key',
+            ),
+        ]
+
+
+class AICreditPackage(TimestampedModel):
+    """Пакет кредитов для разовой покупки через YooKassa."""
+
+    name = models.CharField(max_length=100)
+    credits = models.DecimalField(max_digits=14, decimal_places=2)
+    price_rub = models.DecimalField(max_digits=12, decimal_places=2)
+    is_active = models.BooleanField(default=True)
+    sort_order = models.PositiveSmallIntegerField(default=100)
+
+    class Meta:
+        verbose_name = 'Пакет AI-кредитов'
+        verbose_name_plural = 'Пакеты AI-кредитов'
+        ordering = ['sort_order', 'credits']
+
+    def __str__(self):
+        return f'{self.name}: {self.credits} кредитов за {self.price_rub} ₽'
