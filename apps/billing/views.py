@@ -159,11 +159,18 @@ class YooKassaWebhookView(APIView):
         event = request.data.get('event', '')
         payment_obj = request.data.get('object', {})
         payment_id = payment_obj.get('id', '')
-        amount = payment_obj.get('amount', {}).get('value', '0')
+        amount_obj = payment_obj.get('amount', {})
+        amount = amount_obj.get('value', '0')
+        currency = amount_obj.get('currency', '')
         metadata = payment_obj.get('metadata', {})
 
         if event == 'payment.succeeded':
-            BillingService.handle_payment_success_webhook(payment_id, amount, metadata)
+            BillingService.handle_payment_success_webhook(
+                payment_id,
+                amount,
+                metadata,
+                currency=currency,
+            )
         elif event == 'payment.canceled':
             BillingService.handle_payment_failed_webhook(payment_id)
 

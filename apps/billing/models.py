@@ -1,4 +1,4 @@
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 
 from django.db import models
 from django.utils import timezone
@@ -34,6 +34,13 @@ class Plan(TimestampedModel):
 
     def __str__(self):
         return self.name
+
+    @property
+    def price_yearly_monthly_equivalent(self):
+        return (self.price_yearly / Decimal('12')).quantize(
+            Decimal('0.01'),
+            rounding=ROUND_HALF_UP,
+        )
 
 
 class Subscription(TimestampedModel):
@@ -133,6 +140,7 @@ class Invoice(TimestampedModel):
         Tenant, on_delete=models.CASCADE, related_name='invoices', verbose_name='Тенант',
     )
     amount = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Сумма, ₽')
+    currency = models.CharField(max_length=3, default='RUB', verbose_name='Валюта')
     purchase_type = models.CharField(
         max_length=20, choices=TYPE_CHOICES, default=TYPE_SUBSCRIPTION,
         verbose_name='Тип покупки',

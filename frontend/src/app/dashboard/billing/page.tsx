@@ -16,6 +16,7 @@ interface Plan {
   slug: string;
   price_monthly: string;
   price_yearly: string;
+  price_yearly_monthly_equivalent: string;
   limit_listings: number | null;
   limit_sku: number | null;
   limit_ai_credits: number | null;
@@ -36,6 +37,7 @@ interface Invoice {
   id: number;
   purchase_type: 'subscription' | 'ai_topup';
   amount: string;
+  currency: string;
   status: string;
   paid_at: string | null;
   created_at: string;
@@ -223,17 +225,23 @@ export default function BillingPage() {
                         : canRenewCurrent ? 'Продлить (мес)' : isCurrent ? 'Текущий план' : 'Выбрать (мес)'}
                     </Button>
                     {(!isCurrent || canRenewCurrent) && (
-                      <Button
-                        className="w-full"
-                        size="sm"
-                        variant="outline"
-                        disabled={checkoutLoading !== null}
-                        onClick={() => checkout(plan.slug, 'yearly')}
-                      >
-                        {checkoutLoading === `${plan.slug}-yearly`
-                          ? <Loader2 className="h-4 w-4 animate-spin" />
-                          : `Год (−20%) — ${Number(plan.price_yearly).toLocaleString('ru-RU')} ₽`}
-                      </Button>
+                      <div className="space-y-1">
+                        <Button
+                          className="w-full"
+                          size="sm"
+                          variant="outline"
+                          disabled={checkoutLoading !== null}
+                          onClick={() => checkout(plan.slug, 'yearly')}
+                        >
+                          {checkoutLoading === `${plan.slug}-yearly`
+                            ? <Loader2 className="h-4 w-4 animate-spin" />
+                            : `Оплатить год — ${Number(plan.price_yearly).toLocaleString('ru-RU')} ₽`}
+                        </Button>
+                        <p className="text-center text-xs text-muted-foreground">
+                          {Number(plan.price_yearly_monthly_equivalent).toLocaleString('ru-RU')} ₽/мес
+                          · скидка 20%
+                        </p>
+                      </div>
                     )}
                   </div>
                 </CardContent>

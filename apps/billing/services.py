@@ -1,6 +1,7 @@
 import logging
 import calendar
 from datetime import date, datetime, time, timedelta
+from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.db import transaction
@@ -40,6 +41,14 @@ def add_billing_month(start: date) -> date:
         year += 1
     last_day = calendar.monthrange(year, month)[1]
     return start.replace(year=year, month=month, day=min(start.day, last_day))
+
+
+def add_billing_year(start: date) -> date:
+    """Возвращает дату через год; 29 февраля переводит в 28 февраля."""
+    try:
+        return start.replace(year=start.year + 1)
+    except ValueError:
+        return start.replace(year=start.year + 1, month=2, day=28)
 
 
 class LimitChecker:
@@ -217,6 +226,7 @@ class BillingService:
         Invoice.objects.create(
             tenant=tenant,
             amount=amount,
+            currency='RUB',
             status=Invoice.STATUS_PENDING,
             yookassa_payment_id=payment_id,
             purchase_type=Invoice.TYPE_SUBSCRIPTION,
@@ -243,6 +253,7 @@ class BillingService:
         Invoice.objects.create(
             tenant=tenant,
             amount=package.price_rub,
+            currency='RUB',
             status=Invoice.STATUS_PENDING,
             yookassa_payment_id=payment_id,
             purchase_type=Invoice.TYPE_AI_TOPUP,
@@ -252,7 +263,12 @@ class BillingService:
 
     @staticmethod
     @transaction.atomic
-    def handle_payment_success_webhook(payment_id: str, amount, metadata: dict) -> None:
+    def handle_payment_success_webhook(
+        payment_id: str,
+        amount,
+        metadata: dict,
+        currency: str = 'RUB',
+    ) -> bool:
         """
         Обрабатывает вебхук payment.succeeded от YooKassa.
 
@@ -263,24 +279,65 @@ class BillingService:
         from apps.notifications.tasks import send_notification_task
 
         try:
-            invoice = Invoice.objects.select_related('tenant').get(yookassa_payment_id=payment_id)
+            invoice = Invoice.objects.select_for_update().select_related('tenant').get(
+                yookassa_payment_id=payment_id,
+            )
         except Invoice.DoesNotExist:
             logger.warning('handle_payment_success_webhook: Invoice %s не найден', payment_id)
-            return
+            return False
 
-        invoice.status = Invoice.STATUS_PAID
-        invoice.paid_at = timezone.now()
-        invoice.save(update_fields=['status', 'paid_at'])
+        # YooKassa повторяет webhook до получения HTTP 200. Повтор уже
+        # обработанного события не должен продлевать подписку или уведомлять снова.
+        if invoice.status == Invoice.STATUS_PAID:
+            return True
+
+        try:
+            received_amount = Decimal(str(amount)).quantize(Decimal('0.01'))
+        except (InvalidOperation, TypeError, ValueError):
+            logger.error(
+                'Некорректная сумма webhook: invoice=%s payment_id=%s',
+                invoice.pk, payment_id,
+            )
+            return False
+
+        received_currency = str(currency or '').upper()
+        if received_amount != invoice.amount or received_currency != invoice.currency:
+            logger.error(
+                (
+                    'Webhook не совпадает со счётом: invoice=%s payment_id=%s '
+                    'expected=%s %s received=%s %s'
+                ),
+                invoice.pk,
+                payment_id,
+                invoice.amount,
+                invoice.currency,
+                received_amount,
+                received_currency or '<empty>',
+            )
+            _write_billing_log(
+                invoice.tenant,
+                'error',
+                f'Платёж {payment_id} требует проверки: сумма или валюта не совпадает',
+            )
+            return False
 
         tenant = invoice.tenant
-        stored_metadata = invoice.metadata or metadata
+        # Решение о покупке принимается только по сохранённому Invoice.
+        # Metadata из входящего webhook не является источником истины.
+        stored_metadata = invoice.metadata or {}
         if invoice.purchase_type == Invoice.TYPE_AI_TOPUP:
             package = AICreditPackage.objects.filter(
                 pk=stored_metadata.get('package_id'),
             ).first()
             if package is None:
                 logger.error('Пакет AI-кредитов для invoice=%s не найден', invoice.pk)
-                return
+                return False
+
+        invoice.status = Invoice.STATUS_PAID
+        invoice.paid_at = timezone.now()
+        invoice.save(update_fields=['status', 'paid_at'])
+
+        if invoice.purchase_type == Invoice.TYPE_AI_TOPUP:
             from apps.billing.ai_wallet import AIWalletService
             AIWalletService.topup(
                 tenant,
@@ -296,7 +353,7 @@ class BillingService:
                 tenant, 'ok',
                 f'AI-баланс пополнен на {package.credits} кредитов',
             )
-            return
+            return True
 
         plan_slug = stored_metadata.get('plan_slug')
         period = stored_metadata.get('period', Subscription.PERIOD_MONTHLY)
@@ -316,6 +373,7 @@ class BillingService:
         BillingService._requeue_limit_reached_listings(tenant)
         _write_billing_log(tenant, 'ok', f'Оплата {invoice.amount}₽ прошла успешно')
         logger.info('Вебхук payment.succeeded: tenant=%s, amount=%s', tenant.slug, amount)
+        return True
 
     @staticmethod
     def _requeue_limit_reached_listings(tenant: Tenant) -> None:
@@ -405,7 +463,7 @@ class BillingService:
         today = timezone.localdate()
 
         if period == Subscription.PERIOD_YEARLY:
-            end = today.replace(year=today.year + 1)
+            end = add_billing_year(today)
         else:
             end = add_billing_month(today)
 

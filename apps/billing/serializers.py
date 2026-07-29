@@ -17,11 +17,17 @@ class CheckoutSerializer(serializers.Serializer):
 
 
 class PlanSerializer(serializers.ModelSerializer):
+    price_yearly_monthly_equivalent = serializers.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        read_only=True,
+    )
+
     class Meta:
         model = Plan
         fields = [
             'id', 'name', 'slug',
-            'price_monthly', 'price_yearly',
+            'price_monthly', 'price_yearly', 'price_yearly_monthly_equivalent',
             'limit_listings', 'limit_sku', 'limit_ai_credits',
         ]
 
@@ -43,7 +49,10 @@ class SubscriptionSerializer(serializers.ModelSerializer):
 class InvoiceSerializer(serializers.ModelSerializer):
     class Meta:
         model = Invoice
-        fields = ['id', 'purchase_type', 'amount', 'status', 'paid_at', 'created_at']
+        fields = [
+            'id', 'purchase_type', 'amount', 'currency',
+            'status', 'paid_at', 'created_at',
+        ]
 
 
 class AICreditPackageSerializer(serializers.ModelSerializer):

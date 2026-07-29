@@ -5,7 +5,9 @@ from django.utils import timezone
 import pytest
 
 from apps.billing.models import Plan, Subscription
-from apps.billing.services import BillingService, LimitChecker, add_billing_month
+from apps.billing.services import (
+    BillingService, LimitChecker, add_billing_month, add_billing_year,
+)
 from apps.products.models import Product
 from apps.tenants.services import TenantService
 
@@ -22,6 +24,11 @@ def test_add_billing_month_uses_last_day_when_next_month_is_shorter():
     assert add_billing_month(date(2026, 5, 31)) == date(2026, 6, 30)
     assert add_billing_month(date(2026, 1, 31)) == date(2026, 2, 28)
     assert add_billing_month(date(2026, 12, 31)) == date(2027, 1, 31)
+
+
+def test_add_billing_year_handles_leap_day():
+    assert add_billing_year(date(2026, 7, 29)) == date(2027, 7, 29)
+    assert add_billing_year(date(2024, 2, 29)) == date(2025, 2, 28)
 
 
 @pytest.mark.django_db
@@ -47,6 +54,24 @@ class TestBillingService:
         tenant.subscription.refresh_from_db()
         assert tenant.subscription.status == Subscription.STATUS_ACTIVE
         assert tenant.subscription.plan.slug == Plan.SLUG_PRO
+
+    def test_yearly_upgrade_creates_one_year_period(self):
+        tenant = make_tenant('yearly-co', 'yearly@test.com')
+
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(
+                'apps.billing.services.timezone.localdate',
+                lambda: date(2024, 2, 29),
+            )
+            BillingService.upgrade_plan(
+                tenant,
+                Plan.SLUG_PRO,
+                Subscription.PERIOD_YEARLY,
+            )
+
+        tenant.subscription.refresh_from_db()
+        assert tenant.subscription.current_period_start == date(2024, 2, 29)
+        assert tenant.subscription.current_period_end == date(2025, 2, 28)
 
     def test_check_expired_trials(self):
         """Просроченные trial переходят в past_due."""
