@@ -1,7 +1,8 @@
 import logging
 import calendar
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
+from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
@@ -10,7 +11,7 @@ from apps.tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
 
-TRIAL_DAYS = 14
+TRIAL_DAYS = settings.BILLING_TRIAL_DAYS
 
 
 def _write_billing_log(tenant, status: str, message: str) -> None:
@@ -27,7 +28,7 @@ def _write_billing_log(tenant, status: str, message: str) -> None:
         pass
 
 
-GRACE_PERIOD_DAYS = 7
+GRACE_PERIOD_DAYS = settings.BILLING_GRACE_PERIOD_DAYS
 
 
 def add_billing_month(start: date) -> date:
@@ -89,16 +90,7 @@ class LimitChecker:
         sub = self._get_subscription(tenant)
         plan = sub.plan if sub else None
 
-        # Вычисляем эффективный статус подписки в реальном времени,
-        # не полагаясь на поле status — Celery Beat мог ещё не запуститься.
-        effective_status = sub.status if sub else None
-        if (
-            sub
-            and sub.status == sub.STATUS_TRIAL
-            and sub.current_period_end
-            and sub.current_period_end < timezone.now().date()
-        ):
-            effective_status = sub.STATUS_PAST_DUE
+        effective_status = sub.effective_status if sub else None
 
         rejected_count = Listing.objects.filter(
             tenant=tenant, status=Listing.STATUS_REJECTED,
@@ -113,7 +105,7 @@ class LimitChecker:
         # Дней до принудительной отмены в grace period
         grace_days_left = None
         if effective_status == Subscription.STATUS_PAST_DUE and sub and sub.current_period_end:
-            elapsed = (timezone.now().date() - sub.current_period_end).days
+            elapsed = (timezone.localdate() - sub.current_period_end).days
             grace_days_left = max(0, GRACE_PERIOD_DAYS - elapsed)
 
         current_period_days_left = None
@@ -123,7 +115,7 @@ class LimitChecker:
             and sub.current_period_end
         ):
             current_period_days_left = max(
-                0, (sub.current_period_end - timezone.now().date()).days,
+                0, (sub.current_period_end - timezone.localdate()).days,
             )
 
         return {
@@ -163,6 +155,29 @@ class LimitChecker:
 
 class BillingService:
     """Управление подписками и платёжными событиями."""
+
+    @staticmethod
+    def access_mode(tenant: Tenant) -> str:
+        """Единый режим доступа тенанта для HTTP и фоновых операций."""
+        if not tenant.is_active:
+            return Subscription.ACCESS_BILLING_ONLY
+        try:
+            return tenant.subscription.access_mode
+        except Subscription.DoesNotExist:
+            return Subscription.ACCESS_BILLING_ONLY
+
+    @staticmethod
+    def sync_tenant_trial_end(subscription: Subscription) -> None:
+        """Синхронизирует legacy-поле Tenant.trial_ends_at с подпиской."""
+        trial_end = None
+        if subscription.status == Subscription.STATUS_TRIAL:
+            trial_end = timezone.make_aware(
+                datetime.combine(
+                    subscription.current_period_end,
+                    time.min,
+                ),
+            )
+        Tenant.objects.filter(pk=subscription.tenant_id).update(trial_ends_at=trial_end)
 
     @staticmethod
     def create_payment(tenant: Tenant, plan_slug: str, period: str, return_url: str) -> str:
@@ -229,6 +244,7 @@ class BillingService:
             sub = tenant.subscription
             sub.status = Subscription.STATUS_ACTIVE
             sub.save(update_fields=['status'])
+            BillingService.sync_tenant_trial_end(sub)
 
         send_notification_task.delay(
             tenant.pk, LEVEL_BILLING,
@@ -269,7 +285,7 @@ class BillingService:
     def start_trial(tenant: Tenant) -> Subscription:
         """Запускает 14-дневный пробный период на плане Business."""
         plan = Plan.objects.get(slug=Plan.SLUG_BUSINESS)
-        today = date.today()
+        today = timezone.localdate()
 
         trial_end = today + timedelta(days=TRIAL_DAYS)
         subscription = Subscription.objects.create(
@@ -280,19 +296,40 @@ class BillingService:
             current_period_start=today,
             current_period_end=trial_end,
         )
-        tenant.trial_ends_at = timezone.make_aware(
-            timezone.datetime.combine(trial_end, timezone.datetime.min.time())
-        )
-        tenant.save(update_fields=['trial_ends_at'])
+        BillingService.sync_tenant_trial_end(subscription)
         logger.info('Trial запущен для тенанта %s, план %s', tenant.slug, plan.slug)
         return subscription
+
+    @staticmethod
+    @transaction.atomic
+    def extend_trial(tenant: Tenant, days: int | None = None) -> Subscription:
+        """Продлевает trial, не позволяя случайно понизить активную оплату."""
+        extension_days = days if days is not None else TRIAL_DAYS
+        if extension_days <= 0:
+            raise ValueError('Срок продления должен быть положительным.')
+
+        sub = Subscription.objects.select_for_update().get(tenant=tenant)
+        if sub.status == Subscription.STATUS_ACTIVE:
+            raise ValueError('Нельзя заменить активную платную подписку триалом.')
+
+        today = timezone.localdate()
+        base = max(sub.current_period_end, today)
+        sub.status = Subscription.STATUS_TRIAL
+        sub.current_period_start = today
+        sub.current_period_end = base + timedelta(days=extension_days)
+        sub.cancelled_at = None
+        sub.save(update_fields=[
+            'status', 'current_period_start', 'current_period_end', 'cancelled_at',
+        ])
+        BillingService.sync_tenant_trial_end(sub)
+        return sub
 
     @staticmethod
     @transaction.atomic
     def upgrade_plan(tenant: Tenant, plan_slug: str, period: str) -> Subscription:
         """Меняет тарифный план тенанта."""
         plan = Plan.objects.get(slug=plan_slug, is_active=True)
-        today = date.today()
+        today = timezone.localdate()
 
         if period == Subscription.PERIOD_YEARLY:
             end = today.replace(year=today.year + 1)
@@ -305,7 +342,9 @@ class BillingService:
         sub.status = Subscription.STATUS_ACTIVE
         sub.current_period_start = today
         sub.current_period_end = end
+        sub.cancelled_at = None
         sub.save()
+        BillingService.sync_tenant_trial_end(sub)
 
         # Новый расчётный период — сбрасываем счётчик AI-кредитов
         Tenant.objects.filter(pk=tenant.pk).update(ai_credits_used=0)
@@ -327,6 +366,7 @@ class BillingService:
         sub = tenant.subscription
         sub.status = Subscription.STATUS_ACTIVE
         sub.save(update_fields=['status'])
+        BillingService.sync_tenant_trial_end(sub)
 
         BillingService._requeue_limit_reached_listings(tenant)
         logger.info('Платёж %s прошёл для тенанта %s', yookassa_payment_id, tenant.slug)
@@ -348,18 +388,21 @@ class BillingService:
     @staticmethod
     def check_expired_trials() -> int:
         """
-        Переводит просроченные trial-подписки в past_due.
+        Переводит просроченные trial/active-подписки в past_due.
         Вызывается Celery Beat ежедневно.
         Возвращает количество обработанных подписок.
         """
-        today = date.today()
+        today = timezone.localdate()
         expired = Subscription.objects.filter(
-            status=Subscription.STATUS_TRIAL,
+            status__in=(Subscription.STATUS_TRIAL, Subscription.STATUS_ACTIVE),
             current_period_end__lt=today,
         )
+        tenant_ids = list(expired.values_list('tenant_id', flat=True))
         count = expired.update(status=Subscription.STATUS_PAST_DUE)
+        if tenant_ids:
+            Tenant.objects.filter(pk__in=tenant_ids).update(trial_ends_at=None)
         if count:
-            logger.warning('Переведено %d trial-подписок в past_due', count)
+            logger.warning('Переведено %d истёкших подписок в past_due', count)
         return count
 
     @staticmethod
@@ -368,7 +411,7 @@ class BillingService:
         Отменяет подписки, у которых истёк grace period (7 дней past_due).
         Вызывается Celery Beat ежедневно.
         """
-        deadline = date.today() - timedelta(days=GRACE_PERIOD_DAYS)
+        deadline = timezone.localdate() - timedelta(days=GRACE_PERIOD_DAYS)
         expired = Subscription.objects.filter(
             status=Subscription.STATUS_PAST_DUE,
             current_period_end__lt=deadline,

@@ -59,7 +59,61 @@ class TestBillingService:
         count = BillingService.check_expired_trials()
         assert count == 1
         sub.refresh_from_db()
+        tenant.refresh_from_db()
         assert sub.status == Subscription.STATUS_PAST_DUE
+        assert tenant.trial_ends_at is None
+
+    def test_expired_trial_is_inactive_before_periodic_task_runs(self):
+        """Дата немедленно ограничивает доступ, даже если status ещё trial."""
+        tenant = make_tenant('expired-live-co', 'expired-live@test.com')
+        sub = tenant.subscription
+        sub.current_period_end = date.today() - timedelta(days=1)
+        sub.save(update_fields=['current_period_end'])
+
+        assert sub.status == Subscription.STATUS_TRIAL
+        assert sub.effective_status == Subscription.STATUS_PAST_DUE
+        assert sub.is_active is False
+        assert sub.access_mode == Subscription.ACCESS_BILLING_ONLY
+
+    def test_check_expired_paid_subscription(self):
+        """Истёкший оплаченный период тоже переходит в past_due."""
+        tenant = make_tenant('expired-paid-co', 'expired-paid@test.com')
+        sub = tenant.subscription
+        sub.status = Subscription.STATUS_ACTIVE
+        sub.current_period_end = date.today() - timedelta(days=1)
+        sub.save(update_fields=['status', 'current_period_end'])
+
+        count = BillingService.check_expired_trials()
+
+        assert count == 1
+        sub.refresh_from_db()
+        assert sub.status == Subscription.STATUS_PAST_DUE
+
+    def test_extend_trial_syncs_legacy_tenant_date(self):
+        tenant = make_tenant('extend-trial-co', 'extend-trial@test.com')
+        sub = tenant.subscription
+        sub.status = Subscription.STATUS_PAST_DUE
+        sub.current_period_end = date.today() - timedelta(days=3)
+        sub.save(update_fields=['status', 'current_period_end'])
+
+        extended = BillingService.extend_trial(tenant, days=5)
+        tenant.refresh_from_db()
+
+        assert extended.status == Subscription.STATUS_TRIAL
+        assert extended.current_period_end == date.today() + timedelta(days=5)
+        assert timezone.localdate(tenant.trial_ends_at) == extended.current_period_end
+
+    def test_extend_trial_does_not_downgrade_active_paid_subscription(self):
+        tenant = make_tenant('no-downgrade-co', 'no-downgrade@test.com')
+        sub = tenant.subscription
+        sub.status = Subscription.STATUS_ACTIVE
+        sub.save(update_fields=['status'])
+
+        with pytest.raises(ValueError, match='платную подписку'):
+            BillingService.extend_trial(tenant)
+
+        sub.refresh_from_db()
+        assert sub.status == Subscription.STATUS_ACTIVE
 
     def test_grace_period_cancels_after_7_days(self):
         """Подписка отменяется после 7 дней grace period."""
@@ -104,6 +158,16 @@ class TestLimitChecker:
         can, reason = LimitChecker().can_publish(tenant)
         assert can is False
         assert 'неактивна' in reason
+
+    def test_expired_trial_blocks_all_limit_checked_operations_immediately(self):
+        tenant = make_tenant('expired-limits-co', 'expired-limits@test.com')
+        sub = tenant.subscription
+        sub.current_period_end = date.today() - timedelta(days=1)
+        sub.save(update_fields=['current_period_end'])
+
+        assert LimitChecker().can_publish(tenant)[0] is False
+        assert LimitChecker().can_import_sku(tenant, count=0)[0] is False
+        assert LimitChecker().can_generate_ai(tenant)[0] is False
 
     def test_enterprise_no_limits(self):
         """Enterprise план не имеет лимитов."""

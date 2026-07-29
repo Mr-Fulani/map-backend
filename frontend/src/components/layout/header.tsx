@@ -45,7 +45,9 @@ export function Header() {
 
   const planStatusLabel =
     subscription?.status === 'past_due'
-      ? ' (Триал истёк)'
+      ? ' (истекла)'
+      : subscription?.status === 'cancelled'
+        ? ' (отменена)'
       : subscription?.status === 'trial'
         ? ' (Trial)'
         : '';

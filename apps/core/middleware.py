@@ -30,6 +30,26 @@ class TenantMiddleware:
             )
 
         request.tenant = tenant
+
+        # Истёкшая/отменённая подписка не разлогинивает пользователя: он может
+        # просматривать данные и оплатить тариф, но не может менять состояние.
+        if (
+            request.method not in ('GET', 'HEAD', 'OPTIONS')
+            and not self._is_billing_recovery_path(request.path)
+        ):
+            from apps.billing.models import Subscription
+            from apps.billing.services import BillingService
+
+            if BillingService.access_mode(tenant) != Subscription.ACCESS_FULL:
+                return JsonResponse(
+                    {
+                        'status': 'error',
+                        'code': 'subscription_inactive',
+                        'message': 'Подписка истекла. Продлите её в разделе «Биллинг».',
+                    },
+                    status=402,
+                )
+
         return self.get_response(request)
 
     def _resolve_tenant(self, request):
@@ -117,3 +137,7 @@ class TenantMiddleware:
             '/api/v1/notifications/webhook/telegram/',
         )
         return any(path.startswith(p) for p in PUBLIC_PREFIXES)
+
+    def _is_billing_recovery_path(self, path):
+        """Запись, необходимая для восстановления подписки."""
+        return path.startswith('/api/v1/billing/checkout/')

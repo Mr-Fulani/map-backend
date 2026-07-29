@@ -33,7 +33,10 @@ class SubscriptionAdmin(ModelAdmin):
     Позволяет видеть текущий статус, даты периода и историю.
     """
 
-    list_display = ['tenant', 'plan', 'status', 'billing_period', 'current_period_start', 'current_period_end']
+    list_display = [
+        'tenant', 'plan', 'status', 'get_effective_status',
+        'billing_period', 'current_period_start', 'current_period_end',
+    ]
     list_filter = ['status', 'plan', 'billing_period']
     search_fields = ['tenant__name', 'tenant__slug']
     readonly_fields = ['created_at', 'updated_at', 'cancelled_at']
@@ -53,6 +56,16 @@ class SubscriptionAdmin(ModelAdmin):
             'classes': ['collapse'],
         }),
     ]
+
+    @admin.display(description='Эффективный статус')
+    def get_effective_status(self, obj):
+        return dict(obj.STATUS_CHOICES)[obj.effective_status]
+
+    def save_model(self, request, obj, form, change):
+        """Subscription — источник истины; legacy-дата тенанта только синхронизируется."""
+        super().save_model(request, obj, form, change)
+        from apps.billing.services import BillingService
+        BillingService.sync_tenant_trial_end(obj)
 
 
 @admin.register(Invoice)

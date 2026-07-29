@@ -91,6 +91,16 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
+    if (
+      error.response?.status === 402
+      && error.response?.data?.code === 'subscription_inactive'
+      && typeof window !== 'undefined'
+      && !window.location.pathname.startsWith('/dashboard/billing')
+    ) {
+      window.location.assign('/dashboard/billing?subscription=inactive');
+      return Promise.reject(error);
+    }
+
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (isRefreshing) {
         return new Promise((resolve, reject) => {

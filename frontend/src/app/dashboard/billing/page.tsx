@@ -25,6 +25,8 @@ interface Subscription {
   id: number;
   plan: Plan;
   status: string;
+  effective_status: string;
+  access_mode: 'full' | 'billing_only';
   billing_period: string;
   current_period_start: string;
   current_period_end: string | null;
@@ -40,8 +42,15 @@ interface Invoice {
 
 const INVOICE_STATUS: Record<string, string> = {
   pending: 'Ожидает',
-  succeeded: 'Оплачен',
-  cancelled: 'Отменён',
+  paid: 'Оплачен',
+  failed: 'Ошибка',
+};
+
+const SUBSCRIPTION_STATUS: Record<string, string> = {
+  trial: 'Пробный период',
+  active: 'Активна',
+  past_due: 'Истекла — доступ только для чтения',
+  cancelled: 'Отменена — доступ только для чтения',
 };
 
 function fmt(n: number | null) {
@@ -95,6 +104,10 @@ export default function BillingPage() {
   }
 
   const currentPlanSlug = subscription?.plan?.slug;
+  const effectiveStatus = subscription
+    ? (subscription.effective_status ?? subscription.status)
+    : null;
+  const hasFullAccess = subscription?.access_mode === 'full';
 
   return (
     <div className="space-y-6">
@@ -103,12 +116,38 @@ export default function BillingPage() {
         <p className="text-muted-foreground">Управление подпиской и платежами</p>
       </div>
 
+      {subscription && (
+        <Card className={hasFullAccess ? '' : 'border-destructive/50'}>
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-semibold">
+                {subscription.plan.name} · {
+                  effectiveStatus
+                    ? (SUBSCRIPTION_STATUS[effectiveStatus] ?? effectiveStatus)
+                    : 'Статус неизвестен'
+                }
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Текущий период до{' '}
+                {subscription.current_period_end
+                  ? new Date(`${subscription.current_period_end}T00:00:00`).toLocaleDateString('ru-RU')
+                  : '—'}
+              </p>
+            </div>
+            <Badge variant={hasFullAccess ? 'default' : 'destructive'}>
+              {hasFullAccess ? 'Полный доступ' : 'Только чтение и оплата'}
+            </Badge>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Тарифные планы */}
       <div>
         <h2 className="mb-3 text-lg font-semibold">Тарифные планы</h2>
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {plans.map((plan) => {
             const isCurrent = plan.slug === currentPlanSlug;
+            const canRenewCurrent = isCurrent && !hasFullAccess;
             return (
               <Card key={plan.id} className={isCurrent ? 'border-primary' : ''}>
                 <CardHeader className="pb-3">
@@ -133,14 +172,14 @@ export default function BillingPage() {
                       className="w-full"
                       size="sm"
                       variant={isCurrent ? 'outline' : 'default'}
-                      disabled={isCurrent || checkoutLoading !== null}
+                      disabled={(isCurrent && !canRenewCurrent) || checkoutLoading !== null}
                       onClick={() => checkout(plan.slug, 'monthly')}
                     >
                       {checkoutLoading === `${plan.slug}-monthly`
                         ? <Loader2 className="h-4 w-4 animate-spin" />
-                        : isCurrent ? 'Текущий план' : 'Выбрать (мес)'}
+                        : canRenewCurrent ? 'Продлить (мес)' : isCurrent ? 'Текущий план' : 'Выбрать (мес)'}
                     </Button>
-                    {!isCurrent && (
+                    {(!isCurrent || canRenewCurrent) && (
                       <Button
                         className="w-full"
                         size="sm"
@@ -182,7 +221,7 @@ export default function BillingPage() {
                           {new Date(inv.created_at).toLocaleDateString('ru-RU')}
                         </p>
                       </div>
-                      <Badge variant={inv.status === 'succeeded' ? 'default' : 'secondary'}>
+                      <Badge variant={inv.status === 'paid' ? 'default' : 'secondary'}>
                         {INVOICE_STATUS[inv.status] ?? inv.status}
                       </Badge>
                     </div>
@@ -208,7 +247,7 @@ export default function BillingPage() {
                         {Number(inv.amount).toLocaleString('ru-RU')} ₽
                       </td>
                       <td className="px-4 py-3">
-                        <Badge variant={inv.status === 'succeeded' ? 'default' : 'secondary'}>
+                        <Badge variant={inv.status === 'paid' ? 'default' : 'secondary'}>
                           {INVOICE_STATUS[inv.status] ?? inv.status}
                         </Badge>
                       </td>
