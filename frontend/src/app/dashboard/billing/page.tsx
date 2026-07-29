@@ -5,6 +5,7 @@ import { billingApi } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
@@ -47,11 +48,17 @@ interface Invoice {
 
 interface AIUsage {
   ai_credits: {
+    used: string;
+    limit: string;
     included_balance: string;
+    included_percent_used: string;
     purchased_balance: string;
     reserved_balance: string;
     available_balance: string;
     unlimited: boolean;
+    individual_limit: boolean;
+    overage_active: boolean;
+    threshold: 'normal' | 'warning' | 'critical' | 'exhausted';
   };
 }
 
@@ -155,6 +162,10 @@ export default function BillingPage() {
     ? (subscription.effective_status ?? subscription.status)
     : null;
   const hasFullAccess = subscription?.access_mode === 'full';
+  const aiPercentUsed = Math.min(
+    100,
+    Number(usage?.ai_credits.included_percent_used ?? 0),
+  );
 
   return (
     <div className="space-y-6">
@@ -261,13 +272,42 @@ export default function BillingPage() {
             <CardTitle className="text-base">Баланс</CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span>
+                  Использовано{' '}
+                  {Number(usage?.ai_credits.used ?? 0).toLocaleString('ru-RU')} из{' '}
+                  {Number(usage?.ai_credits.limit ?? 0).toLocaleString('ru-RU')}
+                </span>
+                <div className="flex gap-2">
+                  {usage?.ai_credits.individual_limit && (
+                    <Badge variant="outline">Индивидуальный лимит</Badge>
+                  )}
+                  {usage?.ai_credits.overage_active && (
+                    <Badge variant="destructive">Расходуется купленный баланс</Badge>
+                  )}
+                  {usage?.ai_credits.threshold === 'warning' && (
+                    <Badge variant="secondary">Использовано 80%+</Badge>
+                  )}
+                  {usage?.ai_credits.threshold === 'critical' && (
+                    <Badge variant="destructive">Использовано 90%+</Badge>
+                  )}
+                  {usage?.ai_credits.threshold === 'exhausted' && (
+                    <Badge variant="destructive">Пакет исчерпан</Badge>
+                  )}
+                </div>
+              </div>
+              <Progress value={aiPercentUsed} />
+              <p className="text-xs text-muted-foreground">
+                Уведомления отправляются при достижении 80%, 90% и 100%.
+              </p>
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border p-4">
                 <p className="text-xs text-muted-foreground">Доступно</p>
                 <p className="mt-1 text-2xl font-bold">
-                  {usage?.ai_credits.unlimited
-                    ? '∞'
-                    : Number(usage?.ai_credits.available_balance ?? 0).toLocaleString('ru-RU')}
+                  {Number(usage?.ai_credits.available_balance ?? 0).toLocaleString('ru-RU')}
                 </p>
               </div>
               <div className="rounded-lg border p-4">

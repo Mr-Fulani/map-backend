@@ -39,9 +39,11 @@ class TenantSerializer(serializers.ModelSerializer):
         model = Tenant
         fields = ['id', 'name', 'slug', 'is_active', 'catalog_domain', 'trial_ends_at',
                   'active_listings_count', 'sku_count', 'ai_credits_used',
+                  'ai_credit_limit_override',
                   'created_at', 'updated_at']
         read_only_fields = ['id', 'active_listings_count', 'sku_count',
-                            'ai_credits_used', 'created_at', 'updated_at']
+                            'ai_credits_used', 'ai_credit_limit_override',
+                            'created_at', 'updated_at']
 
 
 class CatalogDomainSerializer(serializers.ModelSerializer):

@@ -20,7 +20,8 @@ class Plan(TimestampedModel):
     price_monthly = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Цена в месяц')
     price_yearly = models.DecimalField(max_digits=10, decimal_places=2, verbose_name='Цена в год')
 
-    # null = без лимита (Enterprise)
+    # Для листингов/SKU null означает отсутствие лимита.
+    # Для AI null безопасно трактуется сервисом как 0, а не как безлимит.
     limit_listings = models.PositiveIntegerField(null=True, blank=True, verbose_name='Лимит листингов')
     limit_sku = models.PositiveIntegerField(null=True, blank=True, verbose_name='Лимит SKU')
     limit_ai_credits = models.PositiveIntegerField(null=True, blank=True, verbose_name='Лимит AI-кредитов')
@@ -198,6 +199,9 @@ class AIWallet(TimestampedModel):
     included_balance = models.DecimalField(
         max_digits=16, decimal_places=4, default=Decimal('0'),
     )
+    included_limit = models.DecimalField(
+        max_digits=16, decimal_places=4, default=Decimal('0'),
+    )
     purchased_balance = models.DecimalField(
         max_digits=16, decimal_places=4, default=Decimal('0'),
     )
@@ -205,6 +209,7 @@ class AIWallet(TimestampedModel):
         max_digits=16, decimal_places=4, default=Decimal('0'),
     )
     included_expires_at = models.DateTimeField(null=True, blank=True)
+    notification_state = models.JSONField(default=dict, blank=True)
 
     class Meta:
         verbose_name = 'AI-кошелёк'

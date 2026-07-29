@@ -37,7 +37,7 @@ PLANS = [
         'price_yearly': 767040,
         'limit_listings': None,
         'limit_sku': None,
-        'limit_ai_credits': None,
+        'limit_ai_credits': 50000,
     },
 ]
 

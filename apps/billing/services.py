@@ -114,8 +114,6 @@ class LimitChecker:
         if sub is None or not sub.is_active:
             return False, 'Подписка неактивна.'
         from apps.billing.ai_wallet import AIWalletService
-        if AIWalletService.is_unlimited(tenant):
-            return True, ''
         wallet = AIWalletService.summary(tenant)
         if wallet['available'] < 1:
             return False, 'AI-баланс исчерпан. Пополните баланс или обновите тариф.'
@@ -171,13 +169,18 @@ class LimitChecker:
                 'limit': plan.limit_sku if plan else None,
             },
             'ai_credits': {
-                'used': tenant.ai_credits_used,
-                'limit': plan.limit_ai_credits if plan else None,
+                'used': wallet['included_used'],
+                'successful_requests': tenant.ai_credits_used,
+                'limit': wallet['included_limit'],
                 'included_balance': wallet['included'],
+                'included_percent_used': wallet['included_percent_used'],
                 'purchased_balance': wallet['purchased'],
                 'reserved_balance': wallet['reserved'],
                 'available_balance': wallet['available'],
                 'unlimited': wallet['unlimited'],
+                'individual_limit': wallet['individual_limit'],
+                'overage_active': wallet['overage_active'],
+                'threshold': wallet['threshold'],
             },
             'rejected_listings': rejected_count,
             'subscription_status': effective_status,
@@ -452,7 +455,7 @@ class BillingService:
         from apps.billing.ai_wallet import AIWalletService
         AIWalletService.grant_included(
             tenant,
-            plan.limit_ai_credits,
+            AIWalletService.effective_limit(tenant),
             period_end=subscription.ai_period_end,
             idempotency_key=(
                 f'subscription-grant:{subscription.pk}:'
@@ -522,7 +525,7 @@ class BillingService:
         from apps.billing.ai_wallet import AIWalletService
         AIWalletService.grant_included(
             tenant,
-            plan.limit_ai_credits,
+            AIWalletService.effective_limit(tenant),
             period_end=sub.ai_period_end,
             idempotency_key=(
                 f'subscription-grant:{sub.pk}:'
@@ -559,7 +562,7 @@ class BillingService:
         from apps.billing.ai_wallet import AIWalletService
         AIWalletService.grant_included(
             sub.tenant,
-            sub.plan.limit_ai_credits,
+            AIWalletService.effective_limit(sub.tenant),
             period_end=period_end,
             idempotency_key=(
                 f'subscription-grant:{sub.pk}:{period_start}:{period_end}'

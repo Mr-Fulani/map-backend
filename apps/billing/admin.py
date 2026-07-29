@@ -22,7 +22,10 @@ class PlanAdmin(ModelAdmin):
         }),
         ('Лимиты', {
             'fields': ['limit_listings', 'limit_sku', 'limit_ai_credits'],
-            'description': 'Пустое значение = без лимита (тариф Enterprise).',
+            'description': (
+                'Для AI пустое значение безопасно трактуется как 0, '
+                'поэтому у каждого активного тарифа должен быть явный лимит.'
+            ),
         }),
     ]
 
@@ -106,10 +109,10 @@ class InvoiceAdmin(ModelAdmin):
 class AIWalletAdmin(ModelAdmin):
     list_display = [
         'tenant', 'included_balance', 'purchased_balance',
-        'reserved_balance', 'included_expires_at',
+        'reserved_balance', 'included_limit', 'included_expires_at',
     ]
     search_fields = ['tenant__name', 'tenant__slug']
-    readonly_fields = ['created_at', 'updated_at']
+    readonly_fields = ['notification_state', 'created_at', 'updated_at']
 
 
 @admin.register(AICreditTransaction)
