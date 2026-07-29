@@ -32,6 +32,9 @@ class TenantCatalogCategorySerializer(serializers.ModelSerializer):
     depth = serializers.SerializerMethodField()
     has_active_children = serializers.SerializerMethodField()
     is_selectable = serializers.SerializerMethodField()
+    effective_margin_pct = serializers.SerializerMethodField()
+    margin_inherited_from_id = serializers.SerializerMethodField()
+    margin_inherited_from_name = serializers.SerializerMethodField()
 
     class Meta:
         model = TenantCatalogCategory
@@ -41,7 +44,9 @@ class TenantCatalogCategorySerializer(serializers.ModelSerializer):
             'external_id', 'default_image_s3_key', 'default_image_source_name',
             'default_image_url', 'is_active', 'path', 'path_label', 'depth',
             'has_active_children', 'is_selectable',
-            'default_margin_pct', 'created_at', 'updated_at',
+            'default_margin_pct', 'effective_margin_pct',
+            'margin_inherited_from_id', 'margin_inherited_from_name',
+            'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'normalized_name', 'default_image_s3_key',
@@ -65,7 +70,7 @@ class TenantCatalogCategorySerializer(serializers.ModelSerializer):
         if category_paths is not None:
             return category_paths.get(obj.pk, [obj.name])
 
-        path = []
+        path: list[str] = []
         node = obj
         seen = set()
         while node is not None and node.pk not in seen:
@@ -93,6 +98,40 @@ class TenantCatalogCategorySerializer(serializers.ModelSerializer):
     def get_is_selectable(self, obj) -> bool:
         """Разрешает назначать только активные конечные категории."""
         return obj.is_active and not self.get_has_active_children(obj)
+
+    def _get_margin_source(self, obj):
+        """Находит категорию, от которой фактически берётся наценка."""
+        margin_sources = self.context.get('category_margin_sources')
+        if margin_sources is not None:
+            return margin_sources.get(obj.pk)
+
+        node = obj
+        seen = set()
+        while node is not None and node.pk not in seen:
+            seen.add(node.pk)
+            if node.default_margin_pct is not None:
+                return node
+            node = node.parent
+        return None
+
+    def get_effective_margin_pct(self, obj) -> str:
+        """Возвращает итоговую наценку с учётом наследования."""
+        source = self._get_margin_source(obj)
+        return str(source.default_margin_pct if source is not None else 0)
+
+    def get_margin_inherited_from_id(self, obj) -> int | None:
+        """Возвращает родителя-источник наценки либо null для собственной."""
+        source = self._get_margin_source(obj)
+        if source is None or source.pk == obj.pk:
+            return None
+        return source.pk
+
+    def get_margin_inherited_from_name(self, obj) -> str:
+        """Возвращает имя родителя, от которого унаследована наценка."""
+        source = self._get_margin_source(obj)
+        if source is None or source.pk == obj.pk:
+            return ''
+        return source.name
 
 
 class TenantCategoryMappingSerializer(serializers.ModelSerializer):

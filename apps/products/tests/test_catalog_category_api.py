@@ -143,6 +143,47 @@ class TestCatalogCategoryHierarchy:
         assert categories[child.pk]['depth'] == 1
         assert categories[child.pk]['is_selectable'] is True
 
+    def test_list_returns_inherited_margin_and_its_source(self):
+        tenant, api_key = _make_tenant('cat-margin-inheritance')
+        domain = _enable_auto_parts(tenant)
+        parent = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Двигатель',
+            root_domain=domain,
+            external_source='avito',
+            default_margin_pct=Decimal('17.50'),
+        )
+        child = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Головка блока цилиндров',
+            parent=parent,
+            root_domain=domain,
+            external_source='avito',
+            default_margin_pct=None,
+        )
+
+        response = Client().get(
+            '/api/v1/products/catalog-categories/',
+            **self._auth(api_key),
+        )
+
+        assert response.status_code == 200
+        categories = {item['id']: item for item in response.json()['data']}
+        assert categories[child.pk]['default_margin_pct'] is None
+        assert Decimal(categories[child.pk]['effective_margin_pct']) == Decimal('17.50')
+        assert categories[child.pk]['margin_inherited_from_id'] == parent.pk
+        assert categories[child.pk]['margin_inherited_from_name'] == parent.name
+
+        child.default_margin_pct = Decimal('0')
+        child.save(update_fields=['default_margin_pct'])
+        response = Client().get(
+            '/api/v1/products/catalog-categories/',
+            **self._auth(api_key),
+        )
+        categories = {item['id']: item for item in response.json()['data']}
+        assert Decimal(categories[child.pk]['effective_margin_pct']) == Decimal('0')
+        assert categories[child.pk]['margin_inherited_from_id'] is None
+
     def test_assign_rejects_parent_category(self):
         tenant, api_key = _make_tenant('cat-hierarchy-assign')
         domain = _enable_auto_parts(tenant)

@@ -42,6 +42,10 @@ import {
 } from 'lucide-react';
 import { getCategoryPlaceholder } from '@/lib/category-placeholder';
 import { useDebounce } from '@/lib/hooks';
+import {
+  CatalogCategoryPicker,
+  type CatalogCategoryOption,
+} from '@/components/products/catalog-category-picker';
 
 interface Product {
   id: number;
@@ -78,14 +82,6 @@ interface Product {
     reason: string;
     needs_review: boolean;
   } | null;
-}
-
-interface TenantCatalogCategory {
-  id: number;
-  name: string;
-  parent: number | null;
-  domain: string;
-  is_active: boolean;
 }
 
 interface CatalogDomain {
@@ -264,7 +260,7 @@ export default function ProductsPage() {
   const [excludedFilter, setExcludedFilter] = useState(false);
   const [catalogDomainFilter, setCatalogDomainFilter] = useState<string>('');
   const [catalogCategoryFilter, setCatalogCategoryFilter] = useState<string>('');
-  const [catalogCategories, setCatalogCategories] = useState<TenantCatalogCategory[]>([]);
+  const [catalogCategories, setCatalogCategories] = useState<CatalogCategoryOption[]>([]);
   const [categorySearch, setCategorySearch] = useState('');
   const [categoryDropdownOpen, setCategoryDropdownOpen] = useState(false);
   const categorySearchRef = useRef<HTMLDivElement>(null);
@@ -332,7 +328,7 @@ export default function ProductsPage() {
   const loadCatalogCategories = useCallback(async () => {
     try {
       const res = await productApi.catalogCategories();
-      const categories = (res.data.data ?? []) as TenantCatalogCategory[];
+      const categories = (res.data.data ?? []) as CatalogCategoryOption[];
       const active = categories.filter((category) => category.is_active);
       active.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
       setCatalogCategories(active);
@@ -386,18 +382,9 @@ export default function ProductsPage() {
 
   // Полный путь категории (Запчасти / Для автомобилей / Двигатель / …) — чтобы
   // одноимённые категории из разных веток (база + дерево Avito) не сливались в кашу.
-  const categoryById = new Map(catalogCategories.map((c) => [c.id, c]));
-  const categoryPath = (c: TenantCatalogCategory): string => {
-    const parts: string[] = [];
-    let node: TenantCatalogCategory | undefined = c;
-    const seen = new Set<number>();
-    while (node && !seen.has(node.id)) {
-      seen.add(node.id);
-      parts.unshift(node.name);
-      node = node.parent ? categoryById.get(node.parent) : undefined;
-    }
-    return parts.join(' / ');
-  };
+  const categoryPath = (category: CatalogCategoryOption): string => (
+    category.path_label || category.path.join(' / ') || category.name
+  );
   const sortedCategories = [...catalogCategories].sort(
     (a, b) => categoryPath(a).localeCompare(categoryPath(b), 'ru'),
   );
@@ -747,19 +734,13 @@ export default function ProductsPage() {
                   <p className="text-xs font-medium text-muted-foreground">
                     Назначить категорию
                   </p>
-                  <select
+                  <CatalogCategoryPicker
+                    categories={catalogCategories}
                     value={categoryAssignValue}
-                    onChange={(event) => setCategoryAssignValue(event.target.value)}
-                    className="h-9 w-full rounded-md border border-input bg-background px-2 text-sm"
+                    onValueChange={setCategoryAssignValue}
                     disabled={categoryAssignLoading}
-                  >
-                    <option value="">Выбрать</option>
-                    {sortedCategories.map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {categoryPath(category)}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="Выбрать конечную подкатегорию"
+                  />
                   <Button
                     size="sm"
                     className="w-full"

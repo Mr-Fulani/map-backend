@@ -419,6 +419,7 @@ class TenantCatalogCategoryListView(APIView):
             for category in categories
             if category.is_active and category.parent_id is not None
         }
+        category_margin_sources = {}
         for category in categories:
             path = []
             node = category
@@ -429,6 +430,15 @@ class TenantCatalogCategoryListView(APIView):
                 node = categories_by_id.get(node.parent_id)
             category_paths[category.pk] = path
 
+            node = category
+            seen = set()
+            while node is not None and node.pk not in seen:
+                seen.add(node.pk)
+                if node.default_margin_pct is not None:
+                    category_margin_sources[category.pk] = node
+                    break
+                node = categories_by_id.get(node.parent_id)
+
         return Response({
             'status': 'ok',
             'data': TenantCatalogCategorySerializer(
@@ -438,6 +448,7 @@ class TenantCatalogCategoryListView(APIView):
                     'request': request,
                     'category_paths': category_paths,
                     'category_parent_ids': category_parent_ids,
+                    'category_margin_sources': category_margin_sources,
                 },
             ).data,
         })

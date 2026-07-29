@@ -4,7 +4,11 @@ from decimal import Decimal
 from django.db import IntegrityError, transaction
 
 from apps.marketplaces.models import CategoryMapping, Listing, ListingStats
-from apps.marketplaces.price_utils import compute_price, effective_margin
+from apps.marketplaces.price_utils import (
+    compute_price,
+    effective_category_margin,
+    effective_margin,
+)
 
 
 class CategoryMappingService:
@@ -552,7 +556,7 @@ class ListingService:
         Задача в Celery ставится через transaction.on_commit — не раньше коммита.
         """
         cat = getattr(product, 'catalog_category', None)
-        cat_margin = cat.default_margin_pct if cat else Decimal('0')
+        cat_margin = effective_category_margin(cat) if cat else Decimal('0')
         default_price = compute_price(product.price, cat_margin)
 
         listing, created = Listing.objects.get_or_create(

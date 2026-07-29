@@ -18,6 +18,10 @@ import {
   ChevronLeft, ChevronRight, Send,
 } from 'lucide-react';
 import { getCategoryPlaceholder } from '@/lib/category-placeholder';
+import {
+  CatalogCategoryPicker,
+  CatalogCategoryOption,
+} from '@/components/products/catalog-category-picker';
 
 interface ListingImage {
   id: number | null;
@@ -71,13 +75,6 @@ interface ListingDetail {
     parent_name: string | null;
     default_margin_pct?: string;
   } | null;
-}
-
-interface CatalogCategory {
-  id: number;
-  name: string;
-  parent: number | null;
-  default_margin_pct?: string;
 }
 
 interface Account {
@@ -167,7 +164,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [editPrice, setEditPrice] = useState('');
   const [editMarginPct, setEditMarginPct] = useState<string>('');
   const [editAdType, setEditAdType] = useState(DEFAULT_AD_TYPE);
-  const [categories, setCategories] = useState<CatalogCategory[]>([]);
+  const [categories, setCategories] = useState<CatalogCategoryOption[]>([]);
   const [editCategoryId, setEditCategoryId] = useState('');
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [placementAddresses, setPlacementAddresses] = useState<PlacementAddress[]>([]);
@@ -234,7 +231,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     accountApi.listPlacementAddresses()
       .then((res) => setPlacementAddresses(res.data.data ?? res.data))
       .catch(() => setPlacementAddresses([]));
-    productApi.catalogCategories()
+    productApi.catalogCategories({ assignable: true })
       .then((res) => setCategories(res.data.data ?? res.data))
       .catch(() => setCategories([]));
   }, []);
@@ -266,30 +263,6 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       clearTimeout(timer);
     };
   }, [editingBrand, listing, editBrand]);
-
-  // Каскад произвольной глубины: путь от корня до выбранной категории + уровни выбора.
-  const categoryById = new Map(categories.map((c) => [c.id, c]));
-  const selectedAncestry = (() => {
-    const out: number[] = [];
-    let cur = editCategoryId ? categoryById.get(Number(editCategoryId)) : undefined;
-    while (cur) {
-      out.unshift(cur.id);
-      cur = cur.parent ? categoryById.get(cur.parent) : undefined;
-    }
-    return out;
-  })();
-  const categoryLevels: { options: CatalogCategory[]; selectedId: number | null; idx: number }[] = [];
-  {
-    let parentId: number | null = null;
-    for (let i = 0; ; i += 1) {
-      const options = categories.filter((c) => (c.parent ?? null) === parentId);
-      if (options.length === 0) break;
-      const selectedId = selectedAncestry[i] ?? null;
-      categoryLevels.push({ options, selectedId, idx: i });
-      if (selectedId === null) break;
-      parentId = selectedId;
-    }
-  }
 
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     !editAccountId || address.account === Number(editAccountId)
@@ -954,34 +927,17 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                 </select>
               </div>
 
-              {/* Категория и подкатегории любой глубины — проверить/изменить перед
-                  публикацией. По ним строится категория Avito (GoodsType/SparePartType). */}
-              {categoryLevels.length > 0 ? (
-                <div className="grid gap-3 rounded-md border p-3 sm:grid-cols-2">
-                  {categoryLevels.map(({ options, selectedId, idx }) => (
-                    <div className="space-y-1" key={idx}>
-                      <p className="text-sm text-muted-foreground">
-                        {idx === 0 ? 'Категория' : `Подкатегория ${idx}`}
-                      </p>
-                      <select
-                        value={selectedId ?? ''}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (v) setEditCategoryId(v);
-                          else setEditCategoryId(idx > 0 ? String(categoryLevels[idx - 1].selectedId) : '');
-                        }}
-                        disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
-                        className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
-                      >
-                        <option value="">{idx === 0 ? '— не задана —' : '— вся категория —'}</option>
-                        {options.map((category) => (
-                          <option key={category.id} value={category.id}>
-                            {category.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
+              {/* Единое официальное дерево Avito: назначить можно только активный лист. */}
+              {categories.length > 0 ? (
+                <div className="space-y-1 rounded-md border p-3">
+                  <p className="text-sm text-muted-foreground">Категория Avito</p>
+                  <CatalogCategoryPicker
+                    categories={categories}
+                    value={editCategoryId}
+                    onValueChange={setEditCategoryId}
+                    disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                    placeholder="Выберите категорию автозапчасти"
+                  />
                 </div>
               ) : listing.catalog_category ? (
                 // Дерево категорий недоступно (домен каталога выключен), но категория

@@ -23,6 +23,10 @@ export interface CatalogCategoryOption {
   depth: number;
   has_active_children: boolean;
   is_selectable: boolean;
+  default_margin_pct: string | null;
+  effective_margin_pct: string;
+  margin_inherited_from_id: number | null;
+  margin_inherited_from_name: string;
 }
 
 interface CatalogCategoryPickerProps {
