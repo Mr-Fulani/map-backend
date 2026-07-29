@@ -1,7 +1,11 @@
+from datetime import timedelta
+
 from django.conf import settings
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.marketplaces.models import (
+    AvitoAccountStatus,
     AvitoCategory,
     CategoryMapping,
     Listing,
@@ -9,6 +13,95 @@ from apps.marketplaces.models import (
     MarketplacePlacementAddress,
 )
 from apps.products.media import get_publishable_product_images
+
+
+class AvitoAccountStatusSerializer(serializers.ModelSerializer):
+    """Tenant-facing состояние подключения, Автозагрузки и тарифа Avito."""
+
+    days_left = serializers.SerializerMethodField()
+    subscription_ends_at = serializers.SerializerMethodField()
+    subscription_source = serializers.SerializerMethodField()
+    placements_remaining = serializers.SerializerMethodField()
+    placements_total = serializers.SerializerMethodField()
+    profile_stale = serializers.SerializerMethodField()
+    tariff_stale = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AvitoAccountStatus
+        fields = [
+            'connection_status', 'autoload_status', 'feed_configured',
+            'profile_checked_at', 'profile_stale',
+            'tariff_status', 'tariff_name', 'tariff_started_at',
+            'tariff_ends_at', 'subscription_ends_at', 'subscription_source',
+            'days_left', 'tariff_price',
+            'placement_packages', 'placements_remaining', 'placements_total',
+            'scheduled_tariff', 'tariff_checked_at', 'tariff_stale',
+            'last_attempted_at', 'last_error_code', 'last_error_message',
+        ]
+        read_only_fields = fields
+
+    def get_days_left(self, obj):
+        """Возвращает дни по API-тарифу или по ручной дате Autoload."""
+        if obj.tariff_ends_at:
+            seconds_left = (obj.tariff_ends_at - timezone.now()).total_seconds()
+            if seconds_left <= 0:
+                return 0
+            return int((seconds_left + 86399) // 86400)
+        manual_end = obj.account.autoload_subscription_ends_at
+        if not manual_end:
+            return None
+        return max((manual_end - timezone.localdate()).days, 0)
+
+    def get_subscription_ends_at(self, obj):
+        """Единая дата окончания для интерфейса."""
+        if obj.tariff_ends_at:
+            return timezone.localtime(obj.tariff_ends_at).date().isoformat()
+        manual_end = obj.account.autoload_subscription_ends_at
+        return manual_end.isoformat() if manual_end else None
+
+    def get_subscription_source(self, obj):
+        """Показывает, подтверждена дата API или указана пользователем."""
+        if obj.tariff_ends_at:
+            return 'avito_tariff'
+        if obj.account.autoload_subscription_ends_at:
+            return 'manual'
+        return 'unavailable'
+
+    def get_placements_remaining(self, obj):
+        """Суммирует известные остатки по пакетам размещений."""
+        values: list[int] = []
+        for package in obj.placement_packages:
+            if not isinstance(package, dict):
+                continue
+            value = package.get('remain')
+            if isinstance(value, int):
+                values.append(value)
+        return sum(values) if values else None
+
+    def get_placements_total(self, obj):
+        """Суммирует размеры известных пакетов размещений."""
+        values: list[int] = []
+        for package in obj.placement_packages:
+            if not isinstance(package, dict):
+                continue
+            value = package.get('total')
+            if isinstance(value, int):
+                values.append(value)
+        return sum(values) if values else None
+
+    @staticmethod
+    def _is_stale(checked_at) -> bool:
+        if not checked_at:
+            return True
+        return checked_at < timezone.now() - timedelta(hours=12)
+
+    def get_profile_stale(self, obj):
+        """Показывает, что профиль не подтверждался более 12 часов."""
+        return self._is_stale(obj.profile_checked_at)
+
+    def get_tariff_stale(self, obj):
+        """Показывает, что тариф не подтверждался более 12 часов."""
+        return self._is_stale(obj.tariff_checked_at)
 
 
 class AvitoCategorySerializer(serializers.ModelSerializer):
@@ -34,6 +127,8 @@ class CategoryMappingWriteSerializer(serializers.ModelSerializer):
 class MarketplaceAccountSerializer(serializers.ModelSerializer):
     """Чтение: credentials не возвращаются никогда."""
 
+    avito_status = serializers.SerializerMethodField()
+
     class Meta:
         model = MarketplaceAccount
         fields = [
@@ -41,9 +136,19 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
             'default_address', 'default_seller_address_id',
             'default_manager_name', 'default_contact_phone',
             'autoload_active', 'autoload_checked_at',
+            'autoload_subscription_ends_at',
+            'avito_status',
             'created_at',
         ]
         read_only_fields = ['created_at', 'autoload_active', 'autoload_checked_at']
+
+    def get_avito_status(self, obj):
+        """Возвращает последний снимок Avito без внешнего запроса."""
+        try:
+            status_obj = obj.avito_status
+        except AvitoAccountStatus.DoesNotExist:
+            status_obj = AvitoAccountStatus(account=obj, tenant=obj.tenant)
+        return AvitoAccountStatusSerializer(status_obj).data
 
 
 class MarketplacePlacementAddressSerializer(serializers.ModelSerializer):
@@ -219,6 +324,7 @@ class MarketplaceAccountPlacementSerializer(serializers.Serializer):
     default_seller_address_id = serializers.CharField(max_length=100, required=False, allow_blank=True)
     default_manager_name = serializers.CharField(max_length=100, required=False, allow_blank=True)
     default_contact_phone = serializers.CharField(max_length=50, required=False, allow_blank=True)
+    autoload_subscription_ends_at = serializers.DateField(required=False, allow_null=True)
 
 
 class ListingPlacementSerializer(serializers.Serializer):

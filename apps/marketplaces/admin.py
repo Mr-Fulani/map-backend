@@ -1,7 +1,14 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin
 
-from apps.marketplaces.models import AvitoCategory, CategoryMapping, Listing, MarketplaceAccount
+from apps.marketplaces.models import (
+    AvitoAccountStatus,
+    AvitoCategory,
+    AvitoCategoryTreeSnapshot,
+    CategoryMapping,
+    Listing,
+    MarketplaceAccount,
+)
 
 
 @admin.register(Listing)
@@ -42,6 +49,44 @@ class MarketplaceAccountAdmin(ModelAdmin):
     list_filter = ['tenant', 'marketplace', 'is_active']
     search_fields = ['name', 'tenant__slug']
     readonly_fields = ['credentials_enc', 'created_at', 'updated_at']
+
+
+@admin.register(AvitoAccountStatus)
+class AvitoAccountStatusAdmin(ModelAdmin):
+    """Диагностика последней проверки подключения и тарифа Avito."""
+
+    list_display = [
+        'account', 'tenant', 'connection_status', 'autoload_status',
+        'tariff_status', 'tariff_ends_at', 'last_attempted_at',
+    ]
+    list_filter = [
+        'tenant', 'connection_status', 'autoload_status', 'tariff_status',
+    ]
+    search_fields = ['account__name', 'account__external_id', 'tenant__slug']
+    readonly_fields = [
+        'tenant', 'account', 'connection_status', 'autoload_status',
+        'feed_configured', 'profile_checked_at', 'tariff_status',
+        'tariff_name', 'tariff_started_at', 'tariff_ends_at',
+        'tariff_price', 'placement_packages', 'scheduled_tariff',
+        'tariff_checked_at', 'last_attempted_at', 'last_error_code',
+        'last_error_message', 'notification_state', 'created_at', 'updated_at',
+    ]
+
+
+@admin.register(AvitoCategoryTreeSnapshot)
+class AvitoCategoryTreeSnapshotAdmin(ModelAdmin):
+    """Диагностика автоматического обновления дерева категорий Avito."""
+
+    list_display = [
+        'domain_slug', 'status', 'node_count', 'change_count',
+        'fetched_at', 'applied_at', 'source_account',
+    ]
+    list_filter = ['status', 'domain_slug']
+    readonly_fields = [
+        'domain_slug', 'root_name', 'tree', 'checksum', 'status',
+        'node_count', 'change_count', 'fetched_at', 'applied_at',
+        'last_error', 'metadata', 'source_account', 'created_at', 'updated_at',
+    ]
 
 
 @admin.register(AvitoCategory)

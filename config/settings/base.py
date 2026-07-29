@@ -279,6 +279,16 @@ CELERY_BEAT_SCHEDULE = {
         'schedule': 60 * 10,
         'options': {'queue': 'avito_update'},
     },
+    'refresh-avito-account-statuses-6h': {
+        'task': 'apps.marketplaces.tasks.refresh_avito_account_statuses',
+        'schedule': 60 * 60 * 6,
+        'options': {'queue': 'avito_update'},
+    },
+    'sync-avito-category-tree-weekly': {
+        'task': 'apps.marketplaces.tasks.sync_avito_category_tree',
+        'schedule': 60 * 60 * 24 * 7,
+        'options': {'queue': 'avito_update'},
+    },
 }
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 3600
