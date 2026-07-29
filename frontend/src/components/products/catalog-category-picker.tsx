@@ -138,7 +138,7 @@ export function CatalogCategoryPicker({
       {open && (
         <div
           className={cn(
-            'absolute left-0 top-full z-50 mt-1 w-full min-w-[20rem] max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md sm:min-w-[34rem]',
+            'absolute left-0 top-full z-50 mt-1 w-full min-w-0 max-w-[calc(100vw-2rem)] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md',
             dropdownClassName,
           )}
         >
