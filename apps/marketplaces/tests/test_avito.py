@@ -778,8 +778,8 @@ class TestPublishListingTask:
         assert result == [good]
         bad.refresh_from_db()
         assert bad.status == Listing.STATUS_REQUIRES_REVIEW
-        assert 'нет в каталоге Avito' in bad.rejection_reason
-        assert 'Выберите бренд из справочника Avito' in bad.rejection_reason
+        assert 'Avito не распознал производителя' in bad.rejection_reason
+        assert 'Проверьте написание производителя' in bad.rejection_reason
         mock_notify.assert_called_once()
 
     def test_acknowledged_unknown_brand_remains_blocked(self):
@@ -854,7 +854,8 @@ class TestPublishListingTask:
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_REJECTED
         assert 'Тип детали трансмиссии' in listing.rejection_reason
-        assert 'Подкатегорию 3' in listing.rejection_reason
+        assert 'Категория Avito' in listing.rejection_reason
+        assert 'Подкатегорию 3' not in listing.rejection_reason
 
     def test_publish_passes_when_subtype_selected(self):
         """С выбранным под-видом (товар ниже листа) валидация пропускает объявление."""

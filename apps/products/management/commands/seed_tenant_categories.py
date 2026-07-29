@@ -6,11 +6,12 @@ from apps.tenants.models import CatalogDomain, Tenant, TenantCatalogDomain
 
 
 class Command(BaseCommand):
-    """Засевает категории каталога для всех тенантов по всем доступным доменам.
+    """Засевает приоритетные категории для всех тенантов и доступных доменов.
 
     Идемпотентна: использует get_or_create, существующие записи не изменяет.
     Не перезаписывает настроенные пользователем категории и не включает
-    домены, которые пользователь явно отключил.
+    домены, которые пользователь явно отключил. Для автозапчастей использует
+    каноническое дерево Avito, а для остальных доменов — базовые шаблоны.
     """
 
     help = 'Seed catalog categories for all tenants across all available domains'
@@ -67,7 +68,7 @@ class Command(BaseCommand):
                 if tenant_domain is None:
                     continue
 
-                count = ProductCategorySeedService.seed_tenant_default_categories(tenant, domain)
+                count = ProductCategorySeedService.seed_tenant_primary_categories(tenant, domain)
                 if count:
                     self.stdout.write(
                         self.style.SUCCESS(f'  {tenant.slug} / {slug}: +{count} категорий')

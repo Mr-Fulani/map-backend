@@ -426,6 +426,8 @@ AVITO_CLIENT_SECRET = os.environ.get('AVITO_CLIENT_SECRET', '')
 # --- Биллинг ---
 YOOKASSA_SHOP_ID = os.environ.get('YOOKASSA_SHOP_ID', '')
 YOOKASSA_SECRET_KEY = os.environ.get('YOOKASSA_SECRET_KEY', '')
+BILLING_TRIAL_DAYS = int(os.environ.get('BILLING_TRIAL_DAYS', '14'))
+BILLING_GRACE_PERIOD_DAYS = int(os.environ.get('BILLING_GRACE_PERIOD_DAYS', '7'))
 SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8000')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
 

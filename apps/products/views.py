@@ -28,7 +28,8 @@ from apps.products.serializers import (
 )
 from apps.products.services import (
     AutoPartsEnrichmentDisabled, ProductBrandService, ProductBulkActionService,
-    ProductEnrichmentService, ProductIsNotAutoPart, ProductService,
+    ProductCategorySeedService, ProductEnrichmentService, ProductIsNotAutoPart,
+    ProductService,
 )
 from apps.marketplaces.models import Listing
 from apps.products.tasks import import_from_datasource, sync_product_listings_task
@@ -36,9 +37,15 @@ from apps.products.source_policy import DEFAULT_PART_SOURCE, get_part_source_con
 from apps.tenants.models import CatalogDomain, TenantCatalogDomain
 
 
-def _validate_tenant_catalog_category(request, serializer):
-    root_domain = serializer.validated_data.get('root_domain')
-    parent = serializer.validated_data.get('parent')
+def _validate_tenant_catalog_category(request, serializer, instance=None):
+    root_domain = serializer.validated_data.get(
+        'root_domain',
+        getattr(instance, 'root_domain', None),
+    )
+    parent = serializer.validated_data.get(
+        'parent',
+        getattr(instance, 'parent', None),
+    )
     if root_domain is None and parent is not None:
         root_domain = parent.root_domain
         serializer.validated_data['root_domain'] = root_domain
@@ -70,6 +77,21 @@ def _validate_tenant_catalog_category(request, serializer):
                 {'status': 'error', 'code': 'validation_error', 'message': 'Родительская категория другого tenant-а'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        if instance is not None:
+            node = parent
+            seen = set()
+            while node is not None and node.pk not in seen:
+                if node.pk == instance.pk:
+                    return Response(
+                        {
+                            'status': 'error',
+                            'code': 'validation_error',
+                            'message': 'Категория не может быть родителем самой себе или своего предка.',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                seen.add(node.pk)
+                node = node.parent
         if parent.root_domain_id != root_domain.id:
             return Response(
                 {
@@ -374,9 +396,61 @@ class TenantCatalogCategoryListView(APIView):
             .select_related('root_domain', 'parent')
             .order_by('root_domain__sort_order', 'parent__name', 'name')
         )
+        if request.query_params.get('assignable') in ('1', 'true', 'True'):
+            qs = qs.filter(is_active=True)
+
+        # В автозапчастях официальное дерево Avito — источник истины. Старое
+        # компактное дерево оставляем fallback-ом только до первого импорта Avito.
+        has_avito_auto_parts = qs.filter(
+            root_domain__slug=TenantCatalogCategory.Domain.AUTO_PARTS,
+            external_source='avito',
+        ).exists()
+        if has_avito_auto_parts:
+            qs = qs.exclude(
+                root_domain__slug=TenantCatalogCategory.Domain.AUTO_PARTS,
+                external_source=ProductCategorySeedService.SEED_SOURCE,
+            )
+
+        categories = list(qs)
+        categories_by_id = {category.pk: category for category in categories}
+        category_paths = {}
+        category_parent_ids = {
+            category.parent_id
+            for category in categories
+            if category.is_active and category.parent_id is not None
+        }
+        category_margin_sources = {}
+        for category in categories:
+            path = []
+            node = category
+            seen = set()
+            while node is not None and node.pk not in seen:
+                seen.add(node.pk)
+                path.insert(0, node.name)
+                node = categories_by_id.get(node.parent_id)
+            category_paths[category.pk] = path
+
+            node = category
+            seen = set()
+            while node is not None and node.pk not in seen:
+                seen.add(node.pk)
+                if node.default_margin_pct is not None:
+                    category_margin_sources[category.pk] = node
+                    break
+                node = categories_by_id.get(node.parent_id)
+
         return Response({
             'status': 'ok',
-            'data': TenantCatalogCategorySerializer(qs, many=True, context={'request': request}).data,
+            'data': TenantCatalogCategorySerializer(
+                categories,
+                many=True,
+                context={
+                    'request': request,
+                    'category_paths': category_paths,
+                    'category_parent_ids': category_parent_ids,
+                    'category_margin_sources': category_margin_sources,
+                },
+            ).data,
         })
 
     def post(self, request):
@@ -405,7 +479,9 @@ class TenantCatalogCategoryDetailView(APIView):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         serializer = TenantCatalogCategorySerializer(category, data=request.data)
         serializer.is_valid(raise_exception=True)
-        validation_error = _validate_tenant_catalog_category(request, serializer)
+        validation_error = _validate_tenant_catalog_category(
+            request, serializer, instance=category,
+        )
         if validation_error is not None:
             return validation_error
         category = serializer.save(tenant=request.tenant)
@@ -416,6 +492,11 @@ class TenantCatalogCategoryDetailView(APIView):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         serializer = TenantCatalogCategorySerializer(category, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+        validation_error = _validate_tenant_catalog_category(
+            request, serializer, instance=category,
+        )
+        if validation_error is not None:
+            return validation_error
         category = serializer.save()
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
@@ -654,6 +735,15 @@ class ProductCatalogCategoryAssignView(APIView):
                 is_active=True,
                 root_domain_id__in=enabled_domain_ids,
             )
+            if category.children.filter(is_active=True).exists():
+                return Response(
+                    {
+                        'status': 'error',
+                        'code': 'category_not_selectable',
+                        'message': 'Выберите конечную подкатегорию, а не раздел каталога.',
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         valid_ids = list(
             Product.objects
@@ -939,6 +1029,7 @@ def _review_product_payload(product) -> dict:
         'name': product.name,
         'brand': product.brand,
         'category_1c': product.category_1c,
+        'catalog_category_id': product.catalog_category_id,
     }
 
 

@@ -15,6 +15,10 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  CatalogCategoryPicker,
+  type CatalogCategoryOption,
+} from '@/components/products/catalog-category-picker';
 import { useDebounce } from '@/lib/hooks';
 
 type ReviewType = 'all' | 'fitment' | 'fact' | 'classification';
@@ -26,6 +30,7 @@ interface ReviewProduct {
   name: string;
   brand: string;
   category_1c: string;
+  catalog_category_id: number | null;
 }
 
 interface ReviewItem {
@@ -112,6 +117,8 @@ export default function ReviewQueuePage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [catalogCategories, setCatalogCategories] = useState<CatalogCategoryOption[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const debouncedSearch = useDebounce(search, 300);
 
@@ -142,6 +149,14 @@ export default function ReviewQueuePage() {
     load();
   }, [load]);
 
+  useEffect(() => {
+    productApi.catalogCategories({ assignable: true })
+      .then((res) => setCatalogCategories(res.data.data ?? []))
+      .catch((err: unknown) => {
+        setError(getErrorMessage(err, 'Не удалось загрузить категории каталога'));
+      });
+  }, []);
+
   const review = async (item: ReviewItem, action: ReviewAction) => {
     const key = `${item.id}:${action}`;
     setActionLoading(key);
@@ -154,6 +169,27 @@ export default function ReviewQueuePage() {
       ));
     } catch (err: unknown) {
       setError(getErrorMessage(err));
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
+  const assignClassificationCategory = async (item: ReviewItem) => {
+    const selected = selectedCategories[item.id]
+      ?? (item.product.catalog_category_id ? String(item.product.catalog_category_id) : '');
+    if (!selected) return;
+
+    const key = `${item.id}:assign`;
+    setActionLoading(key);
+    setError('');
+    try {
+      await productApi.assignCatalogCategory({
+        product_ids: [item.product.id],
+        catalog_category: Number(selected),
+      });
+      await load();
+    } catch (err: unknown) {
+      setError(getErrorMessage(err, 'Не удалось назначить категорию'));
     } finally {
       setActionLoading(null);
     }
@@ -203,7 +239,7 @@ export default function ReviewQueuePage() {
         </div>
       )}
 
-      <div className="overflow-hidden rounded-md border">
+      <div className="rounded-md border">
         <div className="hidden grid-cols-[118px_minmax(180px,1fr)_minmax(220px,1.3fr)_112px_154px] gap-3 border-b bg-muted/40 px-4 py-3 text-xs font-medium uppercase text-muted-foreground xl:grid">
           <span>Тип</span>
           <span>Товар</span>
@@ -265,6 +301,23 @@ export default function ReviewQueuePage() {
                 <div className="mt-2 text-xs text-muted-foreground">
                   Уверенность: {confidenceLabel(item.confidence)}
                 </div>
+                {item.type === 'classification' && (
+                  <CatalogCategoryPicker
+                    categories={catalogCategories}
+                    value={
+                      selectedCategories[item.id]
+                      ?? (item.product.catalog_category_id
+                        ? String(item.product.catalog_category_id)
+                        : '')
+                    }
+                    onValueChange={(value) => {
+                      setSelectedCategories((current) => ({ ...current, [item.id]: value }));
+                    }}
+                    disabled={actionLoading !== null}
+                    placeholder="Выберите конечную подкатегорию"
+                    className="mt-3"
+                  />
+                )}
               </div>
               <div className="hidden break-words text-sm text-muted-foreground xl:block">
                 {sourceLabel(item.source_id)}
@@ -280,15 +333,33 @@ export default function ReviewQueuePage() {
                   <X className="mr-1 h-4 w-4" />
                   Отклонить
                 </Button>
-                <Button
-                  size="sm"
-                  onClick={() => review(item, 'approve')}
-                  disabled={actionLoading !== null}
-                  className="w-full"
-                >
-                  <Check className="mr-1 h-4 w-4" />
-                  Одобрить
-                </Button>
+                {item.type === 'classification' ? (
+                  <Button
+                    size="sm"
+                    onClick={() => assignClassificationCategory(item)}
+                    disabled={
+                      actionLoading !== null
+                      || !(
+                        selectedCategories[item.id]
+                        ?? item.product.catalog_category_id
+                      )
+                    }
+                    className="w-full"
+                  >
+                    <Check className="mr-1 h-4 w-4" />
+                    Назначить
+                  </Button>
+                ) : (
+                  <Button
+                    size="sm"
+                    onClick={() => review(item, 'approve')}
+                    disabled={actionLoading !== null}
+                    className="w-full"
+                  >
+                    <Check className="mr-1 h-4 w-4" />
+                    Одобрить
+                  </Button>
+                )}
               </div>
             </div>
           ))

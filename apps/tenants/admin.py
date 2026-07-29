@@ -1,6 +1,4 @@
-from datetime import timedelta
-
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.utils import timezone
 from django.utils.html import format_html
 from unfold.admin import ModelAdmin
@@ -79,7 +77,7 @@ class TenantAdmin(ModelAdmin):
 
     list_display = [
         'name', 'slug', 'get_enabled_domains', 'is_active', 'get_plan',
-        'get_trial_status', 'active_listings_count', 'sku_count', 'created_at',
+        'get_access_status', 'active_listings_count', 'sku_count', 'created_at',
     ]
     list_filter = ['is_active']
     search_fields = ['name', 'slug']
@@ -152,39 +150,31 @@ class TenantAdmin(ModelAdmin):
         except Exception:
             return '—'
 
-    @admin.display(description='Триал')
-    def get_trial_status(self, obj):
-        """
-        Возвращает цветной индикатор статуса триала.
-
-        Берёт дату из Subscription.current_period_end (актуальна всегда).
-        Зелёный — > 3 дней, оранжевый — ≤ 3 дней, красный — истёк.
-        """
-        end_date = None
+    @admin.display(description='Доступ')
+    def get_access_status(self, obj):
+        """Показывает эффективный доступ, не зависящий от запуска Celery Beat."""
         try:
             sub = obj.subscription
-            if sub.status in ('trial', 'active', 'past_due'):
-                end_date = sub.current_period_end
         except Exception:
-            pass
+            return format_html('<span style="color:#ef4444;font-weight:600">Нет подписки</span>')
 
-        if not end_date:
-            return '—'
-
-        # current_period_end — DateField, сравниваем с date()
-        today = timezone.now().date()
-        days = (end_date - today).days
-
-        if days < 0:
+        if not sub.is_active:
             return format_html(
-                '<span style="color:#ef4444;font-weight:600">Истёк</span>'
+                '<span style="color:#ef4444;font-weight:600">Только чтение/оплата</span>'
             )
+
+        today = timezone.localdate()
+        days = max(0, (sub.current_period_end - today).days)
+        label = 'Триал' if sub.effective_status == sub.STATUS_TRIAL else 'Оплачено'
+
         if days <= 3:
             return format_html(
-                '<span style="color:#f97316;font-weight:600">{} дн.</span>', days + 1
+                '<span style="color:#f97316;font-weight:600">{} · {} дн.</span>',
+                label, days,
             )
         return format_html(
-            '<span style="color:#22c55e;font-weight:600">{} дн.</span>', days + 1
+            '<span style="color:#22c55e;font-weight:600">{} · {} дн.</span>',
+            label, days,
         )
 
     @admin.display(description='Телефон владельца')
@@ -214,32 +204,30 @@ class TenantAdmin(ModelAdmin):
             sub = obj.subscription
             end = sub.current_period_end
             end_str = end.strftime('%d.%m.%Y') if end else '∞'
-            return f'{sub.plan.name} / {sub.get_status_display()} / до {end_str}'
+            effective_label = dict(sub.STATUS_CHOICES)[sub.effective_status]
+            return f'{sub.plan.name} / {effective_label} / до {end_str}'
         except Exception:
             return '—'
 
-    @admin.action(description='Продлить триал на 14 дней')
+    @admin.action(description='Продлить триал на срок из настроек биллинга')
     def extend_trial_14_days(self, request, queryset):
-        """Продлевает триал выбранных тенантов на 14 дней и синхронизирует подписку."""
-        today = timezone.now().date()
+        """Продлевает триал через единый биллинговый сервис."""
+        from apps.billing.services import BillingService, TRIAL_DAYS
+
         extended = 0
+        errors = []
         for tenant in queryset:
             try:
-                sub = tenant.subscription
-                base = sub.current_period_end if sub.current_period_end and sub.current_period_end > today else today
-                new_end = base + timedelta(days=14)
-                sub.current_period_end = new_end
-                sub.status = 'trial'
-                sub.save(update_fields=['current_period_end', 'status'])
-                # trial_ends_at — DateTimeField, конвертируем date → datetime
-                tenant.trial_ends_at = timezone.make_aware(
-                    timezone.datetime.combine(new_end, timezone.datetime.min.time())
-                )
-                tenant.save(update_fields=['trial_ends_at'])
+                BillingService.extend_trial(tenant, days=TRIAL_DAYS)
                 extended += 1
-            except Exception:
-                pass
-        self.message_user(request, f'Триал продлён для {extended} тенант(ов) на 14 дней.')
+            except Exception as exc:
+                errors.append(f'{tenant.slug}: {exc}')
+        self.message_user(
+            request,
+            f'Триал продлён для {extended} тенант(ов) на {TRIAL_DAYS} дней.',
+        )
+        if errors:
+            self.message_user(request, '; '.join(errors), level=messages.WARNING)
 
 
 @admin.register(APIKey)

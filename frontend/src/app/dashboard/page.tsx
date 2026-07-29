@@ -5,7 +5,9 @@ import { billingApi, imageApi, logApi } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ListOrdered, Package, Sparkles, AlertTriangle, TrendingUp, XCircle, Image } from 'lucide-react';
+import {
+  AlertTriangle, Image as ImageIcon, ListOrdered, Package, Sparkles, TrendingUp, XCircle,
+} from 'lucide-react';
 
 interface UsageData {
   listings: { used: number; limit: number | null };
@@ -86,7 +88,7 @@ const STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive'> =
 const STATUS_LABELS: Record<string, string> = {
   active: 'Активна',
   trial: 'Пробный период',
-  past_due: 'Триал истёк',
+  past_due: 'Подписка истекла',
   cancelled: 'Отменена',
 };
 
@@ -173,14 +175,16 @@ export default function DashboardPage() {
         )}
       </div>
 
-      {/* Баннер grace period */}
-      {!loading && subStatus === 'past_due' && (
+      {/* Read-only сохраняет вход и оплату, но блокирует любые изменения данных. */}
+      {!loading && (subStatus === 'past_due' || subStatus === 'cancelled') && (
         <div className="flex flex-col gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <span className="font-semibold">Триал истёк.</span>{' '}
+            <span className="font-semibold">Подписка неактивна.</span>{' '}
+            Просмотр данных доступен, изменения, импорт, публикация и AI заблокированы.
             {usage?.grace_days_left != null && usage.grace_days_left > 0
-              ? `Публикация и AI заблокированы. До полного отключения осталось ${usage.grace_days_left} дн. — оплатите подписку.`
-              : 'Подписка будет отменена. Оплатите подписку для восстановления доступа.'}
+              ? ` До отмены подписки осталось ${usage.grace_days_left} дн.`
+              : ''}{' '}
+            Оплатите тариф для восстановления полного доступа.
           </div>
           <a href="/dashboard/billing" className="shrink-0 font-semibold underline underline-offset-2">
             Оплатить
@@ -214,7 +218,7 @@ export default function DashboardPage() {
           title="Brave запросов (месяц)"
           value={braveQuota.used ?? 0}
           limit={braveQuota.soft_cap ?? 800}
-          icon={<Image className="h-4 w-4" />}
+          icon={<ImageIcon className="h-4 w-4" />}
           loading={loading}
           warning={braveQuota.is_paused ?? false}
         />

@@ -24,6 +24,7 @@ interface Subscription {
   plan_slug: string;
   plan_name: string;
   status: string;
+  access_mode: 'full' | 'billing_only';
   current_period_end: string | null;
 }
 

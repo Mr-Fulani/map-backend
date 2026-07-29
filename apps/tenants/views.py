@@ -115,7 +115,7 @@ class CatalogDomainListView(APIView):
         )
         if is_enabled:
             from apps.products.services import ProductCategorySeedService
-            ProductCategorySeedService.seed_tenant_default_categories(request.tenant, domain)
+            ProductCategorySeedService.seed_tenant_primary_categories(request.tenant, domain)
 
         return Response({
             'status': 'ok',
@@ -318,19 +318,11 @@ class MeView(APIView):
         if tenant:
             try:
                 sub = tenant.subscription
-                from django.utils import timezone
-                from apps.billing.models import Subscription as Sub
-                effective_status = sub.status
-                if (
-                    sub.status == Sub.STATUS_TRIAL
-                    and sub.current_period_end
-                    and sub.current_period_end < timezone.now().date()
-                ):
-                    effective_status = Sub.STATUS_PAST_DUE
                 subscription_data = {
                     'plan_slug': sub.plan.slug,
                     'plan_name': sub.plan.name,
-                    'status': effective_status,
+                    'status': sub.effective_status,
+                    'access_mode': sub.access_mode,
                     'current_period_end': sub.current_period_end.isoformat() if sub.current_period_end else None,
                 }
             except Exception:

@@ -1,4 +1,5 @@
 from django.db import models
+from django.utils import timezone
 
 from apps.core.models import TimestampedModel
 from apps.tenants.models import Tenant
@@ -48,6 +49,9 @@ class Subscription(TimestampedModel):
         (STATUS_CANCELLED, 'Отменена'),
     ]
 
+    ACCESS_FULL = 'full'
+    ACCESS_BILLING_ONLY = 'billing_only'
+
     PERIOD_MONTHLY = 'monthly'
     PERIOD_YEARLY = 'yearly'
 
@@ -84,8 +88,23 @@ class Subscription(TimestampedModel):
         return f'{self.tenant.slug} — {self.plan.name} ({self.status})'
 
     @property
+    def effective_status(self):
+        """Статус с учётом даты, даже если фоновая задача ещё не отработала."""
+        if (
+            self.status in (self.STATUS_TRIAL, self.STATUS_ACTIVE)
+            and self.current_period_end < timezone.localdate()
+        ):
+            return self.STATUS_PAST_DUE
+        return self.status
+
+    @property
     def is_active(self):
-        return self.status in (self.STATUS_TRIAL, self.STATUS_ACTIVE)
+        return self.effective_status in (self.STATUS_TRIAL, self.STATUS_ACTIVE)
+
+    @property
+    def access_mode(self):
+        """Полный доступ либо read-only с доступом к восстановлению оплаты."""
+        return self.ACCESS_FULL if self.is_active else self.ACCESS_BILLING_ONLY
 
 
 class Invoice(TimestampedModel):
