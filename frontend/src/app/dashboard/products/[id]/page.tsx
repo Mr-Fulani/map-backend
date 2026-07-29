@@ -27,6 +27,10 @@ import {
   Trash2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
+import {
+  CatalogCategoryPicker,
+  type CatalogCategoryOption,
+} from '@/components/products/catalog-category-picker';
 
 function isProductsListHref(value: string | null): value is string {
   return value === '/dashboard/products' || Boolean(value?.startsWith('/dashboard/products?'));
@@ -66,15 +70,11 @@ interface ProductDetail {
   enrichment_facts: ProductEnrichmentFact[];
   latest_parse_job: ProductParseJob | null;
   parse_jobs_summary: ProductParseJob[];
-  catalog_category: TenantCatalogCategory | null;
+  catalog_category: Pick<
+    CatalogCategoryOption,
+    'id' | 'name' | 'domain' | 'is_active'
+  > | null;
   catalog_classification: ProductCatalogClassification | null;
-}
-
-interface TenantCatalogCategory {
-  id: number;
-  name: string;
-  domain: string;
-  is_active: boolean;
 }
 
 interface ProductCatalogClassification {
@@ -206,7 +206,7 @@ export default function ProductDetailPage() {
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [catalogCategories, setCatalogCategories] = useState<TenantCatalogCategory[]>([]);
+  const [catalogCategories, setCatalogCategories] = useState<CatalogCategoryOption[]>([]);
   const [categoryAssignValue, setCategoryAssignValue] = useState('');
   const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
@@ -269,7 +269,7 @@ export default function ProductDetailPage() {
   }, [loadProduct]);
 
   useEffect(() => {
-    productApi.catalogCategories()
+    productApi.catalogCategories({ assignable: true })
       .then((res) => setCatalogCategories(res.data.data ?? []))
       .catch(() => toast.error('Не удалось загрузить категории каталога'));
   }, []);
@@ -438,8 +438,11 @@ export default function ProductDetailPage() {
       });
       await loadProduct();
       toast.success(categoryId ? 'Категория товара обновлена' : 'Категория товара снята');
-    } catch {
-      toast.error('Не удалось изменить категорию товара');
+    } catch (error: unknown) {
+      const message = (
+        error as { response?: { data?: { message?: string } } }
+      ).response?.data?.message;
+      toast.error(message ?? 'Не удалось изменить категорию товара');
     } finally {
       setCategoryAssignLoading(false);
     }
@@ -1017,19 +1020,13 @@ export default function ProductDetailPage() {
             <CardContent className="space-y-4 text-sm">
               <div className="space-y-2">
                 <p className="text-xs font-medium text-muted-foreground">Категория каталога</p>
-                <select
+                <CatalogCategoryPicker
+                  categories={catalogCategories}
                   value={categoryAssignValue}
-                  onChange={(event) => setCategoryAssignValue(event.target.value)}
-                  className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm"
+                  onValueChange={setCategoryAssignValue}
                   disabled={categoryAssignLoading}
-                >
-                  <option value="">Без категории</option>
-                  {catalogCategories.map((category) => (
-                    <option key={category.id} value={category.id}>
-                      {category.name}
-                    </option>
-                  ))}
-                </select>
+                  placeholder="Выберите конечную подкатегорию"
+                />
                 <div className="grid grid-cols-2 gap-2">
                   <Button
                     size="sm"

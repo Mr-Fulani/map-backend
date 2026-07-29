@@ -226,7 +226,8 @@ export const productApi = {
     pause_seconds?: number;
   }) => api.post('/products/bulk-actions/', data),
   bulkActionStatus: (id: number) => api.get(`/products/bulk-actions/${id}/`),
-  catalogCategories: () => api.get('/products/catalog-categories/'),
+  catalogCategories: (params?: { assignable?: boolean }) =>
+    api.get('/products/catalog-categories/', { params }),
   createCatalogCategory: (data: Record<string, unknown>) =>
     api.post('/products/catalog-categories/', data),
   updateCatalogCategory: (id: number, data: Record<string, unknown>) =>
