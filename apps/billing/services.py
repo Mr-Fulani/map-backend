@@ -1,13 +1,16 @@
 import logging
 import calendar
 from datetime import date, datetime, time, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_DOWN
 
 from django.conf import settings
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
 
-from apps.billing.models import AICreditPackage, Invoice, Plan, Subscription
+from apps.billing.models import (
+    AICreditPackage, Invoice, PaymentReversal, Plan, Subscription,
+)
 from apps.tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
@@ -320,8 +323,19 @@ class BillingService:
 
         # YooKassa повторяет webhook до получения HTTP 200. Повтор уже
         # обработанного события не должен продлевать подписку или уведомлять снова.
-        if invoice.status == Invoice.STATUS_PAID:
+        if invoice.status in (
+            Invoice.STATUS_PAID,
+            Invoice.STATUS_PARTIALLY_REFUNDED,
+            Invoice.STATUS_REFUNDED,
+        ):
             return True
+        if invoice.status != Invoice.STATUS_PENDING:
+            logger.error(
+                'Нельзя применить успешный платёж к invoice=%s в статусе %s',
+                invoice.pk,
+                invoice.status,
+            )
+            return False
 
         try:
             received_amount = Decimal(str(amount)).quantize(Decimal('0.01'))
@@ -427,11 +441,224 @@ class BillingService:
 
         Переводит Invoice в статус failed.
         """
-        invoice = Invoice.objects.filter(yookassa_payment_id=payment_id).select_related('tenant').first()
-        Invoice.objects.filter(yookassa_payment_id=payment_id).update(status=Invoice.STATUS_FAILED)
+        invoice = Invoice.objects.filter(
+            yookassa_payment_id=payment_id,
+        ).select_related('tenant').first()
+        Invoice.objects.filter(
+            yookassa_payment_id=payment_id,
+            status=Invoice.STATUS_PENDING,
+        ).update(status=Invoice.STATUS_FAILED)
         if invoice:
             _write_billing_log(invoice.tenant, 'warn', f'Оплата не прошла (payment_id={payment_id})')
         logger.warning('Вебхук payment.canceled: payment_id=%s', payment_id)
+
+    @staticmethod
+    @transaction.atomic
+    def handle_reversal_success(
+        *,
+        provider_reference: str,
+        payment_id: str,
+        amount,
+        currency: str,
+        kind: str = PaymentReversal.KIND_REFUND,
+    ) -> PaymentReversal | None:
+        """Применяет успешный refund/chargeback как неизменяемую обратную операцию."""
+        existing = PaymentReversal.objects.filter(
+            provider_reference=provider_reference,
+        ).first()
+        if existing is not None:
+            return existing
+
+        invoice = Invoice.objects.select_for_update().select_related('tenant').filter(
+            yookassa_payment_id=payment_id,
+        ).first()
+        if invoice is None:
+            logger.error('Возврат %s: invoice для payment_id=%s не найден', provider_reference, payment_id)
+            return None
+        existing = PaymentReversal.objects.filter(
+            provider_reference=provider_reference,
+        ).first()
+        if existing is not None:
+            return existing
+
+        try:
+            reversal_amount = Decimal(str(amount)).quantize(Decimal('0.01'))
+        except (InvalidOperation, TypeError, ValueError):
+            logger.error('Возврат %s: некорректная сумма %r', provider_reference, amount)
+            return None
+
+        received_currency = str(currency or '').upper()
+        refundable_statuses = {
+            Invoice.STATUS_PAID,
+            Invoice.STATUS_PARTIALLY_REFUNDED,
+            Invoice.STATUS_MANUAL_REVIEW,
+        }
+        if invoice.status not in refundable_statuses:
+            invoice.refund_review_required = True
+            invoice.status = Invoice.STATUS_MANUAL_REVIEW
+            invoice.save(update_fields=[
+                'refund_review_required', 'status', 'updated_at',
+            ])
+            return PaymentReversal.objects.create(
+                invoice=invoice,
+                kind=kind,
+                provider_reference=provider_reference,
+                payment_id=payment_id,
+                amount=max(Decimal('0'), reversal_amount),
+                currency=received_currency or invoice.currency,
+                status=PaymentReversal.STATUS_MANUAL_REVIEW,
+                reason='Исходный Invoice не находился в оплачиваемом статусе.',
+            )
+
+        if reversal_amount <= 0 or received_currency != invoice.currency:
+            invoice.refund_review_required = True
+            invoice.status = Invoice.STATUS_MANUAL_REVIEW
+            invoice.save(update_fields=[
+                'refund_review_required', 'status', 'updated_at',
+            ])
+            return PaymentReversal.objects.create(
+                invoice=invoice,
+                kind=kind,
+                provider_reference=provider_reference,
+                payment_id=payment_id,
+                amount=max(Decimal('0'), reversal_amount),
+                currency=received_currency or invoice.currency,
+                status=PaymentReversal.STATUS_MANUAL_REVIEW,
+                reason='Некорректная сумма или валюта возврата.',
+            )
+
+        remaining_refundable = invoice.amount - invoice.refunded_amount
+        if reversal_amount > remaining_refundable:
+            invoice.refund_review_required = True
+            invoice.status = Invoice.STATUS_MANUAL_REVIEW
+            invoice.save(update_fields=[
+                'refund_review_required', 'status', 'updated_at',
+            ])
+            return PaymentReversal.objects.create(
+                invoice=invoice,
+                kind=kind,
+                provider_reference=provider_reference,
+                payment_id=payment_id,
+                amount=reversal_amount,
+                currency=received_currency,
+                status=PaymentReversal.STATUS_MANUAL_REVIEW,
+                reason='Сумма возвратов превышает сумму исходного платежа.',
+            )
+
+        new_refunded_amount = invoice.refunded_amount + reversal_amount
+        reversal = PaymentReversal.objects.create(
+            invoice=invoice,
+            kind=kind,
+            provider_reference=provider_reference,
+            payment_id=payment_id,
+            amount=reversal_amount,
+            currency=received_currency,
+            status=PaymentReversal.STATUS_MANUAL_REVIEW,
+        )
+
+        if invoice.purchase_type != Invoice.TYPE_AI_TOPUP:
+            reversal.reason = (
+                'Возврат подписки требует ручной проверки периода и объёма '
+                'оказанной услуги.'
+            )
+            reversal.save(update_fields=['reason', 'updated_at'])
+            invoice.refunded_amount = new_refunded_amount
+            invoice.refund_review_required = True
+            invoice.status = Invoice.STATUS_MANUAL_REVIEW
+            invoice.save(update_fields=[
+                'refunded_amount', 'refund_review_required', 'status', 'updated_at',
+            ])
+            return reversal
+
+        package = AICreditPackage.objects.filter(
+            pk=(invoice.metadata or {}).get('package_id'),
+        ).first()
+        if package is None:
+            reversal.reason = 'Пакет кредитов исходного платежа не найден.'
+            reversal.save(update_fields=['reason', 'updated_at'])
+            invoice.refunded_amount = new_refunded_amount
+            invoice.refund_review_required = True
+            invoice.status = Invoice.STATUS_MANUAL_REVIEW
+            invoice.save(update_fields=[
+                'refunded_amount', 'refund_review_required', 'status', 'updated_at',
+            ])
+            return reversal
+
+        previous_requested = (
+            PaymentReversal.objects.filter(invoice=invoice)
+            .exclude(pk=reversal.pk)
+            .aggregate(total=Sum('credits_requested'))['total']
+            or Decimal('0')
+        )
+        if new_refunded_amount == invoice.amount:
+            cumulative_credit_target = package.credits
+        else:
+            cumulative_credit_target = (
+                package.credits * new_refunded_amount / invoice.amount
+            ).quantize(Decimal('0.0001'), rounding=ROUND_DOWN)
+        credits_requested = max(
+            Decimal('0'),
+            cumulative_credit_target - previous_requested,
+        )
+
+        from apps.billing.ai_wallet import AIWalletService
+        transaction_kind = (
+            'chargeback'
+            if kind == PaymentReversal.KIND_CHARGEBACK
+            else 'refund'
+        )
+        credits_reversed, shortfall = AIWalletService.reverse_purchased(
+            invoice.tenant,
+            credits_requested,
+            idempotency_key=f'{transaction_kind}:{provider_reference}',
+            reference=provider_reference,
+            kind=transaction_kind,
+        )
+
+        reversal.credits_requested = credits_requested
+        reversal.credits_reversed = credits_reversed
+        reversal.credit_shortfall = shortfall
+        invoice.refunded_amount = new_refunded_amount
+        if shortfall:
+            reversal.status = PaymentReversal.STATUS_MANUAL_REVIEW
+            reversal.reason = (
+                f'Не удалось отозвать {shortfall} уже потраченных или '
+                'зарезервированных кредитов.'
+            )
+            invoice.refund_review_required = True
+            invoice.status = Invoice.STATUS_MANUAL_REVIEW
+        else:
+            reversal.status = PaymentReversal.STATUS_APPLIED
+            invoice.status = (
+                Invoice.STATUS_REFUNDED
+                if new_refunded_amount == invoice.amount
+                else Invoice.STATUS_PARTIALLY_REFUNDED
+            )
+        reversal.save(update_fields=[
+            'credits_requested', 'credits_reversed', 'credit_shortfall',
+            'status', 'reason', 'updated_at',
+        ])
+        invoice.save(update_fields=[
+            'refunded_amount', 'refund_review_required', 'status', 'updated_at',
+        ])
+        return reversal
+
+    @staticmethod
+    def record_chargeback(
+        invoice: Invoice,
+        amount,
+        *,
+        external_reference: str,
+        currency: str = 'RUB',
+    ) -> PaymentReversal | None:
+        """Внутренняя точка для ручного/реестрового учёта чарджбэка."""
+        return BillingService.handle_reversal_success(
+            provider_reference=external_reference,
+            payment_id=invoice.yookassa_payment_id,
+            amount=amount,
+            currency=currency,
+            kind=PaymentReversal.KIND_CHARGEBACK,
+        )
 
     @staticmethod
     @transaction.atomic

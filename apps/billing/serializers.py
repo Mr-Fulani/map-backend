@@ -52,7 +52,8 @@ class InvoiceSerializer(serializers.ModelSerializer):
         model = Invoice
         fields = [
             'id', 'purchase_type', 'amount', 'currency',
-            'status', 'paid_at', 'created_at',
+            'status', 'paid_at', 'refunded_amount',
+            'refund_review_required', 'created_at',
         ]
 
 

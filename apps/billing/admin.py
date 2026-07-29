@@ -2,7 +2,8 @@ from django.contrib import admin
 from unfold.admin import ModelAdmin
 
 from apps.billing.models import (
-    AICreditPackage, AICreditTransaction, AIWallet, Invoice, Plan, Subscription,
+    AICreditPackage, AICreditTransaction, AIWallet, BillingWebhookEvent,
+    Invoice, PaymentReversal, Plan, Subscription,
 )
 
 
@@ -83,15 +84,20 @@ class InvoiceAdmin(ModelAdmin):
 
     list_display = [
         'tenant', 'purchase_type', 'amount', 'currency',
-        'status', 'paid_at', 'created_at',
+        'status', 'refunded_amount', 'refund_review_required',
+        'paid_at', 'created_at',
     ]
-    list_filter = ['status', 'purchase_type']
+    list_filter = ['status', 'purchase_type', 'refund_review_required']
     search_fields = ['tenant__name', 'yookassa_payment_id']
-    readonly_fields = ['yookassa_payment_id', 'pdf_s3_key', 'paid_at', 'created_at', 'updated_at']
+    readonly_fields = [
+        'yookassa_payment_id', 'pdf_s3_key', 'paid_at',
+        'refunded_amount', 'created_at', 'updated_at',
+    ]
     fieldsets = [
         ('Основное', {
             'fields': [
                 'tenant', 'purchase_type', 'amount', 'currency', 'status', 'paid_at',
+                'refunded_amount', 'refund_review_required',
             ],
         }),
         ('Интеграция ЮKassa', {
@@ -139,3 +145,59 @@ class AICreditTransactionAdmin(ModelAdmin):
 class AICreditPackageAdmin(ModelAdmin):
     list_display = ['name', 'credits', 'price_rub', 'is_active', 'sort_order']
     list_filter = ['is_active']
+
+
+@admin.register(PaymentReversal)
+class PaymentReversalAdmin(ModelAdmin):
+    list_display = [
+        'provider_reference', 'invoice', 'kind', 'amount', 'currency',
+        'credits_reversed', 'credit_shortfall', 'status', 'created_at',
+    ]
+    list_filter = ['kind', 'status', 'currency']
+    search_fields = [
+        'provider_reference', 'payment_id',
+        'invoice__tenant__name', 'invoice__tenant__slug',
+    ]
+    readonly_fields = [
+        'invoice', 'kind', 'provider_reference', 'payment_id',
+        'amount', 'currency', 'credits_requested', 'credits_reversed',
+        'credit_shortfall', 'status', 'reason', 'processed_at',
+        'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BillingWebhookEvent)
+class BillingWebhookEventAdmin(ModelAdmin):
+    list_display = [
+        'event_type', 'object_id', 'payment_id', 'invoice',
+        'decision', 'delivery_count', 'source_ip', 'created_at',
+    ]
+    list_filter = ['provider', 'event_type', 'decision']
+    search_fields = [
+        'object_id', 'payment_id', 'reason',
+        'invoice__tenant__name', 'invoice__tenant__slug',
+    ]
+    readonly_fields = [
+        'provider', 'event_type', 'object_id', 'payment_id',
+        'idempotency_key', 'invoice', 'tenant', 'amount', 'currency',
+        'decision', 'reason', 'payload', 'source_ip', 'delivery_count',
+        'processed_at', 'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

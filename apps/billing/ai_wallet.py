@@ -357,6 +357,62 @@ class AIWalletService:
         )
         return wallet
 
+    @classmethod
+    @transaction.atomic
+    def reverse_purchased(
+        cls,
+        tenant,
+        amount: Decimal,
+        *,
+        idempotency_key: str,
+        reference: str,
+        kind: str = AICreditTransaction.KIND_REFUND,
+    ) -> tuple[Decimal, Decimal]:
+        """Отзывает только свободные купленные кредиты, не создавая долг."""
+        wallet = cls.ensure_wallet(tenant)
+        wallet = AIWallet.objects.select_for_update().get(pk=wallet.pk)
+        existing = AICreditTransaction.objects.filter(
+            tenant=tenant,
+            idempotency_key=idempotency_key,
+        ).first()
+        if existing is not None:
+            reversed_amount = abs(existing.amount)
+            return reversed_amount, max(
+                Decimal('0'),
+                Decimal(amount) - reversed_amount,
+            )
+
+        requested = max(Decimal('0'), Decimal(amount))
+        reserved_from_purchased = max(
+            Decimal('0'),
+            wallet.reserved_balance - wallet.included_balance,
+        )
+        reversible = max(
+            Decimal('0'),
+            wallet.purchased_balance - reserved_from_purchased,
+        )
+        reversed_amount = min(requested, reversible)
+        shortfall = requested - reversed_amount
+
+        wallet.purchased_balance -= reversed_amount
+        wallet.save(update_fields=['purchased_balance', 'updated_at'])
+        AICreditTransaction.objects.create(
+            wallet=wallet,
+            tenant=tenant,
+            kind=kind,
+            balance_type=AICreditTransaction.BALANCE_PURCHASED,
+            amount=-reversed_amount,
+            idempotency_key=idempotency_key,
+            reference=reference,
+            details={
+                'requested': str(requested),
+                'reversed': str(reversed_amount),
+                'shortfall': str(shortfall),
+                'preserved_for_reservations': str(reserved_from_purchased),
+            },
+        )
+        return reversed_amount, shortfall
+
     @staticmethod
     def _expire_included_if_needed(wallet: AIWallet) -> None:
         if (

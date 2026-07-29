@@ -133,11 +133,17 @@ class Invoice(TimestampedModel):
     STATUS_PENDING = 'pending'
     STATUS_PAID = 'paid'
     STATUS_FAILED = 'failed'
+    STATUS_PARTIALLY_REFUNDED = 'partially_refunded'
+    STATUS_REFUNDED = 'refunded'
+    STATUS_MANUAL_REVIEW = 'manual_review'
 
     STATUS_CHOICES = [
         (STATUS_PENDING, 'Ожидает оплаты'),
         (STATUS_PAID, 'Оплачен'),
         (STATUS_FAILED, 'Ошибка оплаты'),
+        (STATUS_PARTIALLY_REFUNDED, 'Частично возвращён'),
+        (STATUS_REFUNDED, 'Возвращён'),
+        (STATUS_MANUAL_REVIEW, 'Требует ручной проверки'),
     ]
 
     TYPE_SUBSCRIPTION = 'subscription'
@@ -158,11 +164,21 @@ class Invoice(TimestampedModel):
     )
     metadata = models.JSONField(default=dict, blank=True, verbose_name='Метаданные')
     status = models.CharField(
-        choices=STATUS_CHOICES, default=STATUS_PENDING, max_length=10, verbose_name='Статус',
+        choices=STATUS_CHOICES, default=STATUS_PENDING, max_length=20, verbose_name='Статус',
     )
     yookassa_payment_id = models.CharField(max_length=200, blank=True, verbose_name='ID платежа ЮKassa')
     pdf_s3_key = models.CharField(max_length=500, blank=True, verbose_name='Ключ PDF в S3')
     paid_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата оплаты')
+    refunded_amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=Decimal('0'),
+        verbose_name='Возвращено',
+    )
+    refund_review_required = models.BooleanField(
+        default=False,
+        verbose_name='Возврат требует ручной проверки',
+    )
 
     class Meta:
         verbose_name = 'Счёт'
@@ -237,6 +253,8 @@ class AICreditTransaction(TimestampedModel):
     KIND_CHARGE = 'charge'
     KIND_EXPIRE = 'expire'
     KIND_ADJUSTMENT = 'adjustment'
+    KIND_REFUND = 'refund'
+    KIND_CHARGEBACK = 'chargeback'
     KIND_CHOICES = [
         (KIND_GRANT, 'Начисление по подписке'),
         (KIND_TOPUP, 'Покупка кредитов'),
@@ -245,6 +263,8 @@ class AICreditTransaction(TimestampedModel):
         (KIND_CHARGE, 'Списание'),
         (KIND_EXPIRE, 'Сгорание'),
         (KIND_ADJUSTMENT, 'Корректировка'),
+        (KIND_REFUND, 'Возврат платежа'),
+        (KIND_CHARGEBACK, 'Чарджбэк'),
     ]
 
     BALANCE_INCLUDED = 'included'
@@ -302,3 +322,134 @@ class AICreditPackage(TimestampedModel):
 
     def __str__(self):
         return f'{self.name}: {self.credits} кредитов за {self.price_rub} ₽'
+
+
+class PaymentReversal(TimestampedModel):
+    """Возврат или чарджбэк с результатом обратной кредитной проводки."""
+
+    KIND_REFUND = 'refund'
+    KIND_CHARGEBACK = 'chargeback'
+    KIND_CHOICES = [
+        (KIND_REFUND, 'Возврат'),
+        (KIND_CHARGEBACK, 'Чарджбэк'),
+    ]
+
+    STATUS_APPLIED = 'applied'
+    STATUS_MANUAL_REVIEW = 'manual_review'
+    STATUS_REJECTED = 'rejected'
+    STATUS_CHOICES = [
+        (STATUS_APPLIED, 'Применён'),
+        (STATUS_MANUAL_REVIEW, 'Ручная проверка'),
+        (STATUS_REJECTED, 'Отклонён'),
+    ]
+
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.PROTECT,
+        related_name='reversals',
+    )
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES)
+    provider_reference = models.CharField(max_length=200, unique=True)
+    payment_id = models.CharField(max_length=200)
+    amount = models.DecimalField(max_digits=10, decimal_places=2)
+    currency = models.CharField(max_length=3, default='RUB')
+    credits_requested = models.DecimalField(
+        max_digits=16,
+        decimal_places=4,
+        default=Decimal('0'),
+    )
+    credits_reversed = models.DecimalField(
+        max_digits=16,
+        decimal_places=4,
+        default=Decimal('0'),
+    )
+    credit_shortfall = models.DecimalField(
+        max_digits=16,
+        decimal_places=4,
+        default=Decimal('0'),
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES)
+    reason = models.CharField(max_length=500, blank=True)
+    processed_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        verbose_name = 'Возврат/чарджбэк'
+        verbose_name_plural = 'Возвраты и чарджбэки'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['invoice', '-created_at']),
+            models.Index(fields=['payment_id', '-created_at']),
+        ]
+
+
+class BillingWebhookEvent(TimestampedModel):
+    """Аудит входящего webhook и принятого системой решения."""
+
+    DECISION_RECEIVED = 'received'
+    DECISION_APPLIED = 'applied'
+    DECISION_IGNORED = 'ignored'
+    DECISION_REJECTED = 'rejected'
+    DECISION_MANUAL_REVIEW = 'manual_review'
+    DECISION_ERROR = 'error'
+    DECISION_CHOICES = [
+        (DECISION_RECEIVED, 'Получен'),
+        (DECISION_APPLIED, 'Применён'),
+        (DECISION_IGNORED, 'Игнорирован'),
+        (DECISION_REJECTED, 'Отклонён'),
+        (DECISION_MANUAL_REVIEW, 'Ручная проверка'),
+        (DECISION_ERROR, 'Ошибка'),
+    ]
+
+    provider = models.CharField(max_length=30, default='yookassa')
+    event_type = models.CharField(max_length=80)
+    object_id = models.CharField(max_length=200, blank=True)
+    payment_id = models.CharField(max_length=200, blank=True)
+    idempotency_key = models.CharField(max_length=300, blank=True)
+    invoice = models.ForeignKey(
+        Invoice,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='webhook_events',
+    )
+    tenant = models.ForeignKey(
+        Tenant,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='billing_webhook_events',
+    )
+    amount = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+    )
+    currency = models.CharField(max_length=3, blank=True)
+    decision = models.CharField(
+        max_length=20,
+        choices=DECISION_CHOICES,
+        default=DECISION_RECEIVED,
+    )
+    reason = models.CharField(max_length=500, blank=True)
+    payload = models.JSONField(default=dict, blank=True)
+    source_ip = models.GenericIPAddressField(null=True, blank=True)
+    delivery_count = models.PositiveIntegerField(default=1)
+    processed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Webhook биллинга'
+        verbose_name_plural = 'Webhook биллинга'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['provider', 'event_type', '-created_at']),
+            models.Index(fields=['payment_id', '-created_at']),
+            models.Index(fields=['decision', '-created_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['provider', 'idempotency_key'],
+                condition=~models.Q(idempotency_key=''),
+                name='unique_provider_billing_webhook_event',
+            ),
+        ]

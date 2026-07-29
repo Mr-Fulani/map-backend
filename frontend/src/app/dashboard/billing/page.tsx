@@ -43,6 +43,8 @@ interface Invoice {
   currency: string;
   status: string;
   paid_at: string | null;
+  refunded_amount: string;
+  refund_review_required: boolean;
   created_at: string;
 }
 
@@ -73,6 +75,9 @@ const INVOICE_STATUS: Record<string, string> = {
   pending: 'Ожидает',
   paid: 'Оплачен',
   failed: 'Ошибка',
+  partially_refunded: 'Частичный возврат',
+  refunded: 'Возвращён',
+  manual_review: 'Ручная проверка',
 };
 
 const SUBSCRIPTION_STATUS: Record<string, string> = {
@@ -377,6 +382,11 @@ export default function BillingPage() {
                         <p className="text-xs text-muted-foreground">
                           {INVOICE_TYPE[inv.purchase_type] ?? inv.purchase_type}
                         </p>
+                        {Number(inv.refunded_amount) > 0 && (
+                          <p className="text-xs text-muted-foreground">
+                            Возвращено: {Number(inv.refunded_amount).toLocaleString('ru-RU')} ₽
+                          </p>
+                        )}
                         <p className="mt-1 text-xs text-muted-foreground">
                           {new Date(inv.created_at).toLocaleDateString('ru-RU')}
                         </p>
@@ -409,6 +419,11 @@ export default function BillingPage() {
                       </td>
                       <td className="px-4 py-3 font-medium">
                         {Number(inv.amount).toLocaleString('ru-RU')} ₽
+                        {Number(inv.refunded_amount) > 0 && (
+                          <span className="block text-xs font-normal text-muted-foreground">
+                            Возвращено {Number(inv.refunded_amount).toLocaleString('ru-RU')} ₽
+                          </span>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <Badge variant={inv.status === 'paid' ? 'default' : 'secondary'}>

@@ -383,7 +383,12 @@ class TestWebhookSecurity:
         """Запрос с IP YooKassa → 200 (неизвестный payment_id — просто игнорируется)."""
         payload = json.dumps({
             'event': 'payment.canceled',
-            'object': {'id': 'pay_nonexistent', 'amount': {'value': '100'}, 'metadata': {}},
+            'object': {
+                'id': 'pay_nonexistent',
+                'status': 'canceled',
+                'amount': {'value': '100'},
+                'metadata': {},
+            },
         })
         resp = client.post(
             '/api/v1/billing/webhook/yookassa/',
@@ -406,6 +411,7 @@ class TestWebhookSecurity:
             'event': 'payment.succeeded',
             'object': {
                 'id': 'pay_wrong_currency',
+                'status': 'succeeded',
                 'amount': {'value': '990.00', 'currency': 'USD'},
                 'metadata': {},
             },

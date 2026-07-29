@@ -218,7 +218,7 @@ class TestLimitChecker:
     def test_get_usage_summary_returns_correct_data(self):
         """get_usage_summary возвращает корректную структуру данных."""
         tenant = make_tenant('usage-co', 'usage@test.com')
-        tenant.subscription.current_period_end = timezone.now().date() + timedelta(days=3)
+        tenant.subscription.current_period_end = timezone.localdate() + timedelta(days=3)
         tenant.subscription.save(update_fields=['current_period_end'])
         other_tenant = make_tenant('other-usage-co', 'other-usage@test.com')
         Product.objects.create(
@@ -268,7 +268,7 @@ class TestLimitChecker:
         tenant = make_tenant('active-usage-co', 'active-usage@test.com')
         sub = tenant.subscription
         sub.status = Subscription.STATUS_ACTIVE
-        sub.current_period_end = timezone.now().date() + timedelta(days=6)
+        sub.current_period_end = timezone.localdate() + timedelta(days=6)
         sub.save(update_fields=['status', 'current_period_end'])
 
         summary = LimitChecker().get_usage_summary(tenant)
