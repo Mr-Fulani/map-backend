@@ -53,6 +53,10 @@ interface ProductDetail {
   article: string;
   name: string;
   brand: string | null;
+  brand_resolution_status: string;
+  brand_confidence: number;
+  brand_source_id: string;
+  brand_needs_review: boolean;
   category_1c: string | null;
   condition: string;
   price: string;
@@ -140,6 +144,14 @@ const CONDITION_LABELS: Record<string, string> = {
   new: 'Новый',
   used: 'Б/у',
   refurbished: 'Восстановленный',
+};
+
+const BRAND_STATUS_LABELS: Record<string, string> = {
+  unknown: 'Не определён',
+  source: 'Из источника',
+  catalog: 'Найден в каталоге',
+  manual: 'Подтверждён вручную',
+  ambiguous: 'Требует проверки',
 };
 
 const IMAGE_STATUS_VARIANTS: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
@@ -607,6 +619,23 @@ export default function ProductDetailPage() {
                   ) : (
                     <span className="flex items-center gap-2 text-right text-sm font-medium">
                       {product.brand || '—'}
+                      <Badge
+                        variant={
+                          product.brand_needs_review
+                            ? 'destructive'
+                            : product.brand_resolution_status === 'manual'
+                              ? 'default'
+                              : 'outline'
+                        }
+                        title={[
+                          product.brand_source_id && `Источник: ${product.brand_source_id}`,
+                          product.brand_confidence > 0
+                            && `Уверенность: ${Math.round(product.brand_confidence * 100)}%`,
+                        ].filter(Boolean).join(' · ')}
+                      >
+                        {BRAND_STATUS_LABELS[product.brand_resolution_status]
+                          ?? product.brand_resolution_status}
+                      </Badge>
                       <Button
                         size="sm"
                         variant="ghost"

@@ -174,6 +174,52 @@ def test_save_parsed_part_learns_global_fitments():
 
 
 @pytest.mark.django_db
+def test_brandless_part_keeps_local_fitment_but_does_not_train_global_graph():
+    tenant = make_tenant('kg-brandless-local-only')
+    product = make_product(tenant, brand='')
+    parsed = ParsedPart(
+        brand='',
+        article='P50136',
+        fitments=[
+            ParsedFitment(
+                make='MERCEDES-BENZ',
+                model='E-CLASS',
+                generation='W213',
+                confidence=0.95,
+            ),
+        ],
+    )
+
+    ProductEnrichmentService.save_parsed_part(tenant, product, parsed)
+
+    assert product.fitments.filter(
+        make='MERCEDES-BENZ', model='E-CLASS', generation='W213',
+    ).exists()
+    product.refresh_from_db()
+    assert product.applicability[0]['model'] == 'E-CLASS'
+    assert not GlobalPart.objects.filter(normalized_article='P50136').exists()
+
+
+@pytest.mark.django_db
+def test_brandless_product_does_not_consume_article_only_global_knowledge():
+    tenant = make_tenant('kg-brandless-no-consume')
+    brandless = make_product(tenant, brand='')
+    branded = ProductKnowledgeGraphService.upsert_part(
+        brand='BREMBO', article='P50136', source_id='tachka',
+    )
+    ProductKnowledgeGraphService.upsert_fitment(
+        part=branded,
+        fitment=ParsedFitment(
+            make='MERCEDES-BENZ', model='E-CLASS', confidence=0.95,
+        ),
+        source_id='tachka',
+    )
+
+    assert ProductKnowledgeGraphService.apply_known_fitments_to_product(brandless) == 0
+    assert brandless.fitments.count() == 0
+
+
+@pytest.mark.django_db
 def test_global_part_keeps_brand_article_identity_with_brand_reference():
     tenant = make_tenant('kg-brand-ref')
     product = make_product(tenant, brand='BREMBO', article='P50136')

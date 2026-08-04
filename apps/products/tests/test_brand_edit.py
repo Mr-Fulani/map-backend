@@ -62,6 +62,10 @@ class TestProductBrandPatch:
         product.refresh_from_db()
         assert product.brand == 'Hyundai-KIA'
         assert product.brand_ref is not None
+        assert product.brand_resolution_status == Product.BrandResolutionStatus.MANUAL
+        assert product.brand_confidence == 1.0
+        assert product.brand_source_id == 'manual'
+        assert product.brand_needs_review is False
         sync_delay.assert_called_once_with(product.pk, 'content')
 
     def test_patch_requires_brand_field(self):
@@ -125,12 +129,19 @@ class TestBrandSurvivesImport:
         ds = _datasource(tenant)
         product, _, _ = ProductService.upsert_from_source(tenant, ds, _source_item())
         product.brand = 'Hyundai-KIA'
-        product.save(update_fields=['brand'])
+        product.brand_resolution_status = Product.BrandResolutionStatus.MANUAL
+        product.brand_confidence = 1.0
+        product.brand_source_id = 'manual'
+        product.save(update_fields=[
+            'brand', 'brand_resolution_status', 'brand_confidence', 'brand_source_id',
+        ])
 
         ProductService.upsert_from_source(tenant, ds, _source_item(price='150.00'))
 
         product.refresh_from_db()
         assert product.brand == 'Hyundai-KIA'
+        assert product.brand_resolution_status == Product.BrandResolutionStatus.MANUAL
+        assert product.brand_source_id == 'manual'
 
     def test_source_brand_still_updates_product(self):
         """Если источник присылает непустой бренд — он применяется как раньше."""
@@ -144,3 +155,5 @@ class TestBrandSurvivesImport:
 
         product.refresh_from_db()
         assert product.brand == 'TYC'
+        assert product.brand_resolution_status == Product.BrandResolutionStatus.SOURCE
+        assert product.brand_source_id == ds.type

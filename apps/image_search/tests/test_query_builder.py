@@ -35,6 +35,17 @@ class TestBuildQueries:
         queries = build_queries(product)
         assert queries[0] == ('HYUNDAI-KIA "25327H5010" автозапчасть', 'HIGH')
 
+    def test_точный_артикул_работает_без_бренда(self):
+        product = FakeProduct(
+            article='P50136', brand='', name='Колодки тормозные',
+            category_1c='Тормозная система / Колодки',
+        )
+
+        queries = build_queries(product)
+
+        assert queries[0] == ('"P50136" Колодки', 'HIGH')
+        assert all('P50136' in query for query, _ in queries[:2])
+
     def test_первые_запросы_содержат_идентичность_и_контекст(self):
         product = FakeProduct(
             article='P50136', brand='BREMBO', name='Колодки тормозные задние',

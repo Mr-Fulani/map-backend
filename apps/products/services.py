@@ -269,15 +269,24 @@ class ProductService:
         """
         hash_new = _compute_hash(data)
         uuid_1c = data.get('uuid') or None
+        incoming_brand = str(data.get('brand') or '').strip()
+        brand_source_id = getattr(datasource, 'type', '') or 'datasource'
 
         lookup = {'tenant': tenant, 'datasource': datasource, 'article': data['article']}
         defaults = {
             'name': data.get('name', ''),
-            'brand': data.get('brand', ''),
+            'brand': incoming_brand,
             'brand_ref': ProductBrandService.resolve_or_create_brand(
-                data.get('brand', ''),
-                source_id=getattr(datasource, 'type', '') or 'datasource',
+                incoming_brand,
+                source_id=brand_source_id,
             ),
+            'brand_resolution_status': (
+                Product.BrandResolutionStatus.SOURCE
+                if incoming_brand else Product.BrandResolutionStatus.UNKNOWN
+            ),
+            'brand_confidence': 1.0 if incoming_brand else 0.0,
+            'brand_source_id': brand_source_id if incoming_brand else '',
+            'brand_needs_review': False,
             'category_1c': data.get('category', ''),
             'condition': data.get('condition', Product.CONDITION_NEW),
             'price': Decimal(str(data.get('price', '0'))),
@@ -305,6 +314,10 @@ class ProductService:
         if existing and not defaults['brand'] and existing.brand:
             defaults['brand'] = existing.brand
             defaults['brand_ref'] = existing.brand_ref
+            defaults['brand_resolution_status'] = existing.brand_resolution_status
+            defaults['brand_confidence'] = existing.brand_confidence
+            defaults['brand_source_id'] = existing.brand_source_id
+            defaults['brand_needs_review'] = existing.brand_needs_review
 
         product, created = Product.objects.update_or_create(**lookup, defaults=defaults)
         if created:
@@ -322,7 +335,7 @@ class ProductService:
                 'price': data.get('price', '0'),
                 'stock_qty': data.get('stock_qty', 0),
                 'name': data.get('name', ''),
-                'brand': data.get('brand', ''),
+                'brand': defaults['brand'],
                 'condition': data.get('condition', 'new'),
                 'category': data.get('category', ''),
             }
@@ -882,6 +895,12 @@ class ProductEnrichmentService:
 
         cls._ensure_product_tenant(product, tenant)
         with transaction.atomic():
+            brand_conflict = bool(
+                parsed.brand
+                and product.brand
+                and ProductBrandService.normalize_brand(parsed.brand)
+                != ProductBrandService.normalize_brand(product.brand)
+            )
             ProductAttribute.objects.bulk_create([
                 ProductAttribute(
                     tenant=tenant,
@@ -912,7 +931,14 @@ class ProductEnrichmentService:
             ProductCrossCode.objects.bulk_create(cross_objects, ignore_conflicts=True)
 
             VehicleFitment.objects.bulk_create([
-                cls._build_vehicle_fitment(tenant, product, fitment, source_id, parsed.source_url)
+                cls._build_vehicle_fitment(
+                    tenant,
+                    product,
+                    fitment,
+                    source_id,
+                    parsed.source_url,
+                    force_review=brand_conflict,
+                )
                 for fitment in parsed.fitments
                 if fitment.model
             ], ignore_conflicts=True)
@@ -922,6 +948,7 @@ class ProductEnrichmentService:
                     tenant, product, source_id, parsed.source_url,
                     ProductEnrichmentFact.FactType.DESCRIPTION_HINT,
                     name, value,
+                    force_review=brand_conflict,
                 )
                 for name, value in parsed.description_facts.items()
                 if name and value
@@ -930,21 +957,83 @@ class ProductEnrichmentService:
 
             cls.refresh_product_denormalized_enrichment(product)
             product_update_fields = ['oem_numbers', 'cross_numbers', 'applicability']
-            # Бэкфилл бренда: у CSV-товаров бренда часто нет, а поиск по артикулу
-            # его восстанавливает. Это включает быстрый прямой путь при ре-обогащении.
-            if parsed.brand and not (product.brand or '').strip():
-                product.brand = parsed.brand[:150]
-                product_update_fields.append('brand')
-            product.save(update_fields=product_update_fields)
-            ProductKnowledgeGraphService.learn_from_parsed_part(
-                product=product,
-                parsed=parsed,
-                source_id=source_id,
+            cls._apply_catalog_brand(
+                product,
+                parsed.brand,
+                source_id,
+                product_update_fields,
             )
+            product.save(update_fields=product_update_fields)
+            if not brand_conflict:
+                ProductKnowledgeGraphService.learn_from_parsed_part(
+                    product=product,
+                    parsed=parsed,
+                    source_id=source_id,
+                )
+
+    @staticmethod
+    def _apply_catalog_brand(
+        product: Product,
+        parsed_brand: str,
+        source_id: str,
+        update_fields: list[str],
+    ) -> None:
+        """Backfill an absent brand or flag a non-manual conflicting catalogue result."""
+        parsed_brand = (parsed_brand or '').strip()[:200]
+        if not parsed_brand:
+            return
+        try:
+            confidence = float(get_part_source_config(source_id).get('trust_score', 0.8))
+        except ValueError:
+            confidence = 0.8
+
+        current_normalized = ProductBrandService.normalize_brand(product.brand)
+        parsed_normalized = ProductBrandService.normalize_brand(parsed_brand)
+        if not current_normalized:
+            product.brand = parsed_brand
+            product.brand_ref = ProductBrandService.resolve_or_create_brand(
+                parsed_brand,
+                source_id=source_id,
+                confidence=confidence,
+            )
+            product.brand_resolution_status = Product.BrandResolutionStatus.CATALOG
+            product.brand_confidence = confidence
+            product.brand_source_id = source_id[:50]
+            product.brand_needs_review = False
+            update_fields.extend([
+                'brand', 'brand_ref', 'brand_resolution_status', 'brand_confidence',
+                'brand_source_id', 'brand_needs_review',
+            ])
+            return
+
+        if current_normalized == parsed_normalized:
+            if product.brand_ref_id is None:
+                product.brand_ref = ProductBrandService.resolve_or_create_brand(
+                    parsed_brand,
+                    source_id=source_id,
+                    confidence=confidence,
+                )
+                update_fields.append('brand_ref')
+            return
+
+        if product.brand_resolution_status == Product.BrandResolutionStatus.MANUAL:
+            return
+        product.brand_resolution_status = Product.BrandResolutionStatus.AMBIGUOUS
+        product.brand_confidence = min(product.brand_confidence or confidence, confidence, 0.5)
+        product.brand_source_id = '|'.join(filter(None, [
+            product.brand_source_id,
+            source_id,
+        ]))[:50]
+        product.brand_needs_review = True
+        update_fields.extend([
+            'brand_resolution_status', 'brand_confidence',
+            'brand_source_id', 'brand_needs_review',
+        ])
 
     @classmethod
     def _build_vehicle_fitment(
         cls, tenant, product: Product, parsed_fitment, source_id: str, source_url: str,
+        *, force_review: bool = False,
     ) -> VehicleFitment:
         fitment = VehicleFitment(
             tenant=tenant,
@@ -965,7 +1054,7 @@ class ProductEnrichmentService:
             last_seen_at=now(),
         )
         existing = product.fitments.all()
-        if should_mark_needs_review(
+        if force_review or should_mark_needs_review(
             fitment,
             has_conflict=has_conflicting_fitment(existing, fitment),
         ):
@@ -976,6 +1065,7 @@ class ProductEnrichmentService:
     def _build_enrichment_fact(
         cls, tenant, product: Product, source_id: str, source_url: str,
         fact_type: str, name: str, value: str,
+        *, force_review: bool = False,
     ) -> ProductEnrichmentFact:
         fact = ProductEnrichmentFact(
             tenant=tenant,
@@ -991,7 +1081,7 @@ class ProductEnrichmentService:
             last_seen_at=now(),
         )
         existing = product.enrichment_facts.filter(fact_type=fact_type, name=name[:150])
-        if should_mark_needs_review(
+        if force_review or should_mark_needs_review(
             fact,
             has_conflict=has_conflicting_fact(existing, fact),
         ):
@@ -1452,6 +1542,14 @@ class ProductKnowledgeGraphService:
         return normalize_part_code(brand)
 
     @classmethod
+    def has_trusted_product_identity(cls, product: Product) -> bool:
+        return bool(
+            cls.normalize_brand(product.brand)
+            and not product.brand_needs_review
+            and product.brand_resolution_status != Product.BrandResolutionStatus.AMBIGUOUS
+        )
+
+    @classmethod
     def upsert_part(
         cls, brand: str, article: str, title: str = '', source_id: str = '',
         source_url: str = '', confidence: float = 1.0, needs_review: bool = False,
@@ -1611,8 +1709,10 @@ class ProductKnowledgeGraphService:
     def learn_from_parsed_part(
         cls, product: Product, parsed: ParsedPart, source_id: str = DEFAULT_PART_SOURCE,
     ) -> None:
+        if not cls.has_trusted_product_identity(product):
+            return
         source_part = cls.upsert_part(
-            brand=product.brand or parsed.brand,
+            brand=product.brand,
             article=product.article or parsed.article,
             title=parsed.title,
             source_id=source_id,
@@ -1620,7 +1720,7 @@ class ProductKnowledgeGraphService:
         )
         for cross in parsed.cross_codes:
             normalized = normalize_part_code(cross.code)
-            if not normalized:
+            if not normalized or not cls.normalize_brand(cross.manufacturer):
                 continue
             target_part = cls.upsert_part(
                 brand=cross.manufacturer,
@@ -1643,7 +1743,10 @@ class ProductKnowledgeGraphService:
                 needs_review=cross.code_type == ProductCrossCode.CodeType.UNKNOWN,
             )
         for related in parsed.related_parts:
-            if not normalize_part_code(related.article):
+            if (
+                not normalize_part_code(related.article)
+                or not cls.normalize_brand(related.brand)
+            ):
                 continue
             target_part = cls.upsert_part(
                 brand=related.brand,
@@ -1677,7 +1780,11 @@ class ProductKnowledgeGraphService:
     @classmethod
     def learn_approved_fitment(cls, product: Product, fitment: VehicleFitment) -> None:
         """Promote a human-approved product fitment into reusable platform knowledge."""
-        if not product.brand or not normalize_part_code(product.article) or not fitment.model:
+        if (
+            not cls.has_trusted_product_identity(product)
+            or not normalize_part_code(product.article)
+            or not fitment.model
+        ):
             return
         part = cls.upsert_part(
             brand=product.brand,
@@ -1701,6 +1808,8 @@ class ProductKnowledgeGraphService:
 
     @classmethod
     def apply_known_relations_to_product(cls, product: Product) -> int:
+        if not cls.has_trusted_product_identity(product):
+            return 0
         source_part = GlobalPart.objects.filter(
             normalized_brand=cls.normalize_brand(product.brand),
             normalized_article=normalize_part_code(product.article),
@@ -1732,6 +1841,8 @@ class ProductKnowledgeGraphService:
 
     @classmethod
     def apply_known_fitments_to_product(cls, product: Product) -> int:
+        if not cls.has_trusted_product_identity(product):
+            return 0
         source_part = GlobalPart.objects.filter(
             normalized_brand=cls.normalize_brand(product.brand),
             normalized_article=normalize_part_code(product.article),

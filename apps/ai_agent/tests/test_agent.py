@@ -142,6 +142,27 @@ class TestDescriptionAgent:
         assert 'Условия продажи' not in SYSTEM_PROMPT
         assert 'Не указывай цену' in SYSTEM_PROMPT
 
+    def test_brandless_product_does_not_require_or_invent_brand(self):
+        tenant = make_tenant('agent-brandless-co')
+        product = make_product(tenant)
+        product.brand = ''
+        product.brand_ref = None
+        product.brand_resolution_status = product.BrandResolutionStatus.UNKNOWN
+        product.brand_confidence = 0.0
+        product.brand_source_id = ''
+        product.save(update_fields=[
+            'brand', 'brand_ref', 'brand_resolution_status',
+            'brand_confidence', 'brand_source_id',
+        ])
+
+        payload = json.loads(DescriptionAgent()._build_message(product))
+
+        assert payload['product_data']['brand'] == ''
+        DescriptionAgent._validate_required_identity(product, {
+            'title': 'Тормозной диск передний, артикул ART-001 для автомобиля',
+            'description': 'Новая деталь с подтверждённым артикулом ART-001.',
+        })
+
     def test_generate_returns_valid_structure(self):
         tenant = make_tenant('gen-co')
         product = make_product(tenant)

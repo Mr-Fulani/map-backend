@@ -72,8 +72,27 @@ class TestProductService:
         assert product.article == 'A100'
         assert product.brand == 'BrandX'
         assert product.brand_ref.name == 'BrandX'
+        assert product.brand_resolution_status == Product.BrandResolutionStatus.SOURCE
+        assert product.brand_confidence == 1.0
+        assert product.brand_source_id == ds.type
+        assert product.brand_needs_review is False
         assert product.price == Decimal('1500.00')
         assert product.stock_qty == 10
+
+    def test_upsert_allows_unknown_brand_without_fake_brand_reference(self):
+        tenant = make_tenant('unknown-brand-co')
+        ds = make_datasource(tenant)
+        data = {**SAMPLE_DATA, 'brand': ''}
+
+        product, status, _ = ProductService.upsert_from_source(tenant, ds, data)
+
+        assert status == 'created'
+        assert product.brand == ''
+        assert product.brand_ref is None
+        assert product.brand_resolution_status == Product.BrandResolutionStatus.UNKNOWN
+        assert product.brand_confidence == 0.0
+        assert product.brand_source_id == ''
+        assert product.brand_needs_review is False
 
     def test_brand_alias_resolves_to_existing_brand(self):
         alias = ProductBrandAlias.objects.get(normalized_alias='MB')

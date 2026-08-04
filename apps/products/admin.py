@@ -141,12 +141,19 @@ class ProductAdmin(ModelAdmin):
     """
 
     list_display = [
-        'article', 'name', 'brand', 'brand_ref', 'tenant', 'get_catalog_domain',
+        'article', 'name', 'brand', 'brand_ref', 'brand_resolution_status',
+        'brand_needs_review', 'tenant', 'get_catalog_domain',
         'price', 'stock_qty', 'export_enabled', 'sync_at',
     ]
-    list_filter = ['tenant', 'export_enabled', 'condition', 'catalog_classification__domain']
+    list_filter = [
+        'tenant', 'export_enabled', 'condition', 'brand_resolution_status',
+        'brand_needs_review', 'catalog_classification__domain',
+    ]
     search_fields = ['article', 'name', 'brand']
-    readonly_fields = ['hash_1c', 'sync_at', 'created_at', 'updated_at']
+    readonly_fields = [
+        'hash_1c', 'brand_confidence', 'brand_source_id',
+        'sync_at', 'created_at', 'updated_at',
+    ]
     inlines = [
         ProductCatalogClassificationInline,
         ProductImageInline,

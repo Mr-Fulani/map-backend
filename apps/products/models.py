@@ -186,6 +186,13 @@ class ProductBrandAlias(TimestampedModel):
 class Product(TimestampedModel):
     """Товар из источника данных (1С, CSV и т.д.)."""
 
+    class BrandResolutionStatus(models.TextChoices):
+        UNKNOWN = 'unknown', 'Не определён'
+        SOURCE = 'source', 'Получен из источника'
+        CATALOG = 'catalog', 'Найден в каталоге'
+        MANUAL = 'manual', 'Подтверждён вручную'
+        AMBIGUOUS = 'ambiguous', 'Есть конфликт'
+
     CONDITION_NEW = 'new'
     CONDITION_USED = 'used'
     CONDITION_CHOICES = [(CONDITION_NEW, 'Новый'), (CONDITION_USED, 'Б/у')]
@@ -210,6 +217,20 @@ class Product(TimestampedModel):
     brand_ref = models.ForeignKey(
         ProductBrand, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='products', verbose_name='Нормализованный бренд',
+    )
+    brand_resolution_status = models.CharField(
+        max_length=20, choices=BrandResolutionStatus.choices,
+        default=BrandResolutionStatus.UNKNOWN, db_index=True,
+        verbose_name='Статус определения бренда',
+    )
+    brand_confidence = models.FloatField(
+        default=0.0, verbose_name='Уверенность бренда',
+    )
+    brand_source_id = models.CharField(
+        max_length=50, blank=True, verbose_name='Источник бренда',
+    )
+    brand_needs_review = models.BooleanField(
+        default=False, db_index=True, verbose_name='Бренд требует проверки',
     )
     category_1c = models.CharField(max_length=300, blank=True, verbose_name='Категория из 1С')
     catalog_category = models.ForeignKey(

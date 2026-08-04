@@ -3,10 +3,11 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.products.models import Product, ProductCrossCode
+from apps.products.models import GlobalPart, Product, ProductCrossCode
 from apps.products.part_fetchers import FetchedPage
 from apps.products.part_parsers import (
-    ParsedPart, PartNotFound, RosskoPartParser, TachkaPartParser, parse_fitment_line,
+    ParsedFitment, ParsedPart, PartNotFound, RosskoPartParser, TachkaPartParser,
+    parse_fitment_line,
 )
 from apps.products.services import ProductEnrichmentService, ProductService
 from apps.tenants.services import TenantService
@@ -376,6 +377,44 @@ def test_run_parse_job_falls_back_to_search_and_backfills_brand(monkeypatch):
     assert job.source_url == 'https://tachka.ru/brembo/P50136'
     assert product.cross_codes.filter(normalized_code='A0004206000').exists()
     assert product.brand == 'BREMBO'
+    assert product.brand_ref.normalized_name == 'BREMBO'
+    assert product.brand_resolution_status == Product.BrandResolutionStatus.CATALOG
+    assert product.brand_confidence == pytest.approx(0.85)
+    assert product.brand_source_id == 'tachka'
+    assert product.brand_needs_review is False
+
+
+@pytest.mark.django_db
+def test_catalog_brand_conflict_is_reviewable_and_does_not_overwrite_source_brand():
+    tenant = make_tenant('catalog-brand-conflict')
+    product = Product.objects.create(
+        tenant=tenant,
+        article='P50136',
+        brand='SOURCE-BRAND',
+        brand_resolution_status=Product.BrandResolutionStatus.SOURCE,
+        brand_confidence=1.0,
+        brand_source_id='csv',
+        name='Колодки P50136',
+        price=Decimal('1000.00'),
+        stock_qty=1,
+    )
+    parsed = ParsedPart(
+        brand='CATALOG-BRAND',
+        article='P50136',
+        fitments=[ParsedFitment(
+            make='MERCEDES-BENZ', model='E-CLASS', generation='W213', confidence=0.95,
+        )],
+    )
+
+    ProductEnrichmentService.save_parsed_part(tenant, product, parsed, source_id='tachka')
+
+    product.refresh_from_db()
+    assert product.brand == 'SOURCE-BRAND'
+    assert product.brand_resolution_status == Product.BrandResolutionStatus.AMBIGUOUS
+    assert product.brand_needs_review is True
+    assert product.brand_confidence == 0.5
+    assert product.fitments.get(model='E-CLASS').needs_review is True
+    assert not GlobalPart.objects.filter(normalized_article='P50136').exists()
 
 
 def test_parse_task_saves_enrichment_images_before_finishing():

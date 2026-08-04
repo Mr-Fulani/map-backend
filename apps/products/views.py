@@ -278,9 +278,19 @@ class ProductDetailView(APIView):
         brand = str(request.data.get('brand') or '').strip()[:200]
         product.brand = brand
         product.brand_ref = ProductBrandService.resolve_or_create_brand(
-            brand, source_id='manual',
+            brand, source_id='manual', confidence=1.0,
         ) if brand else None
-        product.save(update_fields=['brand', 'brand_ref', 'updated_at'])
+        product.brand_resolution_status = (
+            Product.BrandResolutionStatus.MANUAL
+            if brand else Product.BrandResolutionStatus.UNKNOWN
+        )
+        product.brand_confidence = 1.0 if brand else 0.0
+        product.brand_source_id = 'manual' if brand else ''
+        product.brand_needs_review = False
+        product.save(update_fields=[
+            'brand', 'brand_ref', 'brand_resolution_status', 'brand_confidence',
+            'brand_source_id', 'brand_needs_review', 'updated_at',
+        ])
         # Для активных листингов Brand — часть XML-фида, поэтому ручную правку
         # нужно распространить так же, как контентное изменение из импорта.
         transaction.on_commit(lambda: sync_product_listings_task.delay(product.pk, 'content'))
