@@ -27,6 +27,12 @@ class ImageSearchLog(TimestampedModel):
     accepted_count = models.PositiveSmallIntegerField(default=0, verbose_name='Принято')
     duration_ms = models.PositiveIntegerField(default=0, verbose_name='Длительность (мс)')
     error = models.TextField(blank=True, verbose_name='Ошибка')
+    query_metrics = models.JSONField(
+        default=list, blank=True, verbose_name='Метрики запросов',
+    )
+    query_builder_version = models.CharField(
+        max_length=20, blank=True, verbose_name='Версия построителя запросов',
+    )
 
     class Meta:
         verbose_name = 'Лог поиска изображений'

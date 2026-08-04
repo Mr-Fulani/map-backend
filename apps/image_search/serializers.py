@@ -35,7 +35,9 @@ class ProductImageSerializer(serializers.ModelSerializer):
 
     def get_url(self, obj: ProductImage) -> str:
         """Возвращает публичный URL оригинала."""
-        return self._abs(obj.s3_key) if obj.s3_key else ''
+        from apps.products.media import get_product_image_delivery_key
+        key = get_product_image_delivery_key(obj)
+        return self._abs(key) if key else ''
 
     def get_thumb_url(self, obj: ProductImage) -> str:
         """Возвращает публичный URL миниатюры."""

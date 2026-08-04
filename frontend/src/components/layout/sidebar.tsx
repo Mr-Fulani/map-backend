@@ -17,6 +17,7 @@ import {
   Settings,
   CreditCard,
   Webhook,
+  Images,
   ChevronLeft,
   ChevronRight,
   Zap,
@@ -50,6 +51,11 @@ const navItems = [
     title: 'Проверка',
     href: '/dashboard/review',
     icon: ClipboardCheck,
+  },
+  {
+    title: 'Медиа',
+    href: '/dashboard/media',
+    icon: Images,
   },
   {
     title: 'Логи',

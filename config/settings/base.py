@@ -47,6 +47,7 @@ LOCAL_APPS = [
     'apps.api',
     'apps.analytics',
     'apps.image_search',
+    'apps.media_processing',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -119,6 +120,37 @@ UNFOLD = {
                 ],
             },
             {
+                "title": "AI и генерация",
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Шаблоны промптов",
+                        "icon": "description",
+                        "link": "/admin/ai_agent/aiprompttemplate/",
+                    },
+                    {
+                        "title": "AI-модели",
+                        "icon": "smart_toy",
+                        "link": "/admin/ai_agent/aimodel/",
+                    },
+                    {
+                        "title": "Настройки AI тенантов",
+                        "icon": "tune",
+                        "link": "/admin/ai_agent/tenantaisettings/",
+                    },
+                    {
+                        "title": "AI-запросы",
+                        "icon": "history",
+                        "link": "/admin/ai_agent/airequestlog/",
+                    },
+                    {
+                        "title": "Цены AI-провайдеров",
+                        "icon": "price_change",
+                        "link": "/admin/ai_agent/aiproviderprice/",
+                    },
+                ],
+            },
+            {
                 "title": "Товары и маркетплейсы",
                 "collapsible": True,
                 "items": [
@@ -153,6 +185,36 @@ UNFOLD = {
                         "title": "Кеш поиска",
                         "icon": "cached",
                         "link": "/admin/image_search/imagesearchcache/",
+                    },
+                    {
+                        "title": "Проверки изображений",
+                        "icon": "fact_check",
+                        "link": "/admin/media_processing/imageassessment/",
+                    },
+                    {
+                        "title": "Задачи обработки медиа",
+                        "icon": "auto_fix_high",
+                        "link": "/admin/media_processing/mediaprocessingjob/",
+                    },
+                    {
+                        "title": "Варианты изображений",
+                        "icon": "collections",
+                        "link": "/admin/media_processing/productimagevariant/",
+                    },
+                    {
+                        "title": "Пресеты обработки",
+                        "icon": "tune",
+                        "link": "/admin/media_processing/mediaprocessingpreset/",
+                    },
+                    {
+                        "title": "Медиа-провайдеры",
+                        "icon": "hub",
+                        "link": "/admin/media_processing/mediaproviderpolicy/",
+                    },
+                    {
+                        "title": "Настройки медиа тенантов",
+                        "icon": "settings_suggest",
+                        "link": "/admin/media_processing/tenantmediasettings/",
                     },
                 ],
             },
@@ -306,6 +368,7 @@ CELERY_TASK_QUEUES = {
     'billing':            {'exchange': 'billing',            'routing_key': 'billing'},
     'image_search':       {'exchange': 'image_search',       'routing_key': 'image_search'},
     'image_search_bulk':  {'exchange': 'image_search_bulk',  'routing_key': 'image_search_bulk'},
+    'media_processing':   {'exchange': 'media_processing',   'routing_key': 'media_processing'},
     'part_parsing':       {'exchange': 'part_parsing',       'routing_key': 'part_parsing'},
     'part_parsing_bulk':  {'exchange': 'part_parsing_bulk',  'routing_key': 'part_parsing_bulk'},
 }

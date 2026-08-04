@@ -121,6 +121,7 @@ def validate_json_response(raw: str) -> dict:
         data['confidence'] = float(data['confidence'])
     except (TypeError, ValueError):
         data['confidence'] = 0.5
+    data['confidence'] = min(max(data['confidence'], 0.0), 1.0)
 
     return data
 

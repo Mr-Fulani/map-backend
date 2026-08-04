@@ -29,7 +29,7 @@ from apps.products.serializers import (
 from apps.products.services import (
     AutoPartsEnrichmentDisabled, ProductBrandService, ProductBulkActionService,
     ProductCategorySeedService, ProductEnrichmentService, ProductIsNotAutoPart,
-    ProductService,
+    ProductKnowledgeGraphService, ProductService,
 )
 from apps.marketplaces.models import Listing
 from apps.products.tasks import import_from_datasource, sync_product_listings_task
@@ -278,9 +278,19 @@ class ProductDetailView(APIView):
         brand = str(request.data.get('brand') or '').strip()[:200]
         product.brand = brand
         product.brand_ref = ProductBrandService.resolve_or_create_brand(
-            brand, source_id='manual',
+            brand, source_id='manual', confidence=1.0,
         ) if brand else None
-        product.save(update_fields=['brand', 'brand_ref', 'updated_at'])
+        product.brand_resolution_status = (
+            Product.BrandResolutionStatus.MANUAL
+            if brand else Product.BrandResolutionStatus.UNKNOWN
+        )
+        product.brand_confidence = 1.0 if brand else 0.0
+        product.brand_source_id = 'manual' if brand else ''
+        product.brand_needs_review = False
+        product.save(update_fields=[
+            'brand', 'brand_ref', 'brand_resolution_status', 'brand_confidence',
+            'brand_source_id', 'brand_needs_review', 'updated_at',
+        ])
         # Для активных листингов Brand — часть XML-фида, поэтому ручную правку
         # нужно распространить так же, как контентное изменение из импорта.
         transaction.on_commit(lambda: sync_product_listings_task.delay(product.pk, 'content'))
@@ -1160,6 +1170,8 @@ class ProductReviewQueueActionView(APIView):
             item = get_object_or_404(VehicleFitment, pk=record_id, tenant=request.tenant)
             review_status = ReviewStatus.APPROVED if action == 'approve' else ReviewStatus.REJECTED
             _set_review_state(item, request, review_status)
+            if review_status == ReviewStatus.APPROVED:
+                ProductKnowledgeGraphService.learn_approved_fitment(item.product, item)
             ProductEnrichmentService.refresh_product_denormalized_enrichment(item.product)
             item.product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability', 'updated_at'])
             return Response({'status': 'ok', 'data': _serialize_review_item(item_type, item)})
@@ -1198,6 +1210,7 @@ class ProductFitmentReviewView(APIView):
         fitment = get_object_or_404(VehicleFitment, pk=fitment_id, tenant=request.tenant, product=product)
         if action == 'approve':
             _set_review_state(fitment, request, ReviewStatus.APPROVED)
+            ProductKnowledgeGraphService.learn_approved_fitment(product, fitment)
         elif action == 'reject':
             _set_review_state(fitment, request, ReviewStatus.REJECTED)
         else:

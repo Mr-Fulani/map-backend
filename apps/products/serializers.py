@@ -163,7 +163,9 @@ class ProductSerializer(serializers.ModelSerializer):
         model = Product
         fields = [
             'id', 'uuid_1c', 'article', 'name', 'brand', 'brand_ref',
-            'brand_ref_name', 'category_1c', 'catalog_category',
+            'brand_ref_name', 'brand_resolution_status', 'brand_confidence',
+            'brand_source_id', 'brand_needs_review',
+            'category_1c', 'catalog_category',
             'condition', 'price', 'stock_qty', 'warehouse',
             'export_enabled', 'sync_excluded', 'sync_at', 'images', 'images_count', 'primary_thumb_url',
             'title_ai', 'description_ai', 'ai_status', 'enrichment_status',
@@ -171,7 +173,11 @@ class ProductSerializer(serializers.ModelSerializer):
             'listing_status',
             'created_at', 'updated_at',
         ]
-        read_only_fields = ['uuid_1c', 'brand_ref', 'brand_ref_name', 'sync_at', 'created_at', 'updated_at']
+        read_only_fields = [
+            'uuid_1c', 'brand_ref', 'brand_ref_name', 'brand_resolution_status',
+            'brand_confidence', 'brand_source_id', 'brand_needs_review',
+            'sync_at', 'created_at', 'updated_at',
+        ]
 
     def get_images_count(self, obj) -> int:
         """Возвращает количество изображений товара."""

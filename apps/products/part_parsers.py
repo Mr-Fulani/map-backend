@@ -1,7 +1,7 @@
 import json
 import re
 from dataclasses import dataclass, field
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from django.utils.text import slugify
 from selectolax.parser import HTMLParser
@@ -197,7 +197,12 @@ class TachkaPartParser:
             attributes=self._parse_attributes(tree),
             cross_codes=self._parse_cross_codes(tree, raw_text, structured.get('description', '')),
             fitments=self._parse_fitments(raw_text),
-            image_urls=self._parse_image_urls(tree, structured.get('image_urls', [])),
+            image_urls=self._parse_image_urls(
+                tree,
+                structured.get('image_urls', []),
+                brand=structured.get('brand') or brand,
+                article=article,
+            ),
             description_facts=self._parse_description_facts(tree, structured.get('description', '')),
             source_url=source_url,
             raw_text=raw_text[:20000],
@@ -264,8 +269,18 @@ class TachkaPartParser:
             fitments.append(parse_fitment_line(line))
         return fitments[:500]
 
-    def _parse_image_urls(self, tree: HTMLParser, structured_urls: list[str] | None = None) -> list[str]:
-        urls = list(structured_urls or [])
+    def _parse_image_urls(
+        self,
+        tree: HTMLParser,
+        structured_urls: list[str] | None = None,
+        *,
+        brand: str = '',
+        article: str = '',
+    ) -> list[str]:
+        urls = [
+            url for url in (structured_urls or [])
+            if self._is_product_image_url(url, brand, article)
+        ]
         for img in tree.css('img'):
             src = img.attributes.get('src') or img.attributes.get('data-src') or ''
             if not src or src.startswith('data:'):
@@ -274,9 +289,30 @@ class TachkaPartParser:
                 src = f'https:{src}'
             elif src.startswith('/'):
                 src = f'{self.base_url}{src}'
-            if src not in urls:
+            if src not in urls and self._is_product_image_url(src, brand, article):
                 urls.append(src)
         return urls[:10]
+
+    @staticmethod
+    def _is_product_image_url(url: str, brand: str, article: str) -> bool:
+        """Reject page chrome; Tachka product CDN paths contain brand/article identity."""
+        normalized_url = normalize_part_code(unquote(url))
+        normalized_article = normalize_part_code(article)
+        normalized_brand = normalize_part_code(brand)
+        lower_url = unquote(url).lower()
+        if any(marker in lower_url for marker in (
+            'getclicky.com', 'brandlogos/', 'placeholder', '/other/mask.',
+        )):
+            return False
+        if lower_url.endswith(('.gif', '.svg')):
+            return False
+        if normalized_article and normalized_article in normalized_url:
+            return True
+        return bool(
+            '/brand/' in lower_url
+            and normalized_brand
+            and normalized_brand in normalized_url
+        )
 
     def _parse_description_facts(self, tree: HTMLParser, structured_description: str = '') -> dict[str, str]:
         facts = {}

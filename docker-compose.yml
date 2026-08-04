@@ -51,7 +51,7 @@ services:
 
   celery_worker_images:
     build: .
-    command: celery -A config worker -l info -Q image_search,image_search_bulk --concurrency=2 -n worker-images@%h
+    command: celery -A config worker -l info -Q image_search,image_search_bulk,media_processing --concurrency=2 -n worker-images@%h
     volumes:
       - .:/app
     env_file: .env

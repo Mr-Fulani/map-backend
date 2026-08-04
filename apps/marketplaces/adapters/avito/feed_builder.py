@@ -660,11 +660,13 @@ def _first_value(*values) -> str:
 
 def _add_images(ad, product) -> None:
     """Добавляет в фид только одобренные/ручные/импортированные фото."""
-    from apps.products.media import get_publishable_product_images
+    from apps.products.media import (
+        get_product_image_delivery_key, get_publishable_product_images,
+    )
 
     urls = []
     for image in get_publishable_product_images(product):
-        url = _image_url(image.s3_key, image.url_source)
+        url = _image_url(get_product_image_delivery_key(image), image.url_source)
         if url.startswith('http'):
             urls.append(url)
 

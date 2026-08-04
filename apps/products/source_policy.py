@@ -53,6 +53,19 @@ class PartSourcePolicy:
 
 
 PART_SOURCE_POLICIES = {
+    'human_review': PartSourcePolicy(
+        source_id='human_review',
+        label='Подтверждено пользователем',
+        priority=1000,
+        trust_score=1.0,
+        default_pause_seconds=0,
+        min_pause_seconds=0,
+        batch_size=100,
+        capabilities=SourceCapabilities(
+            supports_product_page=False,
+            supports_fitments=True,
+        ),
+    ),
     'tachka': PartSourcePolicy(
         source_id='tachka',
         label='Tachka.ru',

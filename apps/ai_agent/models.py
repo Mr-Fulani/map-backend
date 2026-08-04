@@ -17,6 +17,66 @@ class AITaskType(models.TextChoices):
     FITMENT_RESOLUTION = 'fitment_resolution', 'Анализ совместимости'
 
 
+class AIPromptTemplate(TimestampedModel):
+    """Versioned prompt selected independently from a concrete AI provider."""
+
+    task_type = models.CharField(max_length=40, choices=AITaskType.choices)
+    catalog_domain = models.CharField(
+        max_length=50, blank=True,
+        help_text='Пусто — шаблон подходит для любого домена каталога.',
+    )
+    marketplace = models.CharField(
+        max_length=30, blank=True,
+        help_text='Пусто — шаблон подходит для любого маркетплейса.',
+    )
+    version = models.PositiveIntegerField()
+    name = models.CharField(max_length=150)
+    system_prompt = models.TextField()
+    output_schema = models.JSONField(default=dict, blank=True)
+    is_active = models.BooleanField(default=False)
+    change_notes = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = 'Шаблон AI-промпта'
+        verbose_name_plural = 'Шаблоны AI-промптов'
+        ordering = ['task_type', 'catalog_domain', 'marketplace', '-version']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['task_type', 'catalog_domain', 'marketplace', 'version'],
+                name='unique_ai_prompt_scope_version',
+            ),
+            models.UniqueConstraint(
+                fields=['task_type', 'catalog_domain', 'marketplace'],
+                condition=models.Q(is_active=True),
+                name='unique_active_ai_prompt_scope',
+            ),
+        ]
+
+    def __str__(self):
+        scope = '/'.join(filter(None, [self.catalog_domain, self.marketplace])) or 'global'
+        return f'{self.name} v{self.version} ({scope})'
+
+    def save(self, *args, **kwargs):
+        if self.pk:
+            previous = type(self).objects.filter(pk=self.pk).first()
+            immutable_fields = (
+                'task_type', 'catalog_domain', 'marketplace', 'version', 'name',
+                'system_prompt', 'output_schema', 'change_notes',
+            )
+            if previous and any(
+                getattr(previous, field) != getattr(self, field)
+                for field in immutable_fields
+            ):
+                raise ValidationError(
+                    'Версия промпта неизменяема. Создайте новую версию.',
+                )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Историю версий промптов нельзя удалять.')
+
+
 class AIModel(TimestampedModel):
     """Разрешённая в MAP модель с внутренней ценой в AI-кредитах."""
 
@@ -346,6 +406,12 @@ class AIRequestLog(TimestampedModel):
     duration_ms = models.PositiveIntegerField(default=0)
     error_code = models.CharField(max_length=80, blank=True)
     error_message = models.CharField(max_length=500, blank=True)
+    prompt_template = models.ForeignKey(
+        AIPromptTemplate, null=True, blank=True, on_delete=models.PROTECT,
+        related_name='request_logs',
+    )
+    prompt_version = models.CharField(max_length=50, blank=True)
+    prompt_hash = models.CharField(max_length=64, blank=True)
 
     class Meta:
         verbose_name = 'AI-запрос'

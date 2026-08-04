@@ -187,3 +187,25 @@ def test_bulk_classification_action_classifies_products(django_capture_on_commit
     assert auto_part.catalog_category.name == 'Тормозные колодки'
     assert auto_part.catalog_classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
     assert jewellery.catalog_classification.domain == ProductCatalogClassification.Domain.JEWELLERY
+
+
+@pytest.mark.django_db
+def test_bulk_find_images_queues_search_tasks(django_capture_on_commit_callbacks):
+    tenant = make_tenant('bulk-find-images')
+    products = [make_product(tenant, f'IMG{i}') for i in range(2)]
+    job = ProductBulkActionService.create_job(
+        tenant=tenant,
+        action=ProductBulkActionJob.Action.FIND_IMAGES,
+        product_ids=[product.pk for product in products],
+        batch_size=20,
+    )
+
+    with patch('apps.image_search.tasks.search_images_for_product.delay') as search_delay:
+        with django_capture_on_commit_callbacks(execute=True):
+            result = ProductBulkActionService.process_next_batch(job.pk)
+
+    job.refresh_from_db()
+    assert result['status'] == ProductBulkActionJob.Status.SUCCESS
+    assert job.queued_count == 2
+    assert job.skipped_count == 0
+    assert search_delay.call_count == 2

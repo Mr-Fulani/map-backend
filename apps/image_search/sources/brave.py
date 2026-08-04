@@ -34,6 +34,7 @@ class BraveImageSource(BaseImageSource):
     tier = 3
     is_free = False
     requires_key = True
+    max_queries = _MAX_QUERIES
 
     def is_available(self) -> bool:
         """True если API-ключ задан и месячный soft cap (800) не достигнут."""
@@ -54,8 +55,9 @@ class BraveImageSource(BaseImageSource):
         base = super().build_queries()
         result = []
         for query, confidence in base:
-            if 'запчасть' not in query.lower():
+            if 'запчасть' not in query.lower() and not getattr(self.product, 'category_1c', ''):
                 query = f'{query} автозапчасть'
+            query = f'{query} -logo -схема -manual'
             result.append((query, confidence))
         return result
 
@@ -70,13 +72,13 @@ class BraveImageSource(BaseImageSource):
             logger.warning('[brave] BRAVE_SEARCH_API_KEY не задан')
             return []
 
-        queries = self.build_queries()[:_MAX_QUERIES]
+        queries = self.build_queries()[:self.max_queries]
         candidates: list[ImageCandidate] = []
         seen_urls: set[str] = set()
 
         for query, confidence in queries:
             results = self._fetch(api_key, query)
-            for r in results:
+            for rank, r in enumerate(results, start=1):
                 url = r.get('properties', {}).get('url', '')
                 if not url or url in seen_urls:
                     continue
@@ -92,6 +94,8 @@ class BraveImageSource(BaseImageSource):
                     raw_meta={
                         'confidence': confidence,
                         'title': r.get('title', ''),
+                        'query': query,
+                        'rank': rank,
                     },
                 ))
 

@@ -72,8 +72,27 @@ class TestProductService:
         assert product.article == 'A100'
         assert product.brand == 'BrandX'
         assert product.brand_ref.name == 'BrandX'
+        assert product.brand_resolution_status == Product.BrandResolutionStatus.SOURCE
+        assert product.brand_confidence == 1.0
+        assert product.brand_source_id == ds.type
+        assert product.brand_needs_review is False
         assert product.price == Decimal('1500.00')
         assert product.stock_qty == 10
+
+    def test_upsert_allows_unknown_brand_without_fake_brand_reference(self):
+        tenant = make_tenant('unknown-brand-co')
+        ds = make_datasource(tenant)
+        data = {**SAMPLE_DATA, 'brand': ''}
+
+        product, status, _ = ProductService.upsert_from_source(tenant, ds, data)
+
+        assert status == 'created'
+        assert product.brand == ''
+        assert product.brand_ref is None
+        assert product.brand_resolution_status == Product.BrandResolutionStatus.UNKNOWN
+        assert product.brand_confidence == 0.0
+        assert product.brand_source_id == ''
+        assert product.brand_needs_review is False
 
     def test_brand_alias_resolves_to_existing_brand(self):
         alias = ProductBrandAlias.objects.get(normalized_alias='MB')
@@ -169,8 +188,44 @@ class TestPhotoUploadPipeline:
     def _mock_response(self, content):
         resp = MagicMock()
         resp.content = content
+        resp.headers = {'Content-Type': 'image/jpeg'}
         resp.raise_for_status = MagicMock()
         return resp
+
+    def test_quality_validation_rejects_tiny_image(self):
+        from apps.products.storage import PhotoUploadPipeline
+
+        tenant = make_tenant('photo-quality-tiny')
+        ds = make_datasource(tenant)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        mock_storage = MagicMock()
+
+        with patch('apps.products.storage.requests.get') as mock_get:
+            mock_get.return_value = self._mock_response(self._make_jpeg_bytes(size=(120, 120)))
+            result = PhotoUploadPipeline(storage=mock_storage).process(
+                'http://example.com/tiny.jpg', product, validate_quality=True,
+            )
+
+        assert result is None
+        mock_storage.save.assert_not_called()
+
+    def test_quality_validation_uses_actual_dimensions(self):
+        from apps.products.storage import PhotoUploadPipeline
+
+        tenant = make_tenant('photo-quality-valid')
+        ds = make_datasource(tenant)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        mock_storage = MagicMock()
+        mock_storage.save = MagicMock(side_effect=lambda key, _: key)
+
+        with patch('apps.products.storage.requests.get') as mock_get:
+            mock_get.return_value = self._mock_response(self._make_jpeg_bytes(size=(640, 480)))
+            result = PhotoUploadPipeline(storage=mock_storage).process(
+                'http://example.com/valid.jpg', product, validate_quality=True,
+            )
+
+        assert result is not None
+        assert (result.resolution_w, result.resolution_h) == (640, 480)
 
     def test_photo_perceptual_dedup_merges_same_image_across_sources(self):
         """Одна фотография из разных источников (разные байты) → один ProductImage."""

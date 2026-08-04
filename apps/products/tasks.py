@@ -278,6 +278,7 @@ def _download_enrichment_images(product, image_urls: list[str], source_id: str =
             product,
             source_id=source_id,
             status=ProductImage.Status.NEEDS_REVIEW,
+            validate_quality=True,
         )
         if image is not None:
             saved += 1

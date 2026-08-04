@@ -7,10 +7,10 @@ from django.test import Client
 
 from apps.products.enrichment import normalize_part_code
 from apps.products.models import (
-    Product, ProductCatalogClassification, ProductCrossCode, ProductEnrichmentFact,
+    GlobalPartFitment, Product, ProductCatalogClassification, ProductCrossCode, ProductEnrichmentFact,
     ReviewStatus, VehicleFitment, TenantCatalogCategory, TenantCategoryMapping,
 )
-from apps.products.services import ProductEnrichmentService
+from apps.products.services import ProductEnrichmentService, ProductKnowledgeGraphService
 from apps.tenants.models import CatalogDomain
 from apps.tenants.services import TenantService
 
@@ -312,6 +312,21 @@ def test_review_queue_approves_fitment_and_refreshes_applicability():
     assert fitment.review_status == ReviewStatus.APPROVED
     assert fitment.needs_review is False
     assert product.applicability[0]['model'] == 'E-CLASS'
+    learned = GlobalPartFitment.objects.get(
+        part__normalized_brand='BREMBO',
+        part__normalized_article='P50136',
+        source_id='human_review',
+        model='E-CLASS',
+    )
+    assert learned.needs_review is False
+    assert learned.confidence == 1.0
+
+    consumer_tenant, _ = make_tenant('review-fitment-consumer')
+    consumer_product = make_product(consumer_tenant)
+    assert ProductKnowledgeGraphService.apply_known_fitments_to_product(consumer_product) == 1
+    assert consumer_product.fitments.filter(
+        make='MERCEDES-BENZ', model='E-CLASS', generation='W213',
+    ).exists()
 
 
 @pytest.mark.django_db

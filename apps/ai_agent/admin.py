@@ -1,9 +1,52 @@
-from django.contrib import admin
+from django.contrib import admin, messages
+from django.db import transaction
 from unfold.admin import ModelAdmin
 
 from apps.ai_agent.models import (
-    AIModel, AIProviderPrice, AIRequestLog, TenantAISettings, TenantAITaskModel,
+    AIModel, AIPromptTemplate, AIProviderPrice, AIRequestLog,
+    TenantAISettings, TenantAITaskModel,
 )
+
+
+@admin.register(AIPromptTemplate)
+class AIPromptTemplateAdmin(ModelAdmin):
+    list_display = [
+        'name', 'task_type', 'catalog_domain', 'marketplace', 'version',
+        'is_active', 'created_at',
+    ]
+    list_filter = ['task_type', 'catalog_domain', 'marketplace', 'is_active']
+    search_fields = ['name', 'system_prompt', 'change_notes']
+    readonly_fields = ['created_at', 'updated_at']
+    actions = ['activate_selected_version']
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj:
+            return [
+                'task_type', 'catalog_domain', 'marketplace', 'version', 'name',
+                'system_prompt', 'output_schema', 'change_notes',
+                'created_at', 'updated_at',
+            ]
+        return self.readonly_fields
+
+    @admin.action(description='Активировать выбранную версию промпта')
+    def activate_selected_version(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(request, 'Выберите ровно одну версию.', level=messages.ERROR)
+            return
+        prompt = queryset.get()
+        with transaction.atomic():
+            type(prompt).objects.filter(
+                task_type=prompt.task_type,
+                catalog_domain=prompt.catalog_domain,
+                marketplace=prompt.marketplace,
+                is_active=True,
+            ).exclude(pk=prompt.pk).update(is_active=False)
+            prompt.is_active = True
+            prompt.save(update_fields=['is_active', 'updated_at'])
+        self.message_user(request, f'Активирован {prompt}.')
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(AIModel)
@@ -65,7 +108,7 @@ class TenantAITaskModelAdmin(ModelAdmin):
 class AIRequestLogAdmin(ModelAdmin):
     list_display = [
         'tenant', 'task_type', 'provider', 'model_id', 'status',
-        'charged_credits', 'duration_ms', 'created_at',
+        'prompt_version', 'charged_credits', 'duration_ms', 'created_at',
     ]
     list_filter = ['task_type', 'provider', 'status']
     search_fields = ['tenant__name', 'tenant__slug', 'model_id', 'error_code']
@@ -73,6 +116,7 @@ class AIRequestLogAdmin(ModelAdmin):
         'tenant', 'task_type', 'provider', 'model_id', 'status',
         'input_tokens', 'cached_input_tokens', 'output_tokens',
         'charged_credits', 'duration_ms', 'error_code', 'error_message',
+        'prompt_template', 'prompt_version', 'prompt_hash',
         'created_at', 'updated_at',
     ]
 

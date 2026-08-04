@@ -7,6 +7,7 @@ from PIL import Image, UnidentifiedImageError
 from django.conf import settings
 
 from apps.products.models import ProductImage
+from apps.core.url_security import is_safe_public_http_url
 
 MAX_PHOTOS = 10
 MAX_DIMENSION = 1280
@@ -123,8 +124,12 @@ class PhotoUploadPipeline:
         self, source_url: str, product, source_id: str = '',
         status: str | None = None,
         check_limit: bool = False,
+        validate_quality: bool = False,
     ) -> ProductImage | None:
         if check_limit and product.images.exclude(status=ProductImage.Status.REJECTED).count() >= MAX_PHOTOS:
+            return None
+
+        if not is_safe_public_http_url(source_url):
             return None
 
         try:
@@ -134,6 +139,15 @@ class PhotoUploadPipeline:
         except requests.RequestException:
             return None
 
+        if validate_quality:
+            cfg = getattr(settings, 'IMAGE_SEARCH_SETTINGS', {})
+            max_bytes = int(cfg.get('MAX_FILE_SIZE_MB', 5) * 1024 * 1024)
+            content_type = str(response.headers.get('Content-Type', '')).split(';', 1)[0]
+            if len(raw) > max_bytes:
+                return None
+            if content_type and not content_type.startswith('image/'):
+                return None
+
         sha = hashlib.sha256(raw).hexdigest()
         existing = product.images.filter(sha256=sha).first()
 
@@ -142,6 +156,19 @@ class PhotoUploadPipeline:
             img.load()
         except (UnidentifiedImageError, Exception):
             return None
+
+        actual_width, actual_height = img.size
+        if validate_quality:
+            min_resolution = int(
+                getattr(settings, 'IMAGE_SEARCH_SETTINGS', {}).get('MIN_RESOLUTION', 300),
+            )
+            if min(actual_width, actual_height) < min_resolution:
+                return None
+            if getattr(img, 'n_frames', 1) > 1:
+                return None
+            aspect_ratio = max(actual_width, actual_height) / min(actual_width, actual_height)
+            if aspect_ratio > 5:
+                return None
 
         # Дедуп по перцептивному хэшу: одна и та же фотография из разных источников
         # (tachka/rossko/поиск) имеет разные байты (sha не совпадёт), но aHash близок.
@@ -180,6 +207,16 @@ class PhotoUploadPipeline:
             if phash and not existing.phash:
                 existing.phash = phash
                 update_fields.append('phash')
+            if existing.resolution_w != actual_width:
+                existing.resolution_w = actual_width
+                update_fields.append('resolution_w')
+            if existing.resolution_h != actual_height:
+                existing.resolution_h = actual_height
+                update_fields.append('resolution_h')
+            actual_size_kb = max(1, len(raw) // 1024)
+            if existing.file_size_kb != actual_size_kb:
+                existing.file_size_kb = actual_size_kb
+                update_fields.append('file_size_kb')
             if update_fields:
                 existing.save(update_fields=update_fields)
             return existing
@@ -195,4 +232,7 @@ class PhotoUploadPipeline:
             source_id=source_id,
             status=status or ProductImage.Status.IMPORTED,
             phash=phash,
+            resolution_w=actual_width,
+            resolution_h=actual_height,
+            file_size_kb=max(1, len(raw) // 1024),
         )

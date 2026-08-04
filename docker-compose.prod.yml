@@ -63,7 +63,7 @@ services:
       context: .
       args:
         REQUIREMENTS: requirements/prod.txt
-    command: celery -A config worker -Q image_search,image_search_bulk --concurrency=2 -n worker-images@%h -l warning
+    command: celery -A config worker -Q image_search,image_search_bulk,media_processing --concurrency=2 -n worker-images@%h -l warning
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production

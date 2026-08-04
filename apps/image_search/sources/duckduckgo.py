@@ -51,6 +51,7 @@ class DuckDuckGoSource(BaseImageSource):
     tier = 4
     is_free = True
     requires_key = False
+    max_queries = _MAX_QUERIES
 
     def search(self) -> list[ImageCandidate]:
         """Ищет изображения по данным товара через DuckDuckGo Images.
@@ -76,7 +77,7 @@ class DuckDuckGoSource(BaseImageSource):
             logger.info('[ddg] глобальный кулдаун между сессиями (%d с), пропускаем', _SESSION_TTL)
             return []
 
-        queries = self.build_queries()[:_MAX_QUERIES]
+        queries = self.build_queries()[:self.max_queries]
         candidates: list[ImageCandidate] = []
         seen_urls: set[str] = set()
 
@@ -84,7 +85,7 @@ class DuckDuckGoSource(BaseImageSource):
             if idx > 0:
                 time.sleep(_QUERY_DELAY_SEC)
             results = self._search_with_retry(query)
-            for r in results:
+            for rank, r in enumerate(results, start=1):
                 url = r.get('image', '')
                 if not url or url in seen_urls:
                     continue
@@ -98,6 +99,8 @@ class DuckDuckGoSource(BaseImageSource):
                     raw_meta={
                         'confidence': confidence,
                         'title': r.get('title', ''),
+                        'query': query,
+                        'rank': rank,
                     },
                 ))
 
