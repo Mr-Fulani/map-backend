@@ -2,7 +2,7 @@ from django.contrib import admin
 from unfold.admin import ModelAdmin
 
 from apps.ai_agent.models import (
-    AIModel, AIRequestLog, TenantAISettings, TenantAITaskModel,
+    AIModel, AIProviderPrice, AIRequestLog, TenantAISettings, TenantAITaskModel,
 )
 
 
@@ -18,6 +18,35 @@ class AIModelAdmin(ModelAdmin):
         'is_active', 'is_pricing_verified',
     ]
     search_fields = ['display_name', 'external_id']
+
+
+@admin.register(AIProviderPrice)
+class AIProviderPriceAdmin(ModelAdmin):
+    list_display = [
+        'model', 'currency', 'input_per_million',
+        'cached_read_per_million', 'cached_write_per_million',
+        'output_per_million', 'effective_from', 'created_at',
+    ]
+    list_filter = ['currency', 'model__provider']
+    search_fields = ['model__display_name', 'model__external_id']
+    readonly_fields = ['created_at']
+    date_hierarchy = 'effective_from'
+
+    def get_readonly_fields(self, request, obj=None):
+        if obj:
+            return [
+                'model', 'currency', 'input_per_million',
+                'cached_read_per_million', 'cached_write_per_million',
+                'output_per_million', 'effective_from', 'source_url',
+                'notes', 'created_at',
+            ]
+        return self.readonly_fields
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(TenantAISettings)

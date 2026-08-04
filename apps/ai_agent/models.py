@@ -1,6 +1,9 @@
-from decimal import Decimal, ROUND_UP
+from decimal import Decimal, ROUND_HALF_UP, ROUND_UP
 
+from django.core.exceptions import ValidationError
+from django.core.validators import RegexValidator
 from django.db import models
+from django.utils import timezone
 
 from apps.ai_agent.provider_registry import provider_choices, provider_is_configured
 from apps.core.models import TimestampedModel
@@ -129,6 +132,145 @@ class AIModel(TimestampedModel):
             input_tokens=input_tokens,
             output_tokens=output_tokens or self.max_output_tokens,
         )
+
+    def provider_price_at(self, at=None):
+        """Возвращает последнюю вступившую в силу цену провайдера."""
+        return self.provider_prices.effective_at(at)
+
+
+class AIProviderPriceQuerySet(models.QuerySet):
+    def effective_at(self, at=None):
+        at = at or timezone.now()
+        return self.filter(effective_from__lte=at).order_by(
+            '-effective_from', '-pk',
+        ).first()
+
+    def update(self, **kwargs):
+        raise ValidationError(
+            'Версии цен неизменяемы. Создайте новую запись с новой датой.',
+        )
+
+    def delete(self):
+        raise ValidationError('Исторические версии цен нельзя удалять.')
+
+
+class AIProviderPrice(models.Model):
+    """Неизменяемая версия фактической цены AI-провайдера за 1 млн токенов."""
+
+    model = models.ForeignKey(
+        AIModel,
+        on_delete=models.PROTECT,
+        related_name='provider_prices',
+    )
+    currency = models.CharField(
+        max_length=3,
+        default='USD',
+        validators=[
+            RegexValidator(
+                regex=r'^[A-Z]{3}$',
+                message='Валюта должна быть трёхбуквенным кодом ISO 4217.',
+            ),
+        ],
+    )
+    input_per_million = models.DecimalField(
+        max_digits=20, decimal_places=8, default=Decimal('0'),
+    )
+    cached_read_per_million = models.DecimalField(
+        max_digits=20, decimal_places=8, default=Decimal('0'),
+    )
+    cached_write_per_million = models.DecimalField(
+        max_digits=20, decimal_places=8, default=Decimal('0'),
+    )
+    output_per_million = models.DecimalField(
+        max_digits=20, decimal_places=8, default=Decimal('0'),
+    )
+    effective_from = models.DateTimeField(db_index=True)
+    source_url = models.URLField(blank=True)
+    notes = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    objects = AIProviderPriceQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = 'Цена AI-провайдера'
+        verbose_name_plural = 'Цены AI-провайдеров'
+        ordering = ['-effective_from', '-pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['model', 'effective_from'],
+                name='unique_ai_model_price_effective_from',
+            ),
+            models.CheckConstraint(
+                check=models.Q(input_per_million__gte=0),
+                name='ai_price_input_nonnegative',
+            ),
+            models.CheckConstraint(
+                check=models.Q(cached_read_per_million__gte=0),
+                name='ai_price_cached_read_nonnegative',
+            ),
+            models.CheckConstraint(
+                check=models.Q(cached_write_per_million__gte=0),
+                name='ai_price_cached_write_nonnegative',
+            ),
+            models.CheckConstraint(
+                check=models.Q(output_per_million__gte=0),
+                name='ai_price_output_nonnegative',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['model', '-effective_from'],
+                name='ai_price_model_effective_idx',
+            ),
+            models.Index(fields=['currency'], name='ai_price_currency_idx'),
+        ]
+
+    def __str__(self):
+        return (
+            f'{self.model.external_id}: {self.currency}, '
+            f'с {self.effective_from.isoformat()}'
+        )
+
+    def save(self, *args, **kwargs):
+        if self.pk and type(self).objects.filter(pk=self.pk).exists():
+            raise ValidationError(
+                'Версия цены неизменяема. Создайте новую запись с новой датой.',
+            )
+        self.full_clean()
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('Исторические версии цен нельзя удалять.')
+
+    def calculate_cost(
+        self,
+        *,
+        input_tokens: int,
+        output_tokens: int,
+        cached_read_tokens: int = 0,
+        cached_write_tokens: int = 0,
+    ) -> Decimal:
+        total_input_tokens = max(0, input_tokens)
+        cached_read_tokens = max(
+            0, min(total_input_tokens, cached_read_tokens),
+        )
+        cached_write_tokens = max(
+            0,
+            min(
+                total_input_tokens - cached_read_tokens,
+                cached_write_tokens,
+            ),
+        )
+        uncached_input_tokens = (
+            total_input_tokens - cached_read_tokens - cached_write_tokens
+        )
+        cost = (
+            Decimal(uncached_input_tokens) * self.input_per_million
+            + Decimal(cached_read_tokens) * self.cached_read_per_million
+            + Decimal(cached_write_tokens) * self.cached_write_per_million
+            + Decimal(max(0, output_tokens)) * self.output_per_million
+        ) / Decimal('1000000')
+        return cost.quantize(Decimal('0.00000001'), rounding=ROUND_HALF_UP)
 
 
 class TenantAISettings(TimestampedModel):
