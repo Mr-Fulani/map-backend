@@ -17,6 +17,8 @@ class ProductAIEnrichmentContext:
 
     trusted_lines: list[str] = field(default_factory=list)
     cautious_lines: list[str] = field(default_factory=list)
+    trusted_fitments: list[dict] = field(default_factory=list)
+    cautious_vehicle_makes: list[str] = field(default_factory=list)
     excluded_review_count: int = 0
 
     @property
@@ -42,6 +44,8 @@ class ProductAIEnrichmentContext:
         return {
             'trusted_facts': self.trusted_lines,
             'cautious_facts': self.cautious_lines,
+            'trusted_fitments': self.trusted_fitments,
+            'cautious_vehicle_makes': self.cautious_vehicle_makes,
             'excluded_review_count': self.excluded_review_count,
         }
 
@@ -53,7 +57,7 @@ class ProductAIEnrichmentContextBuilder:
         context = ProductAIEnrichmentContext()
         attributes = list(product.attributes.all().order_by('name')[:12])
         cross_codes = list(product.cross_codes.all().order_by('manufacturer', 'code')[:20])
-        fitments = list(product.fitments.all().order_by('make', 'model', 'generation')[:30])
+        fitments = list(product.fitments.all().order_by('make', 'model', 'generation')[:50])
         facts = list(product.enrichment_facts.all().order_by('fact_type', 'name')[:30])
 
         self._add_attributes(context, attributes)
@@ -74,6 +78,7 @@ class ProductAIEnrichmentContextBuilder:
             return
         vehicle_makes = self.extract_vehicle_makes_from_cross_codes(cross_codes)
         if vehicle_makes:
+            context.cautious_vehicle_makes.extend(vehicle_makes)
             context.cautious_lines.append(
                 'Вероятные марки авто по OEM/Cross: '
                 + ', '.join(vehicle_makes)
@@ -97,11 +102,23 @@ class ProductAIEnrichmentContextBuilder:
 
         values = []
         for item in trusted_fitments:
+            context.trusted_fitments.append({
+                'make': item.make,
+                'model': item.model,
+                'generation': item.generation,
+                'date_from': item.date_from,
+                'date_to': item.date_to,
+                'modification': item.modification,
+                'engine_code': item.engine_code,
+                'power_hp': item.power_hp,
+            })
             parts = [
                 item.make,
                 item.model,
                 item.generation,
+                '-'.join(filter(None, [item.date_from, item.date_to])),
                 item.modification,
+                item.engine_code,
                 f'{item.power_hp} л.с.' if item.power_hp else '',
             ]
             values.append(' '.join(part for part in parts if part))

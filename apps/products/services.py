@@ -1675,6 +1675,31 @@ class ProductKnowledgeGraphService:
             )
 
     @classmethod
+    def learn_approved_fitment(cls, product: Product, fitment: VehicleFitment) -> None:
+        """Promote a human-approved product fitment into reusable platform knowledge."""
+        if not product.brand or not normalize_part_code(product.article) or not fitment.model:
+            return
+        part = cls.upsert_part(
+            brand=product.brand,
+            article=product.article,
+            title=product.name,
+            source_id='human_review',
+            source_url=fitment.source_url,
+            confidence=1.0,
+            needs_review=False,
+        )
+        approved = cls.upsert_fitment(
+            part=part,
+            fitment=fitment,
+            source_id='human_review',
+            source_url=fitment.source_url,
+        )
+        if approved.needs_review or approved.confidence < 1.0:
+            approved.needs_review = False
+            approved.confidence = 1.0
+            approved.save(update_fields=['needs_review', 'confidence', 'updated_at'])
+
+    @classmethod
     def apply_known_relations_to_product(cls, product: Product) -> int:
         source_part = GlobalPart.objects.filter(
             normalized_brand=cls.normalize_brand(product.brand),

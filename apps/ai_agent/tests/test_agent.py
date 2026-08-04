@@ -254,6 +254,17 @@ class TestDescriptionAgent:
         payload = json.loads(message)
         assert payload['task'] == 'marketplace_product_description'
         assert 'trusted_facts' in payload['enrichment']
+        assert payload['enrichment']['trusted_fitments'] == [{
+            'make': 'MERCEDES-BENZ',
+            'model': 'E-CLASS',
+            'generation': 'W213',
+            'date_from': '',
+            'date_to': '',
+            'modification': 'E 220 d',
+            'engine_code': '',
+            'power_hp': 194,
+        }]
+        assert payload['enrichment']['cautious_vehicle_makes'] == ['MERCEDES-BENZ']
         assert 'Ширина: 114 мм' in message
         assert 'Вероятные марки авто по OEM/Cross: MERCEDES-BENZ' in message
         assert 'MERCEDES-BENZ: A0004206000' in message
@@ -290,6 +301,33 @@ class TestDescriptionAgent:
         assert 'MERCEDES-BENZ E-CLASS W213' in message
         assert 'BMW 5 G30' not in message
         assert json.loads(message)['enrichment']['excluded_review_count'] == 1
+
+    def test_required_fitments_rejects_description_that_drops_one_vehicle(self):
+        tenant = make_tenant('required-fitments-agent-co')
+        product = make_product(tenant)
+        ProductEnrichmentService.create_fitment(
+            tenant=tenant, product=product, make='MERCEDES-BENZ',
+            model='E-CLASS', generation='W213', confidence=0.95,
+        )
+        ProductEnrichmentService.create_fitment(
+            tenant=tenant, product=product, make='BMW',
+            model='5 SERIES', generation='G30', confidence=0.95,
+        )
+        result = {
+            'title': 'Тормозной диск Bosch ART-001 для Mercedes-Benz E-Class W213',
+            'description': 'Подходит к автомобилю Mercedes-Benz E-Class W213.',
+        }
+
+        with pytest.raises(ValidationError, match='BMW 5 SERIES'):
+            DescriptionAgent._validate_required_fitments(product, result)
+
+        result['description'] += ' Также подходит для BMW 5 Series G30.'
+        DescriptionAgent._validate_required_fitments(product, result)
+
+        result['title'] = 'Тормозной диск Bosch ART-001 для нескольких автомобилей'
+        result['description'] = 'Подходит для Mercedes-Benz E-Class и BMW 5 Series G30.'
+        with pytest.raises(ValidationError, match='MERCEDES-BENZ E-CLASS W213'):
+            DescriptionAgent._validate_required_fitments(product, result)
 
     def test_build_message_includes_only_trusted_enrichment_facts(self):
         tenant = make_tenant('trusted-facts-agent-co')
@@ -393,7 +431,11 @@ class TestDescriptionAgent:
 
         with patch(
             'apps.ai_agent.services.call_model',
-            return_value=_provider_response(VALID_RESPONSE),
+            return_value=_provider_response(json.dumps({
+                'title': 'Тормозной диск Bosch ART-001 для Mercedes-Benz E-Class W213',
+                'description': 'Подходит для Mercedes-Benz E-Class поколения W213.',
+                'confidence': 0.9,
+            })),
         ) as mock_provider:
             result = generate_description_task(product.pk)
 

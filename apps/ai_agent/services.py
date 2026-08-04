@@ -77,6 +77,7 @@ class DescriptionAgent:
                     )
                     result = validate_json_response(provider_result.text)
                     self._validate_required_identity(product, result)
+                    self._validate_required_fitments(product, result)
                 except (BannedWordsError, VagueFitmentError, ValidationError) as exc:
                     AIWalletService.release(
                         tenant, reservation, reason='validation_rejected',
@@ -210,6 +211,39 @@ class DescriptionAgent:
             raise ValidationError('Ответ потерял артикул товара.')
         if brand and brand not in combined:
             raise ValidationError('Ответ потерял бренд товара.')
+
+    @staticmethod
+    def _validate_required_fitments(product, result: dict) -> None:
+        """Do not accept an answer that drops confirmed vehicle compatibility."""
+        context = ProductAIEnrichmentContextBuilder().build(product)
+        if not context.trusted_fitments:
+            return
+
+        combined = ''.join(
+            character for character in f'{result["title"]} {result["description"]}'.casefold()
+            if character.isalnum()
+        )
+        missing = []
+        seen = set()
+        for fitment in context.trusted_fitments:
+            make = str(fitment.get('make') or '').strip()
+            model = str(fitment.get('model') or '').strip()
+            generation = str(fitment.get('generation') or '').strip()
+            key = (make.casefold(), model.casefold(), generation.casefold())
+            if key in seen:
+                continue
+            seen.add(key)
+            required = [value for value in [make, model, generation] if value]
+            if any(
+                ''.join(char for char in value.casefold() if char.isalnum()) not in combined
+                for value in required
+            ):
+                missing.append(' '.join(required))
+        if missing:
+            raise ValidationError(
+                'Ответ потерял подтверждённую применяемость: '
+                + ', '.join(missing[:10])
+            )
 
     @staticmethod
     def calculate_grounding_confidence(product) -> float:

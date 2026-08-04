@@ -41,7 +41,7 @@ def test_prompt_router_prefers_exact_catalog_domain(prompt_product):
 
     assert selection.template is not None
     assert selection.template.catalog_domain == 'auto_parts'
-    assert selection.version == 'db-v2'
+    assert selection.version == 'db-v3'
 
 
 @pytest.mark.django_db

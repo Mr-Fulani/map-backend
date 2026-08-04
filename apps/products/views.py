@@ -29,7 +29,7 @@ from apps.products.serializers import (
 from apps.products.services import (
     AutoPartsEnrichmentDisabled, ProductBrandService, ProductBulkActionService,
     ProductCategorySeedService, ProductEnrichmentService, ProductIsNotAutoPart,
-    ProductService,
+    ProductKnowledgeGraphService, ProductService,
 )
 from apps.marketplaces.models import Listing
 from apps.products.tasks import import_from_datasource, sync_product_listings_task
@@ -1160,6 +1160,8 @@ class ProductReviewQueueActionView(APIView):
             item = get_object_or_404(VehicleFitment, pk=record_id, tenant=request.tenant)
             review_status = ReviewStatus.APPROVED if action == 'approve' else ReviewStatus.REJECTED
             _set_review_state(item, request, review_status)
+            if review_status == ReviewStatus.APPROVED:
+                ProductKnowledgeGraphService.learn_approved_fitment(item.product, item)
             ProductEnrichmentService.refresh_product_denormalized_enrichment(item.product)
             item.product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability', 'updated_at'])
             return Response({'status': 'ok', 'data': _serialize_review_item(item_type, item)})
@@ -1198,6 +1200,7 @@ class ProductFitmentReviewView(APIView):
         fitment = get_object_or_404(VehicleFitment, pk=fitment_id, tenant=request.tenant, product=product)
         if action == 'approve':
             _set_review_state(fitment, request, ReviewStatus.APPROVED)
+            ProductKnowledgeGraphService.learn_approved_fitment(product, fitment)
         elif action == 'reject':
             _set_review_state(fitment, request, ReviewStatus.REJECTED)
         else:
