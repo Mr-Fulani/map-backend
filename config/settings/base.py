@@ -120,6 +120,37 @@ UNFOLD = {
                 ],
             },
             {
+                "title": "AI и генерация",
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "Шаблоны промптов",
+                        "icon": "description",
+                        "link": "/admin/ai_agent/aiprompttemplate/",
+                    },
+                    {
+                        "title": "AI-модели",
+                        "icon": "smart_toy",
+                        "link": "/admin/ai_agent/aimodel/",
+                    },
+                    {
+                        "title": "Настройки AI тенантов",
+                        "icon": "tune",
+                        "link": "/admin/ai_agent/tenantaisettings/",
+                    },
+                    {
+                        "title": "AI-запросы",
+                        "icon": "history",
+                        "link": "/admin/ai_agent/airequestlog/",
+                    },
+                    {
+                        "title": "Цены AI-провайдеров",
+                        "icon": "price_change",
+                        "link": "/admin/ai_agent/aiproviderprice/",
+                    },
+                ],
+            },
+            {
                 "title": "Товары и маркетплейсы",
                 "collapsible": True,
                 "items": [

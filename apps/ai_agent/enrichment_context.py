@@ -38,6 +38,13 @@ class ProductAIEnrichmentContext:
             )
         return lines
 
+    def to_prompt_payload(self) -> dict:
+        return {
+            'trusted_facts': self.trusted_lines,
+            'cautious_facts': self.cautious_lines,
+            'excluded_review_count': self.excluded_review_count,
+        }
+
 
 class ProductAIEnrichmentContextBuilder:
     """Собирает trusted/cautious/review факты из tenant-scoped enrichment данных."""

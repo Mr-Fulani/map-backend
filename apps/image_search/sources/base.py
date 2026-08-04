@@ -32,6 +32,7 @@ class BaseImageSource(ABC):
     tier: int = 99                    # Приоритет (меньше = выше)
     is_free: bool = True              # False = платный API
     requires_key: bool = False        # Нужен ли API-ключ
+    max_queries: int = 1              # Сколько первых запросов источник реально выполняет
 
     def __init__(self, product):
         """Инициализация с товаром для поиска.

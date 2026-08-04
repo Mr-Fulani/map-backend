@@ -1,6 +1,8 @@
-DESCRIPTION_PROMPT_VERSION = 'description-v2'
-GENERIC_DESCRIPTION_PROMPT_VERSION = 'generic-description-v1'
+from django.db import migrations
 
+
+# Keep migration data self-contained: later edits to runtime prompts must not
+# silently change what a fresh installation receives for these versions.
 DESCRIPTION_OUTPUT_SCHEMA = {
     'type': 'object',
     'additionalProperties': False,
@@ -56,3 +58,60 @@ GENERIC_SYSTEM_PROMPT = (
     "Верни только JSON с ключами title, description, confidence. confidence — "
     "предварительная оценка полноты от 0 до 1; сервер пересчитает итоговое значение."
 )
+
+
+def seed_prompts(apps, schema_editor):
+    AIPromptTemplate = apps.get_model('ai_agent', 'AIPromptTemplate')
+    prompts = [
+        {
+            'catalog_domain': 'auto_parts',
+            'version': 2,
+            'name': 'Avito — автозапчасти',
+            'system_prompt': SYSTEM_PROMPT,
+            'change_notes': (
+                'Структурированный вход, защита недоверенных данных, '
+                'релевантные факты вместо механического перечисления.'
+            ),
+        },
+        {
+            'catalog_domain': '',
+            'version': 1,
+            'name': 'Avito — универсальные товары',
+            'system_prompt': GENERIC_SYSTEM_PROMPT,
+            'change_notes': 'Безопасный универсальный шаблон для неавтомобильных доменов.',
+        },
+    ]
+    for item in prompts:
+        AIPromptTemplate.objects.get_or_create(
+            task_type='description_generation',
+            catalog_domain=item['catalog_domain'],
+            marketplace='avito',
+            version=item['version'],
+            defaults={
+                'name': item['name'],
+                'system_prompt': item['system_prompt'],
+                'output_schema': DESCRIPTION_OUTPUT_SCHEMA,
+                'is_active': True,
+                'change_notes': item['change_notes'],
+            },
+        )
+
+
+def unseed_prompts(apps, schema_editor):
+    AIPromptTemplate = apps.get_model('ai_agent', 'AIPromptTemplate')
+    AIPromptTemplate.objects.filter(
+        task_type='description_generation',
+        marketplace='avito',
+        catalog_domain__in=['auto_parts', ''],
+    ).delete()
+
+
+class Migration(migrations.Migration):
+
+    dependencies = [
+        ('ai_agent', '0007_aiprompttemplate_airequestlog_prompt_hash_and_more'),
+    ]
+
+    operations = [
+        migrations.RunPython(seed_prompts, unseed_prompts),
+    ]

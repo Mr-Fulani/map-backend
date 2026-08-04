@@ -15,6 +15,7 @@ from django.utils.timezone import now
 from apps.image_search.models import ImageSearchCache, ImageSearchLog
 from apps.image_search.services.quality import score
 from apps.image_search.services.candidate_filter import candidate_metadata_assessment
+from apps.image_search.services.query_builder import QUERY_BUILDER_VERSION
 from apps.image_search.sources.registry import get_active_sources
 from apps.products.models import ProductImage
 from apps.products.storage import PhotoUploadPipeline
@@ -106,12 +107,13 @@ def run_for_product(product) -> list[ProductImage]:
 
         t0 = time.monotonic()
         candidates = []
+        queries = []
         primary_query = ''
         primary_confidence = ''
         error = ''
 
         try:
-            queries = source.build_queries()
+            queries = source.build_queries()[:source.max_queries]
             if queries:
                 primary_query, primary_confidence = queries[0]
             candidates = source.search()
@@ -120,6 +122,20 @@ def run_for_product(product) -> list[ProductImage]:
             logger.warning(f'[pipeline] {source.source_id} ошибка: {exc}')
 
         duration_ms = int((time.monotonic() - t0) * 1000)
+        query_metrics = {
+            query: {
+                'query': query,
+                'confidence': confidence,
+                'results_count': 0,
+                'metadata_pass_count': 0,
+                'accepted_count': 0,
+            }
+            for query, confidence in queries
+        }
+        for candidate in candidates:
+            query = candidate.raw_meta.get('query', '')
+            if query in query_metrics:
+                query_metrics[query]['results_count'] += 1
 
         # Search metadata is a cheap deterministic gate; semantic validation is a
         # separate provider-backed stage and can be added without changing sources.
@@ -131,6 +147,9 @@ def run_for_product(product) -> list[ProductImage]:
             c.raw_meta['assessment_reasons'] = reasons
             if allowed:
                 filtered_candidates.append(c)
+                query = c.raw_meta.get('query', '')
+                if query in query_metrics:
+                    query_metrics[query]['metadata_pass_count'] += 1
             else:
                 rejected_assessments.append(c)
 
@@ -191,6 +210,9 @@ def run_for_product(product) -> list[ProductImage]:
 
             saved.append(pi)
             accepted += 1
+            query = candidate.raw_meta.get('query', '')
+            if query in query_metrics:
+                query_metrics[query]['accepted_count'] += 1
 
             _record_candidate_assessments(
                 product, [candidate], verdict='review', product_image=pi,
@@ -207,6 +229,8 @@ def run_for_product(product) -> list[ProductImage]:
             accepted_count=accepted,
             duration_ms=duration_ms,
             error=error,
+            query_metrics=list(query_metrics.values()),
+            query_builder_version=QUERY_BUILDER_VERSION,
         )
 
     # Обновляем кеш. Пустой результат кешируем на 1 час чтобы не блокировать повторные попытки.

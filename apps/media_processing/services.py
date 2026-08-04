@@ -30,6 +30,7 @@ from apps.media_processing.providers.registry import (
     get_media_provider,
     list_media_providers,
 )
+from apps.media_processing.prompts import build_product_media_prompt
 
 
 GENERATIVE_OPERATIONS = {
@@ -124,6 +125,13 @@ def create_processing_job(
         raise ValueError('Генеративные операции отключены в настройках тенанта.')
 
     effective_parameters = {**(preset.parameters if preset else {}), **(parameters or {})}
+    if set(map(MediaOperation, normalized_operations)) & GENERATIVE_OPERATIONS:
+        effective_parameters.pop('generation_prompt', None)
+        effective_parameters.pop('negative_prompt', None)
+        effective_parameters.update(build_product_media_prompt(
+            product_image.product,
+            str(effective_parameters.get('background_style') or 'white_studio'),
+        ))
     defaults = {
         'product_image': product_image,
         'preset': preset,

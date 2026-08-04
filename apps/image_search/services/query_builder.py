@@ -7,6 +7,9 @@
 import re
 
 
+QUERY_BUILDER_VERSION = 'v3'
+
+
 def build_queries(product) -> list[tuple[str, str]]:
     """Формирует поисковые запросы с уровнем уверенности.
 
@@ -28,28 +31,64 @@ def build_queries(product) -> list[tuple[str, str]]:
     # Наиболее конкретный доступный уровень категории для уточнения запросов
     cat_hint = subcategory or category
 
-    # Q1: Артикул + производитель — самый точный
+    desc_words = _extract_keywords(nom, max_words=4)
+
+    # Q1/Q2 deliberately contain identity and product context together. Search
+    # providers currently execute only the first few queries, so weaker context
+    # must not be deferred to the end of the list.
     if pn and not _is_unreliable_article(pn, mfr):
-        queries.append((f'{pn} {mfr}'.strip(), 'HIGH'))
-        # Q1b: артикул + конкретная категория вместо generic "автозапчасть"
-        hint = cat_hint or 'автозапчасть'
-        queries.append((f'{pn} {hint}', 'HIGH'))
+        quoted_pn = f'"{pn}"'
+        queries.append((
+            ' '.join(filter(None, [mfr, quoted_pn, cat_hint or 'автозапчасть'])),
+            'HIGH',
+        ))
+        queries.append((
+            ' '.join(filter(None, [mfr, quoted_pn, desc_words, cat_hint])),
+            'HIGH',
+        ))
 
     # Q2: Очищенный артикул (без спецсимволов)
     clean_pn = re.sub(r'[^A-Za-z0-9]', '', pn)
     if clean_pn and clean_pn != pn:
-        queries.append((f'{clean_pn} {mfr}'.strip(), 'MEDIUM'))
+        queries.append((
+            ' '.join(filter(None, [mfr, clean_pn, cat_hint or desc_words])),
+            'MEDIUM',
+        ))
 
-    # Q3: Производитель + ключевые слова названия + категория
-    desc_words = _extract_keywords(nom, max_words=5)
+    # Q3: fallback for unreliable/missing articles and an additional diagnostic query.
     if desc_words:
         ctx = ' '.join(filter(None, [mfr, desc_words, cat_hint]))
         queries.append((ctx, 'LOW'))
-        hint2 = cat_hint or ''
-        queries.append((f'{desc_words} {hint2}'.strip() if hint2 else desc_words, 'LOW'))
+
+    for cross_code in _trusted_cross_codes(product)[:2]:
+        queries.append((
+            ' '.join(filter(None, [mfr, f'"{cross_code}"', cat_hint or desc_words])),
+            'MEDIUM',
+        ))
 
     fallback = f'{nom} {cat_hint}'.strip() if cat_hint else nom
-    return queries or [(fallback, 'LOW')]
+    return _deduplicate_queries(queries) or [(fallback, 'LOW')]
+
+
+def _trusted_cross_codes(product) -> list[str]:
+    manager = getattr(product, 'cross_codes', None)
+    if manager is None or not hasattr(manager, 'filter'):
+        return []
+    return list(
+        manager.exclude(code='')
+        .values_list('code', flat=True)[:2]
+    )
+
+
+def _deduplicate_queries(queries: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    result = []
+    seen = set()
+    for query, confidence in queries:
+        normalized = ' '.join(query.split()).casefold()
+        if normalized and normalized not in seen:
+            result.append((' '.join(query.split()), confidence))
+            seen.add(normalized)
+    return result
 
 
 def _get_category_context(product) -> tuple[str, str]:

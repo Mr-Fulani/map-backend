@@ -12,7 +12,8 @@ class ImageSearchLogAdmin(admin.ModelAdmin):
     list_filter = ('source_id', 'confidence', 'created_at')
     search_fields = ('query', 'product__article', 'product__name')
     readonly_fields = ('tenant', 'product', 'source_id', 'query', 'confidence',
-                       'results_count', 'accepted_count', 'duration_ms', 'error', 'created_at')
+                       'results_count', 'accepted_count', 'duration_ms', 'error',
+                       'query_metrics', 'query_builder_version', 'created_at')
     date_hierarchy = 'created_at'
 
     def has_add_permission(self, request):

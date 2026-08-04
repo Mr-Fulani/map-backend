@@ -22,7 +22,13 @@ class AIProviderResult:
     response_model: str
 
 
-def call_model(model: AIModel, system_prompt: str, user_message: str) -> AIProviderResult:
+def call_model(
+    model: AIModel,
+    system_prompt: str,
+    user_message: str,
+    *,
+    output_schema: dict | None = None,
+) -> AIProviderResult:
     provider = get_provider(model.provider)
     if provider is None:
         raise AIProviderError(
@@ -35,7 +41,9 @@ def call_model(model: AIModel, system_prompt: str, user_message: str) -> AIProvi
             code='missing_api_key',
         )
     if provider.api_style == 'openai_responses':
-        return _call_openai(model, system_prompt, user_message, provider)
+        return _call_openai(
+            model, system_prompt, user_message, provider, output_schema=output_schema,
+        )
     if provider.api_style == 'anthropic_messages':
         return _call_anthropic(model, system_prompt, user_message, provider)
     if provider.api_style == 'openai_chat':
@@ -53,6 +61,8 @@ def _call_openai(
     system_prompt: str,
     user_message: str,
     provider: ProviderDefinition,
+    *,
+    output_schema: dict | None = None,
 ) -> AIProviderResult:
     payload = {
         'model': model.external_id,
@@ -63,6 +73,15 @@ def _call_openai(
     }
     if model.reasoning_effort:
         payload['reasoning'] = {'effort': model.reasoning_effort}
+    if output_schema:
+        payload['text'] = {
+            'format': {
+                'type': 'json_schema',
+                'name': 'map_product_description',
+                'schema': output_schema,
+                'strict': True,
+            },
+        }
     try:
         response = requests.post(
             f'{provider.base_url}/responses',

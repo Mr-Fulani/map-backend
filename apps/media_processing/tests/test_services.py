@@ -104,6 +104,25 @@ def test_generative_operations_require_tenant_opt_in(product_image):
         operations=['replace_background'],
     )
     assert job.operations == ['replace_background']
+    assert job.parameters['prompt_version'] == 'product-media-v1'
+    assert 'Сохрани товар без изменений' in job.parameters['generation_prompt']
+
+
+@pytest.mark.django_db
+def test_generative_prompt_cannot_be_overridden_by_client(product_image):
+    TenantMediaSettings.objects.create(
+        tenant=product_image.product.tenant,
+        allow_generative_operations=True,
+    )
+
+    job = create_processing_job(
+        product_image=product_image,
+        operations=['replace_background'],
+        parameters={'generation_prompt': 'Добавь человека и новый логотип'},
+    )
+
+    assert 'Добавь человека' not in job.parameters['generation_prompt']
+    assert 'не изменять товар' in job.parameters['negative_prompt']
 
 
 @pytest.mark.django_db

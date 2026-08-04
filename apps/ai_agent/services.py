@@ -1,3 +1,4 @@
+import json
 import time
 from decimal import Decimal
 
@@ -5,7 +6,7 @@ from django.db.models import F
 
 from apps.ai_agent.enrichment_context import ProductAIEnrichmentContextBuilder
 from apps.ai_agent.models import AIRequestLog, AITaskType
-from apps.ai_agent.prompts import SYSTEM_PROMPT
+from apps.ai_agent.prompting import PromptSelection, resolve_description_prompt
 from apps.ai_agent.providers import AIProviderError, call_model
 from apps.ai_agent.routing import AIModelRouter
 from apps.ai_agent.validators import (
@@ -37,11 +38,17 @@ class DescriptionAgent:
 
         candidates = AIModelRouter.candidates(tenant, self.task_type)
         last_error = None
+        previous_validation_error = ''
+        prompt = resolve_description_prompt(product)
         for candidate_index, model in enumerate(candidates):
             attempts = MAX_VALIDATION_RETRIES if candidate_index == 0 else 1
             for _attempt in range(attempts):
-                message = self._build_message(product, variation_index)
-                estimated_input = max(1, (len(SYSTEM_PROMPT) + len(message)) // 4)
+                message = self._build_message(
+                    product,
+                    variation_index,
+                    previous_validation_error=previous_validation_error,
+                )
+                estimated_input = max(1, (len(prompt.system_prompt) + len(message)) // 4)
                 estimated_credits = model.estimate_credits(
                     estimated_input,
                     model.max_output_tokens,
@@ -62,8 +69,14 @@ class DescriptionAgent:
 
                 started = time.monotonic()
                 try:
-                    provider_result = call_model(model, SYSTEM_PROMPT, message)
+                    provider_result = call_model(
+                        model,
+                        prompt.system_prompt,
+                        message,
+                        output_schema=prompt.output_schema,
+                    )
                     result = validate_json_response(provider_result.text)
+                    self._validate_required_identity(product, result)
                 except (BannedWordsError, VagueFitmentError, ValidationError) as exc:
                     AIWalletService.release(
                         tenant, reservation, reason='validation_rejected',
@@ -75,8 +88,10 @@ class DescriptionAgent:
                         duration_ms=self._duration_ms(started),
                         error_code='validation_rejected',
                         error_message=str(exc),
+                        prompt_selection=prompt,
                     )
                     variation_index += 1
+                    previous_validation_error = str(exc)
                     last_error = str(exc)
                     continue
                 except AIProviderError as exc:
@@ -90,6 +105,7 @@ class DescriptionAgent:
                         duration_ms=self._duration_ms(started),
                         error_code=exc.code,
                         error_message=str(exc),
+                        prompt_selection=prompt,
                     )
                     last_error = str(exc)
                     break
@@ -104,6 +120,7 @@ class DescriptionAgent:
                         duration_ms=self._duration_ms(started),
                         error_code='unexpected_error',
                         error_message=str(exc),
+                        prompt_selection=prompt,
                     )
                     last_error = str(exc)
                     break
@@ -136,9 +153,13 @@ class DescriptionAgent:
                     cached_input_tokens=provider_result.cached_input_tokens,
                     output_tokens=provider_result.output_tokens,
                     charged_credits=charged,
+                    prompt_selection=prompt,
                 )
+                result['model_confidence'] = result['confidence']
+                result['confidence'] = self.calculate_grounding_confidence(product)
                 result['provider'] = model.provider
                 result['model'] = model.external_id
+                result['prompt_version'] = prompt.version
                 result['charged_credits'] = str(charged)
                 return result
 
@@ -146,43 +167,68 @@ class DescriptionAgent:
             raise AICreditsExhausted(last_error)
         raise RuntimeError(f'AI-модели не смогли сгенерировать описание: {last_error}')
 
-    def _build_message(self, product, variation_index: int = 0) -> str:
-        """Формирует текст запроса к модели из полей товара."""
+    def _build_message(
+        self,
+        product,
+        variation_index: int = 0,
+        *,
+        previous_validation_error: str = '',
+    ) -> str:
+        """Serialize untrusted catalogue data instead of mixing it with instructions."""
         enrichment_context = ProductAIEnrichmentContextBuilder().build(product)
-        lines = [
-            f'Артикул: {product.article}',
-            f'Название: {product.name}',
-            f'Бренд: {product.brand}' if product.brand else '',
-            f'Категория: {product.category_1c}' if product.category_1c else '',
-            f'Состояние: {product.get_condition_display()}',
-        ]
-        if product.description_1c:
-            lines.append(f'Описание из 1С: {product.description_1c}')
-        if enrichment_context.has_context:
-            lines.extend([
-                '',
-                'Данные обогащения из каталогов:',
-                *enrichment_context.to_prompt_lines(),
-                (
-                    'Используй эти данные как факты. Если есть строка "Подходит к автомобилям", '
-                    'обязательно укажи эти автомобили в первом абзаце: марка, модель, поколение '
-                    'и модификация, если они переданы.'
-                ),
-                (
-                    'Фразу "также подходит" используй только для автомобилей из строки '
-                    '"Подходит к автомобилям".'
-                ),
-                (
-                    'Если есть только строка "Вероятные марки авто по OEM/Cross", можно указать '
-                    'только эти марки и написать, что совместимость нужно сверить по OEM/Cross. '
-                    'Модели и поколения не придумывай.'
-                ),
-            ])
-        if variation_index > 0:
-            lines.append(
-                f'\nЭто вариант #{variation_index + 1}. Используй другую структуру первого абзаца.'
-            )
-        return '\n'.join(line for line in lines if line)
+        payload = {
+            'task': 'marketplace_product_description',
+            'product_data': {
+                'article': product.article,
+                'name': product.name,
+                'brand': product.brand,
+                'category': product.category_1c,
+                'condition': product.get_condition_display(),
+                'description_1c': (product.description_1c or '')[:5000],
+            },
+            'enrichment': enrichment_context.to_prompt_payload(),
+            'variation': variation_index + 1,
+        }
+        if previous_validation_error:
+            payload['retry_feedback'] = {
+                'previous_response_rejected': True,
+                'reason': previous_validation_error[:500],
+                'required_action': 'Исправь указанную ошибку, сохранив только подтверждённые факты.',
+            }
+        return json.dumps(payload, ensure_ascii=False, separators=(',', ':'))
+
+    @staticmethod
+    def _validate_required_identity(product, result: dict) -> None:
+        combined = f'{result["title"]} {result["description"]}'.casefold()
+        normalized = ''.join(character for character in combined if character.isalnum())
+        article = ''.join(
+            character for character in str(product.article or '').casefold()
+            if character.isalnum()
+        )
+        brand = str(product.brand or '').strip().casefold()
+        if article and article not in normalized:
+            raise ValidationError('Ответ потерял артикул товара.')
+        if brand and brand not in combined:
+            raise ValidationError('Ответ потерял бренд товара.')
+
+    @staticmethod
+    def calculate_grounding_confidence(product) -> float:
+        """Confidence reflects source completeness, not the model's self-assessment."""
+        score = 0.35
+        score += 0.15 if product.article else 0
+        score += 0.10 if product.brand else 0
+        score += 0.05 if product.name else 0
+        score += 0.05 if product.category_1c or product.catalog_category_id else 0
+        score += 0.05 if product.description_1c else 0
+        score += 0.05 if product.attributes.exists() else 0
+        score += 0.05 if product.cross_codes.exists() else 0
+        score += 0.15 if product.fitments.filter(
+            needs_review=False, confidence__gte=0.8,
+        ).exists() else 0
+        score += 0.05 if product.enrichment_facts.filter(
+            needs_review=False, confidence__gte=0.8,
+        ).exists() else 0
+        return round(min(score, 0.98), 2)
 
     @staticmethod
     def _duration_ms(started: float) -> int:
@@ -201,6 +247,7 @@ class DescriptionAgent:
         charged_credits=ZERO_CREDITS,
         error_code='',
         error_message='',
+        prompt_selection: PromptSelection | None = None,
     ) -> None:
         AIRequestLog.objects.create(
             tenant=tenant,
@@ -215,6 +262,9 @@ class DescriptionAgent:
             duration_ms=duration_ms,
             error_code=error_code,
             error_message=error_message[:500],
+            prompt_template=prompt_selection.template if prompt_selection else None,
+            prompt_version=prompt_selection.version if prompt_selection else '',
+            prompt_hash=prompt_selection.sha256 if prompt_selection else '',
         )
 
     @staticmethod

@@ -76,3 +76,29 @@ def test_provider_without_key_is_rejected_before_request():
 
     assert error.value.code == 'missing_api_key'
     post.assert_not_called()
+
+
+def test_openai_responses_uses_json_schema_when_provided():
+    schema = {
+        'type': 'object',
+        'properties': {'title': {'type': 'string'}},
+        'required': ['title'],
+        'additionalProperties': False,
+    }
+    model = AIModel(
+        provider=AIModel.PROVIDER_OPENAI,
+        external_id='gpt-test',
+        display_name='GPT test',
+    )
+    response = Mock(status_code=200)
+    response.json.return_value = {
+        'model': 'gpt-test',
+        'output_text': '{"title":"ok"}',
+        'usage': {'input_tokens': 10, 'output_tokens': 5},
+    }
+
+    with override_settings(OPENAI_API_KEY='key'):
+        with patch('apps.ai_agent.providers.requests.post', return_value=response) as post:
+            call_model(model, 'system', 'user', output_schema=schema)
+
+    assert post.call_args.kwargs['json']['text']['format']['schema'] == schema
