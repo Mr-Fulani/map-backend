@@ -1266,6 +1266,12 @@ class ProductBulkActionService:
                 elif job.action == ProductBulkActionJob.Action.CLASSIFY_CATALOG_DOMAIN:
                     ProductEnrichmentService.classify_product_catalog_domain(product)
                     queued += 1
+                elif job.action == ProductBulkActionJob.Action.FIND_IMAGES:
+                    from apps.image_search.tasks import search_images_for_product
+                    transaction.on_commit(
+                        lambda pk=product.pk: search_images_for_product.delay(pk),
+                    )
+                    queued += 1
                 else:
                     job.skipped_count += 1
 

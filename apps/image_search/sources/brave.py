@@ -76,7 +76,7 @@ class BraveImageSource(BaseImageSource):
 
         for query, confidence in queries:
             results = self._fetch(api_key, query)
-            for r in results:
+            for rank, r in enumerate(results, start=1):
                 url = r.get('properties', {}).get('url', '')
                 if not url or url in seen_urls:
                     continue
@@ -92,6 +92,8 @@ class BraveImageSource(BaseImageSource):
                     raw_meta={
                         'confidence': confidence,
                         'title': r.get('title', ''),
+                        'query': query,
+                        'rank': rank,
                     },
                 ))
 

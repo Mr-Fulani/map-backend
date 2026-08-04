@@ -69,7 +69,8 @@ class ImageSearchView(APIView):
         from apps.image_search.models import ImageSearchCache
         from apps.image_search.tasks import search_images_for_product
         product = get_object_or_404(Product, pk=product_pk, tenant=request.tenant)
-        cache_key = f'img_search:{product.article}:{product.brand}'
+        from apps.image_search.services.pipeline import build_cache_key
+        cache_key = build_cache_key(product)
         ImageSearchCache.objects.filter(cache_key=cache_key).delete()
         task = search_images_for_product.delay(product.pk)
         return Response({'status': 'ok', 'data': {'task_id': task.id}})

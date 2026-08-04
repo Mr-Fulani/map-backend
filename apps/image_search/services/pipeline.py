@@ -6,6 +6,7 @@
 
 import logging
 import time
+import hashlib
 from datetime import timedelta
 
 from django.conf import settings
@@ -13,11 +14,27 @@ from django.utils.timezone import now
 
 from apps.image_search.models import ImageSearchCache, ImageSearchLog
 from apps.image_search.services.quality import score
+from apps.image_search.services.candidate_filter import candidate_metadata_assessment
 from apps.image_search.sources.registry import get_active_sources
 from apps.products.models import ProductImage
 from apps.products.storage import PhotoUploadPipeline
 
 logger = logging.getLogger(__name__)
+
+PIPELINE_VERSION = 'v2'
+
+
+def build_cache_key(product) -> str:
+    """Tenant/product/version scoped key; avoids cross-tenant and blank identity collisions."""
+    payload = '|'.join([
+        PIPELINE_VERSION,
+        str(product.tenant_id),
+        str(product.pk),
+        str(product.article or '').strip().upper(),
+        str(product.brand or '').strip().upper(),
+        str(product.catalog_category_id or ''),
+    ])
+    return f'img_search:{PIPELINE_VERSION}:{hashlib.sha256(payload.encode()).hexdigest()}'
 
 
 def run_for_product(product) -> list[ProductImage]:
@@ -43,7 +60,7 @@ def run_for_product(product) -> list[ProductImage]:
     min_score = cfg['MIN_QUALITY_SCORE']
     cache_ttl_days = cfg['CACHE_TTL_DAYS']
 
-    cache_key = f'img_search:{product.article}:{product.brand}'
+    cache_key = build_cache_key(product)
 
     # Ранний выход если кеш актуален
     if ImageSearchCache.objects.filter(cache_key=cache_key, expires_at__gt=now()).exists():
@@ -51,12 +68,24 @@ def run_for_product(product) -> list[ProductImage]:
         return []
 
     # Учитываем фото уже добавленные парсерами — не превышаем общий лимит
-    existing_count = ProductImage.objects.filter(
+    publishable_count = ProductImage.objects.filter(
         product=product,
-    ).exclude(status=ProductImage.Status.REJECTED).count()
-    remaining_slots = max_images - existing_count
+        status__in=(
+            ProductImage.Status.AUTO_APPROVED,
+            ProductImage.Status.MANUALLY_SET,
+            ProductImage.Status.IMPORTED,
+        ),
+    ).count()
+    total_non_rejected = ProductImage.objects.filter(product=product).exclude(
+        status=ProductImage.Status.REJECTED,
+    ).count()
+    from apps.products.storage import MAX_PHOTOS
+    remaining_slots = min(max_images - publishable_count, MAX_PHOTOS - total_non_rejected)
     if remaining_slots <= 0:
-        logger.debug(f'[pipeline] товар уже имеет {existing_count} фото, image search пропущен')
+        logger.debug(
+            '[pipeline] product=%s publishable=%s total=%s, image search пропущен',
+            product.pk, publishable_count, total_non_rejected,
+        )
         return []
 
     saved: list[ProductImage] = []
@@ -92,12 +121,27 @@ def run_for_product(product) -> list[ProductImage]:
 
         duration_ms = int((time.monotonic() - t0) * 1000)
 
-        # Скорить кандидатов и отфильтровать по порогу
+        # Search metadata is a cheap deterministic gate; semantic validation is a
+        # separate provider-backed stage and can be added without changing sources.
+        filtered_candidates = []
+        rejected_assessments = []
         for c in candidates:
+            allowed, reasons, relevance = candidate_metadata_assessment(product, c)
+            c.raw_meta['metadata_relevance'] = relevance
+            c.raw_meta['assessment_reasons'] = reasons
+            if allowed:
+                filtered_candidates.append(c)
+            else:
+                rejected_assessments.append(c)
+
+        _record_candidate_assessments(product, rejected_assessments, verdict='reject')
+
+        # Скорить кандидатов и отфильтровать по порогу
+        for c in filtered_candidates:
             c.quality_score = score(c)
 
         good = sorted(
-            [c for c in candidates if c.quality_score >= min_score],
+            [c for c in filtered_candidates if c.quality_score >= min_score],
             key=lambda c: c.quality_score,
             reverse=True,
         )
@@ -110,7 +154,7 @@ def run_for_product(product) -> list[ProductImage]:
             if candidate.url in rejected_urls:
                 continue
 
-            pi = uploader.process(candidate.url, product)
+            pi = uploader.process(candidate.url, product, validate_quality=True)
             if pi is None:
                 continue
 
@@ -135,9 +179,9 @@ def run_for_product(product) -> list[ProductImage]:
             pi.quality_score = candidate.quality_score
             pi.search_confidence = candidate.raw_meta.get('confidence', '').lower()
             pi.status = status
-            if candidate.width:
+            if candidate.width and not pi.resolution_w:
                 pi.resolution_w = candidate.width
-            if candidate.height:
+            if candidate.height and not pi.resolution_h:
                 pi.resolution_h = candidate.height
 
             pi.save(update_fields=[
@@ -147,6 +191,10 @@ def run_for_product(product) -> list[ProductImage]:
 
             saved.append(pi)
             accepted += 1
+
+            _record_candidate_assessments(
+                product, [candidate], verdict='review', product_image=pi,
+            )
 
         # Логируем результат работы источника
         ImageSearchLog.objects.create(
@@ -179,3 +227,44 @@ def run_for_product(product) -> list[ProductImage]:
     product.save(update_fields=['image_status'])
 
     return saved
+
+
+def _record_candidate_assessments(
+    product,
+    candidates,
+    *,
+    verdict: str,
+    product_image=None,
+) -> None:
+    if not candidates:
+        return
+    from apps.media_processing.models import ImageAssessment
+
+    expected = {
+        'article': product.article,
+        'brand': product.brand,
+        'name': product.name,
+        'category': product.category_1c,
+        'catalog_category_id': product.catalog_category_id,
+    }
+    ImageAssessment.objects.bulk_create([
+        ImageAssessment(
+            tenant=product.tenant,
+            product=product,
+            product_image=product_image,
+            source_url=candidate.url,
+            source_id=candidate.source_id,
+            provider_id='metadata_rules',
+            model_id=PIPELINE_VERSION,
+            verdict=verdict,
+            score=candidate.raw_meta.get('metadata_relevance'),
+            reason_codes=candidate.raw_meta.get('assessment_reasons', []),
+            checks={
+                'title': candidate.raw_meta.get('title', ''),
+                'query': candidate.raw_meta.get('query', ''),
+                'quality_score': candidate.quality_score,
+            },
+            expected_product=expected,
+        )
+        for candidate in candidates
+    ])

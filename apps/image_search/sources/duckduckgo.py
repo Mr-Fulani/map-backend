@@ -84,7 +84,7 @@ class DuckDuckGoSource(BaseImageSource):
             if idx > 0:
                 time.sleep(_QUERY_DELAY_SEC)
             results = self._search_with_retry(query)
-            for r in results:
+            for rank, r in enumerate(results, start=1):
                 url = r.get('image', '')
                 if not url or url in seen_urls:
                     continue
@@ -98,6 +98,8 @@ class DuckDuckGoSource(BaseImageSource):
                     raw_meta={
                         'confidence': confidence,
                         'title': r.get('title', ''),
+                        'query': query,
+                        'rank': rank,
                     },
                 ))
 

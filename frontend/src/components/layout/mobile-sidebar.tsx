@@ -16,6 +16,7 @@ import {
   Settings,
   CreditCard,
   Webhook,
+  Images,
   Zap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -25,6 +26,7 @@ const navItems = [
   { title: 'Товары', href: '/dashboard/products', icon: Package },
   { title: 'Листинги', href: '/dashboard/listings', icon: ListOrdered },
   { title: 'Проверка', href: '/dashboard/review', icon: ClipboardCheck },
+  { title: 'Медиа', href: '/dashboard/media', icon: Images },
   { title: 'Логи', href: '/dashboard/logs', icon: ScrollText },
   { title: 'Аналитика', href: '/dashboard/analytics', icon: BarChart3 },
   { title: 'Настройки', href: '/dashboard/settings', icon: Settings },

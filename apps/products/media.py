@@ -15,3 +15,9 @@ def get_publishable_product_images(product):
         .filter(status__in=PUBLISHABLE_IMAGE_STATUSES)
         .order_by('-is_primary', 'position', 'pk')
     )
+
+
+def get_product_image_delivery_key(product_image) -> str:
+    """Resolve an active processed variant without overwriting the source image."""
+    from apps.media_processing.services import delivery_s3_key
+    return delivery_s3_key(product_image)

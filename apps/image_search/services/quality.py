@@ -50,4 +50,9 @@ def score(candidate: ImageCandidate) -> float:
         elif min_dim >= 300:
             s += 0.10
 
+    # Metadata relevance is calculated against the concrete Product before download.
+    # It cannot prove visual identity, but rewards exact article/brand/category evidence.
+    relevance = float(candidate.raw_meta.get('metadata_relevance', 0) or 0)
+    s += min(max(relevance, 0.0), 1.0) * 0.10
+
     return min(s, 1.0)

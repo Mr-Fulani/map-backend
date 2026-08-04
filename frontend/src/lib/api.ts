@@ -399,6 +399,31 @@ export const imageApi = {
   getQuota: () => api.get('/images/quota/'),
 };
 
+// Provider-agnostic media processing
+export const mediaApi = {
+  providers: () => api.get('/media/providers/'),
+  presets: () => api.get('/media/presets/'),
+  createPreset: (data: Record<string, unknown>) => api.post('/media/presets/', data),
+  settings: () => api.get('/media/settings/'),
+  updateSettings: (data: Record<string, unknown>) => api.patch('/media/settings/', data),
+  jobs: () => api.get('/media/jobs/'),
+  job: (id: number) => api.get(`/media/jobs/${id}/`),
+  assessments: () => api.get('/media/assessments/'),
+  process: (
+    productId: number,
+    imageId: number,
+    data: {
+      preset_id?: number;
+      operations?: string[];
+      parameters?: Record<string, unknown>;
+      provider_id?: string;
+      idempotency_key?: string;
+    },
+  ) => api.post(`/products/${productId}/images/${imageId}/process/`, data),
+  activateVariant: (variantId: number) =>
+    api.post(`/media/variants/${variantId}/activate/`),
+};
+
 // Webhooks
 export const webhookApi = {
   list: () => api.get('/webhooks/'),

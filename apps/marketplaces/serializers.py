@@ -12,7 +12,9 @@ from apps.marketplaces.models import (
     MarketplaceAccount,
     MarketplacePlacementAddress,
 )
-from apps.products.media import get_publishable_product_images
+from apps.products.media import (
+    get_product_image_delivery_key, get_publishable_product_images,
+)
 
 
 class AvitoAccountStatusSerializer(serializers.ModelSerializer):
@@ -283,7 +285,9 @@ class ListingDetailSerializer(ListingSerializer):
         images = [
             {
                 'id': img.pk,
-                'url': _image_url(img.s3_key, img.url_source, request),
+                'url': _image_url(
+                    get_product_image_delivery_key(img), img.url_source, request,
+                ),
                 'thumb_url': _image_url(img.s3_key_thumb, img.url_source, request),
                 'position': img.position,
                 'is_primary': img.is_primary,
