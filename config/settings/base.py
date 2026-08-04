@@ -88,6 +88,7 @@ UNFOLD = {
             },
             {
                 "title": "Пользователи и тенанты",
+                "separator": True,
                 "collapsible": True,
                 "items": [
                     {"title": "Тенанты", "icon": "domain", "link": "/admin/tenants/tenant/"},
@@ -103,26 +104,141 @@ UNFOLD = {
                         "icon": "webhook",
                         "link": "/admin/tenants/webhookendpoint/",
                     },
+                    {"title": "Группы", "icon": "group", "link": "/admin/auth/group/"},
                 ],
             },
             {
                 "title": "Биллинг",
+                "separator": True,
                 "collapsible": True,
                 "items": [
                     {"title": "Тарифные планы", "icon": "sell", "link": "/admin/billing/plan/"},
+                    {
+                        "title": "Пакеты AI-кредитов",
+                        "icon": "add_card",
+                        "link": "/admin/billing/aicreditpackage/",
+                    },
                     {
                         "title": "Подписки",
                         "icon": "subscriptions",
                         "link": "/admin/billing/subscription/",
                     },
                     {"title": "Счета", "icon": "receipt", "link": "/admin/billing/invoice/"},
+                    {
+                        "title": "AI-кошельки",
+                        "icon": "account_balance_wallet",
+                        "link": "/admin/billing/aiwallet/",
+                    },
+                    {
+                        "title": "Проводки AI-кредитов",
+                        "icon": "receipt_long",
+                        "link": "/admin/billing/aicredittransaction/",
+                    },
+                    {
+                        "title": "Возвраты и чарджбэки",
+                        "icon": "undo",
+                        "link": "/admin/billing/paymentreversal/",
+                    },
+                    {
+                        "title": "Webhook биллинга",
+                        "icon": "webhook",
+                        "link": "/admin/billing/billingwebhookevent/",
+                    },
+                ],
+            },
+            {
+                "title": "AI и тарификация",
+                "separator": True,
+                "collapsible": True,
+                "items": [
+                    {
+                        "title": "AI-модели",
+                        "icon": "smart_toy",
+                        "link": "/admin/ai_agent/aimodel/",
+                    },
+                    {
+                        "title": "Модели AI-задач",
+                        "icon": "account_tree",
+                        "link": "/admin/ai_agent/tenantaitaskmodel/",
+                    },
+                    {
+                        "title": "Настройки AI тенантов",
+                        "icon": "tune",
+                        "link": "/admin/ai_agent/tenantaisettings/",
+                    },
+                    {
+                        "title": "Цены AI-провайдеров",
+                        "icon": "price_change",
+                        "link": "/admin/ai_agent/aiproviderprice/",
+                    },
+                    {
+                        "title": "AI-запросы",
+                        "icon": "history",
+                        "link": "/admin/ai_agent/airequestlog/",
+                    },
                 ],
             },
             {
                 "title": "Товары и маркетплейсы",
+                "separator": True,
                 "collapsible": True,
                 "items": [
                     {"title": "Товары", "icon": "inventory_2", "link": "/admin/products/product/"},
+                    {
+                        "title": "Бренды",
+                        "icon": "branding_watermark",
+                        "link": "/admin/products/productbrand/",
+                    },
+                    {
+                        "title": "Категории автозапчастей",
+                        "icon": "category",
+                        "link": "/admin/products/partcategory/",
+                    },
+                    {
+                        "title": "Категории каталога tenant-а",
+                        "icon": "account_tree",
+                        "link": "/admin/products/tenantcatalogcategory/",
+                    },
+                    {
+                        "title": "Маппинги категорий каталога",
+                        "icon": "conversion_path",
+                        "link": "/admin/products/tenantcategorymapping/",
+                    },
+                    {
+                        "title": "Задачи парсинга товаров",
+                        "icon": "task",
+                        "link": "/admin/products/productparsejob/",
+                    },
+                    {
+                        "title": "Глобальные запчасти",
+                        "icon": "settings",
+                        "link": "/admin/products/globalpart/",
+                    },
+                    {
+                        "title": "Глобальные связи запчастей",
+                        "icon": "link",
+                        "link": "/admin/products/globalpartrelation/",
+                    },
+                    {
+                        "title": "Глобальная применяемость",
+                        "icon": "directions_car",
+                        "link": "/admin/products/globalpartfitment/",
+                    },
+                    {
+                        "title": "Марки авто",
+                        "icon": "directions_car",
+                        "link": "/admin/products/vehiclemake/",
+                    },
+                    {
+                        "title": "Модели авто",
+                        "icon": "commute",
+                        "link": "/admin/products/vehiclemodel/",
+                    },
+                    {
+                        "title": "Поколения авто",
+                        "icon": "timeline",
+                        "link": "/admin/products/vehiclegeneration/",
+                    },
                     {
                         "title": "Листинги",
                         "icon": "storefront",
@@ -134,6 +250,26 @@ UNFOLD = {
                         "link": "/admin/marketplaces/marketplaceaccount/",
                     },
                     {
+                        "title": "Состояния Avito-аккаунтов",
+                        "icon": "monitor_heart",
+                        "link": "/admin/marketplaces/avitoaccountstatus/",
+                    },
+                    {
+                        "title": "Категории Avito",
+                        "icon": "category",
+                        "link": "/admin/marketplaces/avitocategory/",
+                    },
+                    {
+                        "title": "Маппинг категорий",
+                        "icon": "conversion_path",
+                        "link": "/admin/marketplaces/categorymapping/",
+                    },
+                    {
+                        "title": "Снимки дерева категорий Avito",
+                        "icon": "history",
+                        "link": "/admin/marketplaces/avitocategorytreesnapshot/",
+                    },
+                    {
                         "title": "Источники данных",
                         "icon": "database",
                         "link": "/admin/datasources/datasourceconnection/",
@@ -142,15 +278,16 @@ UNFOLD = {
             },
             {
                 "title": "Изображения",
+                "separator": True,
                 "collapsible": True,
                 "items": [
                     {
-                        "title": "Логи поиска",
+                        "title": "Логи поиска изображений",
                         "icon": "image_search",
                         "link": "/admin/image_search/imagesearchlog/",
                     },
                     {
-                        "title": "Кеш поиска",
+                        "title": "Кеш поиска изображений",
                         "icon": "cached",
                         "link": "/admin/image_search/imagesearchcache/",
                     },
@@ -158,6 +295,7 @@ UNFOLD = {
             },
             {
                 "title": "Система",
+                "separator": True,
                 "collapsible": True,
                 "items": [
                     {
@@ -166,9 +304,29 @@ UNFOLD = {
                         "link": "/admin/sync/synclog/",
                     },
                     {
-                        "title": "Уведомления",
+                        "title": "Настройки уведомлений",
                         "icon": "notifications",
                         "link": "/admin/notifications/tenantnotificationsettings/",
+                    },
+                    {
+                        "title": "Интервалы",
+                        "icon": "timer",
+                        "link": "/admin/django_celery_beat/intervalschedule/",
+                    },
+                    {
+                        "title": "Crontab",
+                        "icon": "calendar_month",
+                        "link": "/admin/django_celery_beat/crontabschedule/",
+                    },
+                    {
+                        "title": "Астрономические события",
+                        "icon": "sunny",
+                        "link": "/admin/django_celery_beat/solarschedule/",
+                    },
+                    {
+                        "title": "Время",
+                        "icon": "schedule",
+                        "link": "/admin/django_celery_beat/clockedschedule/",
                     },
                     {
                         "title": "Периодические задачи",
