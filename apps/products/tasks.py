@@ -221,6 +221,10 @@ def parse_single_part(self, job_id: int):
     try:
         result = ProductEnrichmentService.run_parse_job(job_id)
         _save_enrichment_images(result)
+        product_id = result.get('product_id')
+        if product_id:
+            from apps.web_research.tasks import schedule_web_research_fallback
+            schedule_web_research_fallback.delay(product_id, False)
         return result
     except Exception as exc:
         raise self.retry(exc=exc)
@@ -234,8 +238,8 @@ def parse_single_part_then_generate_description(self, job_id: int):
         _save_enrichment_images(result)
         product_id = result.get('product_id')
         if product_id:
-            from apps.ai_agent.tasks import generate_description_task
-            generate_description_task.delay(product_id)
+            from apps.web_research.tasks import schedule_web_research_fallback
+            schedule_web_research_fallback.delay(product_id, True)
         return result
     except Exception as exc:
         raise self.retry(exc=exc)

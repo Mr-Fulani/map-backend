@@ -851,6 +851,7 @@ class ProductEnrichmentFact(TimestampedModel):
     """Факт для достоверного AI-описания товара."""
 
     class FactType(models.TextChoices):
+        BRAND = 'brand', 'Предполагаемый бренд'
         TECHNICAL = 'technical', 'Технический'
         FITMENT = 'fitment', 'Применяемость'
         OEM = 'oem', 'OEM/Cross'

@@ -1,3 +1,4 @@
+import json
 from decimal import Decimal
 from unittest.mock import call, patch
 
@@ -34,6 +35,66 @@ def make_product(tenant, article='P50136', brand='BREMBO', name=None, category_1
         price=Decimal('0'),
         stock_qty=0,
     )
+
+
+@pytest.mark.django_db
+def test_approved_web_brand_fact_updates_product_identity():
+    tenant, api_key = make_tenant('approve-web-brand')
+    product = make_product(tenant, brand='', name='Фонарь Kia Optima')
+    fact = ProductEnrichmentFact.objects.create(
+        tenant=tenant,
+        product=product,
+        source_id='web_research',
+        fact_type=ProductEnrichmentFact.FactType.BRAND,
+        name='Предполагаемый бренд',
+        value='OEM',
+        needs_review=True,
+    )
+    client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
+
+    response = client.post(
+        f'/api/v1/products/{product.pk}/enrichment-facts/{fact.pk}/approve/',
+    )
+
+    assert response.status_code == 200
+    product.refresh_from_db()
+    assert product.brand == 'OEM'
+    assert product.brand_resolution_status == Product.BrandResolutionStatus.MANUAL
+    assert product.brand_source_id == 'human_review'
+
+
+@pytest.mark.django_db
+def test_approved_web_oem_fact_creates_trusted_cross_code():
+    tenant, api_key = make_tenant('approve-web-oem')
+    product = make_product(tenant, article='P50136', brand='BREMBO')
+    fact = ProductEnrichmentFact.objects.create(
+        tenant=tenant,
+        product=product,
+        source_id='web_research',
+        fact_type=ProductEnrichmentFact.FactType.OEM,
+        name='KIA',
+        value='92402D4000',
+        raw_text=json.dumps({
+            'claim_payload': {
+                'manufacturer': 'KIA',
+                'code': '92402D4000',
+                'code_type': 'OEM',
+            },
+        }),
+        needs_review=True,
+    )
+    client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
+
+    response = client.post(
+        f'/api/v1/products/{product.pk}/enrichment-facts/{fact.pk}/approve/',
+    )
+
+    assert response.status_code == 200
+    cross = product.cross_codes.get(source_id='human_review')
+    product.refresh_from_db()
+    assert cross.manufacturer == 'KIA'
+    assert cross.normalized_code == '92402D4000'
+    assert product.oem_numbers == ['92402D4000']
 
 
 @pytest.mark.django_db

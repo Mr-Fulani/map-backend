@@ -18,6 +18,7 @@ import {
   Webhook,
   Images,
   Zap,
+  Globe2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -26,6 +27,7 @@ const navItems = [
   { title: 'Товары', href: '/dashboard/products', icon: Package },
   { title: 'Листинги', href: '/dashboard/listings', icon: ListOrdered },
   { title: 'Проверка', href: '/dashboard/review', icon: ClipboardCheck },
+  { title: 'Интернет-поиск', href: '/dashboard/research', icon: Globe2 },
   { title: 'Медиа', href: '/dashboard/media', icon: Images },
   { title: 'Логи', href: '/dashboard/logs', icon: ScrollText },
   { title: 'Аналитика', href: '/dashboard/analytics', icon: BarChart3 },

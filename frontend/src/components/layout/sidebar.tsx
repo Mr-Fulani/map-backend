@@ -21,6 +21,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Zap,
+  Globe2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -51,6 +52,11 @@ const navItems = [
     title: 'Проверка',
     href: '/dashboard/review',
     icon: ClipboardCheck,
+  },
+  {
+    title: 'Интернет-поиск',
+    href: '/dashboard/research',
+    icon: Globe2,
   },
   {
     title: 'Медиа',

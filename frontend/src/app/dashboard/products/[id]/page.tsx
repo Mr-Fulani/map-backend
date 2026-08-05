@@ -25,6 +25,7 @@ import {
   Check,
   X,
   Trash2,
+  Globe2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import {
@@ -140,6 +141,30 @@ interface ProductParseJob {
   finished_at: string | null;
 }
 
+interface WebResearchEvidence {
+  id: number;
+  title: string;
+  url: string;
+  domain: string;
+  rank: number;
+}
+
+interface WebResearchRun {
+  id: number;
+  status: string;
+  trigger: string;
+  search_provider: string;
+  ai_provider: string;
+  ai_model: string;
+  result_count: number;
+  claim_count: number;
+  generate_after: boolean;
+  error_message: string;
+  created_at: string;
+  finished_at: string | null;
+  evidence: WebResearchEvidence[];
+}
+
 const CONDITION_LABELS: Record<string, string> = {
   new: 'Новый',
   used: 'Б/у',
@@ -177,6 +202,15 @@ const ENRICHMENT_STATUS_LABELS: Record<string, string> = {
   need_review: 'Данные найдены частично',
   not_found: 'Источник не нашёл товар',
   failed: 'Ошибка обогащения',
+};
+
+const WEB_RESEARCH_STATUS_LABELS: Record<string, string> = {
+  queued: 'Ожидает запуска',
+  running: 'Идёт исследование',
+  need_review: 'Найдены данные для проверки',
+  no_results: 'Ничего не найдено',
+  skipped: 'Не потребовалось',
+  failed: 'Ошибка',
 };
 
 const CATALOG_DOMAIN_LABELS: Record<string, string> = {
@@ -249,8 +283,12 @@ export default function ProductDetailPage() {
   const [parseJobId, setParseJobId] = useState<number | null>(null);
   const [parseThenGenerate, setParseThenGenerate] = useState(false);
   const enriching = parseJobId !== null;
+  const [webResearch, setWebResearch] = useState<WebResearchRun | null>(null);
+  const [webResearchRunId, setWebResearchRunId] = useState<number | null>(null);
+  const webResearchRunning = webResearchRunId !== null;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const descriptionPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
 
   const loadProduct = useCallback(async () => {
@@ -259,6 +297,55 @@ export default function ProductDetailPage() {
     setProduct(nextProduct);
     setCategoryAssignValue(nextProduct.catalog_category?.id ? String(nextProduct.catalog_category.id) : '');
   }, [id]);
+
+  const loadWebResearch = useCallback(async () => {
+    const res = await productApi.latestWebResearch(Number(id));
+    const run = (res.data.data ?? null) as WebResearchRun | null;
+    setWebResearch(run);
+    if (run && ['queued', 'running'].includes(run.status)) {
+      setWebResearchRunId(run.id);
+    }
+    return run;
+  }, [id]);
+
+  const waitForGeneratedDescription = useCallback((previousDescription: string) => {
+    if (descriptionPollRef.current) {
+      clearInterval(descriptionPollRef.current);
+    }
+    setGeneratingDescription(true);
+    const deadline = Date.now() + 60_000;
+    descriptionPollRef.current = setInterval(async () => {
+      if (Date.now() > deadline) {
+        if (descriptionPollRef.current) clearInterval(descriptionPollRef.current);
+        descriptionPollRef.current = null;
+        setGeneratingDescription(false);
+        setParseThenGenerate(false);
+        toast.warning('Генерация заняла слишком долго. Обновите страницу вручную.');
+        return;
+      }
+      try {
+        const productRes = await productApi.get(Number(id));
+        const updated = productRes.data.data as ProductDetail;
+        if (updated.description_ai && updated.description_ai !== previousDescription) {
+          if (descriptionPollRef.current) clearInterval(descriptionPollRef.current);
+          descriptionPollRef.current = null;
+          setGeneratingDescription(false);
+          setParseThenGenerate(false);
+          setProduct(updated);
+          toast.success('Описание сгенерировано на основе доступных данных');
+        }
+      } catch {
+        if (descriptionPollRef.current) clearInterval(descriptionPollRef.current);
+        descriptionPollRef.current = null;
+        setGeneratingDescription(false);
+        setParseThenGenerate(false);
+      }
+    }, 2000);
+  }, [id]);
+
+  useEffect(() => () => {
+    if (descriptionPollRef.current) clearInterval(descriptionPollRef.current);
+  }, []);
 
   async function saveBrand() {
     setSavingBrand(true);
@@ -278,7 +365,45 @@ export default function ProductDetailPage() {
     loadProduct()
       .catch(() => toast.error('Товар не найден'))
       .finally(() => setLoading(false));
-  }, [loadProduct]);
+    loadWebResearch().catch(() => undefined);
+  }, [loadProduct, loadWebResearch]);
+
+  useEffect(() => {
+    if (!webResearchRunId) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await productApi.webResearchStatus(webResearchRunId);
+        const run = res.data.data as WebResearchRun;
+        setWebResearch(run);
+        if (!['queued', 'running'].includes(run.status)) {
+          const previousDescription = product?.description_ai ?? '';
+          setWebResearchRunId(null);
+          clearInterval(interval);
+          await loadProduct();
+          if (run.status === 'need_review') {
+            toast.warning(`Интернет-агент нашёл факты: ${run.claim_count}. Проверьте их перед применением.`);
+          } else if (run.status === 'no_results') {
+            toast.warning('Интернет-исследование не нашло подтверждённых данных.');
+            if (run.generate_after) {
+              toast.info('Генерируем описание из уже подтверждённых данных...');
+              waitForGeneratedDescription(previousDescription);
+            }
+          } else if (run.status === 'failed') {
+            toast.error(run.error_message || 'Интернет-исследование завершилось с ошибкой.');
+            if (run.generate_after) {
+              toast.info('Продолжаем генерацию из уже подтверждённых данных...');
+              waitForGeneratedDescription(previousDescription);
+            }
+          }
+        }
+      } catch {
+        setWebResearchRunId(null);
+        clearInterval(interval);
+        toast.error('Не удалось получить статус интернет-исследования.');
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [webResearchRunId, loadProduct, product?.description_ai, waitForGeneratedDescription]);
 
   useEffect(() => {
     productApi.catalogCategories({ assignable: true })
@@ -350,33 +475,32 @@ export default function ProductDetailPage() {
           setParseJobId(null);
           await loadProduct();
           if (parseThenGenerate) {
-            setGeneratingDescription(true);
+            // The parser task schedules the fallback immediately before it exits;
+            // give the worker a short moment to create the corresponding run.
+            await new Promise((resolve) => setTimeout(resolve, 750));
+            const research = await loadWebResearch();
+            const belongsToCurrentPipeline = research
+              && new Date(research.created_at).getTime() >= new Date(job.created_at).getTime();
+            if (
+              belongsToCurrentPipeline
+              && research
+              && ['queued', 'running'].includes(research.status)
+            ) {
+              setParseThenGenerate(false);
+              toast.info('Каталоги проверены. Интернет-агент ищет недостающие данные...');
+              return;
+            }
+            if (
+              belongsToCurrentPipeline
+              && research?.status === 'need_review'
+              && research.generate_after
+            ) {
+              setParseThenGenerate(false);
+              toast.warning('Интернет-агент нашёл факты. Подтвердите их перед генерацией описания.');
+              return;
+            }
             toast.info('Обогащение завершено, генерируем описание...');
-            const deadline = Date.now() + 60_000;
-            const poll = setInterval(async () => {
-              if (Date.now() > deadline) {
-                clearInterval(poll);
-                setGeneratingDescription(false);
-                setParseThenGenerate(false);
-                toast.warning('Генерация заняла слишком долго. Обновите страницу вручную.');
-                return;
-              }
-              try {
-                const productRes = await productApi.get(Number(id));
-                const updated = productRes.data.data as ProductDetail;
-                if (updated.description_ai && updated.description_ai !== prevDescription) {
-                  clearInterval(poll);
-                  setGeneratingDescription(false);
-                  setParseThenGenerate(false);
-                  setProduct(updated);
-                  toast.success('Описание сгенерировано на основе доступных данных');
-                }
-              } catch {
-                clearInterval(poll);
-                setGeneratingDescription(false);
-                setParseThenGenerate(false);
-              }
-            }, 2000);
+            waitForGeneratedDescription(prevDescription);
             return;
           }
           if (job.status === 'success') {
@@ -396,7 +520,14 @@ export default function ProductDetailPage() {
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [parseJobId, parseThenGenerate, product?.description_ai, id, loadProduct]);
+  }, [
+    parseJobId,
+    parseThenGenerate,
+    product?.description_ai,
+    loadProduct,
+    loadWebResearch,
+    waitForGeneratedDescription,
+  ]);
 
   async function startEnrichment(generateAfter = false) {
     setActionLoading(generateAfter ? 'enrich-generate' : 'enrich');
@@ -409,6 +540,24 @@ export default function ProductDetailPage() {
       const responseData = (err as { response?: { data?: { code?: string; message?: string } } })?.response?.data;
       const message = responseData?.message;
       toast.error(message ?? (generateAfter ? 'Не удалось запустить подготовку описания' : 'Не удалось запустить обогащение'));
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function startWebResearch() {
+    setActionLoading('web-research');
+    try {
+      const res = await productApi.startWebResearch(Number(id));
+      const run = res.data.data as WebResearchRun;
+      setWebResearch(run);
+      setWebResearchRunId(run.id);
+      toast.info('Интернет-исследование запущено');
+    } catch (error: unknown) {
+      const message = (
+        error as { response?: { data?: { message?: string; detail?: string } } }
+      ).response?.data;
+      toast.error(message?.message ?? message?.detail ?? 'Не удалось запустить интернет-исследование');
     } finally {
       setActionLoading(null);
     }
@@ -559,7 +708,7 @@ export default function ProductDetailPage() {
     );
   }
 
-  const busy = actionLoading !== null;
+  const busy = actionLoading !== null || webResearchRunning;
 
   return (
     <div className="space-y-6">
@@ -732,6 +881,14 @@ export default function ProductDetailPage() {
                       </Badge>
                     );
                   })}
+                  {webResearch && (
+                    <Badge
+                      variant={webResearch.status === 'need_review' ? 'secondary' : 'outline'}
+                      className="text-xs"
+                    >
+                      Интернет: {WEB_RESEARCH_STATUS_LABELS[webResearch.status] ?? webResearch.status}
+                    </Badge>
+                  )}
                   {!product.latest_parse_job && (
                     <Badge variant="outline">Не запускалось</Badge>
                   )}
@@ -756,6 +913,36 @@ export default function ProductDetailPage() {
                   </a>
                 )}
               </div>
+
+              {webResearch && (
+                <div className="rounded-md border bg-muted/20 p-3 text-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="font-medium">Интернет-исследование</span>
+                    <span className="text-xs text-muted-foreground">
+                      Страниц: {webResearch.result_count} · фактов: {webResearch.claim_count}
+                    </span>
+                  </div>
+                  {webResearch.error_message && (
+                    <p className="mt-2 text-xs text-destructive">{webResearch.error_message}</p>
+                  )}
+                  {webResearch.evidence.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+                      {webResearch.evidence.slice(0, 6).map((item) => (
+                        <a
+                          key={item.id}
+                          href={item.url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="max-w-full truncate text-primary hover:underline"
+                          title={item.title || item.url}
+                        >
+                          {item.domain}
+                        </a>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {(product.parse_jobs_summary ?? (product.latest_parse_job ? [product.latest_parse_job] : []))
                 .filter((j) => j.error_message)
@@ -1183,6 +1370,19 @@ export default function ProductDetailPage() {
                   : generatingDescription
                     ? 'Генерация...'
                     : 'Обогатить и сгенерировать'}
+              </Button>
+              <Button
+                className="w-full"
+                variant="outline"
+                onClick={startWebResearch}
+                disabled={busy || searching || enriching || generatingDescription}
+              >
+                {webResearchRunning || actionLoading === 'web-research' ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Globe2 className="mr-2 h-4 w-4" />
+                )}
+                {webResearchRunning ? 'Исследование в интернете...' : 'Исследовать в интернете'}
               </Button>
               <Button
                 className="w-full"
