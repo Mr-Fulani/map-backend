@@ -11,7 +11,10 @@ from apps.web_research.services import (
 )
 
 
-@shared_task(bind=True, max_retries=2, retry_backoff=True, retry_backoff_max=120)
+@shared_task(
+    bind=True, max_retries=2, retry_backoff=True,
+    retry_backoff_max=120, queue='part_parsing',
+)
 def run_web_research(self, run_id: int):
     lock = cache.lock(f'lock:web_research:{run_id}', timeout=300)
     if not lock.acquire(blocking=False):
@@ -39,7 +42,9 @@ def run_web_research(self, run_id: int):
             pass
 
 
-@shared_task(bind=True, max_retries=12, default_retry_delay=5)
+@shared_task(
+    bind=True, max_retries=12, default_retry_delay=5, queue='part_parsing',
+)
 def schedule_web_research_fallback(
     self, product_id: int, generate_after: bool = False,
 ):

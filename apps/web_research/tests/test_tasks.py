@@ -6,7 +6,12 @@ import pytest
 from apps.products.models import Product
 from apps.tenants.services import TenantService
 from apps.web_research.models import WebResearchRun
-from apps.web_research.tasks import schedule_web_research_fallback
+from apps.web_research.tasks import run_web_research, schedule_web_research_fallback
+
+
+def test_web_research_tasks_use_a_queue_served_in_production():
+    assert run_web_research.queue == 'part_parsing'
+    assert schedule_web_research_fallback.queue == 'part_parsing'
 
 
 @pytest.mark.django_db
