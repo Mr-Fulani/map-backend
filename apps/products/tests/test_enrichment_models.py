@@ -383,3 +383,37 @@ def test_conflicting_description_fact_keeps_provenance_and_needs_review():
     assert fact.needs_review is True
     assert fact.source_url == 'https://example.test/part/P50136'
     assert fact.last_seen_at is not None
+
+
+@pytest.mark.django_db
+def test_repeated_catalog_enrichment_replaces_current_description_fact():
+    tenant = make_tenant('current-description-fact')
+    product = make_product(tenant)
+    first = ParsedPart(
+        brand='BREMBO',
+        article='P50136',
+        source_url='https://tachka.ru/old/P50136',
+        description_facts={'description': 'Старое описание колодок.'},
+    )
+    second = ParsedPart(
+        brand='BREMBO',
+        article='P50136',
+        source_url='https://tachka.ru/current/P50136',
+        description_facts={'description': 'Актуальное описание колодок.'},
+    )
+
+    ProductEnrichmentService.save_parsed_part(tenant, product, first, source_id='tachka')
+    original_id = product.enrichment_facts.get().pk
+    ProductEnrichmentService.save_parsed_part(tenant, product, second, source_id='tachka')
+
+    facts = product.enrichment_facts.filter(
+        source_id='tachka',
+        fact_type=ProductEnrichmentFact.FactType.DESCRIPTION_HINT,
+        name='description',
+    )
+    assert facts.count() == 1
+    fact = facts.get()
+    assert fact.pk == original_id
+    assert fact.value == 'Актуальное описание колодок.'
+    assert fact.source_url == 'https://tachka.ru/current/P50136'
+    assert fact.value_hash == make_value_hash('Актуальное описание колодок.')

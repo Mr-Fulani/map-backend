@@ -377,6 +377,25 @@ class TestDescriptionAgent:
         assert 'подходит для BMW 5 G30' not in message
         assert json.loads(message)['enrichment']['excluded_review_count'] == 1
 
+    def test_build_message_deduplicates_same_fact_from_multiple_sources(self):
+        tenant = make_tenant('deduplicated-facts-agent-co')
+        product = make_product(tenant)
+        value = 'Уникальное каталожное описание тормозных колодок.'
+        for source_id in ('tachka', 'rossko'):
+            ProductEnrichmentService.create_fact(
+                tenant=tenant,
+                product=product,
+                source_id=source_id,
+                fact_type=ProductEnrichmentFact.FactType.DESCRIPTION_HINT,
+                name='description',
+                value=value,
+                confidence=0.95,
+            )
+
+        message = DescriptionAgent()._build_message(product)
+
+        assert message.count(value) == 1
+
     def test_retry_receives_validator_feedback(self):
         tenant = make_tenant('retry-feedback-co')
         product = make_product(tenant)

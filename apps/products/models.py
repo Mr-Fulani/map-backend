@@ -901,6 +901,14 @@ class ProductEnrichmentFact(TimestampedModel):
                 fields=['tenant', 'product', 'source_id', 'fact_type', 'name', 'value_hash'],
                 name='unique_product_enrichment_fact',
             ),
+            models.UniqueConstraint(
+                fields=['tenant', 'product', 'source_id', 'fact_type', 'name'],
+                condition=(
+                    models.Q(fact_type='description_hint')
+                    & models.Q(source_id__in=['tachka', 'rossko', 'euroauto'])
+                ),
+                name='unique_current_catalog_description_fact',
+            ),
         ]
 
     def __str__(self):

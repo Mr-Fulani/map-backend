@@ -130,12 +130,16 @@ interface VehicleFitment {
 interface ProductEnrichmentFact {
   id: number;
   source_id: string;
+  source_label: string;
+  source_url: string;
   fact_type: string;
   name: string;
   value: string;
   confidence: number;
   needs_review: boolean;
   review_status: ReviewStatus;
+  created_at: string;
+  updated_at: string;
 }
 
 type ReviewStatus = 'pending' | 'approved' | 'rejected';
@@ -231,6 +235,13 @@ const ENRICHMENT_SOURCE_LABELS: Record<string, string> = {
   tachka: 'Тачка.ру',
   rossko: 'Росско',
   euroauto: 'Euroauto',
+  web_research: 'Интернет-исследование',
+};
+
+const ENRICHMENT_FACT_LABELS: Record<string, string> = {
+  description: 'Описание из каталога',
+  catalog_description: 'Описание из каталога',
+  catalog_note: 'Примечание каталога',
 };
 
 const WEB_RESEARCH_STATUS_LABELS: Record<string, string> = {
@@ -1217,46 +1228,88 @@ export default function ProductDetailPage() {
 
                   {product.enrichment_facts.length > 0 && (
                     <div>
-                      <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
-                        Факты для описания
-                      </p>
+                      <div className="mb-2">
+                        <p className="text-xs font-medium uppercase text-muted-foreground">
+                          Данные из источников
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Используются при создании описания и не публикуются как отдельный текст.
+                        </p>
+                      </div>
                       <div className="space-y-2">
-                        {product.enrichment_facts.slice(0, 5).map((fact) => (
-                          <div key={fact.id} className="flex flex-col gap-2 rounded-md border p-2 text-sm sm:flex-row sm:items-start sm:justify-between">
-                            <div className="min-w-0">
-                              <p className="font-medium">{fact.name}</p>
-                              <p className="break-words text-muted-foreground">{fact.value}</p>
-                              <Badge
-                                variant={fact.review_status === 'rejected' ? 'destructive' : 'secondary'}
-                                className="mt-2"
-                              >
-                                {reviewStatusLabel(fact.review_status, fact.needs_review)}
-                              </Badge>
-                            </div>
-                            {fact.needs_review && (
-                              <div className="flex shrink-0 gap-2">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleReview('fact', 'approve', fact.id)}
-                                  disabled={reviewAction !== null}
+                        {product.enrichment_facts.slice(0, 5).map((fact) => {
+                          const factLabel = ENRICHMENT_FACT_LABELS[fact.name] || fact.name;
+                          const sourceLabel = fact.source_label
+                            || ENRICHMENT_SOURCE_LABELS[fact.source_id]
+                            || fact.source_id;
+                          const longValue = fact.value.length > 260;
+                          return (
+                            <div key={fact.id} className="flex flex-col gap-3 rounded-md border p-3 text-sm sm:flex-row sm:items-start sm:justify-between">
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <p className="font-medium">{factLabel}</p>
+                                  <Badge variant="outline" className="text-[11px]">{sourceLabel}</Badge>
+                                </div>
+                                <p className="mt-1 text-xs text-muted-foreground">
+                                  Обновлено {new Date(fact.updated_at || fact.created_at).toLocaleString('ru-RU')}
+                                  {fact.source_url && (
+                                    <>
+                                      {' · '}
+                                      <a
+                                        href={fact.source_url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="inline-flex items-center gap-1 text-primary hover:underline"
+                                      >
+                                        Источник <ExternalLink className="h-3 w-3" />
+                                      </a>
+                                    </>
+                                  )}
+                                </p>
+                                {longValue ? (
+                                  <details className="mt-2 rounded-md bg-muted/30 p-2">
+                                    <summary className="cursor-pointer text-xs font-medium text-primary">
+                                      Показать исходный текст
+                                    </summary>
+                                    <p className="mt-2 break-words text-xs text-muted-foreground">
+                                      {fact.value}
+                                    </p>
+                                  </details>
+                                ) : (
+                                  <p className="mt-2 break-words text-muted-foreground">{fact.value}</p>
+                                )}
+                                <Badge
+                                  variant={fact.review_status === 'rejected' ? 'destructive' : 'secondary'}
+                                  className="mt-2"
                                 >
-                                  <Check className="h-4 w-4" />
-                                  Одобрить
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleReview('fact', 'reject', fact.id)}
-                                  disabled={reviewAction !== null}
-                                >
-                                  <X className="h-4 w-4" />
-                                  Отклонить
-                                </Button>
+                                  {reviewStatusLabel(fact.review_status, fact.needs_review)}
+                                </Badge>
                               </div>
-                            )}
-                          </div>
-                        ))}
+                              {fact.needs_review && (
+                                <div className="flex shrink-0 gap-2">
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleReview('fact', 'approve', fact.id)}
+                                    disabled={reviewAction !== null}
+                                  >
+                                    <Check className="h-4 w-4" />
+                                    Одобрить
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => handleReview('fact', 'reject', fact.id)}
+                                    disabled={reviewAction !== null}
+                                  >
+                                    <X className="h-4 w-4" />
+                                    Отклонить
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
                   )}

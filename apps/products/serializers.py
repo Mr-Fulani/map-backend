@@ -275,12 +275,20 @@ class VehicleFitmentSerializer(serializers.ModelSerializer):
 
 
 class ProductEnrichmentFactSerializer(serializers.ModelSerializer):
+    source_label = serializers.SerializerMethodField()
+
     class Meta:
         model = ProductEnrichmentFact
         fields = [
-            'id', 'source_id', 'source_url', 'fact_type', 'name', 'value',
-            'raw_text', 'confidence', 'needs_review', 'review_status', 'reviewed_at', 'created_at',
+            'id', 'source_id', 'source_label', 'source_url', 'fact_type', 'name', 'value',
+            'raw_text', 'confidence', 'needs_review', 'review_status', 'reviewed_at',
+            'created_at', 'updated_at',
         ]
+
+    def get_source_label(self, obj):
+        from apps.products.source_policy import PART_SOURCE_POLICIES
+        policy = PART_SOURCE_POLICIES.get(obj.source_id)
+        return policy.label if policy else obj.source_id
 
 
 class ProductParseJobSerializer(serializers.ModelSerializer):

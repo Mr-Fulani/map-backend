@@ -162,6 +162,7 @@ def test_tachka_parser_extracts_grouped_fitments_with_manufacturer():
     ]
     assert parsed.fitments[0].engine_code == '205.040, 205.140'
     assert parsed.fitments[1].modification == 'C 220 d'
+    assert parsed.description_facts == {}
 
 
 def test_tachka_parser_extracts_fitments_from_flat_json_ld_fallback():
@@ -176,6 +177,7 @@ def test_tachka_parser_extracts_fitments_from_flat_json_ld_fallback():
         ('MERCEDES-BENZ', 'C-CLASS', 'W205'),
         ('MERCEDES-BENZ', 'E-CLASS', 'W213'),
     ]
+    assert parsed.description_facts == {}
 
 
 def test_parse_fitment_line_keeps_uncertain_data_reviewable():

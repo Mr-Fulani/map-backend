@@ -401,18 +401,18 @@ class TachkaPartParser:
         )
 
     def _parse_description_facts(self, tree: HTMLParser, structured_description: str = '') -> dict[str, str]:
-        facts = {}
-        if structured_description:
-            facts['description'] = structured_description[:3000]
-            return facts
+        candidates = [structured_description]
         for selector in ['.description', '[itemprop="description"]', '.product-description']:
             node = tree.css_first(selector)
             if node:
                 text = _normalize_spaces(node.text(separator=' '))
                 if text:
-                    facts['description'] = text[:3000]
-                    break
-        return facts
+                    candidates.append(text)
+        for candidate in candidates:
+            hint = _catalog_description_hint(candidate)
+            if hint:
+                return {'description': hint}
+        return {}
 
     def _parse_product_json_ld(self, tree: HTMLParser) -> dict:
         for script in tree.css('script[type="application/ld+json"]'):
@@ -581,6 +581,30 @@ def _normalize_spaces(value: str) -> str:
 def _normalize_lines(value: str) -> str:
     lines = [_normalize_spaces(line) for line in (value or '').splitlines()]
     return '\n'.join(line for line in lines if line)
+
+
+def _catalog_description_hint(value: str) -> str:
+    """Return catalogue prose without OEM/cross and applicability dumps.
+
+    Those sections are parsed into dedicated records and feeding them to the AI
+    again as a description hint creates duplicates and wastes prompt context.
+    """
+    normalized = _normalize_spaces(value)
+    if not normalized:
+        return ''
+    markers = [
+        match.start()
+        for pattern in (
+            r'\bкросс[ -]?коды?\b',
+            r'\bOEM(?:\s*/\s*Cross)?[ -]?коды?\b',
+            r'\bподходит\s+для\s+следующих\s+модификаций\b',
+            r'\bприменяемость\s*:',
+        )
+        if (match := re.search(pattern, normalized, re.IGNORECASE))
+    ]
+    if markers:
+        normalized = normalized[:min(markers)].strip(' .,:;-')
+    return normalized[:3000]
 
 
 def _parse_source_price(value) -> Decimal | None:

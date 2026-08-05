@@ -127,8 +127,17 @@ class ProductAIEnrichmentContextBuilder:
     @staticmethod
     def _add_facts(context: ProductAIEnrichmentContext, facts) -> None:
         trusted_facts = []
+        seen_facts = set()
         for fact in facts:
             if should_auto_apply_record(fact):
+                identity = (
+                    fact.fact_type,
+                    fact.name.strip().casefold(),
+                    ' '.join(fact.value.split()).casefold(),
+                )
+                if identity in seen_facts:
+                    continue
+                seen_facts.add(identity)
                 trusted_facts.append(fact)
             else:
                 context.excluded_review_count += 1

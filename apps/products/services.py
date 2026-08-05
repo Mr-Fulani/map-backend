@@ -1006,7 +1006,8 @@ class ProductEnrichmentService:
                 for name, value in parsed.description_facts.items()
                 if name and value
             ]
-            ProductEnrichmentFact.objects.bulk_create(description_facts, ignore_conflicts=True)
+            for fact in description_facts:
+                cls._save_current_enrichment_fact(fact)
 
             cls.refresh_product_denormalized_enrichment(product)
             product_update_fields = ['oem_numbers', 'cross_numbers', 'applicability']
@@ -1139,6 +1140,46 @@ class ProductEnrichmentService:
             has_conflict=has_conflicting_fact(existing, fact),
         ):
             fact.needs_review = True
+        return fact
+
+    @staticmethod
+    def _save_current_enrichment_fact(
+        incoming: ProductEnrichmentFact,
+    ) -> ProductEnrichmentFact:
+        """Keep one current parser fact per source/name.
+
+        Complete raw parser history lives in ProductParseJob. Product facts are
+        the current AI context and therefore must be updated instead of appended
+        whenever a catalogue changes its description.
+        """
+        lookup = {
+            'tenant': incoming.tenant,
+            'product': incoming.product,
+            'source_id': incoming.source_id,
+            'fact_type': incoming.fact_type,
+            'name': incoming.name,
+        }
+        current = ProductEnrichmentFact.objects.filter(**lookup).order_by('-updated_at').first()
+        value_changed = current is not None and current.value_hash != incoming.value_hash
+        defaults = {
+            'source_url': incoming.source_url,
+            'value': incoming.value,
+            'value_hash': incoming.value_hash,
+            'raw_text': incoming.raw_text,
+            'confidence': incoming.confidence,
+            'needs_review': incoming.needs_review,
+            'last_seen_at': incoming.last_seen_at,
+        }
+        if value_changed:
+            defaults.update({
+                'review_status': ReviewStatus.PENDING,
+                'reviewed_at': None,
+                'reviewed_by': None,
+            })
+        fact, _ = ProductEnrichmentFact.objects.update_or_create(
+            **lookup,
+            defaults=defaults,
+        )
         return fact
 
     @staticmethod
