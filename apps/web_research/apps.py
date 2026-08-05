@@ -8,3 +8,4 @@ class WebResearchConfig(AppConfig):
 
     def ready(self):
         import apps.web_research.providers.brave  # noqa: F401
+        import apps.web_research.providers.tavily  # noqa: F401

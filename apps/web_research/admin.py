@@ -1,10 +1,15 @@
-from django.contrib import admin
+from django import forms
+from django.contrib import admin, messages
 from unfold.admin import ModelAdmin, TabularInline
 
 from apps.core.admin import TenantScopedReadOnlyAdminMixin
 from apps.tenants.models import Tenant
 from apps.web_research.models import (
     WebResearchClaim, WebResearchEvidence, WebResearchRun,
+    WebSearchAttempt, WebSearchConnection,
+)
+from apps.web_research.providers.registry import (
+    create_search_provider, registered_search_providers,
 )
 
 
@@ -35,7 +40,18 @@ class ResearchTenantFilter(admin.SimpleListFilter):
 class EvidenceInline(TabularInline):
     model = WebResearchEvidence
     extra = 0
-    fields = ['rank', 'domain', 'title', 'url', 'query']
+    fields = ['rank', 'provider_id', 'domain', 'title', 'url', 'query']
+    readonly_fields = fields
+    can_delete = False
+
+
+class AttemptInline(TabularInline):
+    model = WebSearchAttempt
+    extra = 0
+    fields = [
+        'provider_id', 'status', 'query', 'result_count', 'duration_ms',
+        'error_message', 'created_at',
+    ]
     readonly_fields = fields
     can_delete = False
 
@@ -43,7 +59,10 @@ class EvidenceInline(TabularInline):
 class ClaimInline(TabularInline):
     model = WebResearchClaim
     extra = 0
-    fields = ['claim_type', 'confidence', 'payload', 'saved_model', 'saved_record_id']
+    fields = [
+        'claim_type', 'confidence', 'review_status', 'payload',
+        'saved_model', 'saved_record_id',
+    ]
     readonly_fields = fields
     can_delete = False
 
@@ -69,7 +88,7 @@ class WebResearchRunAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
         'result_count', 'claim_count', 'generate_after', 'error_message',
         'started_at', 'finished_at', 'created_at', 'updated_at',
     ]
-    inlines = [EvidenceInline, ClaimInline]
+    inlines = [AttemptInline, EvidenceInline, ClaimInline]
 
 
 @admin.register(WebResearchEvidence)
@@ -84,7 +103,7 @@ class WebResearchEvidenceAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
     list_select_related = ['run__tenant', 'run__product']
     date_hierarchy = 'created_at'
     readonly_fields = [
-        'run', 'query', 'rank', 'title', 'url', 'domain', 'snippet',
+        'run', 'query', 'rank', 'provider_id', 'title', 'url', 'domain', 'snippet',
         'created_at', 'updated_at',
     ]
 
@@ -93,14 +112,157 @@ class WebResearchEvidenceAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
         return obj.run.tenant
 
 
+class WebSearchConnectionForm(forms.ModelForm):
+    api_key = forms.CharField(
+        required=False,
+        label='API-ключ',
+        help_text='Оставьте пустым, чтобы сохранить текущий ключ или ключ сервера.',
+        widget=forms.PasswordInput(render_value=False),
+    )
+    allowed_plan_slugs = forms.MultipleChoiceField(
+        required=False,
+        label='Доступно тарифам',
+        help_text='Не выбирайте тарифы, чтобы разрешить подключение всем.',
+        widget=forms.CheckboxSelectMultiple,
+    )
+
+    class Meta:
+        model = WebSearchConnection
+        fields = [
+            'provider_id', 'display_name', 'is_active', 'priority',
+            'allowed_plan_slugs', 'parameters', 'requests_per_minute',
+            'monthly_request_limit',
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        choices = [
+            (provider_id, provider.display_name or provider_id)
+            for provider_id, provider in registered_search_providers().items()
+        ]
+        self.fields['provider_id'].widget = forms.Select(choices=choices)
+        from apps.billing.models import Plan
+        self.fields['allowed_plan_slugs'].choices = list(
+            Plan.objects.filter(is_active=True).values_list('slug', 'name')
+        )
+        if self.instance and self.instance.pk:
+            self.initial['allowed_plan_slugs'] = self.instance.allowed_plan_slugs
+
+    def clean_provider_id(self):
+        provider_id = self.cleaned_data['provider_id']
+        if provider_id not in registered_search_providers():
+            raise forms.ValidationError('Для этого провайдера нет установленного адаптера.')
+        return provider_id
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        if self.cleaned_data.get('api_key'):
+            instance.set_credentials({'api_key': self.cleaned_data['api_key']})
+        if commit:
+            instance.save()
+        return instance
+
+
+@admin.register(WebSearchConnection)
+class WebSearchConnectionAdmin(ModelAdmin):
+    form = WebSearchConnectionForm
+    list_display = [
+        'display_name', 'provider_id', 'is_active', 'priority',
+        'credential_state', 'allowed_plans', 'monthly_usage',
+        'last_check_status', 'last_checked_at',
+    ]
+    list_filter = ['is_active', 'provider_id', 'last_check_status']
+    actions = ['check_connections']
+    readonly_fields = [
+        'credential_state', 'last_check_status', 'last_check_message',
+        'last_checked_at', 'created_at', 'updated_at',
+    ]
+
+    def has_module_permission(self, request):
+        return request.user.is_superuser
+
+    def has_view_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_add_permission(self, request):
+        return request.user.is_superuser
+
+    def has_change_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    def has_delete_permission(self, request, obj=None):
+        return request.user.is_superuser
+
+    @admin.display(description='Ключ')
+    def credential_state(self, obj):
+        if obj and obj.has_credentials:
+            return 'Сохранён зашифрованно'
+        provider = create_search_provider(obj.provider_id) if obj else None
+        return 'Настроен на сервере' if provider and provider.is_available() else 'Не задан'
+
+    @admin.display(description='Тарифы')
+    def allowed_plans(self, obj):
+        return ', '.join(obj.allowed_plan_slugs) if obj.allowed_plan_slugs else 'Все'
+
+    @admin.display(description='Запросов за месяц')
+    def monthly_usage(self, obj):
+        from django.utils.timezone import now
+        current = now()
+        used = obj.attempts.filter(
+            created_at__year=current.year, created_at__month=current.month,
+        ).count()
+        return f'{used} / {obj.monthly_request_limit or "∞"}'
+
+    @admin.action(description='Проверить выбранные подключения')
+    def check_connections(self, request, queryset):
+        ok_count = 0
+        for connection in queryset:
+            provider = create_search_provider(
+                connection.provider_id,
+                credentials=connection.get_credentials(),
+                parameters=connection.parameters,
+            )
+            if provider is None or not provider.is_available():
+                connection.mark_checked(ok=False, message='API-ключ не настроен.')
+                continue
+            try:
+                provider.search('Kia Optima 92402D4000 автозапчасть', count=1)
+            except Exception as exc:
+                connection.mark_checked(ok=False, message=str(exc))
+            else:
+                connection.mark_checked(ok=True, message='Подключение работает.')
+                ok_count += 1
+        self.message_user(
+            request,
+            f'Работают подключений: {ok_count} из {queryset.count()}.',
+            level=messages.SUCCESS if ok_count else messages.WARNING,
+        )
+
+
+@admin.register(WebSearchAttempt)
+class WebSearchAttemptAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
+    tenant_lookup = 'run__tenant_id'
+    list_display = [
+        'id', 'provider_id', 'status', 'run', 'result_count',
+        'duration_ms', 'created_at',
+    ]
+    list_filter = ['provider_id', 'status', 'created_at']
+    search_fields = ['query', 'error_message', 'run__product__article']
+    readonly_fields = [
+        'run', 'connection', 'provider_id', 'query', 'status', 'result_count',
+        'duration_ms', 'retryable', 'error_code', 'error_message',
+        'created_at', 'updated_at',
+    ]
+
+
 @admin.register(WebResearchClaim)
 class WebResearchClaimAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
     tenant_lookup = 'run__tenant_id'
     list_display = [
         'id', 'get_tenant', 'run', 'claim_type', 'confidence',
-        'saved_model', 'saved_record_id',
+        'review_status', 'saved_model', 'saved_record_id',
     ]
-    list_filter = [ResearchTenantFilter, 'claim_type', 'created_at']
+    list_filter = [ResearchTenantFilter, 'claim_type', 'review_status', 'created_at']
     search_fields = [
         'run__product__article', 'run__product__name',
         'run__tenant__name', 'run__tenant__slug',
@@ -108,7 +270,7 @@ class WebResearchClaimAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
     list_select_related = ['run__tenant', 'run__product']
     date_hierarchy = 'created_at'
     readonly_fields = [
-        'run', 'claim_type', 'payload', 'confidence', 'evidence',
+        'run', 'claim_type', 'payload', 'confidence', 'review_status', 'evidence',
         'saved_model', 'saved_record_id', 'created_at', 'updated_at',
     ]
 

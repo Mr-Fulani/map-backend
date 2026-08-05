@@ -150,6 +150,11 @@ UNFOLD = {
                         "link": "/admin/web_research/webresearchrun/",
                     },
                     {
+                        "title": "Сервисы интернет-поиска",
+                        "icon": "language",
+                        "link": "/admin/web_research/websearchconnection/",
+                    },
+                    {
                         "title": "Цены AI-провайдеров",
                         "icon": "price_change",
                         "link": "/admin/ai_agent/aiproviderprice/",
@@ -500,6 +505,7 @@ MOONSHOT_API_KEY = os.environ.get('MOONSHOT_API_KEY', '')
 
 # --- Image Search ---
 BRAVE_SEARCH_API_KEY = os.environ.get('BRAVE_SEARCH_API_KEY', '')
+TAVILY_API_KEY = os.environ.get('TAVILY_API_KEY', '')
 WEB_RESEARCH_AUTO_FALLBACK = os.environ.get(
     'WEB_RESEARCH_AUTO_FALLBACK', 'true',
 ).lower() in {'1', 'true', 'yes'}

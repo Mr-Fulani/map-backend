@@ -6,11 +6,14 @@ import pytest
 
 from apps.products.models import Product, ProductEnrichmentFact, VehicleFitment
 from apps.tenants.services import TenantService
-from apps.web_research.models import WebResearchClaim, WebResearchEvidence, WebResearchRun
+from apps.web_research.models import (
+    WebResearchClaim, WebResearchEvidence, WebResearchRun, WebSearchAttempt,
+)
 from apps.web_research.services import (
     WebResearchAgent, WebResearchService, build_research_queries, enrichment_coverage,
 )
-from apps.web_research.providers.base import WebSearchResult
+from apps.web_research.providers.base import WebSearchProviderError, WebSearchResult
+from apps.web_research.routing import SearchProviderCandidate
 
 
 def make_tenant(slug):
@@ -212,8 +215,13 @@ def test_execute_runs_search_and_saves_grounded_claims():
         extracted['fitments'][0]['evidence_ids'] = [evidence[0].pk]
         return extracted, SimpleNamespace(provider='openai', external_id='test-model')
 
-    with patch('apps.web_research.services.get_search_provider', return_value=provider), \
-         patch.object(WebResearchAgent, 'extract', side_effect=add_evidence_id):
+    with (
+        patch(
+            'apps.web_research.services.search_provider_candidates',
+            return_value=[SearchProviderCandidate(provider)],
+        ),
+        patch.object(WebResearchAgent, 'extract', side_effect=add_evidence_id),
+    ):
         result = WebResearchService.execute(run.pk)
 
     assert result.status == WebResearchRun.Status.NEED_REVIEW
@@ -221,3 +229,73 @@ def test_execute_runs_search_and_saves_grounded_claims():
     assert result.claim_count == 1
     assert result.search_provider == 'test_search'
     assert VehicleFitment.objects.get(product=product).needs_review is True
+
+
+@pytest.mark.django_db
+def test_search_falls_back_and_audits_each_provider_attempt():
+    tenant, _ = make_tenant('web-provider-fallback')
+    product = make_product(tenant)
+    run = WebResearchRun.objects.create(tenant=tenant, product=product)
+    first = Mock(provider_id='brave')
+    first.search.side_effect = WebSearchProviderError(
+        'rate limited', retryable=True, code='http_429',
+    )
+    second = Mock(provider_id='tavily')
+    second.search.return_value = [WebSearchResult(
+        title='Kia Optima lamp',
+        url='https://parts.example.com/lamp',
+        snippet='OEM 92402D4000',
+        rank=1,
+    )]
+    extracted = {
+        'brand': '', 'brand_evidence_ids': [], 'brand_confidence': 0,
+        'cross_codes': [], 'fitments': [], 'facts': [],
+    }
+
+    with patch(
+        'apps.web_research.services.search_provider_candidates',
+        return_value=[SearchProviderCandidate(first), SearchProviderCandidate(second)],
+    ), patch.object(
+        WebResearchAgent, 'extract',
+        return_value=(extracted, SimpleNamespace(provider='openai', external_id='test-model')),
+    ):
+        result = WebResearchService.execute(run.pk)
+
+    assert result.status == WebResearchRun.Status.NO_RESULTS
+    assert result.search_provider == 'tavily'
+    assert list(run.search_attempts.values_list('provider_id', 'status')) == [
+        ('brave', WebSearchAttempt.Status.FAILED),
+        ('tavily', WebSearchAttempt.Status.SUCCESS),
+    ]
+
+
+@pytest.mark.django_db
+def test_last_reviewed_claim_completes_research_run():
+    tenant, _ = make_tenant('web-review-complete')
+    product = make_product(tenant)
+    run = WebResearchRun.objects.create(
+        tenant=tenant, product=product, status=WebResearchRun.Status.NEED_REVIEW,
+    )
+    fact = ProductEnrichmentFact.objects.create(
+        tenant=tenant,
+        product=product,
+        source_id='web_research',
+        fact_type=ProductEnrichmentFact.FactType.TECHNICAL,
+        name='position',
+        value='right',
+        needs_review=False,
+        review_status='approved',
+    )
+    WebResearchClaim.objects.create(
+        run=run,
+        claim_type=WebResearchClaim.ClaimType.FACT,
+        payload={'name': 'position', 'value': 'right'},
+        saved_model=fact._meta.label_lower,
+        saved_record_id=fact.pk,
+    )
+
+    WebResearchService.record_claim_review(fact, 'approved')
+
+    run.refresh_from_db()
+    assert run.status == WebResearchRun.Status.COMPLETED
+    assert run.claims.get().review_status == WebResearchClaim.ReviewStatus.APPROVED

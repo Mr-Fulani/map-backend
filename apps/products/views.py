@@ -1032,6 +1032,12 @@ def _set_review_state(obj, request, review_status: str) -> None:
     obj.save(update_fields=['review_status', 'needs_review', 'reviewed_at', 'reviewed_by', 'updated_at'])
 
 
+def _sync_web_research_review(obj, review_status: str) -> None:
+    if getattr(obj, 'source_id', '') == 'web_research':
+        from apps.web_research.services import WebResearchService
+        WebResearchService.record_claim_review(obj, review_status)
+
+
 def _review_product_payload(product) -> dict:
     return {
         'id': product.pk,
@@ -1174,6 +1180,7 @@ class ProductReviewQueueActionView(APIView):
                 ProductKnowledgeGraphService.learn_approved_fitment(item.product, item)
             ProductEnrichmentService.refresh_product_denormalized_enrichment(item.product)
             item.product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability', 'updated_at'])
+            _sync_web_research_review(item, review_status)
             return Response({'status': 'ok', 'data': _serialize_review_item(item_type, item)})
         if item_type == 'fact':
             item = get_object_or_404(ProductEnrichmentFact, pk=record_id, tenant=request.tenant)
@@ -1181,6 +1188,7 @@ class ProductReviewQueueActionView(APIView):
             _set_review_state(item, request, review_status)
             if review_status == ReviewStatus.APPROVED:
                 ProductEnrichmentService.apply_approved_fact(item.product, item)
+            _sync_web_research_review(item, review_status)
             return Response({'status': 'ok', 'data': _serialize_review_item(item_type, item)})
         if item_type == 'classification':
             product = get_object_or_404(
@@ -1220,6 +1228,7 @@ class ProductFitmentReviewView(APIView):
 
         ProductEnrichmentService.refresh_product_denormalized_enrichment(product)
         product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability', 'updated_at'])
+        _sync_web_research_review(fitment, fitment.review_status)
         return Response({'status': 'ok', 'data': VehicleFitmentSerializer(fitment).data})
 
 
@@ -1247,6 +1256,7 @@ class ProductEnrichmentFactReviewView(APIView):
             _set_review_state(fact, request, ReviewStatus.REJECTED)
         else:
             return Response({'status': 'error', 'code': 'bad_action'}, status=status.HTTP_404_NOT_FOUND)
+        _sync_web_research_review(fact, fact.review_status)
         return Response({'status': 'ok', 'data': ProductEnrichmentFactSerializer(fact).data})
 
 

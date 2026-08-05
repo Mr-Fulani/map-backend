@@ -15,37 +15,46 @@ class BraveWebSearchProvider(BaseWebSearchProvider):
     """Brave Web Search adapter; business logic depends only on the base interface."""
 
     provider_id = 'brave'
+    display_name = 'Brave Search'
     endpoint = 'https://api.search.brave.com/res/v1/web/search'
 
     def is_available(self) -> bool:
-        return bool(getattr(settings, 'BRAVE_SEARCH_API_KEY', ''))
+        return bool(self.credentials.get('api_key') or getattr(settings, 'BRAVE_SEARCH_API_KEY', ''))
 
     def search(self, query: str, *, count: int = 8) -> list[WebSearchResult]:
+        api_key = self.credentials.get('api_key') or getattr(settings, 'BRAVE_SEARCH_API_KEY', '')
+        if not api_key:
+            raise WebSearchProviderError(
+                'Brave Search API key is not configured.', code='not_configured',
+            )
         try:
             response = requests.get(
                 self.endpoint,
                 headers={
                     'Accept': 'application/json',
                     'Accept-Encoding': 'gzip',
-                    'X-Subscription-Token': settings.BRAVE_SEARCH_API_KEY,
+                    'X-Subscription-Token': api_key,
                 },
                 params={
                     'q': query,
                     'count': max(1, min(count, 20)),
-                    'country': 'ru',
-                    'search_lang': 'ru',
+                    'country': self.parameters.get('country', 'ru'),
+                    'search_lang': self.parameters.get('search_lang', 'ru'),
                     'safesearch': 'moderate',
+                    'extra_snippets': bool(self.parameters.get('extra_snippets', True)),
                 },
-                timeout=15,
+                timeout=max(3, min(int(self.parameters.get('timeout', 15)), 60)),
             )
         except requests.RequestException as exc:
             raise WebSearchProviderError(
-                f'Brave web search connection error: {exc}', retryable=True,
+                f'Brave web search connection error: {exc}',
+                retryable=True, code='connection_error',
             ) from exc
         if response.status_code >= 400:
             raise WebSearchProviderError(
                 f'Brave web search HTTP {response.status_code}',
                 retryable=response.status_code == 429 or response.status_code >= 500,
+                code=f'http_{response.status_code}',
             )
         try:
             data = response.json()
@@ -57,7 +66,8 @@ class BraveWebSearchProvider(BaseWebSearchProvider):
             url = str(item.get('url') or '').strip()
             if not url:
                 continue
-            snippet = strip_tags(str(item.get('description') or ''))
+            extra = ' '.join(str(value) for value in item.get('extra_snippets') or [])
+            snippet = strip_tags(' '.join(filter(None, [str(item.get('description') or ''), extra])))
             snippet = re.sub(r'\s+', ' ', snippet).strip()
             results.append(WebSearchResult(
                 title=strip_tags(str(item.get('title') or ''))[:500],

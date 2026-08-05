@@ -25,7 +25,6 @@ import {
   Check,
   X,
   Trash2,
-  Globe2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import {
@@ -208,6 +207,7 @@ const WEB_RESEARCH_STATUS_LABELS: Record<string, string> = {
   queued: 'Ожидает запуска',
   running: 'Идёт исследование',
   need_review: 'Найдены данные для проверки',
+  completed: 'Проверено',
   no_results: 'Ничего не найдено',
   skipped: 'Не потребовалось',
   failed: 'Ошибка',
@@ -615,6 +615,7 @@ export default function ProductDetailPage() {
     itemId?: number,
   ) {
     const key = `${target}-${itemId ?? 'main'}-${action}`;
+    const previousDescription = product?.description_ai ?? '';
     setReviewAction(key);
     try {
       if (target === 'classification') {
@@ -625,6 +626,11 @@ export default function ProductDetailPage() {
         await productApi.reviewEnrichmentFact(Number(id), itemId, action);
       }
       await loadProduct();
+      const research = await loadWebResearch();
+      if (research?.status === 'completed' && research.generate_after) {
+        toast.info('Все найденные факты проверены. Генерируем описание...');
+        waitForGeneratedDescription(previousDescription);
+      }
       toast.success(action === 'approve' ? 'Данные одобрены' : 'Данные отклонены');
     } catch {
       toast.error('Не удалось сохранить проверку');
@@ -940,6 +946,22 @@ export default function ProductDetailPage() {
                         </a>
                       ))}
                     </div>
+                  )}
+                  {['completed', 'no_results', 'failed'].includes(webResearch.status) && (
+                    <Button
+                      className="mt-3"
+                      size="sm"
+                      variant="outline"
+                      onClick={startWebResearch}
+                      disabled={busy || searching || enriching || generatingDescription}
+                    >
+                      {actionLoading === 'web-research' ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="mr-2 h-4 w-4" />
+                      )}
+                      Повторить интернет-поиск
+                    </Button>
                   )}
                 </div>
               )}
@@ -1370,19 +1392,6 @@ export default function ProductDetailPage() {
                   : generatingDescription
                     ? 'Генерация...'
                     : 'Обогатить и сгенерировать'}
-              </Button>
-              <Button
-                className="w-full"
-                variant="outline"
-                onClick={startWebResearch}
-                disabled={busy || searching || enriching || generatingDescription}
-              >
-                {webResearchRunning || actionLoading === 'web-research' ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Globe2 className="mr-2 h-4 w-4" />
-                )}
-                {webResearchRunning ? 'Исследование в интернете...' : 'Исследовать в интернете'}
               </Button>
               <Button
                 className="w-full"

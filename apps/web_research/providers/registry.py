@@ -23,5 +23,13 @@ def get_search_provider(provider_id: str = '') -> BaseWebSearchProvider | None:
     return None
 
 
+def create_search_provider(
+    provider_id: str, *, credentials: dict | None = None,
+    parameters: dict | None = None,
+) -> BaseWebSearchProvider | None:
+    cls = _PROVIDERS.get((provider_id or '').strip().lower())
+    return cls(credentials=credentials, parameters=parameters) if cls else None
+
+
 def registered_search_providers() -> dict[str, type[BaseWebSearchProvider]]:
     return dict(_PROVIDERS)

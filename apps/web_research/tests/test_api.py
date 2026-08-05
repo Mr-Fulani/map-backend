@@ -2,7 +2,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
-from django.test import Client
+from django.test import Client, override_settings
 
 from apps.products.models import Product
 from apps.tenants.services import TenantService
@@ -95,3 +95,22 @@ def test_dashboard_run_list_is_tenant_scoped_and_has_summary():
         'need_review': 1,
         'failed': 0,
     }
+
+
+@pytest.mark.django_db
+@override_settings(BRAVE_SEARCH_API_KEY='server-secret', TAVILY_API_KEY='')
+def test_tenant_provider_status_never_exposes_credentials():
+    _, api_key = make_tenant('web-provider-status')
+    client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
+
+    response = client.get('/api/v1/web-research/providers/')
+
+    assert response.status_code == 200
+    body = response.json()['data']
+    assert body['mode'] == 'automatic'
+    assert body['providers'] == [{
+        'provider_id': 'brave',
+        'display_name': 'Brave Search',
+        'available': True,
+    }]
+    assert 'server-secret' not in response.content.decode()

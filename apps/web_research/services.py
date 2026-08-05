@@ -21,12 +21,13 @@ from apps.products.models import (
 )
 from apps.products.source_policy import should_auto_apply_fitment, should_auto_apply_record
 from apps.web_research.models import (
-    WebResearchClaim, WebResearchEvidence, WebResearchRun,
+    WebResearchClaim, WebResearchEvidence, WebResearchRun, WebSearchAttempt,
 )
 from apps.web_research.prompts import (
     WEB_RESEARCH_OUTPUT_SCHEMA, WEB_RESEARCH_SYSTEM_PROMPT,
 )
-from apps.web_research.providers.registry import get_search_provider
+from apps.web_research.providers.base import WebSearchProviderError
+from apps.web_research.routing import search_provider_candidates
 
 
 ZERO_CREDITS = Decimal('0')
@@ -150,15 +151,15 @@ class WebResearchService:
         run.save(update_fields=['status', 'started_at', 'error_message', 'updated_at'])
 
         try:
-            provider = get_search_provider(run.search_provider)
-            if provider is None:
+            if not search_provider_candidates(run.tenant, run.search_provider):
                 raise WebResearchUnavailable('Не настроен ни один провайдер интернет-поиска.')
-            run.search_provider = provider.provider_id
             queries = build_research_queries(run.product)
             run.queries = queries
-            run.save(update_fields=['search_provider', 'queries', 'updated_at'])
-            evidence = cls._collect_evidence(run, provider, queries)
+            run.save(update_fields=['queries', 'updated_at'])
+            evidence, providers_used = cls._collect_evidence(run, queries)
+            run.search_provider = providers_used[0] if providers_used else ''
             run.result_count = len(evidence)
+            run.save(update_fields=['search_provider', 'result_count', 'updated_at'])
             if not evidence:
                 finished = cls._finish(run, WebResearchRun.Status.NO_RESULTS)
                 cls._generate_if_unblocked(finished)
@@ -171,9 +172,16 @@ class WebResearchService:
                 claims = cls._save_extracted_claims(run, extracted, evidence)
             run.claim_count = len(claims)
             run.coverage_after = enrichment_coverage(run.product)
+            pending_claims = any(
+                claim.review_status == WebResearchClaim.ReviewStatus.PENDING
+                for claim in claims
+            )
             status = (
                 WebResearchRun.Status.NEED_REVIEW
-                if claims else WebResearchRun.Status.NO_RESULTS
+                if pending_claims
+                else WebResearchRun.Status.COMPLETED
+                if claims
+                else WebResearchRun.Status.NO_RESULTS
             )
             finished = cls._finish(run, status)
             cls._generate_if_unblocked(finished)
@@ -184,15 +192,58 @@ class WebResearchService:
             raise
 
     @staticmethod
-    def _collect_evidence(run, provider, queries) -> list[WebResearchEvidence]:
+    def _collect_evidence(run, queries) -> tuple[list[WebResearchEvidence], list[str]]:
         seen_urls = set(run.evidence.values_list('url', flat=True))
         evidence = list(run.evidence.all())
+        providers_used = list(dict.fromkeys(
+            item.provider_id for item in evidence if item.provider_id
+        ))
         rank = len(evidence)
+        last_error = None
+        any_success = False
         for query in queries:
-            results = provider.search(
-                query,
-                count=settings.WEB_RESEARCH_RESULTS_PER_QUERY,
-            )
+            results = []
+            selected_provider = None
+            for candidate in search_provider_candidates(run.tenant, run.search_provider):
+                started = time.monotonic()
+                try:
+                    candidate_results = candidate.provider.search(
+                        query, count=settings.WEB_RESEARCH_RESULTS_PER_QUERY,
+                    )
+                except WebSearchProviderError as exc:
+                    last_error = exc
+                    WebSearchAttempt.objects.create(
+                        run=run,
+                        connection=candidate.connection,
+                        provider_id=candidate.provider.provider_id,
+                        query=query[:500],
+                        status=WebSearchAttempt.Status.FAILED,
+                        duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+                        retryable=exc.retryable,
+                        error_code=exc.code[:80],
+                        error_message=str(exc)[:500],
+                    )
+                    continue
+                attempt_status = (
+                    WebSearchAttempt.Status.SUCCESS
+                    if candidate_results else WebSearchAttempt.Status.EMPTY
+                )
+                WebSearchAttempt.objects.create(
+                    run=run,
+                    connection=candidate.connection,
+                    provider_id=candidate.provider.provider_id,
+                    query=query[:500],
+                    status=attempt_status,
+                    result_count=len(candidate_results),
+                    duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+                )
+                if candidate_results:
+                    results = candidate_results
+                    selected_provider = candidate.provider.provider_id
+                    any_success = True
+                    if selected_provider not in providers_used:
+                        providers_used.append(selected_provider)
+                    break
             for result in results:
                 if result.url in seen_urls or not is_safe_public_http_url(result.url):
                     continue
@@ -204,14 +255,19 @@ class WebResearchService:
                     run=run,
                     query=query[:500],
                     rank=rank,
+                    provider_id=selected_provider or '',
                     title=result.title[:500],
                     url=result.url[:2000],
                     domain=domain[:255],
-                    snippet=result.snippet[:2000],
+                    snippet=' '.join(filter(None, [
+                        result.snippet, result.content[:4000],
+                    ]))[:6000],
                 )
                 evidence.append(item)
                 seen_urls.add(result.url)
-        return evidence
+        if not any_success and last_error is not None:
+            raise last_error
+        return evidence, providers_used
 
     @classmethod
     def _save_extracted_claims(cls, run, extracted, evidence):
@@ -280,7 +336,7 @@ class WebResearchService:
             )
             if claim:
                 first_url = claim.evidence.order_by('rank').values_list('url', flat=True).first() or ''
-                fitment, _ = VehicleFitment.objects.get_or_create(
+                fitment, created = VehicleFitment.objects.get_or_create(
                     tenant=run.tenant,
                     product=run.product,
                     source_id=SOURCE_ID,
@@ -300,6 +356,13 @@ class WebResearchService:
                         'last_seen_at': now(),
                     },
                 )
+                if (
+                    not created
+                    and not fitment.needs_review
+                    and fitment.review_status == 'approved'
+                ):
+                    claim.review_status = WebResearchClaim.ReviewStatus.APPROVED
+                    claim.save(update_fields=['review_status', 'updated_at'])
                 cls._link_saved(claim, fitment)
                 claims.append(claim)
 
@@ -352,7 +415,7 @@ class WebResearchService:
     @classmethod
     def _save_fact(cls, run, fact_type, name, value, claim):
         first_url = claim.evidence.order_by('rank').values_list('url', flat=True).first() or ''
-        fact, _ = ProductEnrichmentFact.objects.get_or_create(
+        fact, created = ProductEnrichmentFact.objects.get_or_create(
             tenant=run.tenant,
             product=run.product,
             source_id=SOURCE_ID,
@@ -368,6 +431,13 @@ class WebResearchService:
                 'last_seen_at': now(),
             },
         )
+        if (
+            not created
+            and not fact.needs_review
+            and fact.review_status == 'approved'
+        ):
+            claim.review_status = WebResearchClaim.ReviewStatus.APPROVED
+            claim.save(update_fields=['review_status', 'updated_at'])
         return fact
 
     @staticmethod
@@ -404,6 +474,35 @@ class WebResearchService:
             return
         from apps.ai_agent.tasks import generate_description_task
         generate_description_task.delay(run.product_id)
+
+    @classmethod
+    def record_claim_review(cls, record, review_status: str) -> None:
+        """Synchronize product review actions with the research run lifecycle."""
+        model_label = record._meta.label_lower
+        claims = WebResearchClaim.objects.filter(
+            saved_model=model_label,
+            saved_record_id=record.pk,
+            review_status=WebResearchClaim.ReviewStatus.PENDING,
+        )
+        run_ids = list(claims.values_list('run_id', flat=True).distinct())
+        normalized = (
+            WebResearchClaim.ReviewStatus.APPROVED
+            if review_status == 'approved'
+            else WebResearchClaim.ReviewStatus.REJECTED
+        )
+        claims.update(review_status=normalized, updated_at=now())
+        for run_id in run_ids:
+            with transaction.atomic():
+                run = WebResearchRun.objects.select_for_update().get(pk=run_id)
+                if run.status != WebResearchRun.Status.NEED_REVIEW:
+                    continue
+                if run.claims.filter(
+                    review_status=WebResearchClaim.ReviewStatus.PENDING,
+                ).exists():
+                    continue
+                run.status = WebResearchRun.Status.COMPLETED
+                run.save(update_fields=['status', 'updated_at'])
+            cls._generate_if_unblocked(run)
 
 
 class WebResearchAgent:
