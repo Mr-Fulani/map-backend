@@ -1,6 +1,7 @@
 from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import MagicMock, patch
+from xml.etree import ElementTree as ET
 
 import pytest
 import responses as responses_lib
@@ -158,6 +159,23 @@ class TestFeedBuilder:
         assert '<Title>' in xml_str
         assert '<Price>3500</Price>' in xml_str
         assert '<Condition>Новое</Condition>' in xml_str
+
+    def test_build_feed_enforces_avito_text_limits(self):
+        tenant = make_tenant('feed-text-limits-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+        # update() bypasses the model field's max_length and represents legacy data.
+        Listing.objects.filter(pk=listing.pk).update(
+            title='Заголовок ' * 28,
+            description_ai='Описание товара ' * 700,
+        )
+        listing.refresh_from_db()
+
+        root = ET.fromstring(build_feed([listing]))
+
+        assert len(root.findtext('./Ad/Title')) <= 200
+        assert len(root.findtext('./Ad/Description')) <= 7500
 
     def test_build_feed_includes_ad_type_and_goods_type(self):
         """Фид содержит обязательные для категории теги AdType и GoodsType."""

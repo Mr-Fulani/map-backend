@@ -41,8 +41,9 @@ def test_prompt_router_prefers_exact_catalog_domain(prompt_product):
 
     assert selection.template is not None
     assert selection.template.catalog_domain == 'auto_parts'
-    assert selection.version == 'db-v4'
-    assert 'Копируй OEM/Cross-коды как неделимые строки' in selection.system_prompt
+    assert selection.version == 'db-v5'
+    assert 'Номера для поиска и проверки совместимости' in selection.system_prompt
+    assert 'fitment_presentation' in selection.system_prompt
 
 
 @pytest.mark.django_db

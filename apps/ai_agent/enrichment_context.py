@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 
 from apps.products.models import ProductEnrichmentFact
@@ -18,6 +19,8 @@ class ProductAIEnrichmentContext:
     trusted_lines: list[str] = field(default_factory=list)
     cautious_lines: list[str] = field(default_factory=list)
     trusted_fitments: list[dict] = field(default_factory=list)
+    fitment_presentation: dict = field(default_factory=dict)
+    catalog_number_presentation: dict = field(default_factory=dict)
     cautious_vehicle_makes: list[str] = field(default_factory=list)
     excluded_review_count: int = 0
 
@@ -45,6 +48,8 @@ class ProductAIEnrichmentContext:
             'trusted_facts': self.trusted_lines,
             'cautious_facts': self.cautious_lines,
             'trusted_fitments': self.trusted_fitments,
+            'fitment_presentation': self.fitment_presentation,
+            'catalog_number_presentation': self.catalog_number_presentation,
             'cautious_vehicle_makes': self.cautious_vehicle_makes,
             'excluded_review_count': self.excluded_review_count,
         }
@@ -88,6 +93,9 @@ class ProductAIEnrichmentContextBuilder:
             for item in cross_codes
         )
         context.trusted_lines.append(f'OEM/Cross-коды: {values}')
+        context.catalog_number_presentation = self._build_catalog_number_presentation(
+            cross_codes,
+        )
 
     @staticmethod
     def _add_fitments(context: ProductAIEnrichmentContext, fitments) -> None:
@@ -123,6 +131,107 @@ class ProductAIEnrichmentContextBuilder:
             ]
             values.append(' '.join(part for part in parts if part))
         context.trusted_lines.append(f'Подходит к автомобилям: {"; ".join(values)}')
+        presentation_builder = ProductAIEnrichmentContextBuilder._build_fitment_presentation
+        context.fitment_presentation = presentation_builder(trusted_fitments)
+
+    @staticmethod
+    def _build_fitment_presentation(fitments) -> dict:
+        """Build a compact, truthful marketplace view without losing raw fitments."""
+        vehicles = []
+        seen_vehicles = set()
+        grouped_models = {}
+        for item in fitments:
+            make = ' '.join(str(item.make or '').split())
+            model = ' '.join(str(item.model or '').split())
+            generation = ' '.join(str(item.generation or '').split())
+            vehicle_key = (make.casefold(), model.casefold(), generation.casefold())
+            if vehicle_key not in seen_vehicles:
+                seen_vehicles.add(vehicle_key)
+                vehicles.append({
+                    'make': make,
+                    'model': model,
+                    'generation': generation,
+                })
+            make_key = make.casefold()
+            make_group = grouped_models.setdefault(make_key, {
+                'make': make,
+                'models': [],
+                '_seen_models': set(),
+            })
+            model_family = ProductAIEnrichmentContextBuilder._model_family(make, model)
+            model_key = model_family.casefold()
+            if model_family and model_key not in make_group['_seen_models']:
+                make_group['_seen_models'].add(model_key)
+                make_group['models'].append(model_family)
+
+        compact = len(fitments) > 6 or len(vehicles) > 6
+        groups = []
+        model_budget = 8
+        for group in grouped_models.values():
+            models = group['models']
+            visible_models = models[:model_budget]
+            model_budget -= len(visible_models)
+            groups.append({
+                'make': group['make'],
+                'models': visible_models,
+                'remaining_models_count': max(0, len(models) - len(visible_models)),
+            })
+        return {
+            'mode': 'compact' if compact else 'detailed',
+            'confirmed_fitment_count': len(vehicles),
+            'evidence_record_count': len(fitments),
+            'unique_vehicle_count': len(vehicles),
+            'vehicles': vehicles if not compact else [],
+            'groups': groups,
+            'required_makes': [group['make'] for group in groups if group['make']],
+            'required_models': [
+                model
+                for group in groups
+                for model in group['models']
+            ],
+        }
+
+    @staticmethod
+    def _model_family(make: str, model: str) -> str:
+        """Collapse body styles to a buyer-recognisable model family when safe."""
+        if 'MERCEDES' in make.upper():
+            class_match = re.match(r'^([A-Z]+-CLASS)\b', model, flags=re.IGNORECASE)
+            if class_match:
+                return class_match.group(1).upper()
+        return model
+
+    @staticmethod
+    def _build_catalog_number_presentation(cross_codes) -> dict:
+        """Collapse formatting aliases for buyers while preserving raw search data."""
+        groups = {}
+        for item in cross_codes:
+            manufacturer = ' '.join(str(item.manufacturer or '').split())
+            code = ' '.join(str(item.code or '').split())
+            normalized = ''.join(character for character in code.upper() if character.isalnum())
+            identity = normalized
+            if (
+                'MERCEDES' in manufacturer.upper()
+                and normalized.startswith('A')
+                and normalized[1:].isdigit()
+            ):
+                identity = normalized[1:]
+            key = (manufacturer.casefold(), identity)
+            current = groups.get(key)
+            # Mercedes numbers with the conventional A prefix are clearer to buyers.
+            if current is None or (normalized.startswith('A') and not current['code'].upper().startswith('A')):
+                groups[key] = {
+                    'manufacturer': manufacturer,
+                    'code': code,
+                    'code_type': item.code_type,
+                }
+
+        numbers = list(groups.values())
+        return {
+            'label': 'Номера для поиска и проверки совместимости',
+            'numbers': numbers[:8],
+            'total_unique_count': len(numbers),
+            'remaining_count': max(0, len(numbers) - 8),
+        }
 
     @staticmethod
     def _add_facts(context: ProductAIEnrichmentContext, facts) -> None:

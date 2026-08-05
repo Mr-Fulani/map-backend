@@ -116,6 +116,28 @@ interface ProductCrossCode {
   code_type: string;
 }
 
+function buyerFacingCatalogCodes(codes: ProductCrossCode[]): ProductCrossCode[] {
+  const result: ProductCrossCode[] = [];
+  const positions = new Map<string, number>();
+  for (const item of codes) {
+    const manufacturer = item.manufacturer.trim().toUpperCase();
+    const normalized = item.code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const identity = manufacturer.includes('MERCEDES') && /^A\d+$/.test(normalized)
+      ? normalized.slice(1)
+      : normalized;
+    const key = `${manufacturer}:${identity}`;
+    const position = positions.get(key);
+    if (position === undefined) {
+      positions.set(key, result.length);
+      result.push(item);
+    } else if (/^A\d+$/.test(normalized)) {
+      const currentNormalized = result[position].code.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!/^A\d+$/.test(currentNormalized)) result[position] = item;
+    }
+  }
+  return result;
+}
+
 interface VehicleFitment {
   id: number;
   make: string;
@@ -1149,26 +1171,42 @@ export default function ProductDetailPage() {
                     </div>
                   )}
 
-                  {product.cross_codes.length > 0 && (
+                  {product.cross_codes.length > 0 && (() => {
+                    const catalogCodes = buyerFacingCatalogCodes(product.cross_codes);
+                    return (
                     <div>
                       <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
-                        OEM / Cross-коды
+                        Номера для поиска и проверки совместимости
+                      </p>
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        По этим номерам покупатель может найти деталь или сверить её с VIN.
+                        Форматные дубли скрыты.
                       </p>
                       <div className="flex flex-wrap gap-2">
-                        {product.cross_codes.slice(0, 12).map((cross) => (
+                        {catalogCodes.slice(0, 12).map((cross) => (
                           <Badge key={cross.id} variant="outline" className="max-w-full whitespace-normal break-all px-2 py-1">
                             {cross.manufacturer ? `${cross.manufacturer}: ` : ''}
                             {cross.code}
                           </Badge>
                         ))}
                       </div>
+                      {catalogCodes.length > 12 && (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Ещё номеров: {catalogCodes.length - 12}
+                        </p>
+                      )}
                     </div>
-                  )}
+                    );
+                  })()}
 
                   {product.fitments.length > 0 && (
                     <div>
                       <p className="mb-2 text-xs font-medium uppercase text-muted-foreground">
-                        Применяемость
+                        Совместимость с автомобилями
+                      </p>
+                      <p className="mb-2 text-xs text-muted-foreground">
+                        Точный список хранится для поиска и проверки. В объявлении большой список
+                        автоматически сворачивается до марок и классов автомобилей.
                       </p>
                       <div className="space-y-2">
                         {product.fitments.slice(0, 5).map((fitment) => (
@@ -1223,6 +1261,11 @@ export default function ProductDetailPage() {
                           </div>
                         ))}
                       </div>
+                      {product.fitments.length > 5 && (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          Показаны первые 5 из {product.fitments.length} вариантов.
+                        </p>
+                      )}
                     </div>
                   )}
 

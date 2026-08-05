@@ -387,6 +387,58 @@ class TestDescriptionAgent:
         assert 'BMW 5 G30' not in message
         assert json.loads(message)['enrichment']['excluded_review_count'] == 1
 
+    def test_many_fitments_are_presented_by_make_and_model_family(self):
+        tenant = make_tenant('compact-fitment-agent-co')
+        product = make_product(tenant)
+        models = [
+            'E-CLASS', 'E-CLASS T-Model', 'E-CLASS All-Terrain',
+            'E-CLASS купе', 'E-CLASS Кабриолет', 'CLS', 'CLS',
+        ]
+        for index in range(7):
+            ProductEnrichmentService.create_fitment(
+                tenant=tenant,
+                product=product,
+                make='MERCEDES-BENZ',
+                model=models[index],
+                generation=f'GEN-{index}',
+                confidence=0.95,
+            )
+
+        agent = DescriptionAgent()
+        payload = json.loads(agent._build_message(product))['enrichment']
+
+        assert payload['fitment_presentation']['mode'] == 'compact'
+        assert set(payload['fitment_presentation']['required_models']) == {'E-CLASS', 'CLS'}
+        assert payload['fitment_presentation']['confirmed_fitment_count'] == 7
+
+        result = {
+            'title': 'Тормозной диск Bosch ART-001 для Mercedes-Benz E-Class и CLS',
+            'description': (
+                'Совместимость: подтверждено 7 вариантов Mercedes-Benz E-Class и CLS. '
+                'Перед покупкой сверьте номер детали или VIN.'
+            ),
+        }
+        agent._validate_required_fitments(product, result)
+
+    def test_catalog_number_presentation_hides_mercedes_formatting_duplicates(self):
+        tenant = make_tenant('catalog-number-presentation-co')
+        product = make_product(tenant)
+        for code in ('0004206000', 'A0004206000', 'A000420930364'):
+            ProductEnrichmentService.create_cross_code(
+                tenant=tenant,
+                product=product,
+                manufacturer='MERCEDES-BENZ',
+                code=code,
+                normalized_code=code,
+                code_type=ProductCrossCode.CodeType.OEM,
+            )
+
+        payload = json.loads(DescriptionAgent()._build_message(product))['enrichment']
+        numbers = payload['catalog_number_presentation']['numbers']
+
+        assert [item['code'] for item in numbers] == ['A0004206000', 'A000420930364']
+        assert payload['catalog_number_presentation']['total_unique_count'] == 2
+
     def test_required_fitments_rejects_description_that_drops_one_vehicle(self):
         tenant = make_tenant('required-fitments-agent-co')
         product = make_product(tenant)

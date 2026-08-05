@@ -218,7 +218,7 @@ class DescriptionAgent:
 
     @staticmethod
     def _validate_required_fitments(product, result: dict) -> None:
-        """Do not accept an answer that drops confirmed vehicle compatibility."""
+        """Keep exact short fitments or their truthful compact model-family summary."""
         context = ProductAIEnrichmentContextBuilder().build(product)
         if not context.trusted_fitments:
             return
@@ -227,6 +227,23 @@ class DescriptionAgent:
             character for character in f'{result["title"]} {result["description"]}'.casefold()
             if character.isalnum()
         )
+        presentation = context.fitment_presentation
+        if presentation.get('mode') == 'compact':
+            required_values = [
+                *presentation.get('required_makes', []),
+                *presentation.get('required_models', []),
+            ]
+            missing = [
+                value for value in required_values
+                if ''.join(char for char in value.casefold() if char.isalnum()) not in combined
+            ]
+            if missing:
+                raise ValidationError(
+                    'Ответ потерял марки или классы из компактной '
+                    'применяемости: ' + ', '.join(missing[:10])
+                )
+            return
+
         missing = []
         seen = set()
         for fitment in context.trusted_fitments:

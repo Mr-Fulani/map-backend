@@ -13,6 +13,20 @@ _CONDITION_MAP = {
 }
 
 _DEFAULT_CATEGORY = 'Запчасти и аксессуары'
+AVITO_TITLE_MAX_LENGTH = 200
+AVITO_DESCRIPTION_MAX_LENGTH = 7500
+
+
+def _limit_marketplace_text(value, max_length: int) -> str:
+    """Enforce adapter limits even for legacy or manually edited listings."""
+    text = str(value or '').strip()
+    if len(text) <= max_length:
+        return text
+    shortened = text[:max_length + 1]
+    boundary = max(shortened.rfind('\n'), shortened.rfind(' '))
+    if boundary >= int(max_length * 0.8):
+        return shortened[:boundary].rstrip(' ,;:-')
+    return text[:max_length].rstrip(' ,;:-')
 
 
 def build_feed(listings: list) -> bytes:
@@ -32,9 +46,12 @@ def build_feed(listings: list) -> bytes:
 
         # Id — наш ключ идемпотентности; по нему сопоставляем с avito_id через API
         ET.SubElement(ad, 'Id').text = str(listing.publish_idempotency_key)
-        ET.SubElement(ad, 'Title').text = listing.title or product.name or ''
-        ET.SubElement(ad, 'Description').text = (
-            listing.description_ai or getattr(product, 'description_1c', '') or ''
+        ET.SubElement(ad, 'Title').text = _limit_marketplace_text(
+            listing.title or product.name or '', AVITO_TITLE_MAX_LENGTH,
+        )
+        ET.SubElement(ad, 'Description').text = _limit_marketplace_text(
+            listing.description_ai or getattr(product, 'description_1c', '') or '',
+            AVITO_DESCRIPTION_MAX_LENGTH,
         )
         ET.SubElement(ad, 'Price').text = str(int(listing.price_on_listing))
         ET.SubElement(ad, 'Category').text = _get_avito_category(listing)

@@ -162,8 +162,8 @@ function enrichmentTitle(product: Product) {
   const summary = product.enrichment_summary;
   const parts = [
     `Характеристики: ${summary.attributes_count}`,
-    `OEM/Cross: ${summary.cross_codes_count}`,
-    `Применяемость: ${summary.fitments_count}`,
+    `Каталожные номера: ${summary.cross_codes_count}`,
+    `Совместимость: ${summary.fitments_count}`,
   ];
   if (summary.latest_parse_status) {
     parts.push(`Последний парсинг: ${summary.latest_parse_status}`);
