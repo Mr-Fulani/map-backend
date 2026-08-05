@@ -72,6 +72,9 @@ const SOURCE_LABELS: Record<string, string> = {
   manual: 'Оператор',
   rules: 'Автоопределение',
   tachka: 'Tachka',
+  rossko: 'Rossko',
+  euroauto: 'Euroauto',
+  web_research: 'Интернет-исследование',
 };
 
 function confidenceLabel(value: number) {

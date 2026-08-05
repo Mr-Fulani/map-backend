@@ -32,6 +32,31 @@ def test_brave_web_search_parses_grounding_results():
     assert get.call_args.kwargs['params']['q'] == 'Kia Optima фонарь'
 
 
+@override_settings(BRAVE_SEARCH_API_KEY='test-key')
+def test_brave_image_search_retains_source_page_for_exact_product_validation():
+    response = Mock(status_code=200, headers={})
+    response.json.return_value = {
+        'results': [{
+            'title': '8940-289 Metaco Фонарь задний наружный левый',
+            'url': 'https://euroauto.ru/part/new/6148741/',
+            'properties': {
+                'url': 'https://file.euroauto.ru/v2/file/parts/new/6148741/1.jpg',
+            },
+        }],
+    }
+    with patch(
+        'apps.web_research.providers.brave.requests.get', return_value=response,
+    ) as get, patch(
+        'apps.image_search.sources.brave.BraveImageSource._track_quota',
+    ) as track_quota:
+        results = BraveWebSearchProvider().search_images('site:euroauto.ru "8940-289"')
+
+    assert results[0]['url'] == 'https://euroauto.ru/part/new/6148741/'
+    assert results[0]['properties']['url'].endswith('/6148741/1.jpg')
+    assert get.call_args.kwargs['params']['spellcheck'] is False
+    track_quota.assert_called_once_with(response)
+
+
 @override_settings(BRAVE_SEARCH_API_KEY='')
 def test_brave_web_search_is_unavailable_without_key():
     assert BraveWebSearchProvider().is_available() is False
@@ -55,6 +80,28 @@ def test_tavily_parses_cleaned_content_and_score():
     assert results[0].content == 'OEM 92402D4000 для Kia Optima JF'
     assert results[0].score == 0.91
     assert post.call_args.kwargs['json']['include_raw_content'] is True
+
+
+@override_settings(TAVILY_API_KEY='test-tavily-key')
+def test_tavily_search_payload_supports_domain_limited_catalog_images():
+    response = Mock(status_code=200)
+    response.json.return_value = {
+        'results': [],
+        'images': [{'url': 'https://file.euroauto.ru/part.jpg'}],
+    }
+    with patch('apps.web_research.providers.tavily.requests.post', return_value=response) as post:
+        payload = TavilyWebSearchProvider().search_payload(
+            '8940-289 Metaco',
+            include_domains=['euroauto.ru'],
+            include_images=True,
+            include_image_descriptions=True,
+        )
+
+    assert payload['images'][0]['url'].startswith('https://file.euroauto.ru/')
+    request_data = post.call_args.kwargs['json']
+    assert request_data['include_domains'] == ['euroauto.ru']
+    assert request_data['include_images'] is True
+    assert request_data['include_image_descriptions'] is True
 
 
 @override_settings(TAVILY_API_KEY='')

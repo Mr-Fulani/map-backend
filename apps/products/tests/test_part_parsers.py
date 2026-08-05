@@ -4,11 +4,13 @@ from unittest.mock import patch
 
 import pytest
 
-from apps.products.models import GlobalPart, GlobalPartFitment, Product, ProductCrossCode
+from apps.products.models import (
+    GlobalPart, GlobalPartFitment, GlobalPartRelation, Product, ProductCrossCode,
+)
 from apps.products.part_fetchers import FetchedPage
 from apps.products.part_parsers import (
-    ParsedFitment, ParsedPart, PartNotFound, RosskoPartParser, TachkaPartParser,
-    parse_fitment_line,
+    EuroautoPartParser, ParsedFitment, ParsedPart, PartNotFound, RosskoPartParser,
+    TachkaPartParser, parse_fitment_line,
 )
 from apps.products.services import ProductEnrichmentService, ProductService
 from apps.tenants.services import TenantService
@@ -643,6 +645,84 @@ ROSSKO_ALTERNATIVE_APPLICABILITY_HTML = """
 </html>
 """
 
+EUROAUTO_PRODUCT_HTML = """
+<html>
+<head>
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": "8940-289 Metaco Фонарь задний наружный левый",
+    "description": "8940-289 Metaco Фонарь задний наружный левый HYUNDAI SOLARIS (2017>) #6148741",
+    "url": "https://euroauto.ru/part/new/6148741/",
+    "manufacturer": "Metaco",
+    "brand": {"@type": "Brand", "name": "Metaco"},
+    "mpn": "8940-289",
+    "image": "https://file.euroauto.ru/v2/file/parts/new/6148741/1.jpg"
+  }
+  </script>
+</head>
+<body>
+  <h1>Фонарь задний наружный левый Metaco 8940-289</h1>
+  <table class="part-parameters-table">
+    <tr><th>№ производителя</th><td>8940-289</td></tr>
+    <tr><th>Производитель</th><td>Metaco</td></tr>
+    <tr><th>Применимость</th><td>2 авто</td></tr>
+    <tr><th>Примечание</th><td>HYUNDAI SOLARIS (2017&gt;)</td></tr>
+    <tr><th>Страна происхождения</th><td>Китай</td></tr>
+  </table>
+  <span class="part-applicability">
+    <a href="/catalog/zadnie-fonari-1058/brand-hyundai/model-solaris/modification-solaris_2017-2022/">
+      Hyundai Solaris 2017-2022
+    </a>
+    <a href="/catalog/zadnie-fonari-1058/brand-solaris/model-hs/modification-hs_2024-/">
+      Solaris HS 2024&gt;
+    </a>
+  </span>
+  <img src="https://file.euroauto.ru/v2/file/parts/new/6148741/2.jpg?thumbnail=308x244">
+  <img src="https://file.euroauto.ru/v2/file/parts/new/9999999/1.jpg?thumbnail=116x88">
+  <img src="https://file.euroauto.ru/v2/file/parts/used/1/2/3/4/1.jpg">
+  <div class="slider-analog-card new-analog">
+    <div class="slider-analog-card-content-brand">Hyundai-Kia</div>
+    <div class="slider-analog-card-content-num">92401-H5000</div>
+  </div>
+  <div class="slider-analog-card new-analog">
+    <div class="slider-analog-card-content-brand">SAT</div>
+    <div class="slider-analog-card-content-num">ST-221-19S7L</div>
+  </div>
+  <div class="slider-analog-card new-analog">
+    <div class="slider-analog-card-content-brand">SAT</div>
+    <div class="slider-analog-card-content-num">ST-221-19S7L</div>
+  </div>
+</body>
+</html>
+"""
+
+EUROAUTO_SEARCH_PAYLOAD = json.dumps({
+    '_map_request': {
+        'article': '8940-289',
+        'hint': 'Фонарь задний наружный левый Kia Solaris',
+    },
+    '_map_product_images': [
+        'https://file.euroauto.ru/v2/file/parts/new/6148741/1.jpg',
+        'https://file.euroauto.ru/v2/file/parts/new/6148741/2.jpg',
+    ],
+    'results': [{
+        'url': 'https://rostov-na-donu.euroauto.ru/firms/metaco/8940289',
+        'title': '8940-289 Metaco Фонарь задний наружный левый',
+        'content': (
+            'Фонарь задний наружный левый Metaco 8940-289. '
+            'Metaco HYUNDAI SOLARIS (2017>). '
+            'Лучший аналог · SAT · ST-221-19S7L'
+        ),
+        'score': 0.91,
+    }],
+    'images': [{
+        'url': 'https://file.euroauto.ru/v2/file/parts/new/6148741/1.jpg?thumbnail=308x244',
+        'description': 'A rear left tail light.',
+    }],
+}, ensure_ascii=False)
+
 
 def test_rossko_parser_extracts_features_from_html():
     parsed = RosskoPartParser().parse_html(
@@ -795,3 +875,114 @@ def test_rossko_parser_uses_injected_fetcher_without_network():
     assert 'brembo-p-50-136' in calls[1]
     assert html == ROSSKO_PRODUCT_HTML
     assert 'rossko.ru' in source_url
+
+
+def test_euroauto_parser_extracts_product_fitments_analogues_and_only_own_images():
+    parsed = EuroautoPartParser().parse_html(
+        EUROAUTO_PRODUCT_HTML,
+        brand='',
+        article='8940289',
+        source_url='https://euroauto.ru/part/new/6148741/',
+    )
+
+    assert parsed.brand == 'METACO'
+    assert parsed.normalized_article == '8940289'
+    assert parsed.attributes['Страна происхождения'] == 'Китай'
+    assert [(item.make, item.model, item.date_from, item.date_to) for item in parsed.fitments] == [
+        ('Hyundai', 'Solaris', '2017', '2022'),
+        ('Solaris', 'HS', '2024', ''),
+    ]
+    assert [(item.brand, item.article) for item in parsed.related_parts] == [
+        ('Hyundai-Kia', '92401-H5000'),
+        ('SAT', 'ST-221-19S7L'),
+    ]
+    assert parsed.image_urls == [
+        'https://file.euroauto.ru/v2/file/parts/new/6148741/1.jpg',
+        'https://file.euroauto.ru/v2/file/parts/new/6148741/2.jpg',
+    ]
+    assert 'HYUNDAI SOLARIS' in parsed.description_facts['catalog_description']
+
+
+def test_euroauto_parser_extracts_indexed_search_payload_without_source_brand():
+    parsed = EuroautoPartParser(fetcher=object()).parse_search_html(
+        EUROAUTO_SEARCH_PAYLOAD,
+        brand='',
+        article='8940-289',
+        source_url='https://euroauto.ru/search/?q=8940-289',
+    )
+
+    assert parsed.brand == 'METACO'
+    assert parsed.title == 'Фонарь задний наружный левый Metaco 8940-289'
+    assert [(item.make, item.model, item.date_from) for item in parsed.fitments] == [
+        ('HYUNDAI', 'SOLARIS', '2017'),
+    ]
+    assert [(item.brand, item.article) for item in parsed.related_parts] == [
+        ('SAT', 'ST-221-19S7L'),
+    ]
+    assert len(parsed.image_urls) == 2
+    assert '/parts/new/6148741/' in parsed.image_urls[0]
+    assert '/firms/metaco/8940289' in parsed.source_url
+
+
+def test_euroauto_search_uses_injected_fetcher_and_passes_product_hint():
+    calls = []
+
+    class FakeFetcher:
+        def fetch(self, url):
+            calls.append(url)
+            return FetchedPage(
+                html=EUROAUTO_SEARCH_PAYLOAD,
+                url='https://rostov-na-donu.euroauto.ru/firms/metaco/8940289',
+                status_code=200,
+            )
+
+    parser = EuroautoPartParser(fetcher=FakeFetcher())
+    html, source_url = parser.fetch_search(
+        '8940-289', hint='Фонарь задний наружный левый',
+    )
+
+    assert html == EUROAUTO_SEARCH_PAYLOAD
+    assert source_url.endswith('/firms/metaco/8940289')
+    assert 'q=8940-289' in calls[0]
+    assert 'hint=%D0%A4%D0%BE%D0%BD%D0%B0%D1%80%D1%8C' in calls[0]
+
+
+@pytest.mark.django_db
+def test_euroauto_fitments_and_analogues_are_learned_by_platform_graph():
+    tenant = make_tenant('euroauto-learning')
+    product = Product.objects.create(
+        tenant=tenant,
+        article='8940-289',
+        brand='METACO',
+        name='Фонарь задний наружный левый Metaco 8940-289',
+        price=Decimal('4253.00'),
+        stock_qty=1,
+    )
+    parsed = EuroautoPartParser().parse_html(
+        EUROAUTO_PRODUCT_HTML,
+        brand='METACO',
+        article='8940-289',
+        source_url='https://euroauto.ru/part/new/6148741/',
+    )
+
+    ProductEnrichmentService.save_parsed_part(
+        tenant, product, parsed, source_id='euroauto',
+    )
+
+    assert GlobalPartFitment.objects.filter(
+        part__normalized_brand='METACO',
+        part__normalized_article='8940289',
+        source_id='euroauto',
+        make='Hyundai',
+        model='Solaris',
+        needs_review=False,
+    ).exists()
+    assert GlobalPartRelation.objects.filter(
+        source_part__normalized_brand='METACO',
+        source_part__normalized_article='8940289',
+        target_part__normalized_brand='HYUNDAIKIA',
+        target_part__normalized_article='92401H5000',
+        source_id='euroauto',
+        relation_type=GlobalPartRelation.RelationType.ANALOGUE,
+        needs_review=False,
+    ).exists()
