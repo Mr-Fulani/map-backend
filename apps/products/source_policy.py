@@ -100,6 +100,23 @@ PART_SOURCE_POLICIES = {
             supports_related_parts=False,
         ),
     ),
+    'web_research': PartSourcePolicy(
+        source_id='web_research',
+        label='Интернет-исследование',
+        priority=10,
+        trust_score=0.55,
+        default_pause_seconds=0,
+        min_pause_seconds=0,
+        batch_size=1,
+        transport='agent',
+        capabilities=SourceCapabilities(
+            supports_product_page=False,
+            supports_search=False,
+            supports_fitments=True,
+            supports_images=False,
+            supports_related_parts=True,
+        ),
+    ),
 }
 
 

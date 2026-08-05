@@ -48,6 +48,7 @@ LOCAL_APPS = [
     'apps.analytics',
     'apps.image_search',
     'apps.media_processing',
+    'apps.web_research',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -142,6 +143,11 @@ UNFOLD = {
                         "title": "AI-запросы",
                         "icon": "history",
                         "link": "/admin/ai_agent/airequestlog/",
+                    },
+                    {
+                        "title": "Интернет-исследования",
+                        "icon": "travel_explore",
+                        "link": "/admin/web_research/webresearchrun/",
                     },
                     {
                         "title": "Цены AI-провайдеров",
@@ -494,6 +500,14 @@ MOONSHOT_API_KEY = os.environ.get('MOONSHOT_API_KEY', '')
 
 # --- Image Search ---
 BRAVE_SEARCH_API_KEY = os.environ.get('BRAVE_SEARCH_API_KEY', '')
+WEB_RESEARCH_AUTO_FALLBACK = os.environ.get(
+    'WEB_RESEARCH_AUTO_FALLBACK', 'true',
+).lower() in {'1', 'true', 'yes'}
+WEB_RESEARCH_COVERAGE_THRESHOLD = float(os.environ.get(
+    'WEB_RESEARCH_COVERAGE_THRESHOLD', '0.65',
+))
+WEB_RESEARCH_MAX_QUERIES = int(os.environ.get('WEB_RESEARCH_MAX_QUERIES', '2'))
+WEB_RESEARCH_RESULTS_PER_QUERY = int(os.environ.get('WEB_RESEARCH_RESULTS_PER_QUERY', '8'))
 
 # --- Avito ---
 AVITO_CLIENT_ID = os.environ.get('AVITO_CLIENT_ID', '')

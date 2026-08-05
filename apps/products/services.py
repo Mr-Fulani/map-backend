@@ -850,6 +850,59 @@ class ProductEnrichmentService:
         return ProductEnrichmentFact.objects.create(tenant=tenant, product=product, **data)
 
     @classmethod
+    def apply_approved_fact(cls, product: Product, fact: ProductEnrichmentFact) -> None:
+        """Promote a reviewed web-research brand/OEM claim into trusted product data."""
+        if fact.review_status != ReviewStatus.APPROVED:
+            return
+        if fact.fact_type == ProductEnrichmentFact.FactType.BRAND:
+            brand = str(fact.value or '').strip()[:200]
+            if not brand:
+                return
+            product.brand = brand
+            product.brand_ref = ProductBrandService.resolve_or_create_brand(
+                brand,
+                source_id='human_review',
+                confidence=1.0,
+            )
+            product.brand_resolution_status = Product.BrandResolutionStatus.MANUAL
+            product.brand_confidence = 1.0
+            product.brand_source_id = 'human_review'
+            product.brand_needs_review = False
+            product.save(update_fields=[
+                'brand', 'brand_ref', 'brand_resolution_status', 'brand_confidence',
+                'brand_source_id', 'brand_needs_review', 'updated_at',
+            ])
+            return
+
+        if fact.fact_type != ProductEnrichmentFact.FactType.OEM:
+            return
+        payload = {}
+        try:
+            raw = json.loads(fact.raw_text or '{}')
+            payload = raw.get('claim_payload') or {}
+        except (TypeError, ValueError):
+            pass
+        code = str(payload.get('code') or fact.value or '').strip()[:100]
+        normalized = normalize_cross_code(code)
+        if not normalized:
+            return
+        code_type = str(payload.get('code_type') or ProductCrossCode.CodeType.OEM)
+        if code_type not in ProductCrossCode.CodeType.values:
+            code_type = ProductCrossCode.CodeType.UNKNOWN
+        cross, _ = ProductCrossCode.objects.get_or_create(
+            tenant=product.tenant,
+            product=product,
+            source_id='human_review',
+            manufacturer=str(payload.get('manufacturer') or fact.name or '')[:100],
+            normalized_code=normalized,
+            code_type=code_type,
+            defaults={'code': code},
+        )
+        cls.refresh_product_denormalized_enrichment(product)
+        product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability', 'updated_at'])
+        ProductKnowledgeGraphService.learn_approved_cross_code(product, cross)
+
+    @classmethod
     def create_parse_job(
         cls, tenant, product: Product | None, brand: str, article: str,
         normalized_article: str, source_id: str = DEFAULT_PART_SOURCE,
@@ -1805,6 +1858,52 @@ class ProductKnowledgeGraphService:
             approved.needs_review = False
             approved.confidence = 1.0
             approved.save(update_fields=['needs_review', 'confidence', 'updated_at'])
+
+    @classmethod
+    def learn_approved_cross_code(cls, product: Product, cross: ProductCrossCode) -> None:
+        """Promote a human-approved OEM/Cross code into reusable platform knowledge."""
+        if (
+            not cls.has_trusted_product_identity(product)
+            or not normalize_part_code(product.article)
+            or not cls.normalize_brand(cross.manufacturer)
+            or not normalize_part_code(cross.code)
+        ):
+            return
+        source_part = cls.upsert_part(
+            brand=product.brand,
+            article=product.article,
+            title=product.name,
+            source_id='human_review',
+            source_url='',
+            confidence=1.0,
+            needs_review=False,
+        )
+        target_part = cls.upsert_part(
+            brand=cross.manufacturer,
+            article=cross.code,
+            source_id='human_review',
+            source_url='',
+            confidence=1.0,
+            needs_review=False,
+        )
+        relation_type = cls.CROSS_TO_RELATION.get(
+            cross.code_type,
+            GlobalPartRelation.RelationType.UNKNOWN,
+        )
+        relation = cls.upsert_relation(
+            source_part=source_part,
+            target_part=target_part,
+            relation_type=relation_type,
+            source_id='human_review',
+            source_url='',
+            raw_text=f'{cross.manufacturer}: {cross.code}'.strip(': '),
+            confidence=1.0,
+            needs_review=False,
+        )
+        if relation.needs_review or relation.confidence < 1.0:
+            relation.needs_review = False
+            relation.confidence = 1.0
+            relation.save(update_fields=['needs_review', 'confidence', 'updated_at'])
 
     @classmethod
     def apply_known_relations_to_product(cls, product: Product) -> int:

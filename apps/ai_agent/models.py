@@ -15,6 +15,7 @@ class AITaskType(models.TextChoices):
     CLASSIFICATION = 'classification', 'Классификация товаров'
     ATTRIBUTE_EXTRACTION = 'attribute_extraction', 'Извлечение характеристик'
     FITMENT_RESOLUTION = 'fitment_resolution', 'Анализ совместимости'
+    WEB_RESEARCH = 'web_research', 'Интернет-исследование товара'
 
 
 class AIPromptTemplate(TimestampedModel):

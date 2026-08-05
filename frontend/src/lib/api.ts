@@ -243,6 +243,10 @@ export const productApi = {
   parse: (id: number, source = '', generateAfter = false) =>
     api.post('/products/parse/', { product_id: id, source: source || undefined, generate_after: generateAfter }),
   parseJobStatus: (id: number) => api.get(`/products/parse-jobs/${id}/`),
+  startWebResearch: (id: number, generateAfter = false) =>
+    api.post(`/products/${id}/web-research/`, { generate_after: generateAfter }),
+  latestWebResearch: (id: number) => api.get(`/products/${id}/web-research/`),
+  webResearchStatus: (runId: number) => api.get(`/web-research/runs/${runId}/`),
   bulkAction: (data: {
     action: string;
     product_ids: number[];

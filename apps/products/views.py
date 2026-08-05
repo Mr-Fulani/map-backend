@@ -1179,6 +1179,8 @@ class ProductReviewQueueActionView(APIView):
             item = get_object_or_404(ProductEnrichmentFact, pk=record_id, tenant=request.tenant)
             review_status = ReviewStatus.APPROVED if action == 'approve' else ReviewStatus.REJECTED
             _set_review_state(item, request, review_status)
+            if review_status == ReviewStatus.APPROVED:
+                ProductEnrichmentService.apply_approved_fact(item.product, item)
             return Response({'status': 'ok', 'data': _serialize_review_item(item_type, item)})
         if item_type == 'classification':
             product = get_object_or_404(
@@ -1240,6 +1242,7 @@ class ProductEnrichmentFactReviewView(APIView):
         fact = get_object_or_404(ProductEnrichmentFact, pk=fact_id, tenant=request.tenant, product=product)
         if action == 'approve':
             _set_review_state(fact, request, ReviewStatus.APPROVED)
+            ProductEnrichmentService.apply_approved_fact(product, fact)
         elif action == 'reject':
             _set_review_state(fact, request, ReviewStatus.REJECTED)
         else:

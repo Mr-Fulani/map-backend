@@ -1,0 +1,63 @@
+from decimal import Decimal
+from unittest.mock import patch
+
+import pytest
+from django.test import Client
+
+from apps.products.models import Product
+from apps.tenants.services import TenantService
+from apps.web_research.models import WebResearchRun
+
+
+def make_tenant(slug):
+    tenant, api_key = TenantService.create_tenant(
+        slug, slug, f'{slug}@test.com', 'pass12345',
+    )
+    tenant.catalog_domain = 'auto_parts'
+    tenant.save(update_fields=['catalog_domain'])
+    from apps.products.services import ProductCategorySeedService
+    ProductCategorySeedService.enable_tenant_catalog_domain(tenant, 'auto_parts')
+    return tenant, api_key
+
+
+def make_product(tenant):
+    return Product.objects.create(
+        tenant=tenant,
+        article='OEM0099FONR',
+        name='Фонарь правый внешний Kia Optima JF',
+        category_1c='Автосвет',
+        price=Decimal('0'),
+    )
+
+
+@pytest.mark.django_db
+def test_tenant_can_start_manual_web_research(django_capture_on_commit_callbacks):
+    tenant, api_key = make_tenant('web-api')
+    product = make_product(tenant)
+    client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
+
+    with patch('apps.web_research.tasks.run_web_research.delay') as delay:
+        with django_capture_on_commit_callbacks(execute=True):
+            response = client.post(
+                f'/api/v1/products/{product.pk}/web-research/',
+                content_type='application/json',
+            )
+
+    assert response.status_code == 201
+    run = WebResearchRun.objects.get(product=product)
+    assert run.trigger == WebResearchRun.Trigger.MANUAL
+    delay.assert_called_once_with(run.pk)
+
+
+@pytest.mark.django_db
+def test_web_research_run_is_tenant_scoped():
+    tenant_a, api_key = make_tenant('web-owner')
+    tenant_b, _ = make_tenant('web-other')
+    product_b = make_product(tenant_b)
+    run = WebResearchRun.objects.create(tenant=tenant_b, product=product_b)
+    client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
+
+    response = client.get(f'/api/v1/web-research/runs/{run.pk}/')
+
+    assert response.status_code == 404
+    assert tenant_a.web_research_runs.count() == 0
