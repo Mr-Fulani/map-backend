@@ -1,9 +1,10 @@
+import json
 from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 
-from apps.products.models import GlobalPart, Product, ProductCrossCode
+from apps.products.models import GlobalPart, GlobalPartFitment, Product, ProductCrossCode
 from apps.products.part_fetchers import FetchedPage
 from apps.products.part_parsers import (
     ParsedFitment, ParsedPart, PartNotFound, RosskoPartParser, TachkaPartParser,
@@ -27,6 +28,70 @@ SAMPLE_HTML = """
     <p>E-CLASS (W213) 01.2016-2023 E 220 d 4-matic (213.005) 194 л.с</p>
     <img src="/images/p50136.jpg" />
   </body>
+</html>
+"""
+
+TACHKA_GROUPED_FITMENTS_DESCRIPTION = (
+    'Кросс коды MERCEDES-BENZ - A0004212512 '
+    'Подходит для следующих модификаций: '
+    'MERCEDES-BENZ C-CLASS (W205) 01.2014-01.2018 '
+    'C 180 (205.040, 205.140) 156 л.с '
+    'C-CLASS T-Model (S205) 05.2018-2023 C 220 d (205.214) 194 л.с'
+)
+TACHKA_GROUPED_FITMENTS_SCHEMA = json.dumps({
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    'brand': {'@type': 'Brand', 'name': 'Brembo'},
+    'name': 'Brembo 09.D526.13',
+    'description': TACHKA_GROUPED_FITMENTS_DESCRIPTION,
+}, ensure_ascii=False)
+
+TACHKA_GROUPED_FITMENTS_HTML = f"""
+<html>
+  <head>
+    <script type="application/ld+json">
+      {TACHKA_GROUPED_FITMENTS_SCHEMA}
+    </script>
+  </head>
+  <body>
+    <h1>Brembo 09.D526.13 Тормозной диск</h1>
+    <section class="product-description">
+      <h2>Подходит для следующих модификаций:</h2>
+      <ul>
+        <h3>MERCEDES-BENZ</h3>
+        <li>C-CLASS (W205) <span>01.2014-01.2018</span>
+          <strong>C 180 (205.040, 205.140)</strong> 156 л.с</li>
+        <li>C-CLASS T-Model (S205) <span>05.2018-2023</span>
+          <strong>C 220 d (205.214)</strong> 194 л.с</li>
+      </ul>
+    </section>
+  </body>
+</html>
+"""
+
+TACHKA_JSON_LD_ONLY_DESCRIPTION = (
+    'Кросс коды MERCEDES-BENZ - A0004212512 '
+    'Подходит для следующих модификаций: '
+    'MERCEDES-BENZ C-CLASS (W205) 01.2014-01.2018 '
+    'C 180 (205.040, 205.140) 156 л.с '
+    'E-CLASS (W213) 01.2016-2023 E 200 (213.042) 184 л.с'
+)
+TACHKA_JSON_LD_ONLY_SCHEMA = json.dumps({
+    '@context': 'https://schema.org',
+    '@type': 'Product',
+    'brand': {'@type': 'Brand', 'name': 'Brembo'},
+    'name': 'Brembo 09.D526.13',
+    'description': TACHKA_JSON_LD_ONLY_DESCRIPTION,
+}, ensure_ascii=False)
+
+TACHKA_JSON_LD_ONLY_FITMENTS_HTML = f"""
+<html>
+  <head>
+    <script type="application/ld+json">
+      {TACHKA_JSON_LD_ONLY_SCHEMA}
+    </script>
+  </head>
+  <body><h1>Brembo 09.D526.13 Тормозной диск</h1></body>
 </html>
 """
 
@@ -79,6 +144,36 @@ def test_tachka_parser_extracts_enrichment_data_from_html():
     assert parsed.fitments[0].power_hp == 194
     assert parsed.image_urls == ['https://tachka.ru/images/p50136.jpg']
     assert 'description' in parsed.description_facts
+
+
+def test_tachka_parser_extracts_grouped_fitments_with_manufacturer():
+    parsed = TachkaPartParser().parse_html(
+        TACHKA_GROUPED_FITMENTS_HTML,
+        brand='BREMBO',
+        article='09D52613',
+    )
+
+    assert len(parsed.fitments) == 2
+    assert [(item.make, item.model, item.generation) for item in parsed.fitments] == [
+        ('MERCEDES-BENZ', 'C-CLASS', 'W205'),
+        ('MERCEDES-BENZ', 'C-CLASS T-Model', 'S205'),
+    ]
+    assert parsed.fitments[0].engine_code == '205.040, 205.140'
+    assert parsed.fitments[1].modification == 'C 220 d'
+
+
+def test_tachka_parser_extracts_fitments_from_flat_json_ld_fallback():
+    parsed = TachkaPartParser().parse_html(
+        TACHKA_JSON_LD_ONLY_FITMENTS_HTML,
+        brand='BREMBO',
+        article='09D52613',
+    )
+
+    assert len(parsed.fitments) == 2
+    assert [(item.make, item.model, item.generation) for item in parsed.fitments] == [
+        ('MERCEDES-BENZ', 'C-CLASS', 'W205'),
+        ('MERCEDES-BENZ', 'E-CLASS', 'W213'),
+    ]
 
 
 def test_parse_fitment_line_keeps_uncertain_data_reviewable():
@@ -530,6 +625,24 @@ ROSSKO_SEARCH_HTML = """
 </html>
 """
 
+ROSSKO_ALTERNATIVE_APPLICABILITY_HTML = """
+<html>
+<body>
+  <h1>09.D526.13 Brembo Тормозной диск</h1>
+  <div data-tab-id="applicability">
+    <div class="car">
+      <h3 class="car__manufacturer">MERCEDES-BENZ</h3>
+      <h4 class="car__model">C-CLASS (W205)</h4>
+      <ul class="car-engines">
+        <li>C 180 (205.040)</li>
+        <li>C 200 (205.042)</li>
+      </ul>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
 
 def test_rossko_parser_extracts_features_from_html():
     parsed = RosskoPartParser().parse_html(
@@ -577,6 +690,70 @@ def test_rossko_parser_extracts_fitments():
     assert e_class[1].engine_code == '213.005'
     cls_fitments = [f for f in parsed.fitments if f.model == 'CLS']
     assert cls_fitments[0].engine_code == '257.314'
+
+
+def test_rossko_parser_extracts_fitments_from_heading_fallback():
+    parsed = RosskoPartParser().parse_html(
+        ROSSKO_ALTERNATIVE_APPLICABILITY_HTML,
+        brand='BREMBO',
+        article='09D52613',
+    )
+
+    assert len(parsed.fitments) == 2
+    assert all(item.make == 'MERCEDES-BENZ' for item in parsed.fitments)
+    assert all(item.model == 'C-CLASS' for item in parsed.fitments)
+    assert all(item.generation == 'W205' for item in parsed.fitments)
+    assert [item.engine_code for item in parsed.fitments] == ['205.040', '205.042']
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ('source_id', 'html'),
+    [
+        ('tachka', TACHKA_GROUPED_FITMENTS_HTML),
+        ('rossko', ROSSKO_ALTERNATIVE_APPLICABILITY_HTML),
+    ],
+)
+def test_source_fitments_are_saved_to_platform_knowledge_graph(source_id, html):
+    tenant = make_tenant(f'{source_id}-fitment-learning')
+    product = Product.objects.create(
+        tenant=tenant,
+        article='09D52613',
+        brand='BREMBO',
+        name='BREMBO 09D52613',
+        price=Decimal('1234.00'),
+        stock_qty=1,
+    )
+    parser = TachkaPartParser() if source_id == 'tachka' else RosskoPartParser()
+    parsed = parser.parse_html(
+        html,
+        brand='BREMBO',
+        article='09D52613',
+        source_url=f'https://{source_id}.example/09D52613',
+    )
+
+    ProductEnrichmentService.save_parsed_part(
+        tenant,
+        product,
+        parsed,
+        source_id=source_id,
+    )
+
+    assert product.fitments.filter(
+        source_id=source_id,
+        make='MERCEDES-BENZ',
+        model='C-CLASS',
+        generation='W205',
+    ).exists()
+    assert GlobalPartFitment.objects.filter(
+        part__normalized_brand='BREMBO',
+        part__normalized_article='09D52613',
+        source_id=source_id,
+        make='MERCEDES-BENZ',
+        model='C-CLASS',
+        generation='W205',
+        needs_review=False,
+    ).exists()
 
 
 def test_rossko_parser_extracts_images():
