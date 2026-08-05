@@ -44,9 +44,10 @@ class TestBuildQueries:
         queries = build_queries(product)
 
         assert queries[0] == ('"P50136" Колодки', 'HIGH')
-        assert all('P50136' in query for query, _ in queries[:2])
+        assert 'P50136' not in queries[1][0]
+        assert 'Колодки тормозные' in queries[1][0]
 
-    def test_первые_запросы_содержат_идентичность_и_контекст(self):
+    def test_первые_запросы_дают_артикул_и_независимый_контекст(self):
         product = FakeProduct(
             article='P50136', brand='BREMBO', name='Колодки тормозные задние',
             category_1c='Тормозная система / Колодки',
@@ -54,8 +55,24 @@ class TestBuildQueries:
 
         queries = build_queries(product)
 
-        assert all('BREMBO' in query and 'P50136' in query for query, _ in queries[:2])
-        assert any('Колодки' in query for query, _ in queries[:2])
+        assert 'BREMBO' in queries[0][0] and 'P50136' in queries[0][0]
+        assert 'BREMBO' in queries[1][0] and 'Колодки' in queries[1][0]
+        assert 'P50136' not in queries[1][0]
+
+    def test_внутренний_oem_артикул_не_вытесняет_название(self):
+        product = FakeProduct(
+            article='OEM0099FONR',
+            brand='',
+            name='Фонарь правый внешний Kia Optima 4 JF (2016-2020)',
+            catalog_category=FakeCategory('Автосвет'),
+        )
+
+        queries = build_queries(product)
+
+        assert queries[0][1] == 'MEDIUM'
+        assert 'OEM0099FONR' not in queries[0][0]
+        assert 'Kia Optima' in queries[0][0]
+        assert 'Фонарь правый внешний' in queries[0][0]
 
     def test_пустые_поля_возвращают_хотя_бы_один_запрос(self):
         product = FakeProduct(article='', brand='', name='Прокладка ГБЦ')
@@ -164,11 +181,14 @@ class TestIsUnreliableArticle:
     def test_короткий_oem_ненадёжен(self):
         assert _is_unreliable_article('1234', 'OEM') is True
 
-    def test_длинный_oem_надёжен(self):
+    def test_длинный_номер_с_oem_брендом_может_быть_надёжен(self):
         assert _is_unreliable_article('123456789', 'OEM') is False
 
     def test_артикул_с_oem_префиксом_ненадёжен(self):
         assert _is_unreliable_article('OEM1234', 'BOSCH') is True
+
+    def test_длинный_внутренний_артикул_с_oem_префиксом_ненадёжен(self):
+        assert _is_unreliable_article('OEM0099FONR', '') is True
 
     def test_нормальный_артикул_надёжен(self):
         assert _is_unreliable_article('25327H5010', 'HYUNDAI-KIA') is False
