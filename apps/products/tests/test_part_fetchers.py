@@ -75,3 +75,29 @@ def test_euroauto_rejects_similar_image_without_exact_article_page_evidence():
     }]
 
     assert EuroautoSearchFetcher._confirmed_product_id(images, '8940-289') == ''
+
+
+def test_euroauto_prefers_catalogue_result_with_fitment_over_sparse_firm_page():
+    payload = {
+        'results': [
+            {
+                'url': 'https://euroauto.ru/firms/metaco/8940289',
+                'title': '8940-289 Metaco Фонарь задний наружный левый',
+                'content': '',
+                'score': 0.99,
+            },
+            {
+                'url': 'https://euroauto.ru/catalog/zadnie-fonari/proizvoditel-metaco',
+                'title': 'Фонари задние Metaco',
+                'content': (
+                    'Фонарь задний наружный левый Metaco 8940-289. '
+                    'HYUNDAI SOLARIS (2017>)'
+                ),
+                'score': 0.75,
+            },
+        ],
+    }
+
+    assert EuroautoSearchFetcher._best_source_url(payload, '8940-289') == (
+        'https://euroauto.ru/catalog/zadnie-fonari/proizvoditel-metaco'
+    )

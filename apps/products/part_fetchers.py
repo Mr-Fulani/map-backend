@@ -211,29 +211,58 @@ class EuroautoSearchFetcher:
 
     @staticmethod
     def _best_source_url(payload: dict, article: str) -> str:
-        target = _normalized_code(article)
         matches = []
         for result in payload.get('results') or []:
             url = str(result.get('url') or '').strip()
-            haystack = ' '.join([
-                str(result.get('title') or ''),
-                str(result.get('content') or ''),
-                str(result.get('raw_content') or ''),
-            ])
-            if not url or target not in _normalized_code(haystack):
+            rank = euroauto_result_rank(result, article)
+            if not url or rank is None:
                 continue
-            direct = int(bool(re.search(r'/part/new/\d+', url)))
-            firm = int('/firms/' in url)
-            try:
-                relevance = float(result.get('score') or 0)
-            except (TypeError, ValueError):
-                relevance = 0
-            matches.append(((direct, firm, relevance), url))
-        return max(matches, default=((0, 0, 0), ''))[1]
+            matches.append((rank, url))
+        return max(matches, default=((0,), ''))[1]
 
 
 def _normalized_code(value: str) -> str:
     return re.sub(r'[^A-ZА-ЯЁ0-9]', '', str(value or '').upper())
+
+
+def euroauto_result_rank(result: dict, article: str) -> tuple | None:
+    """Prefer exact pages, then indexed evidence that contains applicability.
+
+    Euroauto often exposes both a sparse ``/firms/<brand>/<article>`` result
+    and a richer catalogue result for the same part. Search relevance alone
+    can put the sparse page first, dropping fitments from enrichment.
+    """
+    url = str(result.get('url') or '').strip()
+    haystack = ' '.join([
+        str(result.get('title') or ''),
+        str(result.get('content') or ''),
+        str(result.get('raw_content') or ''),
+    ])
+    target = _normalized_code(article)
+    normalized_haystack = _normalized_code(haystack)
+    if not url or not target or target not in normalized_haystack:
+        return None
+    direct = int(bool(re.search(r'/part/new/\d+', url)))
+    has_fitment = int(bool(re.search(
+        r'\(\s*\d{4}(?:\s*[-–]\s*\d{4}|\s*>)\s*\)',
+        haystack,
+    )))
+    firm = int('/firms/' in url)
+    catalog = int('/catalog/' in url)
+    article_mentions = min(normalized_haystack.count(target), 10)
+    try:
+        relevance = float(result.get('score') or 0)
+    except (TypeError, ValueError):
+        relevance = 0
+    return (
+        direct,
+        has_fitment,
+        firm,
+        catalog,
+        article_mentions,
+        min(len(haystack), 20000),
+        relevance,
+    )
 
 
 def get_part_fetcher(source_id: str, tenant=None):

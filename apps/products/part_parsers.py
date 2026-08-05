@@ -7,7 +7,7 @@ from django.utils.text import slugify
 from selectolax.parser import HTMLParser
 
 from apps.products.enrichment import normalize_part_code
-from apps.products.part_fetchers import get_part_fetcher
+from apps.products.part_fetchers import euroauto_result_rank, get_part_fetcher
 from apps.products.models import GlobalPartRelation, ProductCrossCode
 
 
@@ -1173,28 +1173,13 @@ class EuroautoPartParser:
 
     @staticmethod
     def _matching_result(payload: dict, article: str) -> dict | None:
-        target = normalize_part_code(article)
         matches = []
         for result in payload.get('results') or []:
-            haystack = ' '.join([
-                str(result.get('title') or ''),
-                str(result.get('content') or ''),
-                str(result.get('raw_content') or ''),
-            ])
-            if target not in normalize_part_code(haystack):
+            rank = euroauto_result_rank(result, article)
+            if rank is None:
                 continue
-            url = str(result.get('url') or '')
-            try:
-                relevance = float(result.get('score') or 0)
-            except (TypeError, ValueError):
-                relevance = 0
-            matches.append((
-                int(bool(re.search(r'/part/new/\d+', url))),
-                int('/firms/' in url),
-                relevance,
-                result,
-            ))
-        return max(matches, default=(0, 0, 0, None), key=lambda item: item[:3])[3]
+            matches.append((rank, result))
+        return max(matches, default=((0,), None), key=lambda item: item[0])[1]
 
 
 EUROAUTO_VEHICLE_MAKES = sorted([

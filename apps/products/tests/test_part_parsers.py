@@ -924,6 +924,31 @@ def test_euroauto_parser_extracts_indexed_search_payload_without_source_brand():
     assert '/firms/metaco/8940289' in parsed.source_url
 
 
+def test_euroauto_parser_prefers_result_with_fitment_over_sparse_firm_page():
+    payload = json.loads(EUROAUTO_SEARCH_PAYLOAD)
+    payload['results'].insert(0, {
+        'url': 'https://euroauto.ru/firms/metaco/8940289',
+        'title': '8940-289 Metaco Фонарь задний наружный левый',
+        'content': '',
+        'score': 0.99,
+    })
+    payload['results'][1]['url'] = (
+        'https://euroauto.ru/catalog/zadnie-fonari/proizvoditel-metaco'
+    )
+    payload['results'][1]['score'] = 0.75
+
+    parsed = EuroautoPartParser(fetcher=object()).parse_search_html(
+        json.dumps(payload, ensure_ascii=False),
+        brand='METACO',
+        article='8940-289',
+    )
+
+    assert [(item.make, item.model, item.date_from) for item in parsed.fitments] == [
+        ('HYUNDAI', 'SOLARIS', '2017'),
+    ]
+    assert '/catalog/' in parsed.source_url
+
+
 def test_euroauto_search_uses_injected_fetcher_and_passes_product_hint():
     calls = []
 
