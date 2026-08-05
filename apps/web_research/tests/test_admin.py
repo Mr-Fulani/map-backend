@@ -10,9 +10,10 @@ from apps.tenants.models import TenantUser
 from apps.tenants.services import TenantService
 from apps.web_research.admin import (
     WebResearchClaimAdmin, WebResearchEvidenceAdmin, WebResearchRunAdmin,
+    WebSearchConnectionAdmin, WebSearchConnectionForm,
 )
 from apps.web_research.models import (
-    WebResearchClaim, WebResearchEvidence, WebResearchRun,
+    WebResearchClaim, WebResearchEvidence, WebResearchRun, WebSearchConnection,
 )
 
 
@@ -102,3 +103,49 @@ def test_superuser_sees_all_research_but_cannot_mutate_audit_journals():
         response = client.get(url)
         assert response.status_code == 200
         assert 'Тенант' in response.content.decode()
+
+
+@pytest.mark.django_db
+def test_connection_form_maps_routing_role_to_priority():
+    form = WebSearchConnectionForm(data={
+        'provider_id': 'brave',
+        'display_name': 'Brave Search',
+        'is_active': True,
+        'routing_role': 'primary',
+        'allowed_plan_slugs': [],
+        'parameters': '{}',
+        'requests_per_minute': 60,
+        'monthly_request_limit': '',
+        'api_key': '',
+    })
+
+    assert form.is_valid(), form.errors
+    connection = form.save()
+
+    assert connection.priority == WebSearchConnection.PRIMARY_PRIORITY
+
+
+@pytest.mark.django_db
+def test_saving_new_primary_demotes_previous_primary():
+    previous = WebSearchConnection.objects.create(
+        provider_id='brave',
+        display_name='Brave Search',
+        priority=WebSearchConnection.PRIMARY_PRIORITY,
+    )
+    replacement = WebSearchConnection(
+        provider_id='tavily',
+        display_name='Tavily',
+        priority=WebSearchConnection.PRIMARY_PRIORITY,
+    )
+    request = RequestFactory().post('/admin/web_research/websearchconnection/add/')
+    request.user = get_user_model().objects.create_superuser(
+        'admin@example.com', 'password',
+    )
+    model_admin = WebSearchConnectionAdmin(WebSearchConnection, AdminSite())
+
+    model_admin.save_model(request, replacement, form=None, change=False)
+
+    previous.refresh_from_db()
+    replacement.refresh_from_db()
+    assert previous.priority == WebSearchConnection.FALLBACK_PRIORITY
+    assert replacement.priority == WebSearchConnection.PRIMARY_PRIORITY

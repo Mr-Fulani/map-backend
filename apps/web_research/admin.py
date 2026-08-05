@@ -1,5 +1,6 @@
 from django import forms
 from django.contrib import admin, messages
+from django.db import transaction
 from unfold.admin import ModelAdmin, TabularInline
 
 from apps.core.admin import TenantScopedReadOnlyAdminMixin
@@ -113,6 +114,11 @@ class WebResearchEvidenceAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
 
 
 class WebSearchConnectionForm(forms.ModelForm):
+    ROUTING_ROLE_CHOICES = [
+        ('primary', 'Основной'),
+        ('fallback', 'Резервный'),
+    ]
+
     api_key = forms.CharField(
         required=False,
         label='API-ключ',
@@ -125,11 +131,20 @@ class WebSearchConnectionForm(forms.ModelForm):
         help_text='Не выбирайте тарифы, чтобы разрешить подключение всем.',
         widget=forms.CheckboxSelectMultiple,
     )
+    routing_role = forms.ChoiceField(
+        choices=ROUTING_ROLE_CHOICES,
+        label='Роль в поиске',
+        help_text=(
+            'Основной сервис вызывается первым. Резервный используется, если основной '
+            'недоступен, исчерпал лимит или не вернул результатов.'
+        ),
+        widget=forms.RadioSelect,
+    )
 
     class Meta:
         model = WebSearchConnection
         fields = [
-            'provider_id', 'display_name', 'is_active', 'priority',
+            'provider_id', 'display_name', 'is_active', 'routing_role',
             'allowed_plan_slugs', 'parameters', 'requests_per_minute',
             'monthly_request_limit',
         ]
@@ -147,6 +162,17 @@ class WebSearchConnectionForm(forms.ModelForm):
         )
         if self.instance and self.instance.pk:
             self.initial['allowed_plan_slugs'] = self.instance.allowed_plan_slugs
+            self.initial['routing_role'] = (
+                'primary'
+                if self.instance.priority == WebSearchConnection.PRIMARY_PRIORITY
+                else 'fallback'
+            )
+        elif not WebSearchConnection.objects.filter(
+            priority=WebSearchConnection.PRIMARY_PRIORITY,
+        ).exists():
+            self.initial['routing_role'] = 'primary'
+        else:
+            self.initial['routing_role'] = 'fallback'
 
     def clean_provider_id(self):
         provider_id = self.cleaned_data['provider_id']
@@ -156,6 +182,11 @@ class WebSearchConnectionForm(forms.ModelForm):
 
     def save(self, commit=True):
         instance = super().save(commit=False)
+        instance.priority = (
+            WebSearchConnection.PRIMARY_PRIORITY
+            if self.cleaned_data['routing_role'] == 'primary'
+            else WebSearchConnection.FALLBACK_PRIORITY
+        )
         if self.cleaned_data.get('api_key'):
             instance.set_credentials({'api_key': self.cleaned_data['api_key']})
         if commit:
@@ -167,12 +198,12 @@ class WebSearchConnectionForm(forms.ModelForm):
 class WebSearchConnectionAdmin(ModelAdmin):
     form = WebSearchConnectionForm
     list_display = [
-        'display_name', 'provider_id', 'is_active', 'priority',
+        'display_name', 'provider_id', 'routing_role_display', 'is_active',
         'credential_state', 'allowed_plans', 'monthly_usage',
         'last_check_status', 'last_checked_at',
     ]
     list_filter = ['is_active', 'provider_id', 'last_check_status']
-    actions = ['check_connections']
+    actions = ['make_primary', 'make_fallback', 'check_connections']
     readonly_fields = [
         'credential_state', 'last_check_status', 'last_check_message',
         'last_checked_at', 'created_at', 'updated_at',
@@ -192,6 +223,43 @@ class WebSearchConnectionAdmin(ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return request.user.is_superuser
+
+    def save_model(self, request, obj, form, change):
+        with transaction.atomic():
+            if obj.priority == WebSearchConnection.PRIMARY_PRIORITY:
+                WebSearchConnection.objects.exclude(pk=obj.pk).filter(
+                    priority=WebSearchConnection.PRIMARY_PRIORITY,
+                ).update(priority=WebSearchConnection.FALLBACK_PRIORITY)
+            super().save_model(request, obj, form, change)
+
+    @admin.display(description='Роль', ordering='priority')
+    def routing_role_display(self, obj):
+        if obj.priority == WebSearchConnection.PRIMARY_PRIORITY:
+            return 'Основной'
+        return 'Резервный'
+
+    @admin.action(description='Назначить выбранный сервис основным')
+    def make_primary(self, request, queryset):
+        if queryset.count() != 1:
+            self.message_user(
+                request,
+                'Выберите ровно один сервис, который станет основным.',
+                level=messages.WARNING,
+            )
+            return
+        connection = queryset.get()
+        with transaction.atomic():
+            WebSearchConnection.objects.exclude(pk=connection.pk).filter(
+                priority=WebSearchConnection.PRIMARY_PRIORITY,
+            ).update(priority=WebSearchConnection.FALLBACK_PRIORITY)
+            connection.priority = WebSearchConnection.PRIMARY_PRIORITY
+            connection.save(update_fields=['priority', 'updated_at'])
+        self.message_user(request, f'{connection.display_name} назначен основным.')
+
+    @admin.action(description='Назначить выбранные сервисы резервными')
+    def make_fallback(self, request, queryset):
+        updated = queryset.update(priority=WebSearchConnection.FALLBACK_PRIORITY)
+        self.message_user(request, f'Резервных сервисов: {updated}.')
 
     @admin.display(description='Ключ')
     def credential_state(self, obj):

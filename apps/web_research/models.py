@@ -113,6 +113,9 @@ class WebResearchEvidence(TimestampedModel):
 class WebSearchConnection(TimestampedModel):
     """Platform-owned, encrypted connection to a registered search adapter."""
 
+    PRIMARY_PRIORITY = 10
+    FALLBACK_PRIORITY = 20
+
     class CheckStatus(models.TextChoices):
         NOT_CHECKED = 'not_checked', 'Не проверено'
         OK = 'ok', 'Подключено'
