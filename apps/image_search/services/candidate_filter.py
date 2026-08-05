@@ -164,7 +164,7 @@ def _matches_trusted_fitment(product, title_words: set[str]) -> bool:
                 generation_words = _identity_words(getattr(fitment, 'generation', ''))
                 if make_words and model_words:
                     contexts.append((make_words, model_words, generation_words))
-        setattr(product, '_image_search_fitment_contexts', contexts)
+        product._image_search_fitment_contexts = contexts
 
     part_words = _expected_words(product)
     for make_words, model_words, generation_words in contexts:
@@ -201,7 +201,7 @@ def _matches_name_identity(product, title_words: set[str]) -> bool:
             run = []
         if len(run) >= 2:
             phrases.append(set(run))
-        setattr(product, '_image_search_name_identity_phrases', phrases)
+        product._image_search_name_identity_phrases = phrases
 
     part_words = _expected_words(product)
     for phrase in phrases:
