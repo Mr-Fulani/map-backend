@@ -299,6 +299,11 @@ export const productApi = {
   catalogSourceCategories: () => api.get('/products/catalog-source-categories/'),
 };
 
+export const webResearchApi = {
+  list: (params?: Record<string, unknown>) => api.get('/web-research/runs/', { params }),
+  get: (runId: number) => api.get(`/web-research/runs/${runId}/`),
+};
+
 // Marketplace Accounts
 export const accountApi = {
   list: () => api.get('/accounts/'),

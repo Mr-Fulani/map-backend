@@ -1,16 +1,20 @@
 from django.db import transaction
+from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.pagination import MapPagination
 from apps.products.models import Product
 from apps.products.services import (
     AutoPartsEnrichmentDisabled, ProductEnrichmentService, ProductIsNotAutoPart,
 )
 from apps.web_research.models import WebResearchRun
-from apps.web_research.serializers import WebResearchRunSerializer
+from apps.web_research.serializers import (
+    WebResearchRunListSerializer, WebResearchRunSerializer,
+)
 from apps.web_research.services import WebResearchService, enrichment_coverage
 
 
@@ -65,3 +69,39 @@ class WebResearchRunDetailView(APIView):
             tenant=request.tenant,
         )
         return Response({'status': 'ok', 'data': WebResearchRunSerializer(run).data})
+
+
+@extend_schema(tags=['Web research'])
+class WebResearchRunListView(APIView):
+    """Tenant-scoped research journal for the customer dashboard."""
+
+    def get(self, request):
+        base_queryset = WebResearchRun.objects.filter(tenant=request.tenant)
+        summary = base_queryset.aggregate(
+            total=Count('id'),
+            active=Count('id', filter=Q(status__in=[
+                WebResearchRun.Status.QUEUED,
+                WebResearchRun.Status.RUNNING,
+            ])),
+            need_review=Count(
+                'id', filter=Q(status=WebResearchRun.Status.NEED_REVIEW),
+            ),
+            failed=Count('id', filter=Q(status=WebResearchRun.Status.FAILED)),
+        )
+        queryset = base_queryset.select_related('product').order_by('-created_at')
+        run_status = str(request.query_params.get('status') or '').strip()
+        if run_status == 'active':
+            queryset = queryset.filter(status__in=[
+                WebResearchRun.Status.QUEUED,
+                WebResearchRun.Status.RUNNING,
+            ])
+        elif run_status in WebResearchRun.Status.values:
+            queryset = queryset.filter(status=run_status)
+
+        paginator = MapPagination()
+        page = paginator.paginate_queryset(queryset, request)
+        response = paginator.get_paginated_response(
+            WebResearchRunListSerializer(page, many=True).data,
+        )
+        response.data['summary'] = summary
+        return response

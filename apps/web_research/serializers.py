@@ -37,3 +37,18 @@ class WebResearchRunSerializer(serializers.ModelSerializer):
             'error_message', 'started_at', 'finished_at', 'created_at',
             'evidence', 'claims',
         ]
+
+
+class WebResearchRunListSerializer(serializers.ModelSerializer):
+    product_article = serializers.CharField(source='product.article', read_only=True)
+    product_name = serializers.CharField(source='product.name', read_only=True)
+
+    class Meta:
+        model = WebResearchRun
+        fields = [
+            'id', 'product_id', 'product_article', 'product_name', 'status',
+            'trigger', 'search_provider', 'ai_provider', 'ai_model',
+            'coverage_before', 'coverage_after', 'result_count', 'claim_count',
+            'generate_after', 'error_message', 'started_at', 'finished_at',
+            'created_at',
+        ]

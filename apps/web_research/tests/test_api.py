@@ -61,3 +61,37 @@ def test_web_research_run_is_tenant_scoped():
 
     assert response.status_code == 404
     assert tenant_a.web_research_runs.count() == 0
+
+
+@pytest.mark.django_db
+def test_dashboard_run_list_is_tenant_scoped_and_has_summary():
+    tenant_a, api_key = make_tenant('web-list-owner')
+    tenant_b, _ = make_tenant('web-list-other')
+    product_a = make_product(tenant_a)
+    product_b = make_product(tenant_b)
+    own_run = WebResearchRun.objects.create(
+        tenant=tenant_a,
+        product=product_a,
+        status=WebResearchRun.Status.NEED_REVIEW,
+        result_count=3,
+        claim_count=2,
+    )
+    WebResearchRun.objects.create(
+        tenant=tenant_b,
+        product=product_b,
+        status=WebResearchRun.Status.FAILED,
+    )
+    client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
+
+    response = client.get('/api/v1/web-research/runs/?status=need_review')
+
+    assert response.status_code == 200
+    body = response.json()
+    assert [item['id'] for item in body['data']] == [own_run.pk]
+    assert body['data'][0]['product_article'] == product_a.article
+    assert body['summary'] == {
+        'total': 1,
+        'active': 0,
+        'need_review': 1,
+        'failed': 0,
+    }
