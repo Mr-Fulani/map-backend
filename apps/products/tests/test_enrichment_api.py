@@ -118,7 +118,9 @@ def test_parse_endpoint_creates_tenant_scoped_job(django_capture_on_commit_callb
     assert job.product == product
     assert job.normalized_article == normalize_part_code(product.article)
     assert call(job.pk) in delay.call_args_list
-    assert delay.call_count == 2
+    jobs = tenant.product_parse_jobs.filter(product=product)
+    assert set(jobs.values_list('source_id', flat=True)) == {'tachka', 'rossko', 'euroauto'}
+    assert delay.call_count == 3
 
 
 @pytest.mark.django_db
@@ -557,7 +559,9 @@ def test_parse_endpoint_allows_enabled_auto_parts_domain_for_mixed_tenant(
     job = tenant.product_parse_jobs.get(pk=data['job_id'])
     assert job.product == product
     assert call(job.pk) in delay.call_args_list
-    assert delay.call_count == 2
+    jobs = tenant.product_parse_jobs.filter(product=product)
+    assert set(jobs.values_list('source_id', flat=True)) == {'tachka', 'rossko', 'euroauto'}
+    assert delay.call_count == 3
 
 
 @pytest.mark.django_db

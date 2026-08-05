@@ -100,6 +100,23 @@ PART_SOURCE_POLICIES = {
             supports_related_parts=False,
         ),
     ),
+    'euroauto': PartSourcePolicy(
+        source_id='euroauto',
+        label='Euroauto.ru',
+        priority=80,
+        trust_score=0.8,
+        default_pause_seconds=60,
+        min_pause_seconds=10,
+        batch_size=10,
+        transport='catalog_search',
+        capabilities=SourceCapabilities(
+            supports_product_page=False,
+            supports_search=True,
+            supports_fitments=True,
+            supports_images=True,
+            supports_related_parts=True,
+        ),
+    ),
     'web_research': PartSourcePolicy(
         source_id='web_research',
         label='Интернет-исследование',

@@ -1,7 +1,7 @@
 import json
 import re
 from dataclasses import dataclass, field
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, urlencode, urlparse
 
 from django.utils.text import slugify
 from selectolax.parser import HTMLParser
@@ -20,6 +20,16 @@ PARENS_RE = re.compile(r'\(([^()]+)\)')
 CROSS_PAIR_RE = re.compile(
     r'(?P<manufacturer>[A-ZА-ЯЁ][A-ZА-ЯЁ0-9 /().-]{1,70}?)\s+-\s*'
     r'(?P<code>[A-Z0-9][A-Z0-9 ./-]{2,40}?)(?=\s+[A-ZА-ЯЁ][A-ZА-ЯЁ0-9 /().-]{1,70}?\s+-|$)'
+)
+FITMENT_RECORD_RE = re.compile(
+    r'(?P<model>[A-ZА-ЯЁa-zа-яё0-9][A-ZА-ЯЁa-zа-яё0-9 .+&/\'_-]{0,140}?)\s*'
+    r'\((?P<generation>[A-ZА-ЯЁ0-9][A-ZА-ЯЁa-zа-яё0-9 .+&/_-]{0,40})\)\s+'
+    r'(?P<date_from>\d{2}\.\d{4}|\d{4})\s*[-–]\s*'
+    r'(?P<date_to>\d{2}\.\d{4}|\d{4}|н\.?в\.?|н/в)?\s+'
+    r'(?P<modification>.*?)\s*'
+    r'\((?P<engine_code>[^()]{2,100})\)\s*'
+    r'(?P<power>\d{2,4})\s*(?:л\.?\s*с\.?|hp)\b',
+    re.IGNORECASE,
 )
 
 
@@ -186,6 +196,7 @@ class TachkaPartParser:
         tree = HTMLParser(html)
         raw_text = _normalize_lines(tree.body.text(separator='\n')) if tree.body else ''
         structured = self._parse_product_json_ld(tree)
+        cross_codes = self._parse_cross_codes(tree, raw_text, structured.get('description', ''))
         parsed = ParsedPart(
             brand=(structured.get('brand') or brand).strip().upper(),
             article=normalize_part_code(article),
@@ -195,8 +206,13 @@ class TachkaPartParser:
             ),
             category=self._first_text(tree, ['[itemprop="category"]', '.breadcrumb li:last-child']),
             attributes=self._parse_attributes(tree),
-            cross_codes=self._parse_cross_codes(tree, raw_text, structured.get('description', '')),
-            fitments=self._parse_fitments(raw_text),
+            cross_codes=cross_codes,
+            fitments=self._parse_fitments(
+                tree,
+                raw_text,
+                structured.get('description', ''),
+                known_makes=[cross.manufacturer for cross in cross_codes],
+            ),
             image_urls=self._parse_image_urls(
                 tree,
                 structured.get('image_urls', []),
@@ -260,14 +276,53 @@ class TachkaPartParser:
             codes.extend(_parse_cross_pairs(text))
         return _dedupe_cross_codes(codes)
 
-    def _parse_fitments(self, raw_text: str) -> list[ParsedFitment]:
-        fitments = []
+    def _parse_fitments(
+        self,
+        tree: HTMLParser,
+        raw_text: str,
+        structured_description: str = '',
+        *,
+        known_makes: list[str] | None = None,
+    ) -> list[ParsedFitment]:
+        """Extract Tachka applicability from its HTML groups and JSON-LD fallback.
+
+        Tachka renders every vehicle as a structured ``h3 + li`` group, but its
+        Schema.org description flattens the same list into one very long line.
+        The old line-based parser therefore returned zero fitments for real
+        product cards while preserving the list only as a description hint.
+        """
+        fitments: list[ParsedFitment] = []
+
+        for heading in tree.css('h3'):
+            group = heading.parent
+            if group is None:
+                continue
+            group_text = _normalize_spaces(group.text(separator=' '))
+            if not POWER_RE.search(group_text) or not DATE_RE.search(group_text):
+                continue
+            make = _normalize_spaces(heading.text(separator=' ')).strip(' :-')
+            if not _looks_like_vehicle_make(make):
+                continue
+            for item in group.css('li'):
+                line = _normalize_spaces(item.text(separator=' '))
+                if not POWER_RE.search(line) or not DATE_RE.search(line):
+                    continue
+                fitment = parse_fitment_line(line)
+                fitment.make = make
+                fitments.append(fitment)
+
+        if structured_description:
+            fitments.extend(_parse_flat_fitments(
+                structured_description,
+                known_makes=known_makes or [],
+            ))
+
         for line in raw_text.splitlines():
             line = _normalize_spaces(line)
             if not line or not POWER_RE.search(line) or not DATE_RE.search(line):
                 continue
             fitments.append(parse_fitment_line(line))
-        return fitments[:500]
+        return _dedupe_fitments(fitments)
 
     def _parse_image_urls(
         self,
@@ -388,6 +443,105 @@ def parse_fitment_line(line: str) -> ParsedFitment:
     )
 
 
+def _parse_flat_fitments(
+    text: str,
+    *,
+    known_makes: list[str] | None = None,
+) -> list[ParsedFitment]:
+    """Parse fitments flattened by JSON-LD into a single text value."""
+    normalized = _normalize_spaces(text)
+    description_prefix = ''
+    marker = re.search(
+        r'подходит\s+для\s+следующих\s+модификаций\s*:',
+        normalized,
+        re.IGNORECASE,
+    )
+    if marker:
+        description_prefix = normalized[:marker.start()].strip()
+        normalized = normalized[marker.end():].strip()
+
+    description_makes = re.findall(
+        r'(?:^|\s)([A-ZА-ЯЁ][A-ZА-ЯЁ0-9 /().-]{1,70}?)\s+-\s*(?=[A-ZА-ЯЁ0-9])',
+        description_prefix,
+    )
+    makes = sorted(
+        {
+            normalized_make
+            for make in [*(known_makes or []), *description_makes]
+            if (
+                (normalized_make := _normalize_spaces(make).strip(' :-'))
+                and _looks_like_vehicle_make(normalized_make)
+            )
+        },
+        key=len,
+        reverse=True,
+    )
+    current_make = ''
+    fitments: list[ParsedFitment] = []
+    for match in FITMENT_RECORD_RE.finditer(normalized):
+        model = _normalize_spaces(match.group('model')).strip(' ,;:-')
+        make, model = _extract_make_prefix(model, makes, current_make)
+        if make:
+            current_make = make
+        if not model:
+            continue
+        raw_text = _normalize_spaces(match.group(0))
+        fitments.append(ParsedFitment(
+            make=current_make,
+            model=model,
+            generation=_normalize_spaces(match.group('generation')),
+            date_from=match.group('date_from'),
+            date_to=match.group('date_to') or '',
+            modification=_normalize_spaces(match.group('modification')),
+            engine_code=_normalize_spaces(match.group('engine_code')),
+            power_hp=int(match.group('power')),
+            raw_text=raw_text,
+            confidence=0.9,
+            needs_review=False,
+        ))
+    return fitments
+
+
+def _extract_make_prefix(
+    model: str,
+    known_makes: list[str],
+    current_make: str = '',
+) -> tuple[str, str]:
+    model_folded = model.casefold()
+    for make in known_makes:
+        prefix = f'{make} '
+        if model_folded.startswith(prefix.casefold()):
+            return make, model[len(prefix):].strip()
+    return current_make, model
+
+
+def _split_model_generation(value: str) -> tuple[str, str]:
+    value = _normalize_spaces(value)
+    match = re.match(r'^(?P<model>.+?)\s*\((?P<generation>[^()]+)\)\s*$', value)
+    if not match:
+        return value, ''
+    return match.group('model').strip(), match.group('generation').strip()
+
+
+def _dedupe_fitments(fitments: list[ParsedFitment]) -> list[ParsedFitment]:
+    result: list[ParsedFitment] = []
+    seen = set()
+    for fitment in fitments:
+        key = (
+            fitment.make.casefold(),
+            fitment.model.casefold(),
+            fitment.generation.casefold(),
+            fitment.modification.casefold(),
+            fitment.engine_code.casefold(),
+            fitment.power_hp,
+        )
+        if not fitment.model or key in seen:
+            continue
+        seen.add(key)
+        result.append(fitment)
+    return result[:500]
+
+
 def _normalize_spaces(value: str) -> str:
     return ' '.join((value or '').split())
 
@@ -395,6 +549,19 @@ def _normalize_spaces(value: str) -> str:
 def _normalize_lines(value: str) -> str:
     lines = [_normalize_spaces(line) for line in (value or '').splitlines()]
     return '\n'.join(line for line in lines if line)
+
+
+def _first_node_text(node, selectors: list[str], fallback: str = '') -> str:
+    fallback = _normalize_spaces(fallback)
+    if fallback:
+        return fallback
+    for selector in selectors:
+        child = node.css_first(selector)
+        if child:
+            value = _normalize_spaces(child.text(separator=' '))
+            if value:
+                return value
+    return ''
 
 
 def _name_tokens(text: str) -> set[str]:
@@ -421,6 +588,16 @@ def _looks_like_manufacturer(value: str) -> bool:
         and not any(char in normalized for char in '{};=<>')
         and not lowered.startswith(blocked)
         and any(char.isalpha() for char in normalized)
+    )
+
+
+def _looks_like_vehicle_make(value: str) -> bool:
+    value = _normalize_spaces(value).strip(' :-')
+    return bool(
+        _looks_like_manufacturer(value)
+        and len(value.split()) <= 5
+        and not DATE_RE.search(value)
+        and not POWER_RE.search(value)
     )
 
 
@@ -635,28 +812,68 @@ class RosskoPartParser:
         return attributes, _dedupe_cross_codes(cross_codes)
 
     def _parse_applicability(self, tree: HTMLParser) -> list[ParsedFitment]:
-        """Парсит вкладку Применимость: марка, модель, модификация."""
+        """Парсит вкладку Применимость: марка, модель, поколение и модификация.
+
+        Rossko uses data attributes on the current page, but older/cached and
+        alternative responses expose the same values as headings and list
+        items. Both shapes are supported so a harmless markup change does not
+        silently turn applicability into an empty list.
+        """
         fitments: list[ParsedFitment] = []
 
         appl_tab = tree.css_first('[data-tab-id="applicability"]')
         if not appl_tab:
             return fitments
 
-        for car in appl_tab.css('.car[data-role="applicability.car"]'):
-            make = (car.attributes.get('data-manufacturer') or '').strip()
-            model = (car.attributes.get('data-model') or '').strip()
+        cars = appl_tab.css('[data-role="applicability.car"], .car')
+        for car in cars:
+            make = _first_node_text(
+                car,
+                [
+                    '[data-role="applicability.manufacturer"]',
+                    '.car-manufacturer',
+                    '.car__manufacturer',
+                    'h3',
+                ],
+                fallback=(
+                    car.attributes.get('data-manufacturer')
+                    or car.attributes.get('data-make')
+                ),
+            )
+            raw_model = _first_node_text(car, [
+                '[data-role="applicability.model"]',
+                '.car-model',
+                '.car__model',
+                'h4',
+            ], fallback=car.attributes.get('data-model'))
+            model, generation = _split_model_generation(raw_model)
             if not make or not model:
                 continue
 
-            for li in car.css('.car-engines ul li'):
-                modification = _normalize_spaces(li.text())
+            modifications = car.css(
+                '.car-engines li, [data-role="applicability.engine"], '
+                '[data-role="applicability.modification"]'
+            )
+            if not modifications:
+                modifications = car.css('li')
+            for item in modifications:
+                modification = _normalize_spaces(item.text(separator=' '))
                 if not modification:
+                    continue
+                if DATE_RE.search(modification) and POWER_RE.search(modification):
+                    fitment = parse_fitment_line(modification)
+                    fitment.make = make
+                    if not fitment.model:
+                        fitment.model = model
+                        fitment.generation = generation
+                    fitments.append(fitment)
                     continue
                 engine_match = re.search(r'\(([^)]+)\)\s*$', modification)
                 engine_code = engine_match.group(1) if engine_match else ''
                 fitments.append(ParsedFitment(
                     make=make,
                     model=model,
+                    generation=generation,
                     modification=modification,
                     engine_code=engine_code,
                     raw_text=f'{make} {model} {modification}',
@@ -664,7 +881,24 @@ class RosskoPartParser:
                     needs_review=False,
                 ))
 
-        return fitments[:500]
+        # Fallback for Rossko responses that group full fitment lines under a
+        # manufacturer heading but omit the data-role/data-* attributes.
+        for heading in appl_tab.css('h3'):
+            group = heading.parent
+            if group is None:
+                continue
+            make = _normalize_spaces(heading.text(separator=' ')).strip(' :-')
+            if not _looks_like_vehicle_make(make):
+                continue
+            for item in group.css('li'):
+                line = _normalize_spaces(item.text(separator=' '))
+                if not DATE_RE.search(line) or not POWER_RE.search(line):
+                    continue
+                fitment = parse_fitment_line(line)
+                fitment.make = make
+                fitments.append(fitment)
+
+        return _dedupe_fitments(fitments)
 
     def _parse_images(self, tree: HTMLParser) -> list[str]:
         """Извлекает URL изображений из microdata Schema.org Product."""
@@ -676,9 +910,407 @@ class RosskoPartParser:
         return urls[:10]
 
 
+class EuroautoPartParser:
+    """Euroauto catalogue parser with managed web-search discovery.
+
+    The parser understands both the real product DOM and the normalized search
+    payload returned by ``EuroautoSearchFetcher``. Keeping the HTML path makes
+    the extraction testable against real markup and ready for an official feed
+    or renderer later, while production does not attempt to bypass Qrator.
+    """
+
+    source_id = 'euroauto'
+    base_url = 'https://euroauto.ru'
+
+    def __init__(self, fetcher=None, tenant=None):
+        self.fetcher = fetcher
+        self.tenant = tenant
+
+    def set_tenant(self, tenant) -> None:
+        self.tenant = tenant
+
+    def _get_fetcher(self):
+        if self.fetcher is None:
+            self.fetcher = get_part_fetcher(self.source_id, tenant=self.tenant)
+        return self.fetcher
+
+    def build_search_url(self, article: str, hint: str = '') -> str:
+        query = urlencode({'q': article.strip(), 'hint': hint.strip()})
+        return f'{self.base_url}/search/?{query}'
+
+    def fetch(self, brand: str, article: str) -> tuple[str, str]:
+        raise PartNotFound(
+            f'Euroauto uses catalogue search for {brand} {article}'.strip()
+        )
+
+    def fetch_search(self, article: str, hint: str = '') -> tuple[str, str]:
+        page = self._get_fetcher().fetch(self.build_search_url(article, hint))
+        page.raise_for_status()
+        return page.html, page.url
+
+    def parse_search_html(
+        self,
+        html: str,
+        brand: str,
+        article: str,
+        source_url: str = '',
+    ) -> ParsedPart:
+        try:
+            payload = json.loads(html)
+        except (TypeError, ValueError):
+            return self.parse_html(html, brand, article, source_url=source_url)
+        if not isinstance(payload, dict):
+            raise PartNotFound(f'Артикул не найден в каталоге Euroauto: {article}')
+        return self._parse_search_payload(payload, brand, article, source_url)
+
+    def parse_html(
+        self,
+        html: str,
+        brand: str,
+        article: str,
+        source_url: str = '',
+    ) -> ParsedPart:
+        tree = HTMLParser(html)
+        raw_text = _normalize_lines(tree.body.text(separator='\n')) if tree.body else ''
+        schema = self._product_schema(tree)
+        schema_article = str(schema.get('mpn') or '').strip()
+        if schema_article and normalize_part_code(schema_article) != normalize_part_code(article):
+            raise PartNotFound(f'Артикул не найден в каталоге Euroauto: {article}')
+
+        schema_brand = schema.get('brand') or schema.get('manufacturer') or ''
+        if isinstance(schema_brand, dict):
+            schema_brand = schema_brand.get('name') or ''
+        attributes = self._parse_attributes(tree)
+        description = _normalize_spaces(str(schema.get('description') or ''))
+        resolved_url = str(schema.get('url') or source_url or '').strip()
+        resolved_brand = str(schema_brand or brand).strip().upper()
+        resolved_article = schema_article or article
+        title_node = tree.css_first('h1')
+        title = _normalize_spaces(title_node.text(separator=' ')) if title_node else ''
+
+        description_facts = {}
+        if description:
+            description_facts['catalog_description'] = description
+        note = attributes.get('Примечание') or attributes.get('Описание')
+        if note:
+            description_facts['catalog_note'] = note
+
+        return ParsedPart(
+            brand=resolved_brand,
+            article=normalize_part_code(resolved_article),
+            title=title or description or f'{resolved_brand} {resolved_article}'.strip(),
+            category=self._parse_category(tree),
+            attributes=attributes,
+            related_parts=self._parse_related_parts(tree),
+            fitments=self._parse_applicability(tree),
+            image_urls=self._parse_images(tree, schema, resolved_url),
+            description_facts=description_facts,
+            source_url=resolved_url,
+            raw_text=raw_text[:20000],
+        )
+
+    @staticmethod
+    def _product_schema(tree: HTMLParser) -> dict:
+        for script in tree.css('script[type="application/ld+json"]'):
+            try:
+                found = _find_product_schema(json.loads(script.text()))
+            except (TypeError, ValueError):
+                continue
+            if found:
+                return found
+        return {}
+
+    @staticmethod
+    def _parse_attributes(tree: HTMLParser) -> dict[str, str]:
+        attributes = {}
+        table = tree.css_first('.part-parameters-table')
+        if not table:
+            return attributes
+        for row in table.css('tr'):
+            cells = [_normalize_spaces(cell.text(separator=' ')) for cell in row.css('th,td')]
+            if len(cells) >= 2 and cells[0] and cells[1]:
+                attributes[cells[0].rstrip(':')] = cells[1]
+        return attributes
+
+    @staticmethod
+    def _parse_category(tree: HTMLParser) -> str:
+        breadcrumbs = [
+            _normalize_spaces(node.text(separator=' '))
+            for node in tree.css('.breadcrumbs a, .breadcrumb a')
+        ]
+        return breadcrumbs[-1] if breadcrumbs else ''
+
+    @staticmethod
+    def _parse_applicability(tree: HTMLParser) -> list[ParsedFitment]:
+        fitments = []
+        href_pattern = re.compile(
+            r'/brand-(?P<make>[^/]+)/model-(?P<model>[^/]+)/'
+            r'modification-(?P<modification>[^/?#]+)',
+            re.IGNORECASE,
+        )
+        year_pattern = re.compile(
+            r'(?P<date_from>\d{4})(?:\s*[-–]\s*(?P<date_to>\d{4})|>)\s*$',
+        )
+        for link in tree.css('.part-applicability a'):
+            href = unquote(link.attributes.get('href') or '')
+            href_match = href_pattern.search(href)
+            text = _normalize_spaces(link.text(separator=' '))
+            if not href_match or not text:
+                continue
+            make = _slug_display(href_match.group('make'))
+            year_match = year_pattern.search(text)
+            model_text = text[:year_match.start()].strip() if year_match else text
+            if model_text.casefold().startswith(f'{make} '.casefold()):
+                model_text = model_text[len(make):].strip()
+            model, generation = _split_model_generation(model_text)
+            if not model:
+                model = _slug_display(href_match.group('model'))
+            fitments.append(ParsedFitment(
+                make=make,
+                model=model,
+                generation=generation,
+                date_from=year_match.group('date_from') if year_match else '',
+                date_to=(year_match.group('date_to') or '') if year_match else '',
+                raw_text=text,
+                confidence=0.95,
+                needs_review=False,
+            ))
+        return _dedupe_fitments(fitments)
+
+    @staticmethod
+    def _parse_related_parts(tree: HTMLParser) -> list[ParsedRelatedPart]:
+        related = []
+        seen = set()
+        for card in tree.css('.slider-analog-card.new-analog'):
+            brand_node = card.css_first('.slider-analog-card-content-brand')
+            number_node = card.css_first('.slider-analog-card-content-num')
+            related_brand = _normalize_spaces(brand_node.text()) if brand_node else ''
+            related_article = _normalize_spaces(number_node.text()) if number_node else ''
+            key = (related_brand.casefold(), normalize_part_code(related_article))
+            if not related_brand or not _looks_like_cross_code(related_article) or key in seen:
+                continue
+            seen.add(key)
+            related.append(ParsedRelatedPart(
+                brand=related_brand,
+                article=related_article,
+                title=f'{related_brand} {related_article}',
+                relation_type=GlobalPartRelation.RelationType.ANALOGUE,
+                raw_text=f'{related_brand} {related_article}',
+                confidence=0.9,
+                needs_review=False,
+            ))
+        return related[:100]
+
+    @staticmethod
+    def _parse_images(tree: HTMLParser, schema: dict, source_url: str) -> list[str]:
+        product_id_match = re.search(r'/part/new/(?P<id>\d+)', source_url)
+        if not product_id_match:
+            return []
+        product_id = product_id_match.group('id')
+        prefix = f'/v2/file/parts/new/{product_id}/'
+        candidates = []
+        schema_images = schema.get('image') or []
+        if isinstance(schema_images, str):
+            schema_images = [schema_images]
+        for image in schema_images:
+            if isinstance(image, dict):
+                image = image.get('url') or image.get('contentUrl') or ''
+            candidates.append(str(image or ''))
+        for node in tree.css('img'):
+            candidates.extend([
+                node.attributes.get('src') or '',
+                node.attributes.get('data-src') or '',
+            ])
+
+        result = []
+        for candidate in candidates:
+            parsed = urlparse(candidate)
+            if parsed.netloc != 'file.euroauto.ru' or prefix not in parsed.path:
+                continue
+            url = f'https://file.euroauto.ru{parsed.path}'
+            if url not in result:
+                result.append(url)
+        return result[:10]
+
+    def _parse_search_payload(
+        self,
+        payload: dict,
+        brand: str,
+        article: str,
+        source_url: str,
+    ) -> ParsedPart:
+        result = self._matching_result(payload, article)
+        if not result:
+            raise PartNotFound(f'Артикул не найден в каталоге Euroauto: {article}')
+
+        raw_text = _normalize_lines('\n'.join(filter(None, [
+            str(result.get('title') or ''),
+            str(result.get('content') or ''),
+            str(result.get('raw_content') or ''),
+        ])))
+        request_data = payload.get('_map_request') or {}
+        hint = _normalize_spaces(str(request_data.get('hint') or ''))
+        title = _euroauto_catalog_title(raw_text, article, hint)
+        resolved_brand = (brand or _infer_euroauto_brand(raw_text, article)).strip().upper()
+        matched_url = str(result.get('url') or source_url or '').strip()
+        images = payload.get('_map_product_images') or []
+        related_parts = _euroauto_related_parts(raw_text)
+        description = title or _normalize_spaces(str(result.get('content') or ''))[:1000]
+
+        return ParsedPart(
+            brand=resolved_brand,
+            article=normalize_part_code(article),
+            title=title or hint or f'{resolved_brand} {article}'.strip(),
+            related_parts=related_parts,
+            fitments=_euroauto_fitments_from_text(raw_text),
+            image_urls=images[:10],
+            description_facts=(
+                {'catalog_description': description} if description else {}
+            ),
+            source_url=matched_url,
+            raw_text=raw_text[:20000],
+        )
+
+    @staticmethod
+    def _matching_result(payload: dict, article: str) -> dict | None:
+        target = normalize_part_code(article)
+        matches = []
+        for result in payload.get('results') or []:
+            haystack = ' '.join([
+                str(result.get('title') or ''),
+                str(result.get('content') or ''),
+                str(result.get('raw_content') or ''),
+            ])
+            if target not in normalize_part_code(haystack):
+                continue
+            url = str(result.get('url') or '')
+            try:
+                relevance = float(result.get('score') or 0)
+            except (TypeError, ValueError):
+                relevance = 0
+            matches.append((
+                int(bool(re.search(r'/part/new/\d+', url))),
+                int('/firms/' in url),
+                relevance,
+                result,
+            ))
+        return max(matches, default=(0, 0, 0, None), key=lambda item: item[:3])[3]
+
+
+EUROAUTO_VEHICLE_MAKES = sorted([
+    'ALFA ROMEO', 'ASTON MARTIN', 'MERCEDES BENZ', 'MERCEDES-BENZ',
+    'GREAT WALL', 'LAND ROVER', 'ROLLS ROYCE', 'SSANG YONG',
+    'HYUNDAI', 'KIA', 'SOLARIS', 'BMW', 'AUDI', 'VOLKSWAGEN', 'SKODA',
+    'TOYOTA', 'LEXUS', 'NISSAN', 'INFINITI', 'MITSUBISHI', 'HONDA',
+    'MAZDA', 'SUBARU', 'SUZUKI', 'RENAULT', 'PEUGEOT', 'CITROEN',
+    'OPEL', 'FORD', 'VOLVO', 'CHEVROLET', 'CADILLAC', 'JEEP', 'CHRYSLER',
+    'DODGE', 'FIAT', 'SEAT', 'PORSCHE', 'JAGUAR', 'GENESIS', 'GEELY',
+    'CHERY', 'HAVAL', 'EXEED', 'OMODA', 'JAC', 'LADA', 'VAZ', 'GAZ',
+    'UAZ', 'SCANIA', 'MAN', 'DAF', 'IVECO', 'RENAULT TRUCKS',
+], key=len, reverse=True)
+
+
+def _slug_display(value: str) -> str:
+    return ' '.join(part.capitalize() for part in value.replace('-', '_').split('_') if part)
+
+
+def _euroauto_catalog_title(raw_text: str, article: str, hint: str = '') -> str:
+    target = normalize_part_code(article)
+    candidates = []
+    for segment in re.split(r'[\n.;]+', raw_text):
+        segment = _normalize_spaces(segment).strip(' :-')
+        if target in normalize_part_code(segment) and 5 <= len(segment) <= 300:
+            candidates.append(segment)
+    if candidates:
+        candidates.sort(key=lambda value: (
+            len(_name_tokens(value) & _name_tokens(hint)),
+            normalize_part_code(value).endswith(target),
+            -len(value),
+        ), reverse=True)
+        return candidates[0]
+    return hint
+
+
+def _infer_euroauto_brand(raw_text: str, article: str) -> str:
+    target = normalize_part_code(article)
+    tokens = re.findall(r'[A-Za-zА-Яа-яЁё0-9.&+-]+', raw_text)
+    for index, token in enumerate(tokens):
+        if normalize_part_code(token) != target:
+            continue
+        if index + 1 < len(tokens) and normalize_part_code(tokens[index + 1]) != target:
+            next_token = tokens[index + 1]
+            if next_token.casefold() not in {'от', 'для', 'в', 'купить'}:
+                return next_token
+        if index:
+            return tokens[index - 1]
+    return ''
+
+
+def _euroauto_fitments_from_text(text: str) -> list[ParsedFitment]:
+    fitments = []
+    year_pattern = re.compile(
+        r'(?P<label>[A-ZА-ЯЁ][A-ZА-ЯЁ0-9 .+&/\'-]{2,100}?)\s*'
+        r'\((?P<date_from>\d{4})(?:\s*[-–]\s*(?P<date_to>\d{4})|>)\)',
+    )
+    for match in year_pattern.finditer(text.upper()):
+        label = _normalize_spaces(match.group('label')).strip(' :-')
+        make = ''
+        model_text = ''
+        for candidate in EUROAUTO_VEHICLE_MAKES:
+            position = label.rfind(candidate)
+            if position >= 0:
+                make = candidate
+                model_text = label[position + len(candidate):].strip()
+                break
+        if not make or not model_text:
+            continue
+        model, generation = _split_model_generation(model_text)
+        fitments.append(ParsedFitment(
+            make=_normalize_spaces(make.replace('-', ' ')),
+            model=model,
+            generation=generation,
+            date_from=match.group('date_from'),
+            date_to=match.group('date_to') or '',
+            raw_text=_normalize_spaces(match.group(0)),
+            confidence=0.9,
+            needs_review=False,
+        ))
+    return _dedupe_fitments(fitments)
+
+
+def _euroauto_related_parts(text: str) -> list[ParsedRelatedPart]:
+    related = []
+    pattern = re.compile(
+        r'(?:Лучший\s+аналог|Аналог)\s*[·:—-]+\s*'
+        r'(?P<brand>[A-Za-zА-Яа-яЁё0-9.& -]{2,60}?)\s*[·:—-]+\s*'
+        r'(?P<article>[A-ZА-ЯЁ0-9][A-ZА-ЯЁ0-9 ./-]{2,40})',
+        re.IGNORECASE,
+    )
+    seen = set()
+    for match in pattern.finditer(text):
+        brand = _normalize_spaces(match.group('brand')).strip(' ·:-')
+        article = _normalize_spaces(match.group('article')).strip(' ·,;:-')
+        key = (brand.casefold(), normalize_part_code(article))
+        if not _looks_like_cross_code(article) or key in seen:
+            continue
+        seen.add(key)
+        related.append(ParsedRelatedPart(
+            brand=brand,
+            article=article,
+            title=f'{brand} {article}',
+            relation_type=GlobalPartRelation.RelationType.ANALOGUE,
+            raw_text=_normalize_spaces(match.group(0)),
+            confidence=0.85,
+            needs_review=False,
+        ))
+    return related[:100]
+
+
 def get_part_parser(source_id: str):
     if source_id == TachkaPartParser.source_id:
         return TachkaPartParser()
     if source_id == RosskoPartParser.source_id:
         return RosskoPartParser()
+    if source_id == EuroautoPartParser.source_id:
+        return EuroautoPartParser()
     raise ValueError(f'Unknown part parser source: {source_id}')

@@ -28,11 +28,27 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
     def is_available(self) -> bool:
         return bool(self.api_key)
 
-    def search(self, query: str, *, count: int = 8) -> list[WebSearchResult]:
+    def search_payload(
+        self,
+        query: str,
+        *,
+        count: int = 8,
+        include_domains: list[str] | None = None,
+        include_images: bool = False,
+        include_image_descriptions: bool = False,
+    ) -> dict:
+        """Return Tavily's raw response for adapters that need image metadata.
+
+        The regular web-research path deliberately exposes only normalized
+        ``WebSearchResult`` objects. Catalogue adapters additionally need the
+        global ``images`` collection, so they use this narrowly-scoped method
+        without duplicating credentials, timeouts and error handling.
+        """
         if not self.api_key:
             raise WebSearchProviderError(
                 'Tavily API key is not configured.', code='not_configured',
             )
+        configured_domains = self.parameters.get('include_domains', [])
         try:
             response = requests.post(
                 self.endpoint,
@@ -46,8 +62,14 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                     'include_raw_content': bool(
                         self.parameters.get('include_raw_content', True)
                     ),
-                    'include_domains': self.parameters.get('include_domains', []),
+                    'include_domains': (
+                        include_domains
+                        if include_domains is not None
+                        else configured_domains
+                    ),
                     'exclude_domains': self.parameters.get('exclude_domains', []),
+                    'include_images': include_images,
+                    'include_image_descriptions': include_image_descriptions,
                 },
                 timeout=max(3, min(int(self.parameters.get('timeout', 20)), 60)),
             )
@@ -63,11 +85,14 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                 code=f'http_{response.status_code}',
             )
         try:
-            data = response.json()
+            return response.json()
         except ValueError as exc:
             raise WebSearchProviderError(
                 'Tavily returned invalid JSON.', code='invalid_json',
             ) from exc
+
+    def search(self, query: str, *, count: int = 8) -> list[WebSearchResult]:
+        data = self.search_payload(query, count=count)
 
         results = []
         for rank, item in enumerate(data.get('results') or [], start=1):

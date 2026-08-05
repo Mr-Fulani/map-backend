@@ -37,6 +37,11 @@ def test_registry_snapshot_is_available_for_parser_sources():
 
     assert DEFAULT_PART_SOURCE in policies
     assert policies[DEFAULT_PART_SOURCE].label == 'Tachka.ru'
+    assert policies['euroauto'].label == 'Euroauto.ru'
+    assert policies['euroauto'].transport == 'catalog_search'
+    assert policies['euroauto'].capabilities.supports_fitments is True
+    assert policies['euroauto'].capabilities.supports_images is True
+    assert policies['euroauto'].capabilities.supports_related_parts is True
 
 
 def test_unknown_source_records_are_not_auto_applied():

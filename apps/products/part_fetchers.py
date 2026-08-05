@@ -1,4 +1,7 @@
+import json
+import re
 from dataclasses import dataclass
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 
@@ -42,8 +45,201 @@ class HttpxPartFetcher:
         )
 
 
-def get_part_fetcher(source_id: str):
+class EuroautoSearchFetcher:
+    """Fetch Euroauto evidence through managed web-search connections.
+
+    Euroauto protects product pages with a Qrator JavaScript challenge, which
+    makes a plain server-side HTTP client unreliable. The platform's configured
+    Brave/Tavily order is used for text. Images are accepted only when Brave's
+    image result links them to the exact Euroauto product page.
+    """
+
+    source_id = 'euroauto'
+    domain = 'euroauto.ru'
+    image_host = 'file.euroauto.ru'
+
+    def __init__(self, tenant=None):
+        self.tenant = tenant
+
+    def fetch(self, url: str) -> FetchedPage:
+        from apps.web_research.routing import search_provider_candidates
+
+        params = parse_qs(urlparse(url).query)
+        article = (params.get('q') or [''])[0].strip()
+        hint = (params.get('hint') or [''])[0].strip()
+        if not article:
+            raise ValueError('Euroauto search requires an article.')
+
+        candidates = search_provider_candidates(self.tenant)
+        if not candidates:
+            raise RuntimeError(
+                'Для каталога Euroauto требуется активное подключение Brave или Tavily.'
+            )
+        query = ' '.join(filter(None, [
+            f'site:{self.domain}', f'"{article}"', hint, 'автозапчасть',
+        ]))
+        payload = {'results': [], 'images': []}
+        last_error = None
+        for candidate in candidates:
+            provider = candidate.provider
+            try:
+                if provider.provider_id == 'tavily' and hasattr(provider, 'search_payload'):
+                    provider_payload = provider.search_payload(
+                        query,
+                        count=10,
+                        include_domains=[self.domain],
+                    )
+                    payload['results'].extend(provider_payload.get('results') or [])
+                else:
+                    payload['results'].extend([
+                        {
+                            'url': result.url,
+                            'title': result.title,
+                            'content': ' '.join(filter(None, [
+                                result.snippet,
+                                result.content,
+                            ])),
+                            'score': result.score,
+                            'provider_id': provider.provider_id,
+                        }
+                        for result in provider.search(query, count=10)
+                    ])
+            except Exception as exc:
+                last_error = exc
+                continue
+            if self._best_source_url(payload, article):
+                break
+
+        if not self._best_source_url(payload, article) and last_error:
+            raise last_error
+
+        brave = next(
+            (
+                candidate.provider
+                for candidate in candidates
+                if candidate.provider.provider_id == 'brave'
+                and hasattr(candidate.provider, 'search_images')
+            ),
+            None,
+        )
+        if brave is not None:
+            try:
+                payload['images'] = brave.search_images(query, count=50)
+            except Exception:
+                payload['images'] = []
+        payload['_map_request'] = {'article': article, 'hint': hint}
+        confirmed_image = self._confirmed_product_image(
+            payload.get('images') or [], article,
+        )
+        product_id = confirmed_image[0] if confirmed_image else ''
+        if confirmed_image and not self._best_source_url(payload, article):
+            image = confirmed_image[1]
+            payload['results'].append({
+                'url': str(image.get('url') or ''),
+                'title': str(image.get('title') or ''),
+                'content': str(image.get('title') or ''),
+                'score': 1.0,
+                'provider_id': 'brave_images',
+            })
+        payload['_map_product_images'] = (
+            self._discover_product_images(product_id) if product_id else []
+        )
+        source_url = self._best_source_url(payload, article) or url
+        return FetchedPage(
+            html=json.dumps(payload, ensure_ascii=False),
+            url=source_url,
+            status_code=200,
+        )
+
+    def _discover_product_images(self, product_id: str) -> list[str]:
+        first_url = (
+            f'https://{self.image_host}/v2/file/parts/new/{product_id}/1.jpg'
+        )
+        prefix = first_url.rsplit('/', 1)[0]
+        discovered = []
+        with httpx.Client(
+            timeout=8,
+            follow_redirects=True,
+            headers={'User-Agent': HttpxPartFetcher.user_agent},
+        ) as client:
+            for number in range(1, 11):
+                candidate = f'{prefix}/{number}.jpg'
+                try:
+                    response = client.head(candidate)
+                except httpx.HTTPError:
+                    break
+                if response.status_code == 200:
+                    discovered.append(candidate)
+                    continue
+                if number > 1:
+                    break
+        return discovered or [first_url]
+
+    @staticmethod
+    def _confirmed_product_id(images: list[dict], article: str) -> str:
+        confirmed = EuroautoSearchFetcher._confirmed_product_image(images, article)
+        return confirmed[0] if confirmed else ''
+
+    @staticmethod
+    def _confirmed_product_image(
+        images: list[dict], article: str,
+    ) -> tuple[str, dict] | None:
+        target = _normalized_code(article)
+        for image in images:
+            page_url = str(image.get('url') or '').strip()
+            title = str(image.get('title') or '')
+            original_url = str((image.get('properties') or {}).get('url') or '').strip()
+            image_match = re.search(
+                r'https?://file\.euroauto\.ru/v2/file/parts/new/(?P<id>\d+)/\d+\.jpg',
+                original_url,
+                re.IGNORECASE,
+            )
+            if not image_match:
+                continue
+            page_path = urlparse(page_url).path
+            title_matches = target in _normalized_code(title)
+            firms_matches = '/firms/' in page_path and target in _normalized_code(page_path)
+            direct_match = re.search(r'/part/new/(?P<id>\d+)', page_path)
+            direct_matches = bool(
+                direct_match
+                and direct_match.group('id') == image_match.group('id')
+                and title_matches
+            )
+            if firms_matches or direct_matches:
+                return image_match.group('id'), image
+        return None
+
+    @staticmethod
+    def _best_source_url(payload: dict, article: str) -> str:
+        target = _normalized_code(article)
+        matches = []
+        for result in payload.get('results') or []:
+            url = str(result.get('url') or '').strip()
+            haystack = ' '.join([
+                str(result.get('title') or ''),
+                str(result.get('content') or ''),
+                str(result.get('raw_content') or ''),
+            ])
+            if not url or target not in _normalized_code(haystack):
+                continue
+            direct = int(bool(re.search(r'/part/new/\d+', url)))
+            firm = int('/firms/' in url)
+            try:
+                relevance = float(result.get('score') or 0)
+            except (TypeError, ValueError):
+                relevance = 0
+            matches.append(((direct, firm, relevance), url))
+        return max(matches, default=((0, 0, 0), ''))[1]
+
+
+def _normalized_code(value: str) -> str:
+    return re.sub(r'[^A-ZА-ЯЁ0-9]', '', str(value or '').upper())
+
+
+def get_part_fetcher(source_id: str, tenant=None):
     policy = get_part_source_policy(source_id)
     if policy.transport == 'httpx':
         return HttpxPartFetcher()
+    if policy.transport == 'catalog_search':
+        return EuroautoSearchFetcher(tenant=tenant)
     raise ValueError(f'Unsupported part parser transport: {policy.transport}')

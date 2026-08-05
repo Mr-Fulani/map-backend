@@ -1212,6 +1212,8 @@ class ProductEnrichmentService:
                 }
 
             parser = get_part_parser(job.source_id)
+            if hasattr(parser, 'set_tenant'):
+                parser.set_tenant(job.tenant)
             try:
                 html, source_url = parser.fetch(job.brand, job.article)
                 parsed = parser.parse_html(html, job.brand, job.article, source_url=source_url)
