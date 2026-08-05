@@ -85,18 +85,45 @@ def validate_description(text: str) -> str:
     return text
 
 
-def strip_contacts(text: str) -> str:
-    """Удаляет телефоны, email и ссылки из текста."""
+def strip_contacts(text: str, protected_tokens: list[str] | tuple[str, ...] = ()) -> str:
+    """Удаляет контакты, сохраняя подтверждённые идентификаторы товара.
+
+    Чисто цифровой OEM-код внешне похож на телефон, поэтому вызывающий код
+    передаёт точный allowlist артикулов/OEM текущего товара.
+    """
+    protected = {}
+    for index, token in enumerate(sorted(
+        {
+            str(value).strip()
+            for value in protected_tokens
+            if value is not None and str(value).strip()
+        },
+        key=len,
+        reverse=True,
+    )):
+        placeholder = f'\ue000PROTECTED{index}\ue001'
+        updated = re.sub(re.escape(token), placeholder, text, flags=re.IGNORECASE)
+        if updated != text:
+            protected[placeholder] = token
+            text = updated
+
     def replace(match):
         phone = match.group(1)
         if phone and len(re.sub(r'\D', '', phone)) < 7:
             return match.group(0)
         return ''
 
-    return _CONTACTS_RE.sub(replace, text).strip()
+    text = _CONTACTS_RE.sub(replace, text).strip()
+    for placeholder, token in protected.items():
+        text = text.replace(placeholder, token)
+    return text
 
 
-def validate_json_response(raw: str) -> dict:
+def validate_json_response(
+    raw: str,
+    *,
+    protected_tokens: list[str] | tuple[str, ...] = (),
+) -> dict:
     """Парсит JSON-ответ агента, проверяет структуру и применяет все валидации."""
     raw = raw.strip()
     # Убираем markdown-блоки если модель их добавила
@@ -114,7 +141,10 @@ def validate_json_response(raw: str) -> dict:
             raise ValidationError(f'Отсутствует поле: {field}')
 
     data['title'] = validate_title(str(data['title']))
-    data['description'] = strip_contacts(str(data['description']))
+    data['description'] = strip_contacts(
+        str(data['description']),
+        protected_tokens=protected_tokens,
+    )
     data['description'] = validate_description(data['description'])
 
     try:

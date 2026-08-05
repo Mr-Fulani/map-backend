@@ -1,4 +1,4 @@
-DESCRIPTION_PROMPT_VERSION = 'description-v3'
+DESCRIPTION_PROMPT_VERSION = 'description-v4'
 GENERIC_DESCRIPTION_PROMPT_VERSION = 'generic-description-v1'
 
 DESCRIPTION_OUTPUT_SCHEMA = {
@@ -31,7 +31,8 @@ SYSTEM_PROMPT = (
     "«Подходит к автомобилям» и перечисли каждую подтверждённую пару make + model. "
     "Для каждой пары сохрани переданные generation, годы, modification, engine_code и "
     "power_hp, если они есть. Не скрывай применяемость общей фразой и не заменяй список "
-    "одним примером. Затем укажи характеристики, OEM/Cross-коды и состояние.\n"
+    "одним примером. Затем укажи характеристики, OEM/Cross-коды и состояние. "
+    "Копируй OEM/Cross-коды как неделимые строки: не удаляй и не меняй символы.\n"
     "5. Применяемость указывай только из trusted_fitments. Если есть лишь "
     "cautious_vehicle_makes, разрешено назвать только марки и обязательно написать, "
     "что совместимость нужно сверить по OEM/Cross.\n"

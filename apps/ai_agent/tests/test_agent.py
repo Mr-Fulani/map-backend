@@ -101,6 +101,21 @@ class TestValidators:
         text = 'Артикул: 56500-D4800'
         assert strip_contacts(text) == text
 
+    def test_strip_contacts_keeps_protected_numeric_oem_codes(self):
+        text = 'OEM/Cross-коды: MERCEDES-BENZ: 0004206000, A0004206100.'
+
+        result = strip_contacts(
+            text,
+            protected_tokens=('0004206000', 'A0004206100'),
+        )
+
+        assert result == text
+
+    def test_strip_contacts_still_removes_unprotected_plain_phone(self):
+        result = strip_contacts('Телефон продавца: 89991234567')
+
+        assert '89991234567' not in result
+
     def test_strip_contacts_removes_email(self):
         text = 'Пишите на test@example.com'
         result = strip_contacts(text)
@@ -175,6 +190,28 @@ class TestDescriptionAgent:
         assert 'confidence' in result
         assert 50 <= len(result['title']) <= 200
         assert len(result['description']) <= 7500
+
+    def test_generate_preserves_confirmed_numeric_oem_code(self):
+        tenant = make_tenant('numeric-oem-generate-co')
+        product = make_product(tenant)
+        ProductEnrichmentService.create_cross_code(
+            tenant=tenant,
+            product=product,
+            manufacturer='MERCEDES-BENZ',
+            code='0004206000',
+            normalized_code='0004206000',
+            code_type=ProductCrossCode.CodeType.OEM,
+        )
+        response = json.dumps({
+            'title': 'Тормозной диск Bosch ART-001 для Mercedes-Benz, OEM 0004206000',
+            'description': 'OEM/Cross-код MERCEDES-BENZ: 0004206000. Состояние: новый.',
+            'confidence': 0.9,
+        })
+
+        with patch('apps.ai_agent.services.call_model', return_value=_provider_response(response)):
+            result = DescriptionAgent().generate(product, tenant)
+
+        assert '0004206000' in result['description']
 
     def test_ai_credits_incremented_atomically(self):
         tenant = make_tenant('credits-co')
@@ -304,6 +341,33 @@ class TestDescriptionAgent:
 
         assert 'Вероятные марки авто по OEM/Cross: HYUNDAI, KIA' in message
         assert 'только из trusted_fitments' in SYSTEM_PROMPT
+
+    def test_numeric_cross_codes_are_protected_and_required_in_result(self):
+        tenant = make_tenant('required-cross-code-agent-co')
+        product = make_product(tenant)
+        ProductEnrichmentService.create_cross_code(
+            tenant=tenant,
+            product=product,
+            manufacturer='MERCEDES-BENZ',
+            code='0004206000',
+            normalized_code='0004206000',
+            code_type=ProductCrossCode.CodeType.OEM,
+        )
+        agent = DescriptionAgent()
+
+        assert '0004206000' in agent._protected_identifiers(product)
+        valid = {
+            'title': 'Тормозные колодки Bosch ART-001 для Mercedes-Benz',
+            'description': 'OEM/Cross-код MERCEDES-BENZ: 0004206000.',
+        }
+        agent._validate_required_cross_codes(product, valid)
+
+        invalid = {
+            **valid,
+            'description': 'OEM/Cross-коды MERCEDES-BENZ:,,,, A, A.',
+        }
+        with pytest.raises(ValidationError, match='OEM/Cross'):
+            agent._validate_required_cross_codes(product, invalid)
 
     def test_build_message_excludes_reviewable_fitments(self):
         tenant = make_tenant('reviewable-fitment-agent-co')

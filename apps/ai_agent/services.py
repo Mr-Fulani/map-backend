@@ -75,9 +75,13 @@ class DescriptionAgent:
                         message,
                         output_schema=prompt.output_schema,
                     )
-                    result = validate_json_response(provider_result.text)
+                    result = validate_json_response(
+                        provider_result.text,
+                        protected_tokens=self._protected_identifiers(product),
+                    )
                     self._validate_required_identity(product, result)
                     self._validate_required_fitments(product, result)
+                    self._validate_required_cross_codes(product, result)
                 except (BannedWordsError, VagueFitmentError, ValidationError) as exc:
                     AIWalletService.release(
                         tenant, reservation, reason='validation_rejected',
@@ -244,6 +248,34 @@ class DescriptionAgent:
                 'Ответ потерял подтверждённую применяемость: '
                 + ', '.join(missing[:10])
             )
+
+    @staticmethod
+    def _protected_identifiers(product) -> tuple[str, ...]:
+        identifiers = {str(product.article or '').strip()}
+        for code, normalized_code in product.cross_codes.values_list(
+            'code', 'normalized_code',
+        ):
+            identifiers.update({str(code or '').strip(), str(normalized_code or '').strip()})
+        return tuple(sorted((value for value in identifiers if value), key=len, reverse=True))
+
+    @staticmethod
+    def _validate_required_cross_codes(product, result: dict) -> None:
+        """Reject descriptions that omit or mutilate every confirmed cross-code."""
+        codes = {
+            ''.join(character for character in str(value or '').casefold() if character.isalnum())
+            for pair in product.cross_codes.values_list('code', 'normalized_code')
+            for value in pair
+        }
+        codes.discard('')
+        if not codes:
+            return
+        combined = ''.join(
+            character
+            for character in f'{result["title"]} {result["description"]}'.casefold()
+            if character.isalnum()
+        )
+        if not any(code in combined for code in codes):
+            raise ValidationError('Ответ потерял подтверждённые OEM/Cross-коды.')
 
     @staticmethod
     def calculate_grounding_confidence(product) -> float:
