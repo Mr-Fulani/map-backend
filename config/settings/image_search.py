@@ -6,6 +6,7 @@
 # Список активных источников (в порядке tier)
 IMAGE_SOURCES_ENABLED = [
     'brave',        # Tier 3 — Brave Search API, официальный, не банит по IP
+    'tavily',       # Tier 3 — fallback; приоритет задаётся в админке интернет-поиска
     # 'duckduckgo', # Tier 4 — IP сервера забанен DuckDuckGo
     # 'autodoc',    # Tier 1 — изображения с вотермарком autodoc.ru, непригодны для объявлений
     # 'exist',      # Tier 2 — не проверен (возможно SPA)

@@ -25,8 +25,8 @@ def test_exact_article_in_url_is_allowed():
         candidate('https://img.example.com/brembo-P50136-product.jpg'),
     )
     assert allowed is True
-    assert 'article_match' in reasons
-    assert relevance >= 0.55
+    assert 'trusted_code_match' in reasons
+    assert relevance >= 0.75
 
 
 def test_unrelated_web_result_is_rejected():
@@ -70,3 +70,60 @@ def test_short_article_does_not_match_long_unrelated_numeric_id():
 
     assert allowed is False
     assert reasons == ['insufficient_product_identity']
+
+
+class KiaLampProduct:
+    article = 'OEM0099FONR'
+    brand = 'O.E.M.'
+    name = 'Фонарь правый внешний Kia Optima 4 JF (2016-2020)'
+    category_1c = 'Запчасти / Автосвет'
+    catalog_category = None
+
+
+def test_correct_part_context_is_allowed_without_internal_sku():
+    allowed, reasons, relevance = candidate_metadata_assessment(
+        KiaLampProduct(),
+        candidate(
+            'https://example.com/images/kia-optima-lamp.jpg',
+            'Фонарь внешний правый Kia Optima 4 2018-2020',
+        ),
+    )
+    assert allowed is True
+    assert 'part_type_match' in reasons
+    assert relevance >= 0.45
+
+
+def test_other_vehicle_model_is_rejected():
+    allowed, reasons, _ = candidate_metadata_assessment(
+        KiaLampProduct(),
+        candidate(
+            'https://example.com/images/kia-rio-lamp.jpg',
+            'Фонарь внешний правый Kia Rio 2018-2020',
+        ),
+    )
+    assert allowed is False
+    assert reasons == ['insufficient_product_identity']
+
+
+def test_opposite_side_is_rejected():
+    allowed, reasons, _ = candidate_metadata_assessment(
+        KiaLampProduct(),
+        candidate(
+            'https://example.com/images/kia-optima-left.jpg',
+            'Фонарь внешний левый Kia Optima 4 2018-2020',
+        ),
+    )
+    assert allowed is False
+    assert reasons == ['contradicting_right_left']
+
+
+def test_person_photo_is_rejected():
+    allowed, reasons, _ = candidate_metadata_assessment(
+        KiaLampProduct(),
+        candidate(
+            'https://example.com/images/man.jpg',
+            'Мужчина рядом с Kia Optima',
+        ),
+    )
+    assert allowed is False
+    assert reasons == ['non_product_title']

@@ -19,12 +19,34 @@ class FakeCategory:
 class FakeProduct:
     """Заглушка Product для тестирования query_builder без БД."""
 
-    def __init__(self, article='', brand='', name='', category_1c='', catalog_category=None):
+    def __init__(
+        self, article='', brand='', name='', category_1c='', catalog_category=None,
+        cross_codes=None, fitments=None,
+    ):
         self.article = article
         self.brand = brand
         self.name = name
         self.category_1c = category_1c
         self.catalog_category = catalog_category
+        self.cross_codes = cross_codes
+        self.fitments = fitments
+
+
+class FakeRelatedManager:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def filter(self, *args, **kwargs):
+        return self
+
+    def exclude(self, **kwargs):
+        return self
+
+    def order_by(self, *args):
+        return self
+
+    def values_list(self, *fields, **kwargs):
+        return [tuple(row.get(field, '') for field in fields) for row in self.rows]
 
 
 class TestBuildQueries:
@@ -113,6 +135,26 @@ class TestBuildQueries:
         low_queries = [q for q, c in queries if c == 'LOW']
         assert any('Фильтры' in q for q in low_queries)
 
+    def test_подтвержденный_oem_и_применяемость_приоритетнее_внутреннего_sku(self):
+        product = FakeProduct(
+            article='OEM0099FONR',
+            brand='O.E.M.',
+            name='Фонарь правый внешний Kia Optima 4 JF (2016-2020)',
+            cross_codes=FakeRelatedManager([{
+                'manufacturer': 'Kia', 'code': '92402D4000', 'code_type': 'OEM',
+            }]),
+            fitments=FakeRelatedManager([{
+                'make': 'Kia', 'model': 'Optima', 'generation': 'JF',
+            }]),
+        )
+
+        queries = build_queries(product)
+
+        assert '92402D4000' in queries[0][0]
+        assert 'Kia Optima JF' in queries[0][0]
+        assert 'OEM0099FONR' not in ' '.join(query for query, _ in queries[:2])
+        assert queries[0][1] == 'HIGH'
+
 
 class TestGetCategoryContext:
     """Тесты функции _get_category_context."""
@@ -164,8 +206,8 @@ class TestIsUnreliableArticle:
     def test_короткий_oem_ненадёжен(self):
         assert _is_unreliable_article('1234', 'OEM') is True
 
-    def test_длинный_oem_надёжен(self):
-        assert _is_unreliable_article('123456789', 'OEM') is False
+    def test_длинный_артикул_при_общем_бренде_oem_ненадёжен(self):
+        assert _is_unreliable_article('123456789', 'OEM') is True
 
     def test_артикул_с_oem_префиксом_ненадёжен(self):
         assert _is_unreliable_article('OEM1234', 'BOSCH') is True
