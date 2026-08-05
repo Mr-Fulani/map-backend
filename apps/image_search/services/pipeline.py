@@ -171,6 +171,7 @@ def run_for_product(product) -> dict:
                 candidate.url,
                 product,
                 source_id=candidate.source_id,
+                status=ProductImage.Status.NEEDS_REVIEW,
                 validate_quality=True,
                 allow_low_resolution=True,
             )

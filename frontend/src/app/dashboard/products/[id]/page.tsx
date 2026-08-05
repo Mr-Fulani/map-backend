@@ -488,7 +488,7 @@ export default function ProductDetailPage() {
         const job = res.data.data as ProductParseJob;
         if (!['pending', 'running'].includes(job.status)) {
           setParseJobId(null);
-          await loadProduct();
+          await Promise.all([loadProduct(), loadImages()]);
           if (parseThenGenerate) {
             // The parser task schedules the fallback immediately before it exits;
             // give the worker a short moment to create the corresponding run.
@@ -539,6 +539,7 @@ export default function ProductDetailPage() {
     parseJobId,
     parseThenGenerate,
     product?.description_ai,
+    loadImages,
     loadProduct,
     loadWebResearch,
     waitForGeneratedDescription,
