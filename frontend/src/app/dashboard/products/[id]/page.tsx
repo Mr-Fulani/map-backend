@@ -308,14 +308,24 @@ export default function ProductDetailPage() {
     const interval = setInterval(async () => {
       try {
         const res = await imageApi.searchStatus(Number(id), searchTaskId);
-        const { state, saved_count } = res.data.data;
+        const { state, saved_count, result_code, candidates_count } = res.data.data;
         if (state !== 'running') {
           setSearchTaskId(null);
           if (state === 'done') {
             if (saved_count > 0) {
               toast.success(`Найдено фото: ${saved_count}`);
+            } else if (result_code === 'filtered_out') {
+              toast.warning(`Найдено кандидатов: ${candidates_count}, но ни одно изображение не прошло проверку соответствия товару.`);
+            } else if (result_code === 'rejected_after_validation') {
+              toast.warning('Подходящие кандидаты найдены, но не прошли проверку качества или загрузку.');
+            } else if (result_code === 'no_sources') {
+              toast.warning('Сейчас нет доступных источников поиска. Загрузите фотографию вручную или попробуйте позже.');
+            } else if (result_code === 'already_running') {
+              toast.info('Поиск фотографий для этого товара уже выполняется.');
+            } else if (result_code === 'already_has_images') {
+              toast.info('Для товара уже загружено максимальное количество фотографий.');
             } else {
-              toast.warning('Фото не найдены — сервис поиска ограничил запросы. Попробуйте через минуту или загрузите вручную.');
+              toast.warning('Поиск не нашёл подходящих изображений. Попробуйте изменить данные товара или загрузите фото вручную.');
             }
             loadImages();
           } else {

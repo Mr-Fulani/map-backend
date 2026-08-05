@@ -70,3 +70,103 @@ def test_short_article_does_not_match_long_unrelated_numeric_id():
 
     assert allowed is False
     assert reasons == ['insufficient_product_identity']
+
+
+class FitmentManager:
+    def __init__(self, fitments):
+        self.fitments = fitments
+
+    def all(self):
+        return self.fitments
+
+
+class Fitment:
+    make = 'Kia'
+    model = 'Optima 4'
+    generation = 'JF'
+    source_id = 'manual'
+    confidence = 1.0
+    needs_review = False
+    review_status = 'approved'
+
+
+class InternalArticleProduct:
+    article = 'OEM0099FONR'
+    brand = ''
+    name = 'Фонарь правый внешний Kia Optima 4 JF (2016-2020)'
+    category_1c = ''
+    catalog_category = None
+
+    def __init__(self):
+        self.fitments = FitmentManager([Fitment()])
+
+
+class InternalArticleProductWithoutFitment(InternalArticleProduct):
+    def __init__(self):
+        self.fitments = FitmentManager([])
+
+
+def test_internal_article_allows_strong_vehicle_and_part_context():
+    allowed, reasons, relevance = candidate_metadata_assessment(
+        InternalArticleProduct(),
+        candidate(
+            'https://example.com/kia-optima-jf-right-tail-light.jpg',
+            'Фонарь задний внешний правый Kia Optima JF 2016-2020',
+        ),
+    )
+
+    assert allowed is True
+    assert 'vehicle_and_part_context_match' in reasons
+    assert relevance >= 0.35
+
+
+def test_internal_article_rejects_other_vehicle_model():
+    allowed, reasons, _ = candidate_metadata_assessment(
+        InternalArticleProduct(),
+        candidate(
+            'https://example.com/kia-ceed-tail-light.jpg',
+            'Фонарь внешний KIA Ceed 2012-2018 JD',
+        ),
+    )
+
+    assert allowed is False
+    assert reasons == ['insufficient_product_identity']
+
+
+def test_name_identity_works_without_saved_fitment():
+    allowed, reasons, _ = candidate_metadata_assessment(
+        InternalArticleProductWithoutFitment(),
+        candidate(
+            'https://example.com/kia-optima-tail-light.jpg',
+            'Фонарь правый Kia Optima JF',
+        ),
+    )
+
+    assert allowed is True
+    assert 'vehicle_and_part_context_match' in reasons
+
+
+def test_name_identity_without_fitment_still_rejects_ceed():
+    allowed, reasons, _ = candidate_metadata_assessment(
+        InternalArticleProductWithoutFitment(),
+        candidate(
+            'https://example.com/kia-ceed-tail-light.jpg',
+            'Фонарь внешний KIA Ceed 2012-2018 JD',
+        ),
+    )
+
+    assert allowed is False
+    assert reasons == ['insufficient_product_identity']
+
+
+def test_context_match_rejects_conflicting_side():
+    allowed, reasons, _ = candidate_metadata_assessment(
+        InternalArticleProduct(),
+        candidate(
+            'https://example.com/kia-optima-jf-left-tail-light.jpg',
+            'Фонарь задний внешний левый Kia Optima JF 2016-2020',
+        ),
+    )
+
+    assert allowed is False
+    assert reasons == ['conflicting_side_or_position']

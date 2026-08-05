@@ -7,7 +7,7 @@
 import re
 
 
-QUERY_BUILDER_VERSION = 'v3'
+QUERY_BUILDER_VERSION = 'v4'
 
 
 def build_queries(product) -> list[tuple[str, str]]:
@@ -31,34 +31,51 @@ def build_queries(product) -> list[tuple[str, str]]:
     # Наиболее конкретный доступный уровень категории для уточнения запросов
     cat_hint = subcategory or category
 
-    desc_words = _extract_keywords(nom, max_words=4)
+    desc_words = _extract_keywords(nom, max_words=8)
+    article_is_reliable = bool(pn and not _is_unreliable_article(pn, mfr))
 
     # Q1/Q2 deliberately contain identity and product context together. Search
     # providers currently execute only the first few queries, so weaker context
     # must not be deferred to the end of the list.
-    if pn and not _is_unreliable_article(pn, mfr):
+    if article_is_reliable:
         quoted_pn = f'"{pn}"'
         queries.append((
             ' '.join(filter(None, [mfr, quoted_pn, cat_hint or 'автозапчасть'])),
             'HIGH',
         ))
+
+    # Контекстный запрос выполняется одним из первых: внутренние артикулы вида
+    # OEM... часто отсутствуют в интернете, тогда название и применяемость дают
+    # более точную выдачу, чем фиктивный код. Для настоящего артикула это второй
+    # независимый путь поиска, а не ещё одна вариация того же номера.
+    contextual_name = _remove_article(nom, pn)
+    contextual_words = _extract_keywords(contextual_name, max_words=8)
+    if contextual_words:
         queries.append((
-            ' '.join(filter(None, [mfr, quoted_pn, desc_words, cat_hint])),
-            'HIGH',
+            ' '.join(filter(None, [mfr, contextual_words, cat_hint])),
+            'MEDIUM' if len(contextual_words.split()) >= 3 else 'LOW',
         ))
 
     # Q2: Очищенный артикул (без спецсимволов)
     clean_pn = re.sub(r'[^A-Za-z0-9]', '', pn)
-    if clean_pn and clean_pn != pn:
+    if article_is_reliable and clean_pn and clean_pn != pn:
         queries.append((
             ' '.join(filter(None, [mfr, clean_pn, cat_hint or desc_words])),
             'MEDIUM',
         ))
 
     # Q3: fallback for unreliable/missing articles and an additional diagnostic query.
-    if desc_words:
+    if desc_words and not contextual_words:
         ctx = ' '.join(filter(None, [mfr, desc_words, cat_hint]))
         queries.append((ctx, 'LOW'))
+
+    # Если кроме ненадёжного артикула и категории данных нет, всё равно оставляем
+    # диагностический запрос. Он идёт после контекстного и не вытесняет его.
+    if pn and not article_is_reliable and not contextual_words:
+        queries.append((
+            ' '.join(filter(None, [f'"{pn}"', cat_hint or 'автозапчасть'])),
+            'VERY_LOW',
+        ))
 
     for cross_code in _trusted_cross_codes(product)[:2]:
         queries.append((
@@ -126,11 +143,19 @@ def _is_unreliable_article(article: str, brand: str) -> bool:
     Возвращает True если артикул скорее всего НЕ является точным OEM/артикулом.
     Например: производитель = 'OEM' с коротким/общим номером.
     """
+    normalized = re.sub(r'[^A-Za-z0-9]', '', article).upper()
+    if normalized.startswith('OEM'):
+        return True
     if brand.upper() == 'OEM' and len(article) < 6:
         return True
-    if article.upper().startswith('OEM') and len(article) < 8:
-        return True
     return False
+
+
+def _remove_article(text: str, article: str) -> str:
+    """Убирает внутренний/внешний артикул из описательного поискового запроса."""
+    if not text or not article:
+        return text
+    return re.sub(re.escape(article), ' ', text, flags=re.IGNORECASE)
 
 
 def _extract_keywords(text: str, max_words: int = 5) -> str:

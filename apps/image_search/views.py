@@ -93,16 +93,34 @@ class ImageSearchStatusView(APIView):
         state = state_map.get(result.state, 'running')
 
         saved_count = 0
+        result_code = ''
+        candidates_count = 0
+        metadata_pass_count = 0
         if state == 'done':
-            saved_count = product.images.filter(
-                status__in=[
-                    ProductImage.Status.AUTO_APPROVED,
-                    ProductImage.Status.NEEDS_REVIEW,
-                    ProductImage.Status.LOW_CONFIDENCE,
-                ]
-            ).count()
+            task_result = result.result
+            if isinstance(task_result, dict):
+                saved_count = int(task_result.get('saved_count', 0) or 0)
+                result_code = str(task_result.get('result_code', '') or '')
+                candidates_count = int(task_result.get('candidates_count', 0) or 0)
+                metadata_pass_count = int(task_result.get('metadata_pass_count', 0) or 0)
+            else:
+                # Совместимость со старыми задачами, запущенными до расширения ответа.
+                saved_count = product.images.filter(
+                    status__in=[
+                        ProductImage.Status.AUTO_APPROVED,
+                        ProductImage.Status.NEEDS_REVIEW,
+                        ProductImage.Status.LOW_CONFIDENCE,
+                    ]
+                ).count()
+                result_code = 'found' if saved_count else 'no_candidates'
 
-        return Response({'status': 'ok', 'data': {'state': state, 'saved_count': saved_count}})
+        return Response({'status': 'ok', 'data': {
+            'state': state,
+            'saved_count': saved_count,
+            'result_code': result_code,
+            'candidates_count': candidates_count,
+            'metadata_pass_count': metadata_pass_count,
+        }})
 
 
 @extend_schema(tags=['Images'])

@@ -105,6 +105,36 @@ class TestImageSearchView:
         assert resp.json()['data']['task_id'] == 'test-task-uuid'
 
 
+@pytest.mark.django_db
+class TestImageSearchStatusView:
+    def test_возвращает_причину_фильтрации_и_число_кандидатов(
+        self, tenant_client, product,
+    ):
+        task_result = type('TaskResult', (), {
+            'state': 'SUCCESS',
+            'result': {
+                'result_code': 'filtered_out',
+                'saved_count': 0,
+                'candidates_count': 28,
+                'metadata_pass_count': 0,
+            },
+        })()
+
+        with patch('apps.image_search.views.AsyncResult', return_value=task_result):
+            resp = tenant_client.get(
+                f'/api/v1/products/{product.pk}/images/search/task-1/',
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()['data'] == {
+            'state': 'done',
+            'saved_count': 0,
+            'result_code': 'filtered_out',
+            'candidates_count': 28,
+            'metadata_pass_count': 0,
+        }
+
+
 # ---------------------------------------------------------------------------
 # POST approve / reject / set_primary
 # ---------------------------------------------------------------------------
