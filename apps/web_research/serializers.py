@@ -1,14 +1,23 @@
 from rest_framework import serializers
 
 from apps.web_research.models import (
-    WebResearchClaim, WebResearchEvidence, WebResearchRun,
+    WebResearchClaim, WebResearchEvidence, WebResearchRun, WebSearchAttempt,
 )
 
 
 class WebResearchEvidenceSerializer(serializers.ModelSerializer):
     class Meta:
         model = WebResearchEvidence
-        fields = ['id', 'title', 'url', 'domain', 'query', 'rank']
+        fields = ['id', 'title', 'url', 'domain', 'query', 'rank', 'provider_id']
+
+
+class WebSearchAttemptSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = WebSearchAttempt
+        fields = [
+            'id', 'provider_id', 'query', 'status', 'result_count',
+            'duration_ms', 'retryable', 'error_code', 'error_message', 'created_at',
+        ]
 
 
 class WebResearchClaimSerializer(serializers.ModelSerializer):
@@ -20,13 +29,14 @@ class WebResearchClaimSerializer(serializers.ModelSerializer):
         model = WebResearchClaim
         fields = [
             'id', 'claim_type', 'payload', 'confidence', 'evidence_ids',
-            'saved_model', 'saved_record_id',
+            'review_status', 'saved_model', 'saved_record_id',
         ]
 
 
 class WebResearchRunSerializer(serializers.ModelSerializer):
     evidence = WebResearchEvidenceSerializer(many=True, read_only=True)
     claims = WebResearchClaimSerializer(many=True, read_only=True)
+    search_attempts = WebSearchAttemptSerializer(many=True, read_only=True)
 
     class Meta:
         model = WebResearchRun
@@ -36,6 +46,7 @@ class WebResearchRunSerializer(serializers.ModelSerializer):
             'coverage_after', 'result_count', 'claim_count', 'generate_after',
             'error_message', 'started_at', 'finished_at', 'created_at',
             'evidence', 'claims',
+            'search_attempts',
         ]
 
 

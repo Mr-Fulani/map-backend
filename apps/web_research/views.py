@@ -16,6 +16,8 @@ from apps.web_research.serializers import (
     WebResearchRunListSerializer, WebResearchRunSerializer,
 )
 from apps.web_research.services import WebResearchService, enrichment_coverage
+from apps.web_research.providers.registry import registered_search_providers
+from apps.web_research.routing import search_provider_candidates
 
 
 @extend_schema(tags=['Web research'])
@@ -105,3 +107,29 @@ class WebResearchRunListView(APIView):
         )
         response.data['summary'] = summary
         return response
+
+
+@extend_schema(tags=['Web research'])
+class WebSearchProviderListView(APIView):
+    """Tenant-safe provider health; credentials and platform policy are never exposed."""
+
+    def get(self, request):
+        candidates = search_provider_candidates(request.tenant)
+        available = {item.provider.provider_id for item in candidates}
+        providers = []
+        for provider_id, provider_class in registered_search_providers().items():
+            if provider_id not in available:
+                continue
+            providers.append({
+                'provider_id': provider_id,
+                'display_name': provider_class.display_name or provider_id,
+                'available': True,
+            })
+        return Response({
+            'status': 'ok',
+            'data': {
+                'mode': 'automatic',
+                'available': bool(providers),
+                'providers': providers,
+            },
+        })

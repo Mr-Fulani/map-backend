@@ -302,6 +302,7 @@ export const productApi = {
 export const webResearchApi = {
   list: (params?: Record<string, unknown>) => api.get('/web-research/runs/', { params }),
   get: (runId: number) => api.get(`/web-research/runs/${runId}/`),
+  providers: () => api.get('/web-research/providers/'),
 };
 
 // Marketplace Accounts

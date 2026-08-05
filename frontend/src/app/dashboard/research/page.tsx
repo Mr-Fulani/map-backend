@@ -53,10 +53,17 @@ interface ResearchSummary {
   failed: number;
 }
 
+interface SearchProviderStatus {
+  mode: string;
+  available: boolean;
+  providers: Array<{ provider_id: string; display_name: string; available: boolean }>;
+}
+
 const STATUS_FILTERS = [
   { value: '', label: 'Все' },
   { value: 'active', label: 'Выполняются' },
   { value: 'need_review', label: 'Нужна проверка' },
+  { value: 'completed', label: 'Проверено' },
   { value: 'no_results', label: 'Без результатов' },
   { value: 'failed', label: 'Ошибки' },
 ];
@@ -65,6 +72,7 @@ const STATUS_LABELS: Record<string, string> = {
   queued: 'В очереди',
   running: 'Выполняется',
   need_review: 'Нужна проверка',
+  completed: 'Проверено',
   no_results: 'Ничего не найдено',
   skipped: 'Не потребовалось',
   failed: 'Ошибка',
@@ -90,6 +98,7 @@ export default function ResearchPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [providerStatus, setProviderStatus] = useState<SearchProviderStatus | null>(null);
 
   const load = useCallback(async (silent = false) => {
     if (silent) setRefreshing(true);
@@ -115,6 +124,11 @@ export default function ResearchPage() {
   useEffect(() => setPage(1), [statusFilter]);
   useEffect(() => { load().catch(() => undefined); }, [load]);
   useEffect(() => {
+    webResearchApi.providers()
+      .then((response) => setProviderStatus(response.data.data ?? null))
+      .catch(() => setProviderStatus(null));
+  }, []);
+  useEffect(() => {
     if (summary.active === 0) return;
     const timer = setInterval(() => load(true).catch(() => undefined), 5000);
     return () => clearInterval(timer);
@@ -137,6 +151,29 @@ export default function ResearchPage() {
           Обновить
         </Button>
       </div>
+
+      {providerStatus && (
+        <Card className={providerStatus.available ? '' : 'border-destructive/40'}>
+          <CardContent className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="text-sm font-medium">Сервисы поиска</p>
+              <p className="text-xs text-muted-foreground">
+                MAP автоматически выбирает доступный сервис и переключается при временной ошибке.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {providerStatus.providers.map((provider) => (
+                <Badge key={provider.provider_id} variant="secondary">
+                  {provider.display_name}
+                </Badge>
+              ))}
+              {!providerStatus.available && (
+                <Badge variant="destructive">Временно недоступно</Badge>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <SummaryCard icon={Search} label="Всего запусков" value={summary.total} loading={loading} />
@@ -306,7 +343,9 @@ function EmptyState() {
     <div className="px-4 py-16 text-center text-muted-foreground">
       <Globe2 className="mx-auto mb-3 h-10 w-10 opacity-30" />
       <p className="font-medium text-foreground">Исследований пока нет</p>
-      <p className="mt-1 text-sm">Откройте автозапчасть и нажмите «Исследовать в интернете».</p>
+      <p className="mt-1 text-sm">
+        Интернет-поиск запустится автоматически, если каталогам не хватит данных о товаре.
+      </p>
       <Link href="/dashboard/products">
         <Button className="mt-4" variant="outline">Перейти к товарам</Button>
       </Link>
