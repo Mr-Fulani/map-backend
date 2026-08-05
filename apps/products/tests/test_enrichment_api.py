@@ -9,7 +9,7 @@ from django.test import Client
 from apps.products.enrichment import normalize_part_code
 from apps.products.models import (
     GlobalPartFitment, Product, ProductCatalogClassification, ProductCrossCode, ProductEnrichmentFact,
-    ReviewStatus, VehicleFitment, TenantCatalogCategory, TenantCategoryMapping,
+    ProductParseJob, ReviewStatus, VehicleFitment, TenantCatalogCategory, TenantCategoryMapping,
 )
 from apps.products.services import ProductEnrichmentService, ProductKnowledgeGraphService
 from apps.tenants.models import CatalogDomain
@@ -121,6 +121,47 @@ def test_parse_endpoint_creates_tenant_scoped_job(django_capture_on_commit_callb
     jobs = tenant.product_parse_jobs.filter(product=product)
     assert set(jobs.values_list('source_id', flat=True)) == {'tachka', 'rossko', 'euroauto'}
     assert delay.call_count == 3
+
+
+@pytest.mark.django_db
+def test_product_detail_exposes_source_offer_and_friendly_price_comparison():
+    tenant, api_key = make_tenant('source-offer-api')
+    product = make_product(tenant)
+    product.price = Decimal('1234.00')
+    product.save(update_fields=['price'])
+    ProductParseJob.objects.create(
+        tenant=tenant,
+        product=product,
+        brand=product.brand,
+        article=product.article,
+        normalized_article=normalize_part_code(product.article),
+        source_id='euroauto',
+        source_url='https://euroauto.ru/part/new/6148741/',
+        status=ProductParseJob.Status.SUCCESS,
+        source_price=Decimal('1000.00'),
+        source_availability=ProductParseJob.SourceAvailability.IN_STOCK,
+        source_availability_text='В наличии',
+        source_quantity=4,
+    )
+
+    response = Client().get(
+        f'/api/v1/products/{product.pk}/',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    job = response.json()['data']['parse_jobs_summary'][0]
+    assert job['source_label'] == 'Euroauto.ru'
+    assert job['source_offer']['price'] == '1000.00'
+    assert job['source_offer']['availability_label'] == 'В наличии'
+    assert job['source_offer']['quantity'] == 4
+    assert job['price_comparison'] == {
+        'direction': 'tenant_higher',
+        'amount': '234.00',
+        'percent': '23.4',
+        'tenant_price': '1234.00',
+        'source_price': '1000.00',
+    }
 
 
 @pytest.mark.django_db

@@ -248,15 +248,18 @@ class ProductAdmin(ModelAdmin):
 class ProductParseJobAdmin(ModelAdmin):
     list_display = [
         'created_at', 'tenant', 'brand', 'article', 'source_id',
-        'status', 'product', 'started_at', 'finished_at',
+        'status', 'source_price', 'source_availability', 'product',
+        'started_at', 'finished_at',
     ]
-    list_filter = ['status', 'source_id', 'created_at', 'tenant']
+    list_filter = ['status', 'source_id', 'source_availability', 'created_at', 'tenant']
     search_fields = ['brand', 'article', 'normalized_article', 'product__name']
     readonly_fields = [
         'tenant', 'product', 'brand', 'article', 'normalized_article',
         'source_id', 'source_url', 'status', 'error_message', 'raw_html',
         'raw_text', 'parsed_data', 'duration_ms', 'created_at', 'updated_at',
-        'started_at', 'finished_at',
+        'started_at', 'finished_at', 'source_price', 'source_currency',
+        'source_price_is_from', 'source_availability',
+        'source_availability_text', 'source_quantity',
     ]
 
     def has_add_permission(self, request):

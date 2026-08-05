@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.core.files.storage import default_storage
 from rest_framework import serializers
 
@@ -282,14 +284,58 @@ class ProductEnrichmentFactSerializer(serializers.ModelSerializer):
 
 
 class ProductParseJobSerializer(serializers.ModelSerializer):
+    source_label = serializers.SerializerMethodField()
+    source_offer = serializers.SerializerMethodField()
+    price_comparison = serializers.SerializerMethodField()
+
     class Meta:
         model = ProductParseJob
         fields = [
             'id', 'product_id', 'brand', 'article', 'normalized_article',
-            'source_id', 'source_url', 'status', 'error_message',
+            'source_id', 'source_label', 'source_url', 'status', 'error_message',
             'parsed_data', 'duration_ms', 'created_at', 'updated_at',
-            'started_at', 'finished_at',
+            'started_at', 'finished_at', 'source_offer', 'price_comparison',
         ]
+
+    def get_source_label(self, obj):
+        from apps.products.source_policy import PART_SOURCE_POLICIES
+        policy = PART_SOURCE_POLICIES.get(obj.source_id)
+        return policy.label if policy else obj.source_id
+
+    def get_source_offer(self, obj):
+        return {
+            'price': str(obj.source_price) if obj.source_price is not None else None,
+            'currency': obj.source_currency,
+            'price_is_from': obj.source_price_is_from,
+            'availability': obj.source_availability,
+            'availability_label': obj.get_source_availability_display(),
+            'availability_text': obj.source_availability_text,
+            'quantity': obj.source_quantity,
+            'checked_at': obj.finished_at or obj.updated_at,
+        }
+
+    def get_price_comparison(self, obj):
+        if obj.source_price is None or obj.product_id is None:
+            return None
+        tenant_price = obj.product.price
+        source_price = obj.source_price
+        if tenant_price <= 0 or source_price <= 0:
+            return None
+        difference = tenant_price - source_price
+        if difference == 0:
+            direction = 'equal'
+        elif difference > 0:
+            direction = 'tenant_higher'
+        else:
+            direction = 'tenant_lower'
+        percent = (abs(difference) / source_price * Decimal('100')).quantize(Decimal('0.1'))
+        return {
+            'direction': direction,
+            'amount': str(abs(difference).quantize(Decimal('0.01'))),
+            'percent': str(percent),
+            'tenant_price': str(tenant_price),
+            'source_price': str(source_price),
+        }
 
 
 class ProductDetailSerializer(ProductSerializer):

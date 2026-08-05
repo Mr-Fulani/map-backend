@@ -1189,27 +1189,6 @@ class ProductEnrichmentService:
         try:
             product = job.product or cls._find_single_product_for_job(job)
             applied_knowledge = ProductKnowledgeGraphService.apply_known_knowledge_to_product(product)
-            if applied_knowledge['relations_count'] or applied_knowledge['fitments_count']:
-                job.product = product
-                job.source_url = ''
-                job.parsed_data = {
-                    'applied_from': 'knowledge_graph',
-                    **applied_knowledge,
-                }
-                status = (
-                    ProductParseJob.Status.SUCCESS
-                    if applied_knowledge['fitments_count']
-                    else ProductParseJob.Status.NEED_REVIEW
-                )
-                cls._finish_job(job, status)
-                return {
-                    'job_id': job_id,
-                    'product_id': product.pk,
-                    'status': status,
-                    'source_id': job.source_id,
-                    'image_urls': [],
-                    **applied_knowledge,
-                }
 
             parser = get_part_parser(job.source_id)
             if hasattr(parser, 'set_tenant'):
@@ -1243,13 +1222,22 @@ class ProductEnrichmentService:
 
         status = (
             ProductParseJob.Status.SUCCESS
-            if parsed.fitments else ProductParseJob.Status.NEED_REVIEW
+            if parsed.fitments or applied_knowledge['fitments_count']
+            else ProductParseJob.Status.NEED_REVIEW
         )
         job.product = product
         job.source_url = source_url
         job.raw_html = html[:5_000_000]
         job.raw_text = parsed.raw_text
         job.parsed_data = parsed.to_dict()
+        if applied_knowledge['relations_count'] or applied_knowledge['fitments_count']:
+            job.parsed_data['applied_knowledge'] = applied_knowledge
+        job.source_price = parsed.source_offer.price
+        job.source_currency = parsed.source_offer.currency or 'RUB'
+        job.source_price_is_from = parsed.source_offer.price_is_from
+        job.source_availability = parsed.source_offer.availability
+        job.source_availability_text = parsed.source_offer.availability_text[:200]
+        job.source_quantity = parsed.source_offer.quantity
         cls._finish_job(job, status)
         return {
             'job_id': job_id,
@@ -1257,6 +1245,8 @@ class ProductEnrichmentService:
             'status': status,
             'source_id': job.source_id,
             'image_urls': parsed.image_urls,
+            'source_offer': parsed.source_offer.to_dict(),
+            **applied_knowledge,
         }
 
     @classmethod
@@ -1280,7 +1270,9 @@ class ProductEnrichmentService:
         job.finished_at = now()
         job.save(update_fields=[
             'product', 'source_url', 'status', 'error_message', 'raw_html',
-            'raw_text', 'parsed_data', 'finished_at',
+            'raw_text', 'parsed_data', 'source_price', 'source_currency',
+            'source_price_is_from', 'source_availability',
+            'source_availability_text', 'source_quantity', 'finished_at',
         ])
 
 

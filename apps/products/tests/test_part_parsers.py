@@ -9,8 +9,8 @@ from apps.products.models import (
 )
 from apps.products.part_fetchers import FetchedPage
 from apps.products.part_parsers import (
-    EuroautoPartParser, ParsedFitment, ParsedPart, PartNotFound, RosskoPartParser,
-    TachkaPartParser, parse_fitment_line,
+    EuroautoPartParser, ParsedFitment, ParsedPart, ParsedSourceOffer, PartNotFound,
+    RosskoPartParser, TachkaPartParser, parse_fitment_line,
 )
 from apps.products.services import ProductEnrichmentService, ProductService
 from apps.tenants.services import TenantService
@@ -221,6 +221,8 @@ def test_tachka_fetch_search_resolves_via_smart_suggest_and_recovers_brand():
     # Бренд восстановлен из suggest и подставляется в parse_search_html.
     parsed = parser.parse_search_html(html, brand='', article='P50136', source_url=source_url)
     assert parsed.brand == 'BREMBO'
+    assert parsed.source_offer.price == Decimal('1234.00')
+    assert parsed.source_offer.availability == 'in_stock'
 
 
 def test_tachka_match_product_disambiguates_by_name_hint():
@@ -349,7 +351,7 @@ def test_run_parse_job_enriches_existing_tenant_product(monkeypatch):
 
 
 @pytest.mark.django_db
-def test_run_parse_job_applies_known_knowledge_before_external_fetch(monkeypatch):
+def test_run_parse_job_applies_known_knowledge_and_refreshes_source_offer(monkeypatch):
     tenant_a = make_tenant('job-kg-owner')
     product_a = make_product(tenant_a)
     parsed = TachkaPartParser().parse_html(SAMPLE_HTML, brand='BREMBO', article='P50136')
@@ -373,16 +375,32 @@ def test_run_parse_job_applies_known_knowledge_before_external_fetch(monkeypatch
             fetch_called = True
             return SAMPLE_HTML, 'https://tachka.ru/example'
 
+        def parse_html(self, html, brand, article, source_url):
+            parsed_part = TachkaPartParser().parse_html(
+                html, brand=brand, article=article, source_url=source_url,
+            )
+            parsed_part.source_offer = ParsedSourceOffer(
+                price=Decimal('1499.00'),
+                availability='in_stock',
+                availability_text='В наличии',
+                quantity=3,
+            )
+            return parsed_part
+
     monkeypatch.setattr('apps.products.services.get_part_parser', lambda source_id: FakeParser())
 
     result = ProductEnrichmentService.run_parse_job(job.pk)
 
     job.refresh_from_db()
     product_b.refresh_from_db()
-    assert fetch_called is False
+    assert fetch_called is True
     assert result['status'] == 'success'
     assert result['fitments_count'] == 1
-    assert job.parsed_data['applied_from'] == 'knowledge_graph'
+    assert job.parsed_data['applied_knowledge']['fitments_count'] == 1
+    assert job.source_price == Decimal('1499.00')
+    assert job.source_availability == 'in_stock'
+    assert job.source_quantity == 3
+    assert product_b.price == Decimal('1234.00')
     assert product_b.fitments.filter(model='E-CLASS').exists()
 
 
@@ -622,6 +640,8 @@ ROSSKO_SEARCH_HTML = """
       <span class="brand">Brembo</span>
       <span class="name">Колодки тормозные дисковые задние</span>
     </a>
+    <span class="price">5 490 ₽</span>
+    <span class="stock">В наличии</span>
   </div>
 </body>
 </html>
@@ -658,7 +678,13 @@ EUROAUTO_PRODUCT_HTML = """
     "manufacturer": "Metaco",
     "brand": {"@type": "Brand", "name": "Metaco"},
     "mpn": "8940-289",
-    "image": "https://file.euroauto.ru/v2/file/parts/new/6148741/1.jpg"
+    "image": "https://file.euroauto.ru/v2/file/parts/new/6148741/1.jpg",
+    "offers": {
+      "@type": "Offer",
+      "price": "4253.00",
+      "priceCurrency": "RUB",
+      "availability": "https://schema.org/InStock"
+    }
   }
   </script>
 </head>
@@ -713,6 +739,7 @@ EUROAUTO_SEARCH_PAYLOAD = json.dumps({
         'content': (
             'Фонарь задний наружный левый Metaco 8940-289. '
             'Metaco HYUNDAI SOLARIS (2017>). '
+            'от 4 253 ₽. Под заказ. '
             'Лучший аналог · SAT · ST-221-19S7L'
         ),
         'score': 0.91,
@@ -868,13 +895,19 @@ def test_rossko_parser_uses_injected_fetcher_without_network():
                 status_code=200,
             )
 
-    html, source_url = RosskoPartParser(fetcher=FakeFetcher()).fetch_search('P50136')
+    parser = RosskoPartParser(fetcher=FakeFetcher())
+    html, source_url = parser.fetch_search('P50136')
+    parsed = parser.parse_search_html(
+        html, brand='', article='P50136', source_url=source_url,
+    )
 
     assert len(calls) == 2
     assert 'single/search' in calls[0]
     assert 'brembo-p-50-136' in calls[1]
     assert html == ROSSKO_PRODUCT_HTML
     assert 'rossko.ru' in source_url
+    assert parsed.source_offer.price == Decimal('5490.00')
+    assert parsed.source_offer.availability == 'in_stock'
 
 
 def test_euroauto_parser_extracts_product_fitments_analogues_and_only_own_images():
@@ -901,6 +934,8 @@ def test_euroauto_parser_extracts_product_fitments_analogues_and_only_own_images
         'https://file.euroauto.ru/v2/file/parts/new/6148741/2.jpg',
     ]
     assert 'HYUNDAI SOLARIS' in parsed.description_facts['catalog_description']
+    assert parsed.source_offer.price == Decimal('4253.00')
+    assert parsed.source_offer.availability == 'in_stock'
 
 
 def test_euroauto_parser_extracts_indexed_search_payload_without_source_brand():
@@ -922,6 +957,9 @@ def test_euroauto_parser_extracts_indexed_search_payload_without_source_brand():
     assert len(parsed.image_urls) == 2
     assert '/parts/new/6148741/' in parsed.image_urls[0]
     assert '/firms/metaco/8940289' in parsed.source_url
+    assert parsed.source_offer.price == Decimal('4253.00')
+    assert parsed.source_offer.price_is_from is True
+    assert parsed.source_offer.availability == 'preorder'
 
 
 def test_euroauto_parser_prefers_result_with_fitment_over_sparse_firm_page():

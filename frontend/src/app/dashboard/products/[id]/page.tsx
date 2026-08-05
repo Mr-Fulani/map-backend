@@ -25,6 +25,7 @@ import {
   Check,
   X,
   Trash2,
+  ExternalLink,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import {
@@ -143,10 +144,28 @@ interface ProductParseJob {
   id: number;
   status: string;
   source_id: string;
+  source_label: string;
   source_url: string;
   error_message: string;
   parsed_data: {
     image_urls?: string[];
+  } | null;
+  source_offer: {
+    price: string | null;
+    currency: string;
+    price_is_from: boolean;
+    availability: 'unknown' | 'in_stock' | 'preorder' | 'out_of_stock';
+    availability_label: string;
+    availability_text: string;
+    quantity: number | null;
+    checked_at: string;
+  };
+  price_comparison: {
+    direction: 'tenant_higher' | 'tenant_lower' | 'equal';
+    amount: string;
+    percent: string;
+    tenant_price: string;
+    source_price: string;
   } | null;
   created_at: string;
   finished_at: string | null;
@@ -206,13 +225,12 @@ const IMAGE_STATUS_LABELS: Record<string, string> = {
   rejected: 'Отклонено',
 };
 
-const ENRICHMENT_STATUS_LABELS: Record<string, string> = {
-  pending: 'Ожидает запуска',
-  running: 'Идёт обогащение',
-  success: 'Данные найдены',
-  need_review: 'Данные найдены частично',
-  not_found: 'Источник не нашёл товар',
-  failed: 'Ошибка обогащения',
+const ENRICHMENT_SOURCE_IDS = ['tachka', 'rossko', 'euroauto'] as const;
+
+const ENRICHMENT_SOURCE_LABELS: Record<string, string> = {
+  tachka: 'Тачка.ру',
+  rossko: 'Росско',
+  euroauto: 'Euroauto',
 };
 
 const WEB_RESEARCH_STATUS_LABELS: Record<string, string> = {
@@ -251,6 +269,99 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
     <div className="flex justify-between gap-4 py-2">
       <span className="text-sm text-muted-foreground">{label}</span>
       <span className="text-right text-sm font-medium">{value ?? '—'}</span>
+    </div>
+  );
+}
+
+function formatRubles(value: string | number) {
+  return `${Number(value).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽`;
+}
+
+function SourcePriceCard({
+  sourceId,
+  job,
+}: {
+  sourceId: string;
+  job: ProductParseJob | null;
+}) {
+  const label = job?.source_label || ENRICHMENT_SOURCE_LABELS[sourceId] || sourceId;
+  const found = job && ['success', 'need_review'].includes(job.status);
+  const checking = job && ['pending', 'running'].includes(job.status);
+  const offer = job?.source_offer;
+
+  let statusLabel = 'Не проверялось';
+  let statusClass = 'border-border text-muted-foreground';
+  if (checking) {
+    statusLabel = 'Проверяем…';
+  } else if (job?.status === 'not_found') {
+    statusLabel = 'Товар не найден';
+  } else if (job?.status === 'failed') {
+    statusLabel = 'Не удалось проверить';
+    statusClass = 'border-destructive/30 text-destructive';
+  } else if (found && offer?.availability === 'in_stock') {
+    statusLabel = offer.quantity != null ? `В наличии · ${offer.quantity} шт.` : 'В наличии';
+    statusClass = 'border-emerald-500/30 text-emerald-700 dark:text-emerald-400';
+  } else if (found && offer?.availability === 'preorder') {
+    statusLabel = 'Под заказ';
+    statusClass = 'border-amber-500/30 text-amber-700 dark:text-amber-400';
+  } else if (found && offer?.availability === 'out_of_stock') {
+    statusLabel = 'Нет в наличии';
+  } else if (found) {
+    statusLabel = 'Товар найден';
+  }
+
+  let comparisonText = '';
+  let comparisonClass = 'text-muted-foreground';
+  if (job?.price_comparison?.direction === 'tenant_higher') {
+    comparisonText = `Ваша цена выше на ${formatRubles(job.price_comparison.amount)} (${job.price_comparison.percent}%)`;
+    comparisonClass = 'text-amber-700 dark:text-amber-400';
+  } else if (job?.price_comparison?.direction === 'tenant_lower') {
+    comparisonText = `Ваша цена ниже на ${formatRubles(job.price_comparison.amount)} (${job.price_comparison.percent}%)`;
+    comparisonClass = 'text-emerald-700 dark:text-emerald-400';
+  } else if (job?.price_comparison?.direction === 'equal') {
+    comparisonText = 'Цена совпадает с вашей';
+  }
+
+  return (
+    <div className="rounded-lg border bg-card p-3">
+      <div className="flex items-start justify-between gap-2">
+        <span className="font-medium">{label}</span>
+        <Badge variant="outline" className={`whitespace-nowrap text-[11px] ${statusClass}`}>
+          {statusLabel}
+        </Badge>
+      </div>
+      <div className="mt-3">
+        {found && offer?.price ? (
+          <p className="text-xl font-semibold tracking-tight">
+            {offer.price_is_from && <span className="mr-1 text-sm font-normal text-muted-foreground">от</span>}
+            {formatRubles(offer.price)}
+          </p>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {checking ? 'Получаем цену…' : found ? 'Цена не указана' : 'Нет данных о цене'}
+          </p>
+        )}
+        {comparisonText && (
+          <p className={`mt-1 text-xs font-medium ${comparisonClass}`}>{comparisonText}</p>
+        )}
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>
+          {job?.finished_at
+            ? `Проверено ${new Date(job.finished_at).toLocaleString('ru-RU')}`
+            : checking ? 'Проверка выполняется' : 'Запустите обогащение'}
+        </span>
+        {job?.source_url && (
+          <a
+            href={job.source_url}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex shrink-0 items-center gap-1 text-primary hover:underline"
+          >
+            Открыть <ExternalLink className="h-3 w-3" />
+          </a>
+        )}
+      </div>
     </div>
   );
 }
@@ -894,28 +1005,16 @@ export default function ProductDetailPage() {
                     Достоверные факты из внешних каталогов для описания, OEM и применяемости.
                   </p>
                 </div>
-                <div className="flex flex-wrap gap-1">
-                  {(product.parse_jobs_summary ?? (product.latest_parse_job ? [product.latest_parse_job] : [])).map((job) => {
-                    const ok = job.status === 'success' || job.status === 'need_review';
-                    return (
-                      <Badge key={job.source_id} variant={ok ? 'secondary' : 'outline'} className="text-xs">
-                        {job.source_id.charAt(0).toUpperCase() + job.source_id.slice(1)}:{' '}
-                        {ENRICHMENT_STATUS_LABELS[job.status] ?? job.status}
-                      </Badge>
-                    );
-                  })}
-                  {webResearch && (
+                {webResearch && (
+                  <div className="flex flex-wrap gap-1">
                     <Badge
                       variant={webResearch.status === 'need_review' ? 'secondary' : 'outline'}
                       className="text-xs"
                     >
                       Интернет: {WEB_RESEARCH_STATUS_LABELS[webResearch.status] ?? webResearch.status}
                     </Badge>
-                  )}
-                  {!product.latest_parse_job && (
-                    <Badge variant="outline">Не запускалось</Badge>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
             </CardHeader>
             <CardContent className="space-y-4 pt-4 sm:pt-5">
@@ -925,16 +1024,27 @@ export default function ProductDetailPage() {
                     Последний запуск: {new Date(product.latest_parse_job.created_at).toLocaleString('ru-RU')}
                   </span>
                 )}
-                {(product.parse_jobs_summary ?? []).find((j) => j.source_url) && (
-                  <a
-                    href={(product.parse_jobs_summary ?? []).find((j) => j.source_url)!.source_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-primary hover:underline"
-                  >
-                    Открыть источник
-                  </a>
-                )}
+              </div>
+
+              <div>
+                <div className="mb-2">
+                  <p className="text-sm font-medium">Цены и наличие в источниках</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Сравниваем найденные цены с вашей текущей ценой {formatRubles(product.price)}.
+                  </p>
+                </div>
+                <div className="grid gap-3 lg:grid-cols-3">
+                  {ENRICHMENT_SOURCE_IDS.map((sourceId) => (
+                    <SourcePriceCard
+                      key={sourceId}
+                      sourceId={sourceId}
+                      job={(product.parse_jobs_summary ?? []).find((item) => item.source_id === sourceId) ?? null}
+                    />
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Цены справочные: скидки, доставка и условия конкретного продавца могут отличаться.
+                </p>
               </div>
 
               {webResearch && (
@@ -986,9 +1096,18 @@ export default function ProductDetailPage() {
               {(product.parse_jobs_summary ?? (product.latest_parse_job ? [product.latest_parse_job] : []))
                 .filter((j) => j.error_message)
                 .map((job) => (
-                  <p key={job.source_id} className="rounded-md bg-destructive/10 p-2 text-sm text-destructive">
-                    <span className="font-medium capitalize">{job.source_id}:</span> {job.error_message}
-                  </p>
+                  <details
+                    key={job.source_id}
+                    className={job.status === 'failed'
+                      ? 'rounded-md border border-destructive/20 bg-destructive/5 p-2 text-sm'
+                      : 'rounded-md border bg-muted/20 p-2 text-sm'}
+                  >
+                    <summary className="cursor-pointer font-medium">
+                      {job.source_label || ENRICHMENT_SOURCE_LABELS[job.source_id] || job.source_id}:{' '}
+                      {job.status === 'not_found' ? 'почему товар не найден' : 'подробности проверки'}
+                    </summary>
+                    <p className="mt-2 break-words text-xs text-muted-foreground">{job.error_message}</p>
+                  </details>
                 ))}
 
               {product.attributes.length === 0

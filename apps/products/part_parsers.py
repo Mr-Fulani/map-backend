@@ -1,6 +1,7 @@
 import json
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from urllib.parse import quote, unquote, urlencode, urlparse
 
 from django.utils.text import slugify
@@ -67,6 +68,26 @@ class ParsedFitment:
 
 
 @dataclass
+class ParsedSourceOffer:
+    price: Decimal | None = None
+    currency: str = 'RUB'
+    price_is_from: bool = False
+    availability: str = 'unknown'
+    availability_text: str = ''
+    quantity: int | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            'price': str(self.price) if self.price is not None else None,
+            'currency': self.currency,
+            'price_is_from': self.price_is_from,
+            'availability': self.availability,
+            'availability_text': self.availability_text,
+            'quantity': self.quantity,
+        }
+
+
+@dataclass
 class ParsedPart:
     brand: str
     article: str
@@ -80,6 +101,7 @@ class ParsedPart:
     description_facts: dict[str, str] = field(default_factory=dict)
     source_url: str = ''
     raw_text: str = ''
+    source_offer: ParsedSourceOffer = field(default_factory=ParsedSourceOffer)
 
     @property
     def normalized_article(self) -> str:
@@ -99,6 +121,7 @@ class ParsedPart:
             'image_urls': self.image_urls,
             'description_facts': self.description_facts,
             'source_url': self.source_url,
+            'source_offer': self.source_offer.to_dict(),
         }
 
 
@@ -117,6 +140,7 @@ class TachkaPartParser:
         # Бренд, восстановленный из smart-search-suggest при поиске по артикулу
         # без бренда — используется parse_search_html для бэкфилла.
         self._resolved_brand = ''
+        self._search_offer = ParsedSourceOffer()
 
     def build_url(self, brand: str, article: str) -> str:
         brand_slug = slugify(brand).lower() or brand.strip().lower()
@@ -145,10 +169,12 @@ class TachkaPartParser:
         hint (название товара) разрешает неоднозначность, когда один артикул
         принадлежит разным брендам/деталям.
         """
+        self._search_offer = ParsedSourceOffer()
         product = self._match_product(self._smart_search(article), article, hint)
         if not product:
             raise PartNotFound(f'Артикул не найден в каталоге Тачка.ру: {article}')
         self._resolved_brand = (product.get('brand_name') or '').strip()
+        self._search_offer = _source_offer_from_mapping(product)
         relative_url = (product.get('url') or '').strip().lstrip('/')
         if not relative_url:
             raise PartNotFound(f'Артикул не найден в каталоге Тачка.ру: {article}')
@@ -222,6 +248,7 @@ class TachkaPartParser:
             description_facts=self._parse_description_facts(tree, structured.get('description', '')),
             source_url=source_url,
             raw_text=raw_text[:20000],
+            source_offer=structured.get('source_offer', ParsedSourceOffer()),
         )
         if not parsed.title:
             parsed.title = f'{parsed.brand} {parsed.article}'
@@ -232,7 +259,11 @@ class TachkaPartParser:
 
         brand берётся из smart-search-suggest, если у товара его не было.
         """
-        return self.parse_html(html, brand or self._resolved_brand, article, source_url=source_url)
+        parsed = self.parse_html(
+            html, brand or self._resolved_brand, article, source_url=source_url,
+        )
+        parsed.source_offer = _merge_source_offers(parsed.source_offer, self._search_offer)
+        return parsed
 
     def _first_text(self, tree: HTMLParser, selectors: list[str]) -> str:
         for selector in selectors:
@@ -410,6 +441,7 @@ class TachkaPartParser:
                 'title': product.get('name', ''),
                 'description': _normalize_spaces(product.get('description', '')),
                 'image_urls': image_urls,
+                'source_offer': _source_offer_from_mapping(product),
             }
         return {}
 
@@ -549,6 +581,198 @@ def _normalize_spaces(value: str) -> str:
 def _normalize_lines(value: str) -> str:
     lines = [_normalize_spaces(line) for line in (value or '').splitlines()]
     return '\n'.join(line for line in lines if line)
+
+
+def _parse_source_price(value) -> Decimal | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float, Decimal)):
+        raw = str(value)
+    else:
+        match = re.search(r'-?\d[\d\s\u00a0]*(?:[.,]\d{1,2})?', str(value))
+        if not match:
+            return None
+        raw = match.group(0)
+    normalized = raw.replace('\u00a0', '').replace(' ', '').replace(',', '.')
+    if normalized.count('.') > 1:
+        head, tail = normalized.rsplit('.', 1)
+        normalized = f'{head.replace(".", "")}.{tail}'
+    try:
+        price = Decimal(normalized).quantize(Decimal('0.01'))
+    except (InvalidOperation, ValueError):
+        return None
+    return price if price >= 0 else None
+
+
+def _normalize_source_availability(value) -> tuple[str, str]:
+    if isinstance(value, bool):
+        return ('in_stock', 'В наличии') if value else ('out_of_stock', 'Нет в наличии')
+    text = _normalize_spaces(str(value or ''))
+    lowered = text.casefold()
+    if any(marker in lowered for marker in (
+        'outofstock', 'out_of_stock', 'нет в наличии', 'отсутствует', 'unavailable',
+    )):
+        return 'out_of_stock', 'Нет в наличии'
+    if any(marker in lowered for marker in (
+        'preorder', 'pre_order', 'backorder', 'под заказ', 'предзаказ',
+    )):
+        return 'preorder', 'Под заказ'
+    if any(marker in lowered for marker in (
+        'instock', 'in_stock', 'в наличии', 'available', 'есть на складе',
+    )):
+        return 'in_stock', 'В наличии'
+    return 'unknown', text[:200]
+
+
+def _source_offer_from_mapping(data) -> ParsedSourceOffer:
+    if isinstance(data, list):
+        offers = [_source_offer_from_mapping(item) for item in data]
+        priced = [item for item in offers if item.price is not None]
+        if priced:
+            return min(priced, key=lambda item: item.price)
+        available = [item for item in offers if item.availability != 'unknown']
+        return available[0] if available else ParsedSourceOffer()
+    if not isinstance(data, dict):
+        return ParsedSourceOffer()
+
+    nested = data.get('offers')
+    nested_offer = _source_offer_from_mapping(nested) if nested else ParsedSourceOffer()
+    price_key = next(
+        (key for key in ('price', 'lowPrice', 'sale_price', 'current_price') if data.get(key) is not None),
+        '',
+    )
+    price = _parse_source_price(data.get(price_key)) if price_key else None
+    availability_value = data.get('availability')
+    if availability_value is None and 'in_stock' in data:
+        availability_value = data.get('in_stock')
+    if availability_value is None and 'available' in data:
+        availability_value = data.get('available')
+    availability, availability_text = _normalize_source_availability(availability_value)
+
+    quantity = None
+    for key in ('quantity', 'stock_qty', 'stock', 'available_quantity'):
+        raw_quantity = data.get(key)
+        if raw_quantity is None or isinstance(raw_quantity, bool):
+            continue
+        try:
+            quantity = max(0, int(raw_quantity))
+        except (TypeError, ValueError):
+            continue
+        break
+
+    current = ParsedSourceOffer(
+        price=price,
+        currency=str(data.get('priceCurrency') or data.get('currency') or 'RUB').upper()[:3],
+        price_is_from=price_key == 'lowPrice' or bool(data.get('price_is_from')),
+        availability=availability,
+        availability_text=availability_text,
+        quantity=quantity,
+    )
+    return _merge_source_offers(current, nested_offer)
+
+
+def _source_offer_from_text(text: str) -> ParsedSourceOffer:
+    normalized = _normalize_spaces(text)
+    price_match = re.search(
+        r'(?P<from>\bот\s+)?(?P<price>\d{1,3}(?:[\s\u00a0]\d{3})+|\d{3,}'
+        r'(?:[.,]\d{1,2})?)\s*(?:₽|руб(?:\.|лей)?|RUB)',
+        normalized,
+        re.IGNORECASE,
+    )
+    if not price_match:
+        price_match = re.search(
+            r'(?P<from>\bот\s+)(?P<price>\d{1,3}(?:[\s\u00a0]\d{3})+|\d{3,})'
+            r'(?=\s*(?:[.;]|купить|в наличии|под заказ))',
+            normalized,
+            re.IGNORECASE,
+        )
+    availability, availability_text = _normalize_source_availability(normalized)
+    quantity_match = re.search(r'\b(?P<quantity>\d+)\s*шт\.?\b', normalized, re.IGNORECASE)
+    return ParsedSourceOffer(
+        price=_parse_source_price(price_match.group('price')) if price_match else None,
+        currency='RUB',
+        price_is_from=bool(price_match and price_match.groupdict().get('from')),
+        availability=availability,
+        availability_text=availability_text,
+        quantity=int(quantity_match.group('quantity')) if quantity_match else None,
+    )
+
+
+def _source_offer_from_html_node(node) -> ParsedSourceOffer:
+    if node is None:
+        return ParsedSourceOffer()
+    price_node = None
+    for selector in (
+        '[itemprop="price"]', '[data-price]', '[data-role*="price"]',
+        '.product-price', '.price',
+    ):
+        price_node = node.css_first(selector)
+        if price_node:
+            break
+    availability_node = None
+    for selector in (
+        '[itemprop="availability"]', '[data-availability]', '[data-role*="stock"]',
+        '[data-role*="availability"]', '.availability', '.stock',
+    ):
+        availability_node = node.css_first(selector)
+        if availability_node:
+            break
+
+    price_value = ''
+    if price_node:
+        price_value = (
+            price_node.attributes.get('content')
+            or price_node.attributes.get('data-price')
+            or price_node.text(separator=' ')
+        )
+    availability_value = ''
+    if availability_node:
+        availability_value = (
+            availability_node.attributes.get('content')
+            or availability_node.attributes.get('href')
+            or availability_node.attributes.get('data-availability')
+            or availability_node.text(separator=' ')
+        )
+
+    # Не ищем первую попавшуюся цену по всему документу: на карточке могут быть
+    # блоки аналогов и рекомендаций. Текстовый fallback безопасен только внутри
+    # явно найденного блока цены/наличия точного товара.
+    text_offer = (
+        _source_offer_from_text(_normalize_spaces(node.text(separator=' ')))
+        if price_node or availability_node else ParsedSourceOffer()
+    )
+    availability, availability_text = _normalize_source_availability(availability_value)
+    structured = ParsedSourceOffer(
+        price=_parse_source_price(price_value),
+        currency='RUB',
+        price_is_from='от' in _normalize_spaces(str(price_value)).casefold(),
+        availability=availability,
+        availability_text=availability_text,
+    )
+    return _merge_source_offers(structured, text_offer)
+
+
+def _merge_source_offers(
+    primary: ParsedSourceOffer,
+    fallback: ParsedSourceOffer,
+) -> ParsedSourceOffer:
+    price_from_primary = primary.price is not None
+    availability_from_primary = primary.availability != 'unknown'
+    return ParsedSourceOffer(
+        price=primary.price if price_from_primary else fallback.price,
+        currency=(primary.currency if price_from_primary else fallback.currency) or 'RUB',
+        price_is_from=(
+            primary.price_is_from if price_from_primary else fallback.price_is_from
+        ),
+        availability=(
+            primary.availability if availability_from_primary else fallback.availability
+        ),
+        availability_text=(
+            primary.availability_text
+            if availability_from_primary else fallback.availability_text
+        ),
+        quantity=primary.quantity if primary.quantity is not None else fallback.quantity,
+    )
 
 
 def _first_node_text(node, selectors: list[str], fallback: str = '') -> str:
@@ -694,6 +918,7 @@ class RosskoPartParser:
 
     def __init__(self, fetcher=None):
         self.fetcher = fetcher or get_part_fetcher(self.source_id)
+        self._search_offer = ParsedSourceOffer()
 
     def build_search_url(self, article: str) -> str:
         return f'{self.base_url}/single/search/?q={quote(normalize_part_code(article))}'
@@ -707,6 +932,7 @@ class RosskoPartParser:
 
     def fetch_search(self, article: str, hint: str = '') -> tuple[str, str]:
         """Ищет артикул, затем загружает страницу первого совпавшего товара."""
+        self._search_offer = ParsedSourceOffer()
         search_url = self.build_search_url(article)
         search_page = self.fetcher.fetch(search_url)
         search_page.raise_for_status()
@@ -717,6 +943,7 @@ class RosskoPartParser:
         product_url = self._extract_product_url(search_page.html, article)
         if not product_url:
             raise PartNotFound(f'Артикул не найден в каталоге Росско: {article}')
+        self._search_offer = self._extract_search_offer(search_page.html, article)
 
         product_page = self.fetcher.fetch(product_url)
         if product_page.status_code == 404:
@@ -756,6 +983,9 @@ class RosskoPartParser:
             image_urls=image_urls,
             source_url=source_url,
             raw_text=raw_text[:20000],
+            source_offer=_merge_source_offers(
+                _source_offer_from_html_node(tree), self._search_offer,
+            ),
         )
         return parsed
 
@@ -770,6 +1000,17 @@ class RosskoPartParser:
                 if href.startswith('/card/'):
                     return f'{self.base_url}{href}'
         return ''
+
+    def _extract_search_offer(self, html: str, article: str) -> ParsedSourceOffer:
+        tree = HTMLParser(html)
+        normalized = normalize_part_code(article)
+        for link in tree.css('a[data-role="product.href"]'):
+            oe_node = link.css_first('.oe')
+            if not oe_node or normalize_part_code(oe_node.text()) != normalized:
+                continue
+            container = link.parent or link
+            return _source_offer_from_html_node(container)
+        return ParsedSourceOffer()
 
     def _parse_features(self, tree: HTMLParser) -> tuple[dict[str, str], list[ParsedCrossCode]]:
         """Парсит вкладку Характеристики: атрибуты и OEM-коды."""
@@ -1007,6 +1248,10 @@ class EuroautoPartParser:
             description_facts=description_facts,
             source_url=resolved_url,
             raw_text=raw_text[:20000],
+            source_offer=_merge_source_offers(
+                _source_offer_from_mapping(schema),
+                _source_offer_from_html_node(tree),
+            ),
         )
 
     @staticmethod
@@ -1169,6 +1414,7 @@ class EuroautoPartParser:
             ),
             source_url=matched_url,
             raw_text=raw_text[:20000],
+            source_offer=_source_offer_from_text(raw_text),
         )
 
     @staticmethod

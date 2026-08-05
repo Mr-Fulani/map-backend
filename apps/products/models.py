@@ -918,6 +918,12 @@ class ProductParseJob(TimestampedModel):
         NOT_FOUND = 'not_found', 'Не найдено'
         NEED_REVIEW = 'need_review', 'Нужна проверка'
 
+    class SourceAvailability(models.TextChoices):
+        UNKNOWN = 'unknown', 'Наличие не указано'
+        IN_STOCK = 'in_stock', 'В наличии'
+        PREORDER = 'preorder', 'Под заказ'
+        OUT_OF_STOCK = 'out_of_stock', 'Нет в наличии'
+
     tenant = models.ForeignKey(
         Tenant, on_delete=models.CASCADE, related_name='product_parse_jobs',
         verbose_name='Тенант',
@@ -941,6 +947,26 @@ class ProductParseJob(TimestampedModel):
     raw_html = models.TextField(blank=True, verbose_name='Raw HTML')
     raw_text = models.TextField(blank=True, verbose_name='Raw text')
     parsed_data = models.JSONField(null=True, blank=True, verbose_name='Распарсенные данные')
+    source_price = models.DecimalField(
+        max_digits=14, decimal_places=2, null=True, blank=True,
+        verbose_name='Цена в источнике',
+    )
+    source_currency = models.CharField(
+        max_length=3, default='RUB', verbose_name='Валюта источника',
+    )
+    source_price_is_from = models.BooleanField(
+        default=False, verbose_name='Цена указана «от»',
+    )
+    source_availability = models.CharField(
+        max_length=20, choices=SourceAvailability.choices,
+        default=SourceAvailability.UNKNOWN, verbose_name='Наличие в источнике',
+    )
+    source_availability_text = models.CharField(
+        max_length=200, blank=True, verbose_name='Текст наличия в источнике',
+    )
+    source_quantity = models.PositiveIntegerField(
+        null=True, blank=True, verbose_name='Количество в источнике',
+    )
     duration_ms = models.PositiveIntegerField(null=True, blank=True, verbose_name='Длительность, мс')
     started_at = models.DateTimeField(null=True, blank=True, verbose_name='Начато')
     finished_at = models.DateTimeField(null=True, blank=True, verbose_name='Завершено')
