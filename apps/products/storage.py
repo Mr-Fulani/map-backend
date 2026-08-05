@@ -125,6 +125,7 @@ class PhotoUploadPipeline:
         status: str | None = None,
         check_limit: bool = False,
         validate_quality: bool = False,
+        allow_low_resolution: bool = False,
     ) -> ProductImage | None:
         if check_limit and product.images.exclude(status=ProductImage.Status.REJECTED).count() >= MAX_PHOTOS:
             return None
@@ -162,7 +163,7 @@ class PhotoUploadPipeline:
             min_resolution = int(
                 getattr(settings, 'IMAGE_SEARCH_SETTINGS', {}).get('MIN_RESOLUTION', 300),
             )
-            if min(actual_width, actual_height) < min_resolution:
+            if min(actual_width, actual_height) < min_resolution and not allow_low_resolution:
                 return None
             if getattr(img, 'n_frames', 1) > 1:
                 return None

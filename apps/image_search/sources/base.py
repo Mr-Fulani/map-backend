@@ -41,6 +41,8 @@ class BaseImageSource(ABC):
             product: экземпляр Product (поля brand, article, name).
         """
         self.product = product
+        self.last_error = ''
+        self.last_error_code = ''
 
     @abstractmethod
     def search(self) -> list[ImageCandidate]:

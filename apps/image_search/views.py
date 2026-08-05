@@ -82,7 +82,7 @@ class ImageSearchStatusView(APIView):
 
     def get(self, request, product_pk: int, task_id: str):
         """Возвращает состояние Celery-задачи и количество сохранённых изображений."""
-        product = get_object_or_404(Product, pk=product_pk, tenant=request.tenant)
+        get_object_or_404(Product, pk=product_pk, tenant=request.tenant)
         result = AsyncResult(task_id)
 
         state_map = {
@@ -92,17 +92,25 @@ class ImageSearchStatusView(APIView):
         }
         state = state_map.get(result.state, 'running')
 
-        saved_count = 0
+        outcome = {}
         if state == 'done':
-            saved_count = product.images.filter(
-                status__in=[
-                    ProductImage.Status.AUTO_APPROVED,
-                    ProductImage.Status.NEEDS_REVIEW,
-                    ProductImage.Status.LOW_CONFIDENCE,
-                ]
-            ).count()
+            task_result = result.result
+            if isinstance(task_result, dict):
+                outcome = task_result
+            else:
+                outcome = {
+                    'saved_count': 0,
+                    'reason_code': 'completed',
+                    'message': 'Поиск фотографий завершён.',
+                }
+        elif state == 'failed':
+            outcome = {
+                'saved_count': 0,
+                'reason_code': 'task_failed',
+                'message': 'Поиск фотографий завершился с ошибкой.',
+            }
 
-        return Response({'status': 'ok', 'data': {'state': state, 'saved_count': saved_count}})
+        return Response({'status': 'ok', 'data': {'state': state, **outcome}})
 
 
 @extend_schema(tags=['Images'])

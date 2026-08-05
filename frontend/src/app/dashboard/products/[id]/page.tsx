@@ -48,6 +48,18 @@ interface ProductImage {
   url_source: string | null;
 }
 
+interface ImageSearchResult {
+  state: 'running' | 'done' | 'failed';
+  reason_code?: string;
+  message?: string;
+  saved_count?: number;
+  found_count?: number;
+  rejected_count?: number;
+  eligible_count?: number;
+  download_failed_count?: number;
+  sources?: string[];
+}
+
 interface ProductDetail {
   id: number;
   article: string;
@@ -266,6 +278,7 @@ export default function ProductDetailPage() {
   const [savingBrand, setSavingBrand] = useState(false);
 
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
+  const [imageSearchResult, setImageSearchResult] = useState<ImageSearchResult | null>(null);
 
   useEffect(() => {
     const previousHref = getPreviousDashboardHref();
@@ -433,18 +446,20 @@ export default function ProductDetailPage() {
     const interval = setInterval(async () => {
       try {
         const res = await imageApi.searchStatus(Number(id), searchTaskId);
-        const { state, saved_count } = res.data.data;
+        const result = res.data.data as ImageSearchResult;
+        const { state, saved_count = 0 } = result;
         if (state !== 'running') {
           setSearchTaskId(null);
+          setImageSearchResult(result);
           if (state === 'done') {
             if (saved_count > 0) {
-              toast.success(`Найдено фото: ${saved_count}`);
+              toast.success(result.message || `Сохранено фото: ${saved_count}`);
             } else {
-              toast.warning('Фото не найдены — сервис поиска ограничил запросы. Попробуйте через минуту или загрузите вручную.');
+              toast.warning(result.message || 'Подходящие фотографии не найдены.');
             }
             loadImages();
           } else {
-            toast.error('Поиск завершился с ошибкой');
+            toast.error(result.message || 'Поиск завершился с ошибкой');
           }
         }
       } catch {
@@ -641,6 +656,7 @@ export default function ProductDetailPage() {
 
   async function startSearch() {
     setActionLoading('search');
+    setImageSearchResult(null);
     try {
       const res = await imageApi.search(Number(id));
       setSearchTaskId(res.data.data.task_id);
@@ -1144,9 +1160,30 @@ export default function ProductDetailPage() {
                   <div>
                     <p className="font-medium">Идёт поиск фотографий...</p>
                     <p className="mt-0.5 text-xs opacity-80">
-                      Поиск может занять до 30 секунд — сервисы иногда ограничивают запросы, задача делает повторные попытки автоматически. Не нажимайте кнопку повторно.
+                      Проверяем Brave и резервный Tavily по OEM, названию и применяемости. Не нажимайте кнопку повторно.
                     </p>
                   </div>
+                </div>
+              )}
+              {!searching && imageSearchResult?.message && (
+                <div className="mb-4 rounded-md border bg-muted/30 p-3 text-sm">
+                  <p className="font-medium">Результат поиска фотографий</p>
+                  <p className="mt-1 text-muted-foreground">{imageSearchResult.message}</p>
+                  {(imageSearchResult.found_count ?? 0) > 0 && (
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Найдено сервисами: {imageSearchResult.found_count ?? 0}
+                      {' · '}прошли проверку товара: {imageSearchResult.eligible_count ?? 0}
+                      {' · '}отклонено как нерелевантные: {imageSearchResult.rejected_count ?? 0}
+                      {(imageSearchResult.download_failed_count ?? 0) > 0
+                        ? ` · не удалось скачать: ${imageSearchResult.download_failed_count}`
+                        : ''}
+                    </p>
+                  )}
+                  {(imageSearchResult.sources?.length ?? 0) > 0 && (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Источники: {imageSearchResult.sources?.join(' → ')}
+                    </p>
+                  )}
                 </div>
               )}
               {imagesLoading ? (

@@ -9,6 +9,7 @@ import logging
 from django.conf import settings
 
 from apps.image_search.sources.base import BaseImageSource
+from apps.image_search.sources.connection import image_source_connection
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,17 @@ def get_active_sources(product) -> list[BaseImageSource]:
             sources.append(instance)
         else:
             logger.debug(f'Источник {source_id!r} недоступен, пропускаем')
-    return sorted(sources, key=lambda s: s.tier)
+    # The same primary/fallback choice configured for internet research also
+    # controls image search. Tier remains a trust signal, not a routing switch.
+    return sorted(
+        sources,
+        key=lambda source: (
+            image_source_connection(
+                source.source_id, getattr(product, 'tenant', None),
+            ).priority,
+            source.tier,
+        ),
+    )
 
 
 def get_registered_sources() -> dict[str, type[BaseImageSource]]:

@@ -104,6 +104,28 @@ class TestImageSearchView:
         assert resp.status_code == 200
         assert resp.json()['data']['task_id'] == 'test-task-uuid'
 
+    def test_status_возвращает_диагностику_задачи(self, tenant_client, product):
+        task_result = {
+            'saved_count': 0,
+            'found_count': 30,
+            'rejected_count': 30,
+            'eligible_count': 0,
+            'reason_code': 'rejected_by_relevance',
+            'message': 'Сервисы нашли 30 изображений, но все отклонены.',
+            'sources': ['brave', 'tavily'],
+        }
+        with patch('apps.image_search.views.AsyncResult') as async_result:
+            async_result.return_value.state = 'SUCCESS'
+            async_result.return_value.result = task_result
+            resp = tenant_client.get(
+                f'/api/v1/products/{product.pk}/images/search/task-1/',
+            )
+
+        assert resp.status_code == 200
+        assert resp.json()['data']['state'] == 'done'
+        assert resp.json()['data']['found_count'] == 30
+        assert resp.json()['data']['reason_code'] == 'rejected_by_relevance'
+
 
 # ---------------------------------------------------------------------------
 # POST approve / reject / set_primary

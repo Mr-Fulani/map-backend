@@ -12,7 +12,7 @@ _LOCK_TIMEOUT = 300
 
 
 @shared_task(bind=True, max_retries=3, retry_backoff=True, retry_backoff_max=120)
-def search_images_for_product(self, product_id: int) -> None:
+def search_images_for_product(self, product_id: int) -> dict:
     """Запускает поиск изображений для товара через каскадный pipeline.
 
     Идемпотентна: повторный вызов во время выполнения пропускается (Redis lock).
@@ -32,14 +32,20 @@ def search_images_for_product(self, product_id: int) -> None:
 
     if not lock.acquire(blocking=False):
         logger.info(f'[img_search] задача уже выполняется для product_id={product_id}')
-        return
+        return {
+            'reason_code': 'already_running', 'saved_count': 0,
+            'message': 'Поиск фотографий для товара уже выполняется.',
+        }
 
     try:
         try:
             product = Product.objects.select_related('tenant').get(pk=product_id)
         except Product.DoesNotExist:
             logger.warning(f'[img_search] Product {product_id} не найден')
-            return
+            return {
+                'reason_code': 'product_not_found', 'saved_count': 0,
+                'message': 'Товар не найден.',
+            }
 
         # Двойная проверка — пропустить если уже достаточно принятых фото
         from django.conf import settings
@@ -49,9 +55,12 @@ def search_images_for_product(self, product_id: int) -> None:
         ).count()
         if existing >= max_images:
             logger.debug(f'[img_search] product {product_id} уже имеет {existing} фото')
-            return
+            return {
+                'reason_code': 'already_has_images', 'saved_count': 0,
+                'message': 'У товара уже достаточно фотографий.',
+            }
 
-        run_for_product(product)
+        return run_for_product(product)
 
     except Exception as exc:
         logger.error(

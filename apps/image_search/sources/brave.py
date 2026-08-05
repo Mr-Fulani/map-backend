@@ -12,6 +12,7 @@ from django.conf import settings
 
 from apps.image_search.models import BraveQuota
 from apps.image_search.sources.base import BaseImageSource, ImageCandidate
+from apps.image_search.sources.connection import image_source_api_key, image_source_connection
 from apps.image_search.sources.registry import register
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,14 @@ class BraveImageSource(BaseImageSource):
 
     def is_available(self) -> bool:
         """True если API-ключ задан и месячный soft cap (800) не достигнут."""
-        if not settings.BRAVE_SEARCH_API_KEY:
+        tenant = getattr(self.product, 'tenant', None)
+        connection = image_source_connection(self.source_id, tenant)
+        if not connection.enabled:
+            return False
+        if not image_source_api_key(
+            self.source_id, tenant, 'BRAVE_SEARCH_API_KEY',
+            getattr(settings, 'BRAVE_SEARCH_API_KEY', ''),
+        ):
             return False
         if BraveQuota.is_soft_cap_reached():
             logger.warning(
@@ -67,7 +75,10 @@ class BraveImageSource(BaseImageSource):
         Returns:
             Список ImageCandidate с width/height и confidence в raw_meta.
         """
-        api_key = settings.BRAVE_SEARCH_API_KEY
+        api_key = image_source_api_key(
+            self.source_id, getattr(self.product, 'tenant', None), 'BRAVE_SEARCH_API_KEY',
+            getattr(settings, 'BRAVE_SEARCH_API_KEY', ''),
+        )
         if not api_key:
             logger.warning('[brave] BRAVE_SEARCH_API_KEY не задан')
             return []
@@ -122,9 +133,13 @@ class BraveImageSource(BaseImageSource):
             )
 
             if resp.status_code == 401:
+                self.last_error = 'Brave: неверный API-ключ.'
+                self.last_error_code = 'authentication_error'
                 logger.error('[brave] неверный API ключ (401)')
                 return []
             if resp.status_code == 429:
+                self.last_error = 'Brave временно ограничил запросы.'
+                self.last_error_code = 'rate_limited'
                 logger.error(
                     '[brave] ЛИМИТ ЗАПРОСОВ ИСЧЕРПАН (429) — пополните баланс на api.search.brave.com',
                 )
@@ -137,6 +152,8 @@ class BraveImageSource(BaseImageSource):
 
             return resp.json().get('results', [])
         except Exception as exc:
+            self.last_error = f'Brave недоступен: {exc}'
+            self.last_error_code = 'source_error'
             logger.warning('[brave] ошибка для %r: %s', query, exc)
             return []
 

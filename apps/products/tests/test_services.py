@@ -209,6 +209,29 @@ class TestPhotoUploadPipeline:
         assert result is None
         mock_storage.save.assert_not_called()
 
+    def test_search_can_retain_relevant_small_image_for_later_processing(self):
+        from apps.products.storage import PhotoUploadPipeline
+
+        tenant = make_tenant('photo-quality-reviewable')
+        ds = make_datasource(tenant)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        mock_storage = MagicMock()
+        mock_storage.save = MagicMock(side_effect=lambda key, _: key)
+
+        with patch('apps.products.storage.requests.get') as mock_get:
+            mock_get.return_value = self._mock_response(
+                self._make_jpeg_bytes(size=(208, 208)),
+            )
+            result = PhotoUploadPipeline(storage=mock_storage).process(
+                'http://example.com/relevant-small.jpg',
+                product,
+                validate_quality=True,
+                allow_low_resolution=True,
+            )
+
+        assert result is not None
+        assert (result.resolution_w, result.resolution_h) == (208, 208)
+
     def test_quality_validation_uses_actual_dimensions(self):
         from apps.products.storage import PhotoUploadPipeline
 
