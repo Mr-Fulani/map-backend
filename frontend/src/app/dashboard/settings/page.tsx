@@ -20,6 +20,7 @@ import {
   CatalogCategoryPicker,
   type CatalogCategoryOption,
 } from '@/components/products/catalog-category-picker';
+import { WebResearchSettingsCard } from '@/components/settings/web-research-settings';
 
 interface ApiKey {
   id: number;
@@ -167,7 +168,7 @@ interface AISettings {
 
 const SETTINGS_TABS = [
   'profile', 'organization', 'api-keys', 'marketplaces', 'datasources',
-  'catalog-categories', 'pricing', 'ai', 'notifications',
+  'catalog-categories', 'pricing', 'web-research', 'ai', 'notifications',
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
 
@@ -1280,6 +1281,7 @@ export default function SettingsPage() {
             <TabsTrigger value="datasources">Источники данных</TabsTrigger>
             <TabsTrigger value="catalog-categories">Категории</TabsTrigger>
             <TabsTrigger value="pricing">Наценки</TabsTrigger>
+            <TabsTrigger value="web-research">Интернет-исследование</TabsTrigger>
             <TabsTrigger value="ai">AI-модели</TabsTrigger>
             <TabsTrigger value="notifications">Уведомления</TabsTrigger>
           </TabsList>
@@ -2618,6 +2620,10 @@ export default function SettingsPage() {
               />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="web-research" className="mt-4 space-y-4">
+          <WebResearchSettingsCard />
         </TabsContent>
 
         {/* AI-модели */}

@@ -303,6 +303,12 @@ export const webResearchApi = {
   list: (params?: Record<string, unknown>) => api.get('/web-research/runs/', { params }),
   get: (runId: number) => api.get(`/web-research/runs/${runId}/`),
   providers: () => api.get('/web-research/providers/'),
+  settings: () => api.get('/web-research/settings/'),
+  updateSettings: (data: object) => api.put('/web-research/settings/', data),
+  startMarketResearch: (productId: number, force = false) =>
+    api.post(`/products/${productId}/market-research/`, { force }),
+  marketOffers: (productId: number, params?: Record<string, unknown>) =>
+    api.get(`/products/${productId}/market-offers/`, { params }),
 };
 
 // Marketplace Accounts
@@ -335,6 +341,7 @@ export const categoryApi = {
 export const listingApi = {
   list: (params?: Record<string, unknown>) => api.get('/listings/', { params }),
   get: (id: number) => api.get(`/listings/${id}/`),
+  marketComparison: (id: number) => api.get(`/listings/${id}/market-comparison/`),
   approve: (id: number) => api.post(`/listings/${id}/approve/`),
   refreshBrandCatalog: (id: number) => api.post(`/listings/${id}/refresh-brand-catalog/`),
   publish: (id: number) => api.post(`/listings/${id}/publish/`),

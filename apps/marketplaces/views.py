@@ -350,9 +350,10 @@ class ListingDetailView(APIView):
 
     def patch(self, request, pk):
         """
-        Обновляет заголовок и/или AI-описание листинга.
+        Обновляет редактируемые поля листинга.
 
-        Доступно в любом статусе кроме active и deleted.
+        Для active разрешено только безопасное обновление цены; остальные поля
+        доступны в любом статусе кроме active и deleted.
         """
         title = request.data.get('title')
         description_ai = request.data.get('description_ai')
@@ -362,6 +363,22 @@ class ListingDetailView(APIView):
         fields_serializer.is_valid(raise_exception=True)
         try:
             with transaction.atomic():
+                current = ListingService.get_for_tenant(pk, request.tenant)
+                active_price_only = (
+                    current.status == Listing.STATUS_ACTIVE
+                    and bool(fields_serializer.validated_data)
+                    and set(request.data) <= {'price_on_listing', 'margin_pct'}
+                )
+                if active_price_only:
+                    listing = ListingService.update_listing_fields(
+                        pk, request.tenant, fields_serializer.validated_data,
+                    )
+                    return Response({
+                        'status': 'ok',
+                        'data': ListingDetailSerializer(
+                            listing, context={'request': request},
+                        ).data,
+                    })
                 listing = ListingService.update_content(pk, request.tenant, title, description_ai)
                 listing = ListingService.update_listing_fields(pk, request.tenant, fields_serializer.validated_data)
                 listing = ListingService.update_placement(pk, request.tenant, placement_serializer.validated_data)

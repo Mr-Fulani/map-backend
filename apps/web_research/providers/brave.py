@@ -8,6 +8,7 @@ from apps.web_research.providers.base import (
     BaseWebSearchProvider, WebSearchProviderError, WebSearchResult,
 )
 from apps.web_research.providers.registry import register_search_provider
+from apps.web_research.search_context import SearchContext
 
 
 @register_search_provider
@@ -29,7 +30,9 @@ class BraveWebSearchProvider(BaseWebSearchProvider):
     def is_available(self) -> bool:
         return bool(self.api_key)
 
-    def search(self, query: str, *, count: int = 8) -> list[WebSearchResult]:
+    def search(
+        self, query: str, *, count: int = 8, context: SearchContext | None = None,
+    ) -> list[WebSearchResult]:
         api_key = self.api_key
         if not api_key:
             raise WebSearchProviderError(
@@ -46,8 +49,13 @@ class BraveWebSearchProvider(BaseWebSearchProvider):
                 params={
                     'q': query,
                     'count': max(1, min(count, 20)),
-                    'country': self.parameters.get('country', 'ru'),
-                    'search_lang': self.parameters.get('search_lang', 'ru'),
+                    'country': (
+                        context.country_code.lower() if context and context.country_code
+                        else self.parameters.get('country', 'ru')
+                    ),
+                    'search_lang': (
+                        context.language if context else self.parameters.get('search_lang', 'ru')
+                    ),
                     'safesearch': 'moderate',
                     'extra_snippets': bool(self.parameters.get('extra_snippets', True)),
                 },
@@ -82,6 +90,10 @@ class BraveWebSearchProvider(BaseWebSearchProvider):
                 url=url,
                 snippet=snippet[:2000],
                 rank=rank,
+                metadata={
+                    'country_code': context.country_code if context else '',
+                    'search_language': context.language if context else '',
+                },
             ))
         return results
 

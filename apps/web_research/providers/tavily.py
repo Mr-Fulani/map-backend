@@ -8,6 +8,7 @@ from apps.web_research.providers.base import (
     BaseWebSearchProvider, WebSearchProviderError, WebSearchResult,
 )
 from apps.web_research.providers.registry import register_search_provider
+from apps.web_research.search_context import SearchContext
 
 
 @register_search_provider
@@ -36,6 +37,7 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
         include_domains: list[str] | None = None,
         include_images: bool = False,
         include_image_descriptions: bool = False,
+        context: SearchContext | None = None,
     ) -> dict:
         """Return Tavily's raw response for adapters that need image metadata.
 
@@ -65,9 +67,14 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                     'include_domains': (
                         include_domains
                         if include_domains is not None
+                        else list(context.include_domains)
+                        if context and context.include_domains
                         else configured_domains
                     ),
-                    'exclude_domains': self.parameters.get('exclude_domains', []),
+                    'exclude_domains': (
+                        list(context.exclude_domains)
+                        if context else self.parameters.get('exclude_domains', [])
+                    ),
                     'include_images': include_images,
                     'include_image_descriptions': include_image_descriptions,
                 },
@@ -91,8 +98,10 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                 'Tavily returned invalid JSON.', code='invalid_json',
             ) from exc
 
-    def search(self, query: str, *, count: int = 8) -> list[WebSearchResult]:
-        data = self.search_payload(query, count=count)
+    def search(
+        self, query: str, *, count: int = 8, context: SearchContext | None = None,
+    ) -> list[WebSearchResult]:
+        data = self.search_payload(query, count=count, context=context)
 
         results = []
         for rank, item in enumerate(data.get('results') or [], start=1):
@@ -102,8 +111,9 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
             snippet = re.sub(
                 r'\s+', ' ', strip_tags(str(item.get('content') or '')),
             ).strip()
+            structured_content = str(item.get('raw_content') or '').strip()
             raw_content = re.sub(
-                r'\s+', ' ', strip_tags(str(item.get('raw_content') or '')),
+                r'\s+', ' ', strip_tags(structured_content),
             ).strip()
             try:
                 score = float(item['score']) if item.get('score') is not None else None
@@ -114,8 +124,13 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                 url=url,
                 snippet=snippet[:2000],
                 content=raw_content[:12000],
+                raw_content=structured_content[:50000],
                 rank=rank,
                 score=score,
                 published_at=str(item.get('published_date') or '')[:50],
+                metadata={
+                    'country_code': context.country_code if context else '',
+                    'search_language': context.language if context else '',
+                },
             ))
         return results

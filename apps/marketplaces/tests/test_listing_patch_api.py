@@ -5,6 +5,7 @@
 оставлять частично применённые изменения) и текст ошибки в ответе.
 """
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.test import Client
@@ -108,6 +109,60 @@ class TestListingPatchAPI:
         )
         assert resp.status_code == 404
         assert resp.json()['message']
+
+    def test_active_listing_accepts_price_only_and_enqueues_safe_update(
+        self, django_capture_on_commit_callbacks,
+    ):
+        tenant, key = make_tenant('listing-active-price-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(
+            tenant,
+            product,
+            account,
+            status=Listing.STATUS_ACTIVE,
+            external_id='avito-item-42',
+        )
+
+        c = Client()
+        with patch('apps.marketplaces.services._enqueue_price_update') as enqueue:
+            with django_capture_on_commit_callbacks(execute=True):
+                resp = c.patch(
+                    f'/api/v1/listings/{listing.pk}/',
+                    data={'price_on_listing': '4250.00'},
+                    content_type='application/json',
+                    HTTP_AUTHORIZATION=f'Bearer {key}',
+                )
+
+        assert resp.status_code == 200
+        listing.refresh_from_db()
+        assert listing.price_on_listing == Decimal('4250.00')
+        enqueue.assert_called_once_with(listing.pk)
+
+    def test_active_listing_rejects_price_with_content_change(self):
+        tenant, key = make_tenant('listing-active-content-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        listing = make_listing(
+            tenant,
+            product,
+            account,
+            status=Listing.STATUS_ACTIVE,
+            external_id='avito-item-43',
+        )
+
+        c = Client()
+        resp = c.patch(
+            f'/api/v1/listings/{listing.pk}/',
+            data={'price_on_listing': '4250.00', 'title': 'Новый заголовок'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {key}',
+        )
+
+        assert resp.status_code == 400
+        listing.refresh_from_db()
+        assert listing.price_on_listing == Decimal('3000')
+        assert listing.title == 'Фонарь левый Jorden'
 
 
 class TestComputePriceRounding:

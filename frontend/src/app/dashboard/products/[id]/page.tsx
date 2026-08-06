@@ -93,6 +93,13 @@ interface ProductDetail {
   enrichment_facts: ProductEnrichmentFact[];
   latest_parse_job: ProductParseJob | null;
   parse_jobs_summary: ProductParseJob[];
+  listing_options: Array<{
+    id: number;
+    status: string;
+    status_display: string;
+    account_name: string;
+    title: string;
+  }>;
   catalog_category: Pick<
     CatalogCategoryOption,
     'id' | 'name' | 'domain' | 'is_active'
@@ -440,6 +447,7 @@ export default function ProductDetailPage() {
   const [reviewAction, setReviewAction] = useState<string | null>(null);
   const [showAllFitments, setShowAllFitments] = useState(false);
   const [showAllEnrichmentFacts, setShowAllEnrichmentFacts] = useState(false);
+  const [pricingListingId, setPricingListingId] = useState<number | null>(null);
 
   const [images, setImages] = useState<ProductImage[]>([]);
   const [imagesLoading, setImagesLoading] = useState(false);
@@ -490,6 +498,11 @@ export default function ProductDetailPage() {
     const res = await productApi.get(Number(id));
     const nextProduct = res.data.data as ProductDetail;
     setProduct(nextProduct);
+    setPricingListingId((current) => (
+      nextProduct.listing_options.some((listing) => listing.id === current)
+        ? current
+        : nextProduct.listing_options[0]?.id ?? null
+    ));
     setCategoryAssignValue(nextProduct.catalog_category?.id ? String(nextProduct.catalog_category.id) : '');
   }, [id]);
 
@@ -1200,6 +1213,59 @@ export default function ProductDetailPage() {
                 <p className="mt-2 text-xs text-muted-foreground">
                   Цены справочные: скидки, доставка и условия конкретного продавца могут отличаться.
                 </p>
+                <div className="mt-4 rounded-lg border bg-gradient-to-br from-primary/5 via-background to-emerald-500/5 p-4">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="max-w-2xl">
+                      <p className="text-sm font-medium">Полное сравнение рынка — в листинге</p>
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Больше предложений, типичная цена на рынке и сравнение с ценой объявления
+                        доступны в рабочем пространстве конкретного листинга.
+                      </p>
+                    </div>
+                    {product.listing_options.length === 1 && (
+                      <Button asChild size="sm" className="shrink-0">
+                        <Link href={`/dashboard/listings?listing=${product.listing_options[0].id}&panel=pricing`}>
+                          Сравнить цены в листинге
+                        </Link>
+                      </Button>
+                    )}
+                  </div>
+                  {product.listing_options.length > 1 && (
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <select
+                        value={pricingListingId ?? ''}
+                        onChange={(event) => setPricingListingId(Number(event.target.value))}
+                        className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm"
+                      >
+                        {product.listing_options.map((listing) => (
+                          <option key={listing.id} value={listing.id}>
+                            {listing.account_name} · {listing.status_display}
+                          </option>
+                        ))}
+                      </select>
+                      <Button asChild size="sm" disabled={!pricingListingId}>
+                        <Link href={`/dashboard/listings?listing=${pricingListingId}&panel=pricing`}>
+                          Сравнить выбранный листинг
+                        </Link>
+                      </Button>
+                    </div>
+                  )}
+                  {product.listing_options.length === 0 && (
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-xs text-muted-foreground">
+                        Сравнение станет доступно после создания объявления для товара.
+                      </p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => runAction('publish')}
+                        disabled={actionLoading !== null}
+                      >
+                        Создать объявление
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {webResearch && (

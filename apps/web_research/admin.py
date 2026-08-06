@@ -6,8 +6,8 @@ from unfold.admin import ModelAdmin, TabularInline
 from apps.core.admin import TenantScopedReadOnlyAdminMixin
 from apps.tenants.models import Tenant
 from apps.web_research.models import (
-    WebResearchClaim, WebResearchEvidence, WebResearchRun,
-    WebSearchAttempt, WebSearchConnection,
+    CompetitorOffer, TenantWebResearchSettings, WebResearchClaim,
+    WebResearchEvidence, WebResearchRun, WebSearchAttempt, WebSearchConnection,
 )
 from apps.web_research.providers.registry import (
     create_search_provider, registered_search_providers,
@@ -71,11 +71,11 @@ class ClaimInline(TabularInline):
 @admin.register(WebResearchRun)
 class WebResearchRunAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
     list_display = [
-        'id', 'product', 'tenant', 'status', 'trigger', 'search_provider',
-        'result_count', 'claim_count', 'created_at',
+        'id', 'product', 'tenant', 'status', 'purpose', 'trigger', 'search_provider',
+        'result_count', 'claim_count', 'offer_count', 'created_at',
     ]
     list_filter = [
-        ResearchTenantFilter, 'status', 'trigger', 'search_provider',
+        ResearchTenantFilter, 'status', 'purpose', 'trigger', 'search_provider',
         'ai_provider', 'created_at',
     ]
     search_fields = [
@@ -84,9 +84,9 @@ class WebResearchRunAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
     list_select_related = ['tenant', 'product']
     date_hierarchy = 'created_at'
     readonly_fields = [
-        'tenant', 'product', 'status', 'trigger', 'search_provider',
+        'tenant', 'product', 'status', 'trigger', 'purpose', 'settings_snapshot', 'search_provider',
         'ai_provider', 'ai_model', 'queries', 'coverage_before', 'coverage_after',
-        'result_count', 'claim_count', 'generate_after', 'error_message',
+        'result_count', 'claim_count', 'offer_count', 'generate_after', 'error_message',
         'started_at', 'finished_at', 'created_at', 'updated_at',
     ]
     inlines = [AttemptInline, EvidenceInline, ClaimInline]
@@ -104,7 +104,7 @@ class WebResearchEvidenceAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
     list_select_related = ['run__tenant', 'run__product']
     date_hierarchy = 'created_at'
     readonly_fields = [
-        'run', 'query', 'rank', 'provider_id', 'title', 'url', 'domain', 'snippet',
+        'run', 'query', 'rank', 'provider_id', 'title', 'url', 'domain', 'snippet', 'raw_content',
         'created_at', 'updated_at',
     ]
 
@@ -345,3 +345,34 @@ class WebResearchClaimAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
     @admin.display(description='Тенант', ordering='run__tenant__name')
     def get_tenant(self, obj):
         return obj.run.tenant
+
+
+@admin.register(CompetitorOffer)
+class CompetitorOfferAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
+    tenant_lookup = 'tenant_id'
+    list_display = [
+        'id', 'tenant', 'product', 'seller_name', 'domain', 'price', 'currency',
+        'availability', 'match_type', 'review_status', 'captured_at', 'expires_at',
+    ]
+    list_filter = [
+        'tenant', 'provider_id', 'country_code', 'availability', 'condition',
+        'match_type', 'review_status', 'captured_at',
+    ]
+    search_fields = [
+        'product__article', 'product__name', 'seller_name', 'domain', 'url',
+        'article', 'matched_code', 'tenant__name', 'tenant__slug',
+    ]
+    list_select_related = ['tenant', 'product', 'run', 'evidence']
+    date_hierarchy = 'captured_at'
+    readonly_fields = [field.name for field in CompetitorOffer._meta.fields]
+
+
+@admin.register(TenantWebResearchSettings)
+class TenantWebResearchSettingsAdmin(ModelAdmin):
+    list_display = [
+        'tenant', 'market_research_enabled', 'region_preset', 'search_language',
+        'result_limit', 'price_ttl_hours', 'updated_at',
+    ]
+    list_filter = ['market_research_enabled', 'region_preset', 'include_used', 'include_analogues']
+    search_fields = ['tenant__name', 'tenant__slug']
+    list_select_related = ['tenant']

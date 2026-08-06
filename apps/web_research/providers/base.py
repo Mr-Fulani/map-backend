@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
 
+from apps.web_research.search_context import SearchContext
+
 
 class WebSearchProviderError(RuntimeError):
     def __init__(
@@ -19,6 +21,7 @@ class WebSearchResult:
     snippet: str
     rank: int
     content: str = ''
+    raw_content: str = ''
     score: float | None = None
     published_at: str = ''
     metadata: dict[str, Any] | None = None
@@ -37,5 +40,7 @@ class BaseWebSearchProvider(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def search(self, query: str, *, count: int = 8) -> list[WebSearchResult]:
+    def search(
+        self, query: str, *, count: int = 8, context: SearchContext | None = None,
+    ) -> list[WebSearchResult]:
         raise NotImplementedError
