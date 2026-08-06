@@ -426,6 +426,8 @@ export default function ProductDetailPage() {
   const [categoryAssignValue, setCategoryAssignValue] = useState('');
   const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
+  const [showAllFitments, setShowAllFitments] = useState(false);
+  const [showAllEnrichmentFacts, setShowAllEnrichmentFacts] = useState(false);
 
   const [images, setImages] = useState<ProductImage[]>([]);
   const [imagesLoading, setImagesLoading] = useState(false);
@@ -461,6 +463,7 @@ export default function ProductDetailPage() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const publicationSectionRef = useRef<HTMLDivElement>(null);
+  const enrichmentSectionRef = useRef<HTMLDivElement>(null);
   const imagesSectionRef = useRef<HTMLDivElement>(null);
   const descriptionPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
@@ -730,6 +733,7 @@ export default function ProductDetailPage() {
 
   async function startEnrichment(generateAfter = false) {
     setActionLoading(generateAfter ? 'enrich-generate' : 'enrich');
+    scrollToSection(enrichmentSectionRef);
     try {
       const res = await productApi.parse(Number(id), '', generateAfter);
       const primaryJobId = Number(res.data.data.job_id);
@@ -951,6 +955,8 @@ export default function ProductDetailPage() {
     : '';
   const catalogCategoryChanged = Boolean(categoryAssignValue)
     && categoryAssignValue !== assignedCatalogCategoryValue;
+  const descriptionAwaitsResearchReview = webResearch?.status === 'need_review'
+    && webResearch.generate_after;
 
   return (
     <div className="space-y-6">
@@ -1077,6 +1083,24 @@ export default function ProductDetailPage() {
                 <CardTitle className="text-sm font-medium">AI-описание</CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
+                {descriptionAwaitsResearchReview && !generatingDescription && (
+                  <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-950 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+                    <p className="font-medium">Описание ещё не обновлено</p>
+                    <p className="mt-1 text-xs leading-relaxed opacity-90">
+                      Интернет-поиск нашёл данные, которые требуют проверки. Старое описание
+                      остаётся на экране до решения по найденным вариантам; после проверки
+                      новое описание сгенерируется автоматически.
+                    </p>
+                    <Button
+                      className="mt-3"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => scrollToSection(enrichmentSectionRef)}
+                    >
+                      Перейти к проверке ({webResearch.claim_count})
+                    </Button>
+                  </div>
+                )}
                 {generatingDescription ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground py-4">
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -1104,7 +1128,7 @@ export default function ProductDetailPage() {
             </Card>
           )}
 
-          <Card className="overflow-hidden">
+          <Card ref={enrichmentSectionRef} className="scroll-mt-24 overflow-hidden">
             <CardHeader className="border-b bg-muted/30">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
@@ -1284,7 +1308,7 @@ export default function ProductDetailPage() {
                         автоматически сворачивается до марок и классов автомобилей.
                       </p>
                       <div className="space-y-2">
-                        {product.fitments.slice(0, 5).map((fitment) => (
+                        {(showAllFitments ? product.fitments : product.fitments.slice(0, 5)).map((fitment) => (
                           <div key={fitment.id} className="flex flex-col gap-2 rounded-md border p-2 text-sm sm:flex-row sm:items-center sm:justify-between">
                             <div className="min-w-0">
                               <span className="break-words">
@@ -1337,9 +1361,16 @@ export default function ProductDetailPage() {
                         ))}
                       </div>
                       {product.fitments.length > 5 && (
-                        <p className="mt-2 text-xs text-muted-foreground">
-                          Показаны первые 5 из {product.fitments.length} вариантов.
-                        </p>
+                        <Button
+                          className="mt-2 h-auto px-0 text-xs"
+                          type="button"
+                          variant="link"
+                          onClick={() => setShowAllFitments((current) => !current)}
+                        >
+                          {showAllFitments
+                            ? 'Свернуть список'
+                            : `Показать все варианты (${product.fitments.length})`}
+                        </Button>
                       )}
                     </div>
                   )}
@@ -1355,7 +1386,9 @@ export default function ProductDetailPage() {
                         </p>
                       </div>
                       <div className="space-y-2">
-                        {product.enrichment_facts.slice(0, 5).map((fact) => {
+                        {(showAllEnrichmentFacts
+                          ? product.enrichment_facts
+                          : product.enrichment_facts.slice(0, 5)).map((fact) => {
                           const factLabel = ENRICHMENT_FACT_LABELS[fact.name] || fact.name;
                           const sourceLabel = fact.source_label
                             || ENRICHMENT_SOURCE_LABELS[fact.source_id]
@@ -1429,6 +1462,18 @@ export default function ProductDetailPage() {
                           );
                         })}
                       </div>
+                      {product.enrichment_facts.length > 5 && (
+                        <Button
+                          className="mt-2 h-auto px-0 text-xs"
+                          type="button"
+                          variant="link"
+                          onClick={() => setShowAllEnrichmentFacts((current) => !current)}
+                        >
+                          {showAllEnrichmentFacts
+                            ? 'Свернуть список'
+                            : `Показать все данные (${product.enrichment_facts.length})`}
+                        </Button>
+                      )}
                     </div>
                   )}
 
