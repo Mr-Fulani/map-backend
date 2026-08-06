@@ -782,7 +782,26 @@ class ProductCatalogCategoryAssignView(APIView):
                         defaults={'category': category},
                     )
             for product in products:
-                ProductEnrichmentService.classify_product_catalog_domain(product, force=True)
+                classification = ProductEnrichmentService.classify_product_catalog_domain(product, force=True)
+                if category is not None:
+                    classification.domain = category.domain
+                    classification.confidence = 0.95
+                    classification.source = ProductCatalogClassification.Source.MANUAL
+                    classification.reason = f'Категория каталога выбрана вручную: {category.name}.'
+                    classification.needs_review = False
+                    classification.review_status = ReviewStatus.APPROVED
+                    classification.reviewed_at = now()
+                    classification.reviewed_by = _review_actor(request)
+                    classification.save(update_fields=[
+                        'domain', 'confidence', 'source', 'reason', 'needs_review',
+                        'review_status', 'reviewed_at', 'reviewed_by', 'updated_at',
+                    ])
+                else:
+                    # После снятия ручной категории снова показываем актуальный
+                    # результат автоматической классификации без старой отметки оператора.
+                    classification.reviewed_at = None
+                    classification.reviewed_by = None
+                    classification.save(update_fields=['reviewed_at', 'reviewed_by', 'updated_at'])
 
         return Response({
             'status': 'ok',

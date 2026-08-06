@@ -103,6 +103,7 @@ interface ProductDetail {
 interface ProductCatalogClassification {
   domain: string;
   confidence: number;
+  source: 'rules' | 'manual' | 'ai';
   reason: string;
   needs_review: boolean;
   review_status: ReviewStatus;
@@ -301,6 +302,13 @@ function reviewStatusLabel(status: ReviewStatus, needsReview: boolean) {
     return 'Определено автоматически';
   }
   return REVIEW_STATUS_LABELS[status];
+}
+
+function classificationStatusLabel(classification: ProductCatalogClassification) {
+  if (classification.source === 'manual' && classification.review_status !== 'rejected') {
+    return 'Выбрано вручную';
+  }
+  return reviewStatusLabel(classification.review_status, classification.needs_review);
 }
 
 function Field({ label, value }: { label: string; value: React.ReactNode }) {
@@ -1647,10 +1655,7 @@ export default function ProductDetailPage() {
                         ?? product.catalog_classification.domain}
                     </Badge>
                     <Badge variant="outline">
-                      {reviewStatusLabel(
-                        product.catalog_classification.review_status,
-                        product.catalog_classification.needs_review,
-                      )}
+                      {classificationStatusLabel(product.catalog_classification)}
                     </Badge>
                     <span className="text-xs text-muted-foreground">
                       Уверенность: {Math.round(product.catalog_classification.confidence * 100)}%

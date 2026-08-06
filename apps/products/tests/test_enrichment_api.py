@@ -505,7 +505,7 @@ def test_catalog_classification_review_cannot_approve_unknown_domain():
 
 
 @pytest.mark.django_db
-def test_assign_catalog_category_reclassifies_previous_manual_unknown_classification():
+def test_assign_catalog_category_replaces_previous_unknown_with_manual_classification():
     tenant, api_key = make_tenant('classification-force-after-category')
     product = make_product(
         tenant,
@@ -534,8 +534,10 @@ def test_assign_catalog_category_reclassifies_previous_manual_unknown_classifica
     assert response.status_code == 200
     classification.refresh_from_db()
     assert classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
-    assert classification.source == ProductCatalogClassification.Source.RULES
-    assert classification.review_status == ReviewStatus.PENDING
+    assert classification.confidence == 0.95
+    assert classification.source == ProductCatalogClassification.Source.MANUAL
+    assert classification.review_status == ReviewStatus.APPROVED
+    assert classification.needs_review is False
 
 
 @pytest.mark.django_db
@@ -950,6 +952,21 @@ def test_assign_catalog_category_to_selected_products():
     assert other_product.catalog_category is None
     assert product.category_1c == 'Старые категории'
     assert product.catalog_classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
+    assert product.catalog_classification.confidence == 0.95
+    assert product.catalog_classification.source == ProductCatalogClassification.Source.MANUAL
+    assert product.catalog_classification.reason == 'Категория каталога выбрана вручную: Амортизаторы.'
+    assert product.catalog_classification.needs_review is False
+    assert product.catalog_classification.review_status == ReviewStatus.APPROVED
+    assert product.catalog_classification.reviewed_at is not None
+
+    detail_response = client.get(
+        f'/api/v1/products/{product.pk}/',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+    assert detail_response.status_code == 200
+    serialized_classification = detail_response.json()['data']['catalog_classification']
+    assert serialized_classification['confidence'] == 0.95
+    assert serialized_classification['source'] == ProductCatalogClassification.Source.MANUAL
 
 
 @pytest.mark.django_db
