@@ -912,6 +912,11 @@ export default function ProductDetailPage() {
   }
 
   const busy = actionLoading !== null || webResearchRunning;
+  const assignedCatalogCategoryValue = product.catalog_category?.id
+    ? String(product.catalog_category.id)
+    : '';
+  const catalogCategoryChanged = Boolean(categoryAssignValue)
+    && categoryAssignValue !== assignedCatalogCategoryValue;
 
   return (
     <div className="space-y-6">
@@ -1607,7 +1612,10 @@ export default function ProductDetailPage() {
                   <Button
                     size="sm"
                     onClick={() => assignCatalogCategory(Number(categoryAssignValue))}
-                    disabled={categoryAssignLoading || !categoryAssignValue}
+                    disabled={categoryAssignLoading || !catalogCategoryChanged}
+                    title={!catalogCategoryChanged && categoryAssignValue
+                      ? 'Эта категория уже применена'
+                      : undefined}
                   >
                     {categoryAssignLoading ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
