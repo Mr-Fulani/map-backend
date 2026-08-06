@@ -56,6 +56,9 @@ def catalog_offers(product, *, listing_price: Decimal | None = None) -> list[dic
             'difference_from_listing': _difference(
                 listing_price, job.source_price if job else None,
             ),
+            'difference_from_base': _difference(
+                job.source_price if job else None, product.price,
+            ),
             'message': (
                 job.error_message if job and job.status == ProductParseJob.Status.FAILED
                 else 'Товар не найден' if job and job.status == ProductParseJob.Status.NOT_FOUND
@@ -100,6 +103,8 @@ def verified_statistics(product, *, listing_price: Decimal | None = None) -> dic
         'verified_offer_count': len(prices),
         'available_seller_count': sellers,
         'listing_vs_median': _difference(listing_price, median),
+        'listing_vs_base': _difference(listing_price, product.price),
+        'median_vs_base': _difference(median, product.price),
     }
 
 
@@ -130,13 +135,26 @@ def listing_market_comparison(listing) -> dict:
     if latest_run and latest_run.status == WebResearchRun.Status.FAILED:
         warnings.append(latest_run.error_message or 'Ошибка провайдера интернет-поиска')
     last_checked = offers.order_by('-captured_at').values_list('captured_at', flat=True).first()
+    offer_objects = list(offers[:100])
+    internet_offers = CompetitorOfferSerializer(offer_objects, many=True).data
+    for payload, offer in zip(internet_offers, offer_objects):
+        comparable_price = (
+            offer.normalized_price
+            if offer.normalized_currency == 'RUB'
+            else None
+        )
+        payload['difference_from_base'] = _difference(comparable_price, product.price)
+        payload['difference_from_listing'] = _difference(
+            comparable_price, listing.price_on_listing,
+        )
+
     return {
         'listing_id': listing.pk,
         'product_id': product.pk,
         'base_price': _money(product.price),
         'listing_price': _money(listing.price_on_listing),
         'catalog_offers': catalog_offers(product, listing_price=listing.price_on_listing),
-        'internet_offers': CompetitorOfferSerializer(offers[:100], many=True).data,
+        'internet_offers': internet_offers,
         'statistics': verified_statistics(product, listing_price=listing.price_on_listing),
         'region': {
             'preset': settings.region_preset,

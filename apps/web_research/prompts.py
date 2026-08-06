@@ -104,6 +104,6 @@ WEB_RESEARCH_OUTPUT_SCHEMA = {
     },
     'required': [
         'brand', 'brand_evidence_ids', 'brand_confidence',
-        'cross_codes', 'fitments', 'facts',
+        'cross_codes', 'fitments', 'facts', 'offers',
     ],
 }

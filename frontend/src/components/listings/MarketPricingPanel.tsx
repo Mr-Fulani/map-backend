@@ -35,6 +35,7 @@ interface CatalogOffer {
   checked_at: string | null;
   url: string;
   difference_from_listing: Difference | null;
+  difference_from_base: Difference | null;
   message: string;
 }
 
@@ -68,6 +69,8 @@ interface InternetOffer {
   review_status: string;
   captured_at: string;
   expires_at: string;
+  difference_from_base: Difference | null;
+  difference_from_listing: Difference | null;
 }
 
 interface ResearchRun {
@@ -91,6 +94,8 @@ interface Comparison {
     verified_offer_count: number;
     available_seller_count: number;
     listing_vs_median: Difference | null;
+    listing_vs_base: Difference | null;
+    median_vs_base: Difference | null;
   };
   region: { preset: string; label: string; country_codes: string[] };
   freshness: {
@@ -139,6 +144,12 @@ function DifferenceBadge({ difference }: { difference: Difference | null }) {
       {rubles(String(Math.abs(Number(difference.amount))))} · {Math.abs(Number(difference.percent))}%
     </Badge>
   );
+}
+
+function percentHint(difference: Difference | null, suffix: string) {
+  if (!difference) return undefined;
+  const sign = difference.direction === 'above' ? '+' : difference.direction === 'below' ? '−' : '';
+  return `${sign}${Math.abs(Number(difference.percent))}% ${suffix}`;
 }
 
 function SummaryCard({ label, value, hint, tone = 'neutral' }: {
@@ -348,9 +359,18 @@ export default function MarketPricingPanel({
         <h3 className="text-sm font-medium">Сводка цен</h3>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 2xl:grid-cols-4">
           <SummaryCard label="Базовая цена товара" value={rubles(comparison.base_price)} />
-          <SummaryCard label="Цена объявления" value={rubles(comparison.listing_price)} />
+          <SummaryCard
+            label="Цена объявления"
+            value={rubles(comparison.listing_price)}
+            hint={percentHint(comparison.statistics.listing_vs_base, 'к базовой цене')}
+            tone={comparison.statistics.listing_vs_base?.direction === 'above' ? 'warning' : 'positive'}
+          />
           <SummaryCard label="Минимум подтверждённый" value={rubles(comparison.statistics.minimum)} />
-          <SummaryCard label="Медиана рынка" value={rubles(comparison.statistics.median)} />
+          <SummaryCard
+            label="Медиана рынка"
+            value={rubles(comparison.statistics.median)}
+            hint={percentHint(comparison.statistics.median_vs_base, 'к базовой цене')}
+          />
           <SummaryCard label="Максимум подтверждённый" value={rubles(comparison.statistics.maximum)} />
           <SummaryCard label="Продавцов в наличии" value={String(comparison.statistics.available_seller_count)} hint={`${comparison.statistics.verified_offer_count} цен в статистике`} />
           <SummaryCard
@@ -369,7 +389,10 @@ export default function MarketPricingPanel({
             <article key={offer.source_id} className="rounded-xl border bg-card p-4">
               <div className="flex items-start justify-between gap-2"><p className="font-medium">{offer.source_label}</p><Badge variant="outline">{offer.availability_label}</Badge></div>
               <p className="mt-3 text-xl font-semibold tabular-nums">{offer.price_is_from && <span className="mr-1 text-xs font-normal text-muted-foreground">от</span>}{offer.price ? `${Number(offer.price).toLocaleString('ru-RU')} ${offer.currency === 'RUB' ? '₽' : offer.currency}` : '—'}</p>
-              {offer.difference_from_listing && <div className="mt-2"><DifferenceBadge difference={offer.difference_from_listing} /></div>}
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {offer.difference_from_base && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">К базе <DifferenceBadge difference={offer.difference_from_base} /></span>}
+                {offer.difference_from_listing && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">Объявление <DifferenceBadge difference={offer.difference_from_listing} /></span>}
+              </div>
               <div className="mt-3 space-y-1 text-xs text-muted-foreground">
                 {offer.quantity !== null && <p>Количество: {offer.quantity}</p>}
                 <p>Проверено: {dateTime(offer.checked_at)}</p>
@@ -403,6 +426,10 @@ export default function MarketPricingPanel({
                 </div>
                 <p className="mt-3 line-clamp-2 text-sm">{offer.title || 'Название не указано'}</p>
                 <div className="mt-3 flex flex-wrap items-end justify-between gap-2"><div><p className="text-xl font-semibold tabular-nums">{offer.is_price_from && <span className="mr-1 text-xs font-normal text-muted-foreground">от</span>}{Number(offer.price).toLocaleString('ru-RU')} {offer.currency === 'RUB' ? '₽' : offer.currency}</p>{offer.currency !== 'RUB' && <p className="text-xs text-muted-foreground">{offer.normalized_price ? `≈ ${rubles(offer.normalized_price)}` : 'Конвертация недоступна'}</p>}</div><Badge variant="outline">{offer.availability_label}</Badge></div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {offer.difference_from_base && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">К базе <DifferenceBadge difference={offer.difference_from_base} /></span>}
+                  {offer.difference_from_listing && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">Объявление <DifferenceBadge difference={offer.difference_from_listing} /></span>}
+                </div>
                 <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs"><dt className="text-muted-foreground">Состояние</dt><dd>{offer.condition_label}</dd><dt className="text-muted-foreground">Точность</dt><dd>{Math.round(offer.match_confidence * 100)}%</dd><dt className="text-muted-foreground">Найдено по</dt><dd className="truncate" title={offer.matched_code || offer.article}>{offer.matched_code || offer.article || 'не подтверждено'}</dd><dt className="text-muted-foreground">Проверено</dt><dd>{dateTime(offer.captured_at)}</dd>{offer.quantity !== null && <><dt className="text-muted-foreground">Количество</dt><dd>{offer.quantity}</dd></>}{offer.delivery_text && <><dt className="text-muted-foreground">Доставка</dt><dd>{offer.delivery_text}</dd></>}</dl>
                 {offer.match_reasons.length > 0 && <p className="mt-3 line-clamp-2 text-xs text-muted-foreground">{offer.match_reasons.join(' · ')}</p>}
                 <div className="mt-4 flex flex-wrap gap-2"><Button size="sm" variant="outline" asChild><a href={offer.url} target="_blank" rel="noreferrer">Открыть <ExternalLink className="ml-1 h-3.5 w-3.5" /></a></Button><Button size="sm" onClick={() => { onApplyPrice(offer.normalized_price!); toast.success(listingStatus === 'active' ? 'Цена подготовлена. После сохранения отправим безопасное обновление в Avito.' : 'Цена подставлена в черновик объявления.'); }} disabled={!offer.normalized_price}>Подставить цену</Button></div>

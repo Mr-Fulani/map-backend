@@ -15,6 +15,7 @@ from apps.web_research.models import (
     CompetitorOffer, TenantWebResearchSettings, WebResearchEvidence, WebResearchRun,
 )
 from apps.web_research.offer_extraction import save_deterministic_offers
+from apps.web_research.prompts import WEB_RESEARCH_OUTPUT_SCHEMA
 from apps.web_research.search_context import build_search_contexts
 
 
@@ -33,6 +34,20 @@ def make_product(tenant, article='92402D4000'):
         category_1c='Автосвет',
         price=Decimal('18000'),
     )
+
+
+def test_web_research_output_schema_is_strict_for_openai():
+    """Every object property is required; empty arrays represent missing sections."""
+    def assert_strict_object(schema):
+        if schema.get('type') == 'object':
+            properties = schema.get('properties', {})
+            assert set(schema.get('required', [])) == set(properties)
+            for child in properties.values():
+                assert_strict_object(child)
+        if schema.get('type') == 'array':
+            assert_strict_object(schema['items'])
+
+    assert_strict_object(WEB_RESEARCH_OUTPUT_SCHEMA)
 
 
 @pytest.mark.django_db
@@ -139,6 +154,9 @@ def test_unconfirmed_offer_is_excluded_from_market_statistics():
     assert comparison['statistics']['minimum'] == '15000.00'
     assert comparison['statistics']['median'] == '15000.00'
     assert comparison['statistics']['verified_offer_count'] == 1
+    assert comparison['statistics']['listing_vs_base']['percent'] == '11.1'
+    assert comparison['statistics']['median_vs_base']['percent'] == '-16.7'
+    assert comparison['internet_offers'][1]['difference_from_base']['percent'] == '-16.7'
     assert any('не участвуют' in warning for warning in comparison['warnings'])
 
 
