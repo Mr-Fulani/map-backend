@@ -9,13 +9,16 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import {
+  ResearchGeographyPicker,
+  type ResearchRegionPreset,
+} from '@/components/settings/research-geography-picker';
 
 interface ResearchSettings {
   market_research_enabled: boolean;
-  region_preset: 'russia' | 'russia_cis' | 'custom' | 'worldwide';
+  region_preset: ResearchRegionPreset;
   region_label: string;
   country_codes: string[];
   search_language: string;
@@ -29,20 +32,6 @@ interface ResearchSettings {
   display_currency: string;
   updated_at: string;
 }
-
-const CIS_COUNTRIES = [
-  ['RU', 'Россия'], ['BY', 'Беларусь'], ['KZ', 'Казахстан'],
-  ['AM', 'Армения'], ['KG', 'Кыргызстан'], ['UZ', 'Узбекистан'],
-  ['AZ', 'Азербайджан'], ['MD', 'Молдова'], ['TJ', 'Таджикистан'],
-] as const;
-
-const OTHER_COUNTRIES = [
-  ['GE', 'Грузия'], ['TR', 'Турция'], ['DE', 'Германия'], ['PL', 'Польша'],
-  ['CZ', 'Чехия'], ['LT', 'Литва'], ['LV', 'Латвия'], ['EE', 'Эстония'],
-  ['CN', 'Китай'], ['KR', 'Южная Корея'], ['JP', 'Япония'], ['AE', 'ОАЭ'],
-  ['US', 'США'], ['GB', 'Великобритания'], ['FR', 'Франция'], ['IT', 'Италия'],
-  ['ES', 'Испания'], ['NL', 'Нидерланды'], ['UA', 'Украина'],
-] as const;
 
 function ToggleRow({
   title, description, checked, onCheckedChange, disabled,
@@ -114,26 +103,8 @@ export function WebResearchSettingsCard() {
     void persist({ ...settings, [key]: value });
   };
 
-  const changeRegion = (region: ResearchSettings['region_preset']) => {
-    const countryCodes = region === 'russia'
-      ? ['RU']
-      : region === 'russia_cis'
-        ? CIS_COUNTRIES.map(([code]) => code)
-        : region === 'worldwide'
-          ? []
-          : settings.country_codes.length > 0 ? settings.country_codes : ['RU'];
+  const changeGeography = (region: ResearchRegionPreset, countryCodes: string[]) => {
     void persist({ ...settings, region_preset: region, country_codes: countryCodes });
-  };
-
-  const toggleCountry = (code: string) => {
-    const next = settings.country_codes.includes(code)
-      ? settings.country_codes.filter((item) => item !== code)
-      : [...settings.country_codes, code];
-    if (next.length === 0) {
-      toast.info('Выберите хотя бы одну страну');
-      return;
-    }
-    void persist({ ...settings, country_codes: next });
   };
 
   const save = async () => {
@@ -166,27 +137,17 @@ export function WebResearchSettingsCard() {
           disabled={!canEdit || saving}
         />
 
-        <div className="grid gap-4 lg:grid-cols-2">
+        <ResearchGeographyPicker
+          regionPreset={settings.region_preset}
+          countryCodes={settings.country_codes}
+          canEdit={canEdit}
+          saving={saving}
+          onChange={changeGeography}
+        />
+
+        <div className="max-w-xl rounded-xl border bg-card/70 p-4">
           <div className="space-y-2">
-            <Label htmlFor="research-region">Регион поиска</Label>
-            <select
-              id="research-region"
-              value={settings.region_preset}
-              onChange={(event) => changeRegion(event.target.value as ResearchSettings['region_preset'])}
-              disabled={!canEdit || saving}
-              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-            >
-              <option value="russia">Россия</option>
-              <option value="russia_cis">Россия и страны СНГ</option>
-              <option value="custom">Выбранные страны</option>
-              <option value="worldwide">Весь мир — без ограничения</option>
-            </select>
-            <p className="text-xs text-muted-foreground">
-              Выбор сохраняется автоматически. Для каждой страны выполняется отдельный локализованный запрос.
-            </p>
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="research-ttl">Срок актуальности цены, часов</Label>
+            <label htmlFor="research-ttl" className="text-sm font-medium">Срок актуальности цены, часов</label>
             <Input
               id="research-ttl"
               type="number"
@@ -202,52 +163,6 @@ export function WebResearchSettingsCard() {
             </p>
           </div>
         </div>
-
-        {settings.region_preset === 'russia_cis' && (
-          <div className="rounded-lg border bg-muted/25 p-3">
-            <p className="text-sm font-medium">Где будет выполняться поиск</p>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-              {CIS_COUNTRIES.map(([, label]) => label).join(', ')}. Настройка уже сохранена.
-            </p>
-          </div>
-        )}
-
-        {settings.region_preset === 'custom' && (
-          <div className="space-y-2">
-            <Label>Выберите страны</Label>
-            <p className="text-xs text-muted-foreground">Каждое изменение сохраняется сразу.</p>
-            <p className="pt-1 text-xs font-medium">Россия и СНГ</p>
-            <div className="flex flex-wrap gap-2">
-              {CIS_COUNTRIES.map(([code, label]) => (
-                <Button
-                  key={code}
-                  type="button"
-                  size="sm"
-                  variant={settings.country_codes.includes(code) ? 'default' : 'outline'}
-                  onClick={() => toggleCountry(code)}
-                  disabled={!canEdit || saving}
-                >
-                  {label}
-                </Button>
-              ))}
-            </div>
-            <p className="pt-3 text-xs font-medium">Другие страны</p>
-            <div className="flex flex-wrap gap-2">
-              {OTHER_COUNTRIES.map(([code, label]) => (
-                <Button
-                  key={code}
-                  type="button"
-                  size="sm"
-                  variant={settings.country_codes.includes(code) ? 'default' : 'outline'}
-                  onClick={() => toggleCountry(code)}
-                  disabled={!canEdit || saving}
-                >
-                  {label}
-                </Button>
-              ))}
-            </div>
-          </div>
-        )}
 
         <div className="grid gap-3 md:grid-cols-2">
           <ToggleRow

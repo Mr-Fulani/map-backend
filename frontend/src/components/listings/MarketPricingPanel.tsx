@@ -10,9 +10,17 @@ import { toast } from 'sonner';
 import { listingApi, webResearchApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
+import {
+  RESEARCH_COUNTRY_LABELS,
+  ResearchGeographyPicker,
+  type ResearchRegionPreset,
+} from '@/components/settings/research-geography-picker';
 
 interface Difference {
   amount: string;
@@ -80,6 +88,12 @@ interface ResearchRun {
   error_message: string;
 }
 
+interface TenantResearchSettings {
+  region_preset: ResearchRegionPreset;
+  region_label: string;
+  country_codes: string[];
+}
+
 interface Comparison {
   listing_id: number;
   product_id: number;
@@ -113,15 +127,6 @@ const RUN_STATUS: Record<string, string> = {
   queued: 'В очереди', running: 'Выполняется', need_review: 'Требуется проверка',
   completed: 'Предложения обновлены', no_results: 'Ничего не найдено',
   failed: 'Ошибка провайдера', skipped: 'Поиск не потребовался',
-};
-
-const COUNTRY_LABELS: Record<string, string> = {
-  RU: 'Россия', BY: 'Беларусь', KZ: 'Казахстан', AM: 'Армения', KG: 'Кыргызстан',
-  UZ: 'Узбекистан', AZ: 'Азербайджан', MD: 'Молдова', TJ: 'Таджикистан',
-  GE: 'Грузия', UA: 'Украина', TR: 'Турция', DE: 'Германия', PL: 'Польша',
-  CZ: 'Чехия', LT: 'Литва', LV: 'Латвия', EE: 'Эстония', CN: 'Китай',
-  KR: 'Южная Корея', JP: 'Япония', AE: 'ОАЭ', US: 'США',
-  GB: 'Великобритания', FR: 'Франция', IT: 'Италия', ES: 'Испания', NL: 'Нидерланды',
 };
 
 const FILTER_STORAGE_KEY = 'market-pricing-filters-v1';
@@ -192,9 +197,9 @@ function SummaryCard({ label, value, hint, tone = 'neutral' }: {
 
 function Filters({
   countries, country, setCountry, onlyInStock, setOnlyInStock,
-  onlyNew, setOnlyNew, showAnalogues, setShowAnalogues,
+  onlyNew, setOnlyNew, showAnalogues, setShowAnalogues, totalOffers,
 }: {
-  countries: string[];
+  countries: Array<{ code: string; count: number }>;
   country: string;
   setCountry: (value: string) => void;
   onlyInStock: boolean;
@@ -203,33 +208,47 @@ function Filters({
   setOnlyNew: (value: boolean) => void;
   showAnalogues: boolean;
   setShowAnalogues: (value: boolean) => void;
+  totalOffers: number;
 }) {
   return (
-    <div className="grid gap-3 md:grid-cols-4">
-      <label className="grid min-h-20 gap-1 rounded-lg border bg-card p-3 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">Страна продавца</span>
-        <select
-          value={country}
-          onChange={(event) => setCountry(event.target.value)}
-          className="h-9 rounded-md border bg-background px-3 text-sm text-foreground"
-        >
-          <option value="">Все найденные страны</option>
-          {countries.map((code) => <option key={code} value={code}>{COUNTRY_LABELS[code] ?? code}</option>)}
-        </select>
-      </label>
-      {[
-        { title: 'Только в наличии', hint: 'Скрыть отсутствующие', checked: onlyInStock, change: setOnlyInStock },
-        { title: 'Только новые', hint: 'Скрыть товары б/у', checked: onlyNew, change: setOnlyNew },
-        { title: 'Возможные аналоги', hint: 'Показать неточные замены', checked: showAnalogues, change: setShowAnalogues },
-      ].map((item) => (
-        <div key={item.title} className={`flex min-h-20 items-center justify-between gap-3 rounded-lg border p-3 transition-colors ${item.checked ? 'border-primary/35 bg-primary/5' : 'bg-card'}`}>
-          <span>
-            <span className="block text-sm font-medium">{item.title}</span>
-            <span className="mt-1 block text-[11px] text-muted-foreground">{item.checked ? 'Включено' : item.hint}</span>
-          </span>
-          <Switch aria-label={item.title} checked={item.checked} onCheckedChange={item.change} />
+    <div className="space-y-3">
+      <div className="grid gap-3 rounded-lg border bg-card p-3 sm:grid-cols-[minmax(0,280px)_1fr] sm:items-center">
+        <div>
+          <p className="text-sm font-medium">Страна найденного продавца</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+            Фильтрует уже найденные предложения и не меняет географию следующего поиска.
+          </p>
         </div>
-      ))}
+        <Select value={country || 'all'} onValueChange={(value) => setCountry(value === 'all' ? '' : value)}>
+          <SelectTrigger aria-label="Страна найденного продавца" className="h-10 bg-background">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent className="z-[80]">
+            <SelectItem value="all">Все найденные страны · {totalOffers}</SelectItem>
+            {countries.map(({ code, count }) => (
+              <SelectItem key={code} value={code}>
+                {RESEARCH_COUNTRY_LABELS[code] ?? code} · {count}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        {[
+          { title: 'Только в наличии', hint: 'Скрыть отсутствующие', checked: onlyInStock, change: setOnlyInStock },
+          { title: 'Только новые', hint: 'Скрыть товары б/у', checked: onlyNew, change: setOnlyNew },
+          { title: 'Возможные аналоги', hint: 'Показать неточные замены', checked: showAnalogues, change: setShowAnalogues },
+        ].map((item) => (
+          <div key={item.title} className={`flex min-h-20 items-center justify-between gap-3 rounded-lg border p-3 transition-colors ${item.checked ? 'border-primary/35 bg-primary/5' : 'bg-card'}`}>
+            <span>
+              <span className="block text-sm font-medium">{item.title}</span>
+              <span className="mt-1 block text-[11px] text-muted-foreground">{item.checked ? 'Включено' : item.hint}</span>
+            </span>
+            <Switch aria-label={item.title} checked={item.checked} onCheckedChange={item.change} />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -253,6 +272,9 @@ export default function MarketPricingPanel({
   const [showAnalogues, setShowAnalogues] = useState(false);
   const [filtersReady, setFiltersReady] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [researchSettings, setResearchSettings] = useState<TenantResearchSettings | null>(null);
+  const [canEditGeography, setCanEditGeography] = useState(false);
+  const [savingGeography, setSavingGeography] = useState(false);
 
   const load = useCallback(async (quiet = false) => {
     void refreshKey;
@@ -271,6 +293,17 @@ export default function MarketPricingPanel({
   }, [listingId, refreshKey]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    webResearchApi.settings()
+      .then((response) => {
+        setResearchSettings(response.data.data as TenantResearchSettings);
+        setCanEditGeography(Boolean(response.data.can_edit));
+      })
+      .catch(() => {
+        setResearchSettings(null);
+      });
+  }, []);
 
   useEffect(() => {
     const saved = savedFilters();
@@ -330,9 +363,59 @@ export default function MarketPricingPanel({
     }
   };
 
-  const countries = useMemo(() => (
-    Array.from(new Set((comparison?.internet_offers ?? []).map((offer) => offer.country_code).filter(Boolean))).sort()
-  ), [comparison]);
+  const saveGeography = async (
+    regionPreset: ResearchRegionPreset,
+    countryCodes: string[],
+  ) => {
+    if (!researchSettings || !canEditGeography) return;
+    const previous = researchSettings;
+    setResearchSettings({
+      ...researchSettings,
+      region_preset: regionPreset,
+      country_codes: countryCodes,
+    });
+    setSavingGeography(true);
+    try {
+      const response = await webResearchApi.updateSettings({
+        region_preset: regionPreset,
+        country_codes: countryCodes,
+      });
+      const saved = response.data.data as TenantResearchSettings;
+      setResearchSettings(saved);
+      setComparison((current) => current ? {
+        ...current,
+        region: {
+          preset: saved.region_preset,
+          label: saved.region_label,
+          country_codes: saved.country_codes,
+        },
+      } : current);
+      toast.success('География сохранена. Она применится при следующем обновлении предложений.');
+    } catch (error: unknown) {
+      setResearchSettings(previous);
+      const detail = (error as { response?: { data?: { detail?: string } } })
+        ?.response?.data?.detail;
+      toast.error(detail || 'Не удалось сохранить географию поиска');
+    } finally {
+      setSavingGeography(false);
+    }
+  };
+
+  const countries = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const offer of comparison?.internet_offers ?? []) {
+      if (offer.country_code) counts.set(offer.country_code, (counts.get(offer.country_code) ?? 0) + 1);
+    }
+    return Array.from(counts, ([code, count]) => ({ code, count })).sort((left, right) => (
+      (RESEARCH_COUNTRY_LABELS[left.code] ?? left.code)
+        .localeCompare(RESEARCH_COUNTRY_LABELS[right.code] ?? right.code, 'ru')
+    ));
+  }, [comparison]);
+
+  useEffect(() => {
+    if (!comparison) return;
+    if (country && !countries.some((item) => item.code === country)) setCountry('');
+  }, [comparison, countries, country]);
 
   const filtered = useMemo(() => {
     const result = (comparison?.internet_offers ?? []).filter((offer) => (
@@ -378,11 +461,22 @@ export default function MarketPricingPanel({
             <span>Обновлено: {dateTime(comparison.freshness.last_checked_at)}</span>
           </div>
         </div>
-        <Button onClick={refresh} disabled={refreshingRunId !== null} className="shrink-0">
+        <Button onClick={refresh} disabled={refreshingRunId !== null || savingGeography} className="shrink-0">
           {refreshingRunId ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
           {refreshingRunId ? 'Исследуем рынок' : 'Обновить предложения'}
         </Button>
       </div>
+
+      {researchSettings && (
+        <ResearchGeographyPicker
+          regionPreset={researchSettings.region_preset}
+          countryCodes={researchSettings.country_codes}
+          canEdit={canEditGeography}
+          saving={savingGeography}
+          compact
+          onChange={saveGeography}
+        />
+      )}
 
       <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/25 p-3 text-sm">
         {refreshingRunId ? <Loader2 className="h-4 w-4 animate-spin text-primary" /> : comparison.latest_run?.status === 'completed' ? <CheckCircle2 className="h-4 w-4 text-emerald-600" /> : <Store className="h-4 w-4 text-muted-foreground" />}
@@ -452,11 +546,23 @@ export default function MarketPricingPanel({
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div><h3 className="text-sm font-medium">Предложения из интернета</h3><p className="text-xs text-muted-foreground">Сомнительные совпадения помечены и не участвуют в статистике</p></div>
           <div className="flex gap-2">
-            <label className="grid gap-1 text-[11px] text-muted-foreground"><span className="inline-flex items-center gap-1"><ArrowDownUp className="h-3 w-3" />Сортировка</span><select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} className="h-9 rounded-md border bg-background px-3 text-sm text-foreground"><option value="price">По цене</option><option value="availability">По наличию</option><option value="confidence">По точности</option></select></label>
+            <div className="grid min-w-44 gap-1 text-[11px] text-muted-foreground">
+              <span className="inline-flex items-center gap-1"><ArrowDownUp className="h-3 w-3" />Сортировка</span>
+              <Select value={sort} onValueChange={(value) => setSort(value as typeof sort)}>
+                <SelectTrigger aria-label="Сортировка предложений" className="h-9 bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent className="z-[80]">
+                  <SelectItem value="price">По цене</SelectItem>
+                  <SelectItem value="availability">По наличию</SelectItem>
+                  <SelectItem value="confidence">По точности</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <Button variant="outline" size="sm" className="mt-auto md:hidden" onClick={() => setFilterOpen(true)}><Filter className="mr-2 h-4 w-4" />Фильтры</Button>
           </div>
         </div>
-        <div className="hidden rounded-lg border bg-muted/20 p-3 md:block"><Filters countries={countries} country={country} setCountry={setCountry} onlyInStock={onlyInStock} setOnlyInStock={setOnlyInStock} onlyNew={onlyNew} setOnlyNew={setOnlyNew} showAnalogues={showAnalogues} setShowAnalogues={setShowAnalogues} /></div>
+        <div className="hidden rounded-lg border bg-muted/20 p-3 md:block"><Filters countries={countries} country={country} setCountry={setCountry} onlyInStock={onlyInStock} setOnlyInStock={setOnlyInStock} onlyNew={onlyNew} setOnlyNew={setOnlyNew} showAnalogues={showAnalogues} setShowAnalogues={setShowAnalogues} totalOffers={comparison.internet_offers.length} /></div>
 
         {visibleOffers.length === 0 ? (
           <div className="rounded-xl border border-dashed p-8 text-center"><PackageCheck className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 text-sm font-medium">Подходящих предложений нет</p><p className="mt-1 text-xs text-muted-foreground">Измените фильтры или обновите исследование.</p></div>
@@ -465,7 +571,7 @@ export default function MarketPricingPanel({
             {visibleOffers.map((offer) => (
               <article key={offer.id} className="rounded-xl border bg-card p-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0"><p className="truncate font-medium">{offer.seller_name || offer.domain}</p><p className="truncate text-xs text-muted-foreground">{offer.domain} {offer.country_code && `· ${COUNTRY_LABELS[offer.country_code] ?? offer.country_code}`}</p></div>
+                  <div className="min-w-0"><p className="truncate font-medium">{offer.seller_name || offer.domain}</p><p className="truncate text-xs text-muted-foreground">{offer.domain} {offer.country_code && `· ${RESEARCH_COUNTRY_LABELS[offer.country_code] ?? offer.country_code}`}</p></div>
                   <Badge variant={offer.review_status === 'verified' ? 'secondary' : 'outline'} className={offer.review_status === 'verified' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-amber-500/30 text-amber-700 dark:text-amber-300'}>{offer.match_type_label}</Badge>
                 </div>
                 <p className="mt-3 line-clamp-2 text-sm">{offer.title || 'Название не указано'}</p>
@@ -486,13 +592,13 @@ export default function MarketPricingPanel({
       </section>
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t bg-background/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur md:hidden">
-        <Button onClick={refresh} disabled={refreshingRunId !== null} className="w-full">{refreshingRunId ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}{refreshingRunId ? 'Исследуем рынок' : 'Обновить предложения'}</Button>
+        <Button onClick={refresh} disabled={refreshingRunId !== null || savingGeography} className="w-full">{refreshingRunId ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}{refreshingRunId ? 'Исследуем рынок' : 'Обновить предложения'}</Button>
       </div>
 
       <Sheet open={filterOpen} onOpenChange={setFilterOpen}>
         <SheetContent side="bottom" className="rounded-t-2xl pb-[max(1.5rem,env(safe-area-inset-bottom))]">
           <SheetHeader><SheetTitle>Фильтры предложений</SheetTitle></SheetHeader>
-          <div className="mt-5"><Filters countries={countries} country={country} setCountry={setCountry} onlyInStock={onlyInStock} setOnlyInStock={setOnlyInStock} onlyNew={onlyNew} setOnlyNew={setOnlyNew} showAnalogues={showAnalogues} setShowAnalogues={setShowAnalogues} /></div>
+          <div className="mt-5"><Filters countries={countries} country={country} setCountry={setCountry} onlyInStock={onlyInStock} setOnlyInStock={setOnlyInStock} onlyNew={onlyNew} setOnlyNew={setOnlyNew} showAnalogues={showAnalogues} setShowAnalogues={setShowAnalogues} totalOffers={comparison.internet_offers.length} /></div>
           <Button className="mt-6 w-full" onClick={() => setFilterOpen(false)}>Показать {filtered.length}</Button>
         </SheetContent>
       </Sheet>
