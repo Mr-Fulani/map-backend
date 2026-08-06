@@ -353,11 +353,12 @@ class ProductDetailSerializer(ProductSerializer):
     enrichment_facts = ProductEnrichmentFactSerializer(many=True, read_only=True)
     latest_parse_job = serializers.SerializerMethodField()
     parse_jobs_summary = serializers.SerializerMethodField()
+    listing_options = serializers.SerializerMethodField()
 
     class Meta(ProductSerializer.Meta):
         fields = ProductSerializer.Meta.fields + [
             'attributes', 'cross_codes', 'fitments', 'enrichment_facts',
-            'latest_parse_job', 'parse_jobs_summary',
+            'latest_parse_job', 'parse_jobs_summary', 'listing_options',
         ]
 
     def get_attributes(self, obj):
@@ -390,6 +391,19 @@ class ProductDetailSerializer(ProductSerializer):
 
     def get_parse_jobs_summary(self, obj):
         return [ProductParseJobSerializer(j).data for j in self._jobs_by_priority(obj)]
+
+    def get_listing_options(self, obj):
+        return [
+            {
+                'id': listing.pk,
+                'status': listing.status,
+                'status_display': listing.get_status_display(),
+                'account_name': listing.account.name,
+                'title': listing.title,
+            }
+            for listing in obj.listings.all()
+            if listing.status != 'deleted'
+        ]
 
 
 class ProductBulkActionJobSerializer(serializers.ModelSerializer):

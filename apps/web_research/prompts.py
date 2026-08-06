@@ -5,6 +5,8 @@ WEB_RESEARCH_SYSTEM_PROMPT = """Ты извлекаешь факты об авт
 OEM/Cross-коды возвращай только когда код явно связан с этой деталью в доказательстве.
 Применяемость возвращай только с явно указанными make/model; неизвестные поля оставляй пустыми.
 Если доказательств недостаточно, верни пустые массивы и пустой brand.
+Цену и наличие в offers возвращай только когда они буквально присутствуют в evidence;
+никогда не вычисляй и не придумывай коммерческие данные.
 """
 
 
@@ -74,6 +76,29 @@ WEB_RESEARCH_OUTPUT_SCHEMA = {
                     'confidence': {'type': 'number', 'minimum': 0, 'maximum': 1},
                 },
                 'required': ['fact_type', 'name', 'value', 'evidence_ids', 'confidence'],
+            },
+        },
+        'offers': {
+            'type': 'array',
+            'items': {
+                'type': 'object',
+                'additionalProperties': False,
+                'properties': {
+                    'seller_name': {'type': 'string'},
+                    'price': {'type': 'number'},
+                    'currency': {'type': 'string'},
+                    'availability': {'type': 'string'},
+                    'quantity': {'type': ['integer', 'null']},
+                    'condition': {'type': 'string'},
+                    'country_code': {'type': 'string'},
+                    'article': {'type': 'string'},
+                    'evidence_ids': {'type': 'array', 'items': {'type': 'integer'}},
+                    'confidence': {'type': 'number', 'minimum': 0, 'maximum': 1},
+                },
+                'required': [
+                    'seller_name', 'price', 'currency', 'availability', 'quantity',
+                    'condition', 'country_code', 'article', 'evidence_ids', 'confidence',
+                ],
             },
         },
     },

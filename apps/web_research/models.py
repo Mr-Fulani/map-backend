@@ -5,6 +5,62 @@ from apps.core.models import TimestampedModel
 from apps.tenants.models import Tenant
 
 
+class TenantWebResearchSettings(TimestampedModel):
+    """Tenant-owned market research policy; provider credentials stay platform-owned."""
+
+    class RegionPreset(models.TextChoices):
+        RUSSIA = 'russia', 'Россия'
+        RUSSIA_CIS = 'russia_cis', 'Россия и СНГ'
+        CUSTOM = 'custom', 'Выбранные страны'
+        WORLDWIDE = 'worldwide', 'Без ограничения'
+
+    tenant = models.OneToOneField(
+        Tenant, on_delete=models.CASCADE,
+        related_name='web_research_settings', verbose_name='Тенант',
+    )
+    market_research_enabled = models.BooleanField(default=True, verbose_name='Мониторинг цен')
+    region_preset = models.CharField(
+        max_length=20, choices=RegionPreset.choices,
+        default=RegionPreset.RUSSIA, verbose_name='Регион поиска',
+    )
+    country_codes = models.JSONField(default=list, blank=True, verbose_name='Коды стран')
+    search_language = models.CharField(max_length=10, default='ru', verbose_name='Язык поиска')
+    include_marketplaces = models.BooleanField(default=True, verbose_name='Маркетплейсы')
+    include_used = models.BooleanField(default=False, verbose_name='Товары б/у')
+    include_preorder = models.BooleanField(default=True, verbose_name='Под заказ')
+    include_analogues = models.BooleanField(default=False, verbose_name='Аналоги')
+    exact_matches_only = models.BooleanField(default=True, verbose_name='Только точные совпадения')
+    preferred_domains = models.JSONField(default=list, blank=True, verbose_name='Приоритетные домены')
+    excluded_domains = models.JSONField(default=list, blank=True, verbose_name='Исключённые домены')
+    result_limit = models.PositiveSmallIntegerField(default=30, verbose_name='Лимит результатов')
+    price_ttl_hours = models.PositiveSmallIntegerField(default=24, verbose_name='Срок цены, часов')
+    display_currency = models.CharField(max_length=3, default='RUB', verbose_name='Валюта')
+
+    class Meta:
+        verbose_name = 'Настройки интернет-исследования тенанта'
+        verbose_name_plural = 'Настройки интернет-исследования тенантов'
+
+    def __str__(self):
+        return f'{self.tenant}: {self.get_region_preset_display()}'
+
+    def snapshot(self) -> dict:
+        return {
+            'region_preset': self.region_preset,
+            'country_codes': list(self.country_codes or []),
+            'search_language': self.search_language,
+            'include_marketplaces': self.include_marketplaces,
+            'include_used': self.include_used,
+            'include_preorder': self.include_preorder,
+            'include_analogues': self.include_analogues,
+            'exact_matches_only': self.exact_matches_only,
+            'preferred_domains': list(self.preferred_domains or []),
+            'excluded_domains': list(self.excluded_domains or []),
+            'result_limit': self.result_limit,
+            'price_ttl_hours': self.price_ttl_hours,
+            'display_currency': self.display_currency,
+        }
+
+
 class WebResearchRun(TimestampedModel):
     """Auditable product-research run, independent from concrete providers."""
 
@@ -20,6 +76,11 @@ class WebResearchRun(TimestampedModel):
     class Trigger(models.TextChoices):
         MANUAL = 'manual', 'Вручную'
         PARSER_FALLBACK = 'parser_fallback', 'Fallback после каталогов'
+
+    class Purpose(models.TextChoices):
+        ENRICHMENT = 'enrichment', 'Техническое обогащение'
+        PRICING = 'pricing', 'Мониторинг цен'
+        COMBINED = 'combined', 'Обогащение и цены'
 
     tenant = models.ForeignKey(
         Tenant, on_delete=models.CASCADE,
@@ -37,6 +98,13 @@ class WebResearchRun(TimestampedModel):
         max_length=30, choices=Trigger.choices, default=Trigger.MANUAL,
         verbose_name='Причина запуска',
     )
+    purpose = models.CharField(
+        max_length=20, choices=Purpose.choices, default=Purpose.ENRICHMENT,
+        db_index=True, verbose_name='Назначение',
+    )
+    settings_snapshot = models.JSONField(
+        default=dict, blank=True, verbose_name='Снимок настроек поиска',
+    )
     search_provider = models.SlugField(
         max_length=50, blank=True, verbose_name='Провайдер поиска',
     )
@@ -51,6 +119,7 @@ class WebResearchRun(TimestampedModel):
     )
     result_count = models.PositiveIntegerField(default=0, verbose_name='Найдено страниц')
     claim_count = models.PositiveIntegerField(default=0, verbose_name='Найдено фактов')
+    offer_count = models.PositiveIntegerField(default=0, verbose_name='Найдено предложений')
     generate_after = models.BooleanField(
         default=False, verbose_name='Сгенерировать описание после завершения',
     )
@@ -70,8 +139,19 @@ class WebResearchRun(TimestampedModel):
         constraints = [
             models.UniqueConstraint(
                 fields=['product'],
-                condition=models.Q(status__in=['queued', 'running']),
-                name='unique_active_web_research_per_product',
+                condition=(
+                    models.Q(status__in=['queued', 'running'])
+                    & models.Q(purpose='enrichment')
+                ),
+                name='unique_active_enrichment_research_per_product',
+            ),
+            models.UniqueConstraint(
+                fields=['product'],
+                condition=(
+                    models.Q(status__in=['queued', 'running'])
+                    & models.Q(purpose__in=['pricing', 'combined'])
+                ),
+                name='unique_active_pricing_research_per_product',
             ),
         ]
 
@@ -95,6 +175,7 @@ class WebResearchEvidence(TimestampedModel):
     url = models.URLField(max_length=2000, verbose_name='URL')
     domain = models.CharField(max_length=255, db_index=True, verbose_name='Домен')
     snippet = models.TextField(blank=True, verbose_name='Фрагмент')
+    raw_content = models.TextField(blank=True, verbose_name='Структурированное содержимое')
 
     class Meta:
         verbose_name = 'Доказательство интернет-исследования'
@@ -108,6 +189,107 @@ class WebResearchEvidence(TimestampedModel):
 
     def __str__(self):
         return f'[{self.domain}] {self.title or self.url}'
+
+
+class CompetitorOffer(TimestampedModel):
+    """Immutable-ish product-level market observation grounded in saved evidence."""
+
+    class MatchType(models.TextChoices):
+        EXACT = 'exact', 'Точное совпадение'
+        CROSS = 'cross', 'Совпадение по OEM/Cross-коду'
+        ANALOGUE = 'analogue', 'Возможный аналог'
+        REVIEW = 'review', 'Требуется проверка'
+
+    class Availability(models.TextChoices):
+        UNKNOWN = 'unknown', 'Наличие не указано'
+        IN_STOCK = 'in_stock', 'В наличии'
+        PREORDER = 'preorder', 'Под заказ'
+        OUT_OF_STOCK = 'out_of_stock', 'Нет в наличии'
+
+    class Condition(models.TextChoices):
+        NEW = 'new', 'Новый'
+        USED = 'used', 'Б/у'
+        UNKNOWN = 'unknown', 'Не указано'
+
+    class ReviewStatus(models.TextChoices):
+        PENDING = 'pending', 'Ожидает проверки'
+        VERIFIED = 'verified', 'Подтверждено'
+        REJECTED = 'rejected', 'Отклонено'
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.CASCADE,
+        related_name='competitor_offers', verbose_name='Тенант',
+    )
+    product = models.ForeignKey(
+        'products.Product', on_delete=models.CASCADE,
+        related_name='competitor_offers', verbose_name='Товар',
+    )
+    run = models.ForeignKey(
+        WebResearchRun, on_delete=models.PROTECT,
+        related_name='offers', verbose_name='Исследование',
+    )
+    evidence = models.ForeignKey(
+        WebResearchEvidence, on_delete=models.PROTECT,
+        related_name='offers', verbose_name='Доказательство',
+    )
+    provider_id = models.SlugField(max_length=50, blank=True, verbose_name='Провайдер')
+    seller_name = models.CharField(max_length=255, blank=True, verbose_name='Продавец')
+    domain = models.CharField(max_length=255, db_index=True, verbose_name='Домен')
+    url = models.URLField(max_length=2000, verbose_name='URL')
+    dedupe_key = models.CharField(max_length=64, db_index=True, verbose_name='Ключ дедупликации')
+    country_code = models.CharField(max_length=2, blank=True, db_index=True, verbose_name='Страна')
+    region = models.CharField(max_length=150, blank=True, verbose_name='Регион')
+    title = models.CharField(max_length=500, blank=True, verbose_name='Название')
+    article = models.CharField(max_length=100, blank=True, verbose_name='Артикул')
+    matched_code = models.CharField(max_length=100, blank=True, verbose_name='Совпавший код')
+    match_type = models.CharField(
+        max_length=20, choices=MatchType.choices,
+        default=MatchType.REVIEW, db_index=True, verbose_name='Тип совпадения',
+    )
+    match_confidence = models.FloatField(default=0.0, verbose_name='Точность совпадения')
+    match_reasons = models.JSONField(default=list, blank=True, verbose_name='Причины совпадения')
+    price = models.DecimalField(max_digits=14, decimal_places=2, verbose_name='Исходная цена')
+    currency = models.CharField(max_length=3, verbose_name='Исходная валюта')
+    normalized_price = models.DecimalField(
+        max_digits=14, decimal_places=2, null=True, blank=True,
+        verbose_name='Нормализованная цена',
+    )
+    normalized_currency = models.CharField(max_length=3, default='RUB', verbose_name='Валюта сравнения')
+    is_price_from = models.BooleanField(default=False, verbose_name='Цена от')
+    availability = models.CharField(
+        max_length=20, choices=Availability.choices,
+        default=Availability.UNKNOWN, db_index=True, verbose_name='Наличие',
+    )
+    availability_text = models.CharField(max_length=255, blank=True, verbose_name='Текст наличия')
+    quantity = models.PositiveIntegerField(null=True, blank=True, verbose_name='Количество')
+    condition = models.CharField(
+        max_length=20, choices=Condition.choices,
+        default=Condition.UNKNOWN, db_index=True, verbose_name='Состояние',
+    )
+    delivery_text = models.CharField(max_length=500, blank=True, verbose_name='Доставка')
+    review_status = models.CharField(
+        max_length=20, choices=ReviewStatus.choices,
+        default=ReviewStatus.PENDING, db_index=True, verbose_name='Проверка',
+    )
+    captured_at = models.DateTimeField(default=now, db_index=True, verbose_name='Проверено')
+    expires_at = models.DateTimeField(db_index=True, verbose_name='Актуально до')
+
+    class Meta:
+        verbose_name = 'Рыночное предложение'
+        verbose_name_plural = 'Рыночные предложения'
+        ordering = ['normalized_price', '-captured_at']
+        indexes = [
+            models.Index(fields=['tenant', 'product', '-captured_at']),
+            models.Index(fields=['tenant', 'product', 'review_status', 'expires_at']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['run', 'dedupe_key'], name='unique_competitor_offer_per_run',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.seller_name or self.domain}: {self.price} {self.currency}'
 
 
 class WebSearchConnection(TimestampedModel):

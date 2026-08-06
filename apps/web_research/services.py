@@ -21,13 +21,19 @@ from apps.products.models import (
 )
 from apps.products.source_policy import should_auto_apply_fitment, should_auto_apply_record
 from apps.web_research.models import (
-    WebResearchClaim, WebResearchEvidence, WebResearchRun, WebSearchAttempt,
+    CompetitorOffer, WebResearchClaim, WebResearchEvidence, WebResearchRun,
+    WebSearchAttempt,
 )
+from apps.web_research.offer_extraction import save_deterministic_offers
 from apps.web_research.prompts import (
     WEB_RESEARCH_OUTPUT_SCHEMA, WEB_RESEARCH_SYSTEM_PROMPT,
 )
 from apps.web_research.providers.base import WebSearchProviderError
 from apps.web_research.routing import search_provider_candidates
+from apps.web_research.search_context import (
+    build_search_contexts, get_tenant_research_settings, localize_query,
+    result_matches_context, search_contexts_from_snapshot,
+)
 
 
 ZERO_CREDITS = Decimal('0')
@@ -112,19 +118,48 @@ def build_research_queries(product) -> list[str]:
     return result[:max(1, settings.WEB_RESEARCH_MAX_QUERIES)]
 
 
+def build_pricing_queries(product) -> list[str]:
+    """Commercial queries prioritize stable article/OEM identifiers."""
+    brand = str(product.brand or '').strip()
+    codes = [str(product.article or '').strip()]
+    codes.extend(str(value or '').strip() for value in product.oem_numbers or [])
+    codes.extend(str(value or '').strip() for value in product.cross_numbers or [])
+    codes.extend(product.cross_codes.values_list('code', flat=True)[:8])
+    queries = []
+    seen = set()
+    for code in codes:
+        normalized = normalize_part_code(code)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        queries.append(' '.join(filter(None, [brand, f'"{code}"', product.name])))
+    if not queries:
+        queries = build_research_queries(product)
+    return queries[:max(1, settings.WEB_RESEARCH_MAX_QUERIES)]
+
+
 class WebResearchService:
     @classmethod
     def create_run(
         cls, product, *, trigger: str, generate_after: bool = False,
-        search_provider: str = '',
+        search_provider: str = '', purpose: str = WebResearchRun.Purpose.ENRICHMENT,
     ) -> tuple[WebResearchRun, bool]:
         coverage = enrichment_coverage(product)
+        tenant_settings = get_tenant_research_settings(product.tenant)
+        contexts = build_search_contexts(tenant_settings, purpose=purpose)
+        settings_snapshot = tenant_settings.snapshot()
+        settings_snapshot['country_codes'] = [
+            context.country_code for context in contexts if context.country_code
+        ]
+        settings_snapshot['search_contexts'] = [context.to_snapshot() for context in contexts]
         try:
             with transaction.atomic():
                 run = WebResearchRun.objects.create(
                     tenant=product.tenant,
                     product=product,
                     trigger=trigger,
+                    purpose=purpose,
+                    settings_snapshot=settings_snapshot,
                     generate_after=generate_after,
                     search_provider=search_provider,
                     coverage_before=coverage,
@@ -134,7 +169,14 @@ class WebResearchService:
             run = WebResearchRun.objects.filter(
                 product=product,
                 status__in=[WebResearchRun.Status.QUEUED, WebResearchRun.Status.RUNNING],
-            ).latest('created_at')
+            )
+            if purpose in [WebResearchRun.Purpose.PRICING, WebResearchRun.Purpose.COMBINED]:
+                run = run.filter(purpose__in=[
+                    WebResearchRun.Purpose.PRICING, WebResearchRun.Purpose.COMBINED,
+                ])
+            else:
+                run = run.filter(purpose=WebResearchRun.Purpose.ENRICHMENT)
+            run = run.latest('created_at')
             if generate_after and not run.generate_after:
                 run.generate_after = True
                 run.save(update_fields=['generate_after', 'updated_at'])
@@ -153,10 +195,22 @@ class WebResearchService:
         try:
             if not search_provider_candidates(run.tenant, run.search_provider):
                 raise WebResearchUnavailable('Не настроен ни один провайдер интернет-поиска.')
-            queries = build_research_queries(run.product)
-            run.queries = queries
+            contexts = search_contexts_from_snapshot(
+                run.settings_snapshot, purpose=run.purpose,
+            )
+            query_builder = (
+                build_pricing_queries
+                if run.purpose in [WebResearchRun.Purpose.PRICING, WebResearchRun.Purpose.COMBINED]
+                else build_research_queries
+            )
+            base_queries = query_builder(run.product)
+            queries = [
+                localize_query(query, context)
+                for context in contexts for query in base_queries
+            ]
+            run.queries = list(dict.fromkeys(queries))
             run.save(update_fields=['queries', 'updated_at'])
-            evidence, providers_used = cls._collect_evidence(run, queries)
+            evidence, providers_used = cls._collect_evidence(run, base_queries, contexts)
             run.search_provider = providers_used[0] if providers_used else ''
             run.result_count = len(evidence)
             run.save(update_fields=['search_provider', 'result_count', 'updated_at'])
@@ -165,22 +219,35 @@ class WebResearchService:
                 cls._generate_if_unblocked(finished)
                 return finished
 
-            extracted, model = WebResearchAgent().extract(run, evidence)
-            run.ai_provider = model.provider
-            run.ai_model = model.external_id
-            with transaction.atomic():
-                claims = cls._save_extracted_claims(run, extracted, evidence)
+            claims = []
+            offers = []
+            if run.purpose in [WebResearchRun.Purpose.PRICING, WebResearchRun.Purpose.COMBINED]:
+                offers = save_deterministic_offers(
+                    run, evidence,
+                    ttl_hours=int(run.settings_snapshot.get('price_ttl_hours') or 24),
+                )
+                run.offer_count = len(offers)
+            if run.purpose in [WebResearchRun.Purpose.ENRICHMENT, WebResearchRun.Purpose.COMBINED]:
+                extracted, model = WebResearchAgent().extract(run, evidence)
+                run.ai_provider = model.provider
+                run.ai_model = model.external_id
+                with transaction.atomic():
+                    claims = cls._save_extracted_claims(run, extracted, evidence)
             run.claim_count = len(claims)
             run.coverage_after = enrichment_coverage(run.product)
             pending_claims = any(
                 claim.review_status == WebResearchClaim.ReviewStatus.PENDING
                 for claim in claims
             )
+            pending_offers = any(
+                offer.review_status == CompetitorOffer.ReviewStatus.PENDING
+                for offer in offers
+            )
             status = (
                 WebResearchRun.Status.NEED_REVIEW
-                if pending_claims
+                if pending_claims or pending_offers
                 else WebResearchRun.Status.COMPLETED
-                if claims
+                if claims or offers
                 else WebResearchRun.Status.NO_RESULTS
             )
             finished = cls._finish(run, status)
@@ -192,7 +259,10 @@ class WebResearchService:
             raise
 
     @staticmethod
-    def _collect_evidence(run, queries) -> tuple[list[WebResearchEvidence], list[str]]:
+    def _collect_evidence(run, queries, contexts=None) -> tuple[list[WebResearchEvidence], list[str]]:
+        contexts = contexts or search_contexts_from_snapshot(
+            run.settings_snapshot, purpose=run.purpose,
+        )
         seen_urls = set(run.evidence.values_list('url', flat=True))
         evidence = list(run.evidence.all())
         providers_used = list(dict.fromkeys(
@@ -201,70 +271,81 @@ class WebResearchService:
         rank = len(evidence)
         last_error = None
         any_success = False
-        for query in queries:
-            results = []
-            selected_provider = None
-            for candidate in search_provider_candidates(run.tenant, run.search_provider):
-                started = time.monotonic()
-                try:
-                    candidate_results = candidate.provider.search(
-                        query, count=settings.WEB_RESEARCH_RESULTS_PER_QUERY,
+        for context in contexts:
+            for base_query in queries:
+                query = localize_query(base_query, context)
+                results = []
+                selected_provider = None
+                for candidate in search_provider_candidates(run.tenant, run.search_provider):
+                    started = time.monotonic()
+                    try:
+                        candidate_results = candidate.provider.search(
+                            query,
+                            count=min(
+                                settings.WEB_RESEARCH_RESULTS_PER_QUERY,
+                                context.result_limit,
+                            ),
+                            context=context,
+                        )
+                    except WebSearchProviderError as exc:
+                        last_error = exc
+                        WebSearchAttempt.objects.create(
+                            run=run,
+                            connection=candidate.connection,
+                            provider_id=candidate.provider.provider_id,
+                            query=query[:500],
+                            status=WebSearchAttempt.Status.FAILED,
+                            duration_ms=max(0, int((time.monotonic() - started) * 1000)),
+                            retryable=exc.retryable,
+                            error_code=exc.code[:80],
+                            error_message=str(exc)[:500],
+                        )
+                        continue
+                    attempt_status = (
+                        WebSearchAttempt.Status.SUCCESS
+                        if candidate_results else WebSearchAttempt.Status.EMPTY
                     )
-                except WebSearchProviderError as exc:
-                    last_error = exc
                     WebSearchAttempt.objects.create(
                         run=run,
                         connection=candidate.connection,
                         provider_id=candidate.provider.provider_id,
                         query=query[:500],
-                        status=WebSearchAttempt.Status.FAILED,
+                        status=attempt_status,
+                        result_count=len(candidate_results),
                         duration_ms=max(0, int((time.monotonic() - started) * 1000)),
-                        retryable=exc.retryable,
-                        error_code=exc.code[:80],
-                        error_message=str(exc)[:500],
                     )
-                    continue
-                attempt_status = (
-                    WebSearchAttempt.Status.SUCCESS
-                    if candidate_results else WebSearchAttempt.Status.EMPTY
-                )
-                WebSearchAttempt.objects.create(
-                    run=run,
-                    connection=candidate.connection,
-                    provider_id=candidate.provider.provider_id,
-                    query=query[:500],
-                    status=attempt_status,
-                    result_count=len(candidate_results),
-                    duration_ms=max(0, int((time.monotonic() - started) * 1000)),
-                )
-                if candidate_results:
-                    results = candidate_results
-                    selected_provider = candidate.provider.provider_id
-                    any_success = True
-                    if selected_provider not in providers_used:
-                        providers_used.append(selected_provider)
-                    break
-            for result in results:
-                if result.url in seen_urls or not is_safe_public_http_url(result.url):
-                    continue
-                domain = (urlparse(result.url).hostname or '').lower()
-                if not domain:
-                    continue
-                rank += 1
-                item = WebResearchEvidence.objects.create(
-                    run=run,
-                    query=query[:500],
-                    rank=rank,
-                    provider_id=selected_provider or '',
-                    title=result.title[:500],
-                    url=result.url[:2000],
-                    domain=domain[:255],
-                    snippet=' '.join(filter(None, [
-                        result.snippet, result.content[:4000],
-                    ]))[:6000],
-                )
-                evidence.append(item)
-                seen_urls.add(result.url)
+                    if candidate_results:
+                        results = candidate_results
+                        selected_provider = candidate.provider.provider_id
+                        any_success = True
+                        if selected_provider not in providers_used:
+                            providers_used.append(selected_provider)
+                        break
+                for result in results:
+                    if result.url in seen_urls or not is_safe_public_http_url(result.url):
+                        continue
+                    combined_text = ' '.join([result.title, result.snippet, result.content])
+                    if not result_matches_context(result.url, combined_text, context):
+                        continue
+                    domain = (urlparse(result.url).hostname or '').lower()
+                    if not domain:
+                        continue
+                    rank += 1
+                    item = WebResearchEvidence.objects.create(
+                        run=run,
+                        query=query[:500],
+                        rank=rank,
+                        provider_id=selected_provider or '',
+                        title=result.title[:500],
+                        url=result.url[:2000],
+                        domain=domain[:255],
+                        snippet=' '.join(filter(None, [
+                            result.snippet, result.content[:4000],
+                        ]))[:6000],
+                        raw_content=(result.raw_content or result.content)[:50000],
+                    )
+                    evidence.append(item)
+                    seen_urls.add(result.url)
         if not any_success and last_error is not None:
             raise last_error
         return evidence, providers_used
@@ -462,7 +543,7 @@ class WebResearchService:
         run.finished_at = now()
         run.save(update_fields=[
             'status', 'result_count', 'claim_count', 'ai_provider', 'ai_model',
-            'coverage_after', 'error_message', 'finished_at', 'updated_at',
+            'offer_count', 'coverage_after', 'error_message', 'finished_at', 'updated_at',
         ])
         return run
 
@@ -470,7 +551,11 @@ class WebResearchService:
     def _generate_if_unblocked(run):
         # Claims from open-web evidence always require review. Generating before
         # approval would silently omit them from the grounded description context.
-        if not run.generate_after or run.status == WebResearchRun.Status.NEED_REVIEW:
+        if (
+            not run.generate_after
+            or run.status == WebResearchRun.Status.NEED_REVIEW
+            or run.purpose == WebResearchRun.Purpose.PRICING
+        ):
             return
         from apps.ai_agent.tasks import generate_description_task
         generate_description_task.delay(run.product_id)
@@ -635,6 +720,14 @@ class WebResearchAgent:
                 raise WebResearchValidationError(
                     f'AI вернул неверную структуру поля {collection_name}.',
                 )
+        offers = parsed.get('offers', [])
+        if not isinstance(offers, list) or any(
+            not isinstance(item, dict)
+            or not WebResearchAgent._is_evidence_id_list(item.get('evidence_ids'))
+            for item in offers
+        ):
+            raise WebResearchValidationError('AI вернул неверную структуру поля offers.')
+        parsed['offers'] = offers
         return parsed
 
     @staticmethod
