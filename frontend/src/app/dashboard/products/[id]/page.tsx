@@ -457,7 +457,6 @@ export default function ProductDetailPage() {
   const enriching = parseJobId !== null;
   const [webResearch, setWebResearch] = useState<WebResearchRun | null>(null);
   const [webResearchRunId, setWebResearchRunId] = useState<number | null>(null);
-  const webResearchRunning = webResearchRunId !== null;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const publicationSectionRef = useRef<HTMLDivElement>(null);
@@ -919,7 +918,10 @@ export default function ProductDetailPage() {
     );
   }
 
-  const busy = actionLoading !== null || webResearchRunning;
+  // Фоновое интернет-исследование не должно блокировать остальные действия
+  // с товаром. Конкретные операции ниже отдельно учитывают поиск изображений,
+  // обогащение и генерацию описания.
+  const busy = actionLoading !== null;
   const assignedCatalogCategoryValue = product.catalog_category?.id
     ? String(product.catalog_category.id)
     : '';
