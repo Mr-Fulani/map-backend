@@ -15,13 +15,14 @@ import {
 } from '@/components/ui/sheet';
 import {
   CheckCircle, RefreshCw, Pencil, Crown, Trash2, Plus,
-  ChevronLeft, ChevronRight, Send,
+  ChevronLeft, ChevronRight, Send, BarChart3, FileText,
 } from 'lucide-react';
 import { getCategoryPlaceholder } from '@/lib/category-placeholder';
 import {
   CatalogCategoryPicker,
   CatalogCategoryOption,
 } from '@/components/products/catalog-category-picker';
+import MarketPricingPanel from '@/components/listings/MarketPricingPanel';
 
 interface ListingImage {
   id: number | null;
@@ -97,6 +98,7 @@ interface PlacementAddress {
 
 interface Props {
   listingId: number | null;
+  initialPanel?: 'listing' | 'pricing';
   onClose: () => void;
   onActionDone: () => void;
 }
@@ -139,7 +141,9 @@ function ConfidenceBar({ value, label }: { value: number | null; label: string }
   );
 }
 
-export default function ListingDrawer({ listingId, onClose, onActionDone }: Props) {
+export default function ListingDrawer({
+  listingId, initialPanel = 'listing', onClose, onActionDone,
+}: Props) {
   const [listing, setListing] = useState<ListingDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
@@ -172,12 +176,21 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
   const [activeIdx, setActiveIdx] = useState(0);
   const [photoLoading, setPhotoLoading] = useState<number | 'upload' | null>(null);
   const [publishing, setPublishing] = useState(false);
+  const [activePanel, setActivePanel] = useState<'listing' | 'pricing'>(initialPanel);
+  const [marketPriceApplied, setMarketPriceApplied] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const publishPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Листинг, для которого уже выполнена авто-подстановка адреса по умолчанию.
   const placementInitRef = useRef<number | null>(null);
 
   const open = listingId !== null;
+
+  useEffect(() => {
+    if (listingId !== null) {
+      setActivePanel(initialPanel);
+      setMarketPriceApplied(false);
+    }
+  }, [initialPanel, listingId]);
 
   const applyListingState = (data: ListingDetail) => {
     setListing(data);
@@ -207,6 +220,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       setEditingBrand(false);
       setActiveIdx(0);
       setPublishing(false);
+      setMarketPriceApplied(false);
       placementInitRef.current = null;
       if (publishPollRef.current) clearInterval(publishPollRef.current);
       return;
@@ -482,9 +496,15 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
     if (!listing) return;
     setActionLoading('save');
     try {
-      await saveCategoryIfChanged();
-      const res = await listingApi.updateContent(listing.id, buildEditPayload());
+      if (listing.status !== 'active') await saveCategoryIfChanged();
+      const payload = marketPriceApplied
+        ? listing.status === 'active'
+          ? { price_on_listing: editPrice }
+          : { ...buildEditPayload(), price_on_listing: editPrice, margin_pct: null }
+        : buildEditPayload();
+      const res = await listingApi.updateContent(listing.id, payload);
       applyListingState(res.data.data);
+      setMarketPriceApplied(false);
       setEditing(false);
       onActionDone();
       toast.success('Сохранено');
@@ -553,6 +573,20 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
 
   const activeImage = listing?.images[activeIdx] ?? null;
 
+  const applyMarketPrice = (price: string) => {
+    if (!listing) return;
+    setEditPrice(price);
+    const base = Number(listing.base_price);
+    const nextPrice = Number(price);
+    setEditMarginPct(
+      base > 0 && Number.isFinite(nextPrice)
+        ? (((nextPrice / base) - 1) * 100).toFixed(2)
+        : '',
+    );
+    setMarketPriceApplied(true);
+    setActivePanel('listing');
+  };
+
   const isReview = listing?.status === 'requires_review';
   const isDraft = listing?.status === 'draft';
   const isRejected = listing?.status === 'rejected';
@@ -568,14 +602,46 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
       <Sheet open={open} onOpenChange={handleOpenChange}>
         <SheetContent
           side="right"
-          className="w-full overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable] sm:max-w-[520px]"
+          className="h-[100dvh] w-screen max-w-none overflow-hidden p-0 sm:max-w-none xl:w-[min(96vw,1440px)] xl:max-w-[min(96vw,1440px)]"
         >
           {loading || !listing ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               Загрузка...
             </div>
           ) : (
-            <div className="space-y-5 pb-8">
+            <div className="flex h-full min-h-0 flex-col">
+              <div className="shrink-0 border-b bg-background/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur xl:hidden">
+                <p className="truncate pr-10 text-xs text-muted-foreground">{listing.product_article}</p>
+                <p className="truncate pr-10 text-sm font-medium">{listing.product_name}</p>
+                <div className="mt-3 grid grid-cols-2 rounded-lg bg-muted p-1">
+                  <button
+                    type="button"
+                    onClick={() => setActivePanel('listing')}
+                    className={`flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${activePanel === 'listing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
+                  >
+                    <FileText className="h-4 w-4" /> Объявление
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActivePanel('pricing')}
+                    className={`flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${activePanel === 'pricing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
+                  >
+                    <BarChart3 className="h-4 w-4" /> Цены
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(600px,1fr)_minmax(520px,560px)]">
+                <section className={`${activePanel === 'pricing' ? 'block' : 'hidden'} min-h-0 overflow-y-auto overscroll-contain border-r xl:block`}>
+                  <MarketPricingPanel
+                    listingId={listing.id}
+                    listingStatus={listing.status}
+                    onApplyPrice={applyMarketPrice}
+                  />
+                </section>
+
+                <section className={`${activePanel === 'listing' ? 'block' : 'hidden'} min-h-0 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] xl:block`}>
+                  <div className="space-y-5 p-4 pb-8 sm:p-5 sm:pb-8">
               <SheetHeader>
                 <div className="flex items-start gap-3">
                   <SheetTitle className="flex-1 leading-tight">
@@ -907,10 +973,15 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                       setEditPrice(e.target.value);
                       setEditMarginPct('');
                     }}
-                    disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                    disabled={listing.status === 'deleted' || busy || (listing.status === 'active' && !marketPriceApplied)}
                     inputMode="decimal"
                     className="h-9 min-w-0 text-sm"
                   />
+                  {marketPriceApplied && (
+                    <p className="text-xs text-emerald-700 dark:text-emerald-300">
+                      Рыночная цена подготовлена. Она применится только после сохранения.
+                    </p>
+                  )}
                 </div>
               </div>
 
@@ -1095,10 +1166,10 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
               )}
 
               {/* Кнопки действий */}
-              <div className="flex flex-col gap-2 pt-2">
+              <div className="sticky bottom-0 z-10 -mx-4 flex flex-col gap-2 border-t bg-background/95 px-4 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] backdrop-blur sm:-mx-5 sm:px-5">
                 {editing ? (
                   <>
-                    <Button onClick={handleSaveEdit} disabled={busy || editingBrand} className="w-full">
+                    <Button onClick={handleSaveEdit} disabled={busy || editingBrand || (listing.status === 'active' && !marketPriceApplied)} className="w-full">
                       {actionLoading === 'save' ? 'Сохраняем...' : 'Сохранить'}
                     </Button>
                     <Button
@@ -1110,6 +1181,8 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                         setEditBrand(listing.product_brand || '');
                         setEditAccountId(String(listing.account_id));
                         setEditPrice(listing.price_on_listing);
+                        setEditMarginPct(listing.margin_pct ?? listing.catalog_category?.default_margin_pct ?? '');
+                        setMarketPriceApplied(false);
                         setEditAdType(listing.ad_type || DEFAULT_AD_TYPE);
                         setEditAddress(listing.address_override || '');
                         setEditSellerAddressId(listing.seller_address_id_override || '');
@@ -1125,7 +1198,7 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                   </>
                 ) : (
                   <>
-                    <Button onClick={handleSaveEdit} disabled={busy || editingBrand} className="w-full">
+                    <Button onClick={handleSaveEdit} disabled={busy || editingBrand || (listing.status === 'active' && !marketPriceApplied)} className="w-full">
                       {actionLoading === 'save' ? 'Сохраняем...' : 'Сохранить'}
                     </Button>
                     {isReview && listing.avito_brand_valid && (
@@ -1203,6 +1276,9 @@ export default function ListingDrawer({ listingId, onClose, onActionDone }: Prop
                     </Button>
                   </>
                 )}
+              </div>
+                  </div>
+                </section>
               </div>
             </div>
           )}
