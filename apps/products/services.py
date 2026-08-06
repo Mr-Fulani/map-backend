@@ -5,8 +5,9 @@ from decimal import Decimal
 
 from django.utils.timezone import now
 
-from apps.products.enrichment import make_value_hash, normalize_part_code
+from apps.products.attribute_presentation import normalize_attribute_text
 from apps.products.catalog_category_seed import BASE_CATEGORY_TEMPLATE_TREE
+from apps.products.enrichment import make_value_hash, normalize_part_code
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, PartCategory,
     Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
@@ -954,19 +955,24 @@ class ProductEnrichmentService:
                 and ProductBrandService.normalize_brand(parsed.brand)
                 != ProductBrandService.normalize_brand(product.brand)
             )
-            ProductAttribute.objects.bulk_create([
-                ProductAttribute(
+            attribute_objects = []
+            for raw_name, raw_value in parsed.attributes.items():
+                name, value = normalize_attribute_text(raw_name, raw_value)
+                if not name or not value:
+                    continue
+                attribute_objects.append(ProductAttribute(
                     tenant=tenant,
                     product=product,
                     source_id=source_id,
                     name=name[:150],
-                    raw_name=name[:150],
+                    raw_name=raw_name[:150],
                     value=value,
                     value_hash=make_value_hash(value),
-                )
-                for name, value in parsed.attributes.items()
-                if name and value
-            ], ignore_conflicts=True)
+                ))
+            ProductAttribute.objects.bulk_create(
+                attribute_objects,
+                ignore_conflicts=True,
+            )
 
             cross_objects = [
                 ProductCrossCode(

@@ -347,7 +347,7 @@ class ProductParseJobSerializer(serializers.ModelSerializer):
 
 
 class ProductDetailSerializer(ProductSerializer):
-    attributes = ProductAttributeSerializer(many=True, read_only=True)
+    attributes = serializers.SerializerMethodField()
     cross_codes = ProductCrossCodeSerializer(many=True, read_only=True)
     fitments = VehicleFitmentSerializer(many=True, read_only=True)
     enrichment_facts = ProductEnrichmentFactSerializer(many=True, read_only=True)
@@ -359,6 +359,17 @@ class ProductDetailSerializer(ProductSerializer):
             'attributes', 'cross_codes', 'fitments', 'enrichment_facts',
             'latest_parse_job', 'parse_jobs_summary',
         ]
+
+    def get_attributes(self, obj):
+        from apps.products.attribute_presentation import presented_attributes
+
+        result = []
+        for item, name, value in presented_attributes(obj.attributes.all()):
+            payload = ProductAttributeSerializer(item).data
+            payload['name'] = name
+            payload['value'] = value
+            result.append(payload)
+        return result
 
     def _jobs_by_priority(self, obj):
         """Последний job на каждый source_id, отсортированный по убыванию приоритета."""

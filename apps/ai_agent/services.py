@@ -1,4 +1,5 @@
 import json
+import re
 import time
 from decimal import Decimal
 
@@ -336,6 +337,27 @@ class DescriptionAgent:
             raise ValidationError(
                 'Полное описание потеряло доступные разделы: '
                 + ', '.join(missing_sections)
+            )
+
+        from apps.products.attribute_presentation import presented_attributes
+        duplicate_wva = []
+        for _item, name, value in presented_attributes(
+            product.attributes.all(),
+            for_ai=True,
+        ):
+            if name.casefold() != 'wva':
+                continue
+            for code in re.findall(r'[A-ZА-ЯЁ0-9]{4,}', value.upper()):
+                normalized_code = ''.join(
+                    character for character in code.casefold()
+                    if character.isalnum()
+                )
+                if normalized.count(normalized_code) > 1:
+                    duplicate_wva.append(code)
+        if duplicate_wva:
+            raise ValidationError(
+                'Описание повторяет WVA-номера: '
+                + ', '.join(sorted(set(duplicate_wva)))
             )
 
     @staticmethod

@@ -1,6 +1,7 @@
 import re
 from dataclasses import dataclass, field
 
+from apps.products.attribute_presentation import presented_attributes
 from apps.products.models import ProductEnrichmentFact
 from apps.products.source_policy import should_auto_apply_fitment, should_auto_apply_record
 
@@ -63,18 +64,19 @@ class ProductAIEnrichmentContextBuilder:
     def build(self, product) -> ProductAIEnrichmentContext:
         context = ProductAIEnrichmentContext()
         attributes = list(product.attributes.all().order_by('name')[:12])
+        display_attributes = presented_attributes(attributes, for_ai=True)
         cross_codes = list(product.cross_codes.all().order_by('manufacturer', 'code')[:20])
         fitments = list(product.fitments.all().order_by('make', 'model', 'generation')[:50])
         facts = list(product.enrichment_facts.all().order_by('fact_type', 'name')[:30])
         trusted_fact_count = sum(1 for fact in facts if should_auto_apply_record(fact))
 
-        self._add_attributes(context, attributes)
+        self._add_attributes(context, display_attributes)
         self._add_cross_codes(context, cross_codes)
         self._add_fitments(context, fitments)
         self._add_facts(context, facts)
         context.content_profile = self._build_content_profile(
             product=product,
-            attributes=attributes,
+            attributes=display_attributes,
             cross_codes=cross_codes,
             fitments=context.trusted_fitments,
             trusted_fact_count=trusted_fact_count,
@@ -125,7 +127,7 @@ class ProductAIEnrichmentContextBuilder:
     def _add_attributes(context: ProductAIEnrichmentContext, attributes) -> None:
         if not attributes:
             return
-        values = '; '.join(f'{item.name}: {item.value}' for item in attributes)
+        values = '; '.join(f'{name}: {value}' for _item, name, value in attributes)
         context.trusted_lines.append(f'Характеристики: {values}')
 
     def _add_cross_codes(self, context: ProductAIEnrichmentContext, cross_codes) -> None:

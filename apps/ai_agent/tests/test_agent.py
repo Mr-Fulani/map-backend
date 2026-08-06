@@ -97,6 +97,10 @@ class TestValidators:
             validate_description(
                 'Колодки предназначены для замены изношенных колодок в тормозной системе.'
             )
+        with pytest.raises(ValidationError, match='без пользы'):
+            validate_description('Перед заказом сверьте деталь по VIN/номерной детали.')
+        with pytest.raises(ValidationError, match='без пользы'):
+            validate_description('Совместимость: подтверждено 6 записей.')
 
     def test_strip_contacts_removes_phone(self):
         text = 'Звоните +7 (999) 123-45-67 для уточнения'
@@ -399,6 +403,44 @@ class TestDescriptionAgent:
             **weak,
             'description': strong_description,
         })
+
+        ProductEnrichmentService.create_attribute(
+            tenant=tenant,
+            product=product,
+            name='WVA номер',
+            value='22437, 22438',
+        )
+        with pytest.raises(ValidationError, match='повторяет WVA'):
+            DescriptionAgent._validate_rich_description(product, {
+                **weak,
+                'description': strong_description + '\nWVA: 22437, 22438. WVA: 22437, 22438.',
+            })
+
+    def test_prompt_attributes_are_clean_and_deduplicated(self):
+        tenant = make_tenant('clean-attributes-agent-co')
+        product = make_product(tenant)
+        attributes = [
+            ('WVA номер', '22437, 22438'),
+            ('Торговые номера', '22437, 22438'),
+            (
+                'Комплектность',
+                'Без аксессуаров, с винтами тормозных сателлитов, с прижимной пластиной',
+            ),
+            ('Номер EAN/Штрих-код', '8020584086988'),
+        ]
+        for name, value in attributes:
+            ProductEnrichmentService.create_attribute(
+                tenant=tenant, product=product, name=name, value=value,
+            )
+
+        message = DescriptionAgent()._build_message(product)
+
+        assert 'WVA: 22437, 22438' in message
+        assert 'Торговые номера' not in message
+        assert 'сателлит' not in message
+        assert 'болтами тормозного суппорта' in message
+        assert 'противоскрипной пластиной' in message
+        assert '8020584086988' not in message
 
     def test_build_message_uses_vehicle_make_from_cross_without_fitment(self):
         tenant = make_tenant('cross-make-agent-co')

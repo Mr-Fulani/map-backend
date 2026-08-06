@@ -35,6 +35,8 @@ LOW_VALUE_PHRASES = [
     'предназначены для замены изношенных',
     'служит для исправной работы',
     'является важной частью автомобиля',
+    'конкретные комплектации в диапазонах дат',
+    'vin/номер',
 ]
 
 # Регулярка для удаления контактных данных из текста объявления
@@ -97,6 +99,8 @@ def validate_description(text: str) -> str:
             f'Неконкретная применяемость в описании: {", ".join(vague_fitment)}'
         )
     low_value = [phrase for phrase in LOW_VALUE_PHRASES if phrase in lower]
+    if re.search(r'\b\d+\s+(?:запис|подтверждени)', lower):
+        low_value.append('внутренний счётчик применяемости')
     if low_value:
         raise LowValueContentError(
             f'Шаблонная фраза без пользы для покупателя: {", ".join(low_value)}'
