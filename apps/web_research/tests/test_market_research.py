@@ -10,13 +10,13 @@ from apps.marketplaces.models import Listing, MarketplaceAccount
 from apps.products.models import Product
 from apps.tenants.models import TenantUser
 from apps.tenants.services import TenantService
-from apps.web_research.market import listing_market_comparison
+from apps.web_research.market import _difference, listing_market_comparison
 from apps.web_research.models import (
     CompetitorOffer, TenantWebResearchSettings, WebResearchEvidence, WebResearchRun,
 )
 from apps.web_research.offer_extraction import save_deterministic_offers
 from apps.web_research.prompts import WEB_RESEARCH_OUTPUT_SCHEMA
-from apps.web_research.search_context import build_search_contexts
+from apps.web_research.search_context import build_search_contexts, localize_query
 
 
 def make_tenant(slug):
@@ -50,6 +50,14 @@ def test_web_research_output_schema_is_strict_for_openai():
     assert_strict_object(WEB_RESEARCH_OUTPUT_SCHEMA)
 
 
+def test_price_difference_describes_subject_relative_to_reference():
+    cheaper = _difference(Decimal('4220'), Decimal('5092'))
+    dearer = _difference(Decimal('4220'), Decimal('3637'))
+
+    assert cheaper == {'amount': '-872.00', 'percent': '-17.1', 'direction': 'below'}
+    assert dearer == {'amount': '583.00', 'percent': '16.0', 'direction': 'above'}
+
+
 @pytest.mark.django_db
 def test_russia_cis_builds_one_context_per_selected_country():
     tenant, _ = make_tenant('geo-cis')
@@ -65,6 +73,22 @@ def test_russia_cis_builds_one_context_per_selected_country():
     assert [context.country_code for context in contexts] == ['RU', 'BY', 'KZ']
     assert all(context.market_intent == 'pricing' for context in contexts)
     assert contexts[0].include_domains == ('example.ru',)
+
+
+@pytest.mark.django_db
+def test_custom_region_supports_non_cis_countries_with_localized_queries():
+    tenant, _ = make_tenant('geo-custom-world')
+    settings = TenantWebResearchSettings.objects.create(
+        tenant=tenant,
+        region_preset=TenantWebResearchSettings.RegionPreset.CUSTOM,
+        country_codes=['DE', 'TR'],
+    )
+
+    contexts = build_search_contexts(settings, purpose=WebResearchRun.Purpose.PRICING)
+
+    assert [context.country_code for context in contexts] == ['DE', 'TR']
+    assert localize_query('BREMBO P50136', contexts[0]).endswith('Германия')
+    assert localize_query('BREMBO P50136', contexts[1]).endswith('Турция')
 
 
 @pytest.mark.django_db
@@ -178,6 +202,17 @@ def test_settings_are_tenant_scoped_and_operator_cannot_update():
     assert response.status_code == 200
     assert tenant_a.web_research_settings.price_ttl_hours == 12
     assert tenant_b.web_research_settings.price_ttl_hours == 72
+
+    geography = owner_client.put(
+        '/api/v1/web-research/settings/',
+        data={'region_preset': 'custom', 'country_codes': ['RU', 'DE', 'TR']},
+        content_type='application/json',
+    )
+    reloaded = owner_client.get('/api/v1/web-research/settings/')
+
+    assert geography.status_code == 200
+    assert reloaded.json()['data']['region_preset'] == 'custom'
+    assert reloaded.json()['data']['country_codes'] == ['RU', 'DE', 'TR']
 
     membership = TenantService.add_user(
         tenant_a, 'operator-settings@test.com', TenantUser.ROLE_OPERATOR,

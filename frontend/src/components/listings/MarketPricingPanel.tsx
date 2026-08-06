@@ -118,7 +118,30 @@ const RUN_STATUS: Record<string, string> = {
 const COUNTRY_LABELS: Record<string, string> = {
   RU: 'Россия', BY: 'Беларусь', KZ: 'Казахстан', AM: 'Армения', KG: 'Кыргызстан',
   UZ: 'Узбекистан', AZ: 'Азербайджан', MD: 'Молдова', TJ: 'Таджикистан',
+  GE: 'Грузия', UA: 'Украина', TR: 'Турция', DE: 'Германия', PL: 'Польша',
+  CZ: 'Чехия', LT: 'Литва', LV: 'Латвия', EE: 'Эстония', CN: 'Китай',
+  KR: 'Южная Корея', JP: 'Япония', AE: 'ОАЭ', US: 'США',
+  GB: 'Великобритания', FR: 'Франция', IT: 'Италия', ES: 'Испания', NL: 'Нидерланды',
 };
+
+const FILTER_STORAGE_KEY = 'market-pricing-filters-v1';
+
+interface SavedFilters {
+  sort?: 'price' | 'availability' | 'confidence';
+  country?: string;
+  onlyInStock?: boolean;
+  onlyNew?: boolean;
+  showAnalogues?: boolean;
+}
+
+function savedFilters(): SavedFilters {
+  if (typeof window === 'undefined') return {};
+  try {
+    return JSON.parse(window.localStorage.getItem(FILTER_STORAGE_KEY) || '{}') as SavedFilters;
+  } catch {
+    return {};
+  }
+}
 
 function rubles(value: string | null | undefined) {
   if (!value) return '—';
@@ -130,26 +153,23 @@ function dateTime(value: string | null | undefined) {
   return new Date(value).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
 }
 
-function DifferenceBadge({ difference }: { difference: Difference | null }) {
-  if (!difference) return null;
-  const positive = difference.direction === 'below';
-  const className = positive
-    ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-    : difference.direction === 'above'
-      ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-      : '';
-  return (
-    <Badge variant="outline" className={className}>
-      {difference.direction === 'above' ? '+' : difference.direction === 'below' ? '−' : ''}
-      {rubles(String(Math.abs(Number(difference.amount))))} · {Math.abs(Number(difference.percent))}%
-    </Badge>
-  );
+function comparisonSentence(difference: Difference | null, reference: string) {
+  if (!difference) return undefined;
+  if (difference.direction === 'equal') return 'Разницы нет';
+  const direction = difference.direction === 'above' ? 'Дороже' : 'Дешевле';
+  const percent = Math.abs(Number(difference.percent)).toLocaleString('ru-RU');
+  return `${direction} ${reference}: на ${percent}% (${rubles(String(Math.abs(Number(difference.amount))))})`;
 }
 
-function percentHint(difference: Difference | null, suffix: string) {
-  if (!difference) return undefined;
-  const sign = difference.direction === 'above' ? '+' : difference.direction === 'below' ? '−' : '';
-  return `${sign}${Math.abs(Number(difference.percent))}% ${suffix}`;
+function ComparisonLine({ difference, reference }: { difference: Difference | null; reference: string }) {
+  const text = comparisonSentence(difference, reference);
+  if (!text) return null;
+  const className = difference?.direction === 'below'
+    ? 'border-emerald-500/25 bg-emerald-500/5 text-emerald-800 dark:text-emerald-200'
+    : difference?.direction === 'above'
+      ? 'border-amber-500/25 bg-amber-500/5 text-amber-800 dark:text-amber-200'
+      : 'bg-muted/30 text-muted-foreground';
+  return <p className={`rounded-md border px-2.5 py-1.5 text-xs leading-relaxed ${className}`}>{text}</p>;
 }
 
 function SummaryCard({ label, value, hint, tone = 'neutral' }: {
@@ -185,40 +205,42 @@ function Filters({
   setShowAnalogues: (value: boolean) => void;
 }) {
   return (
-    <div className="grid gap-3 md:grid-cols-4 md:items-center">
-      <label className="grid gap-1 text-xs text-muted-foreground">
-        Страна
+    <div className="grid gap-3 md:grid-cols-4">
+      <label className="grid min-h-20 gap-1 rounded-lg border bg-card p-3 text-xs text-muted-foreground">
+        <span className="font-medium text-foreground">Страна продавца</span>
         <select
           value={country}
           onChange={(event) => setCountry(event.target.value)}
           className="h-9 rounded-md border bg-background px-3 text-sm text-foreground"
         >
-          <option value="">Все страны</option>
+          <option value="">Все найденные страны</option>
           {countries.map((code) => <option key={code} value={code}>{COUNTRY_LABELS[code] ?? code}</option>)}
         </select>
       </label>
-      <label className="flex items-center justify-between gap-3 text-sm">
-        Только в наличии
-        <Switch checked={onlyInStock} onCheckedChange={setOnlyInStock} />
-      </label>
-      <label className="flex items-center justify-between gap-3 text-sm">
-        Только новые
-        <Switch checked={onlyNew} onCheckedChange={setOnlyNew} />
-      </label>
-      <label className="flex items-center justify-between gap-3 text-sm">
-        Возможные аналоги
-        <Switch checked={showAnalogues} onCheckedChange={setShowAnalogues} />
-      </label>
+      {[
+        { title: 'Только в наличии', hint: 'Скрыть отсутствующие', checked: onlyInStock, change: setOnlyInStock },
+        { title: 'Только новые', hint: 'Скрыть товары б/у', checked: onlyNew, change: setOnlyNew },
+        { title: 'Возможные аналоги', hint: 'Показать неточные замены', checked: showAnalogues, change: setShowAnalogues },
+      ].map((item) => (
+        <div key={item.title} className={`flex min-h-20 items-center justify-between gap-3 rounded-lg border p-3 transition-colors ${item.checked ? 'border-primary/35 bg-primary/5' : 'bg-card'}`}>
+          <span>
+            <span className="block text-sm font-medium">{item.title}</span>
+            <span className="mt-1 block text-[11px] text-muted-foreground">{item.checked ? 'Включено' : item.hint}</span>
+          </span>
+          <Switch aria-label={item.title} checked={item.checked} onCheckedChange={item.change} />
+        </div>
+      ))}
     </div>
   );
 }
 
 export default function MarketPricingPanel({
-  listingId, listingStatus, onApplyPrice,
+  listingId, listingStatus, onApplyPrice, refreshKey = 0,
 }: {
   listingId: number;
   listingStatus: string;
   onApplyPrice: (price: string) => void;
+  refreshKey?: number;
 }) {
   const [comparison, setComparison] = useState<Comparison | null>(null);
   const [loading, setLoading] = useState(true);
@@ -229,9 +251,11 @@ export default function MarketPricingPanel({
   const [onlyInStock, setOnlyInStock] = useState(false);
   const [onlyNew, setOnlyNew] = useState(false);
   const [showAnalogues, setShowAnalogues] = useState(false);
+  const [filtersReady, setFiltersReady] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
   const load = useCallback(async (quiet = false) => {
+    void refreshKey;
     if (!quiet) setLoading(true);
     try {
       const response = await listingApi.marketComparison(listingId);
@@ -244,9 +268,26 @@ export default function MarketPricingPanel({
     } finally {
       if (!quiet) setLoading(false);
     }
-  }, [listingId]);
+  }, [listingId, refreshKey]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    const saved = savedFilters();
+    if (saved.sort) setSort(saved.sort);
+    setCountry(saved.country ?? '');
+    setOnlyInStock(saved.onlyInStock ?? false);
+    setOnlyNew(saved.onlyNew ?? false);
+    setShowAnalogues(saved.showAnalogues ?? false);
+    setFiltersReady(true);
+  }, []);
+
+  useEffect(() => {
+    if (!filtersReady) return;
+    window.localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
+      sort, country, onlyInStock, onlyNew, showAnalogues,
+    }));
+  }, [country, filtersReady, onlyInStock, onlyNew, showAnalogues, sort]);
 
   useEffect(() => {
     if (!refreshingRunId) return;
@@ -358,28 +399,31 @@ export default function MarketPricingPanel({
       <section className="space-y-3">
         <h3 className="text-sm font-medium">Сводка цен</h3>
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 2xl:grid-cols-4">
-          <SummaryCard label="Базовая цена товара" value={rubles(comparison.base_price)} />
+          <SummaryCard label="Наша базовая цена товара" value={rubles(comparison.base_price)} />
           <SummaryCard
-            label="Цена объявления"
+            label="Цена вашего объявления"
             value={rubles(comparison.listing_price)}
-            hint={percentHint(comparison.statistics.listing_vs_base, 'к базовой цене')}
+            hint={comparisonSentence(comparison.statistics.listing_vs_base, 'нашей базовой цены')}
             tone={comparison.statistics.listing_vs_base?.direction === 'above' ? 'warning' : 'positive'}
           />
-          <SummaryCard label="Минимум подтверждённый" value={rubles(comparison.statistics.minimum)} />
+          <SummaryCard label="Самая низкая подтверждённая цена" value={rubles(comparison.statistics.minimum)} />
           <SummaryCard
-            label="Медиана рынка"
+            label="Типичная цена на рынке"
             value={rubles(comparison.statistics.median)}
-            hint={percentHint(comparison.statistics.median_vs_base, 'к базовой цене')}
+            hint={comparisonSentence(comparison.statistics.median_vs_base, 'нашей базовой цены')}
           />
-          <SummaryCard label="Максимум подтверждённый" value={rubles(comparison.statistics.maximum)} />
-          <SummaryCard label="Продавцов в наличии" value={String(comparison.statistics.available_seller_count)} hint={`${comparison.statistics.verified_offer_count} цен в статистике`} />
+          <SummaryCard label="Самая высокая подтверждённая цена" value={rubles(comparison.statistics.maximum)} />
+          <SummaryCard label="Продавцов с товаром в наличии" value={String(comparison.statistics.available_seller_count)} hint={`Подтверждённых предложений в расчёте: ${comparison.statistics.verified_offer_count}`} />
           <SummaryCard
-            label="Объявление к медиане"
-            value={difference ? `${difference.direction === 'above' ? '+' : difference.direction === 'below' ? '−' : ''}${rubles(String(Math.abs(Number(difference.amount))))}` : '—'}
-            hint={difference ? `${Math.abs(Number(difference.percent))}%` : 'Недостаточно данных'}
+            label="Цена объявления относительно рынка"
+            value={difference ? `${Math.abs(Number(difference.percent)).toLocaleString('ru-RU')}%` : '—'}
+            hint={comparisonSentence(difference, 'типичной цены на рынке') ?? 'Недостаточно данных'}
             tone={differenceTone}
           />
         </div>
+        <p className="text-xs text-muted-foreground">
+          Типичная цена — середина подтверждённых предложений. Единичные слишком дешёвые или дорогие цены меньше влияют на неё.
+        </p>
       </section>
 
       <section className="space-y-3">
@@ -389,9 +433,9 @@ export default function MarketPricingPanel({
             <article key={offer.source_id} className="rounded-xl border bg-card p-4">
               <div className="flex items-start justify-between gap-2"><p className="font-medium">{offer.source_label}</p><Badge variant="outline">{offer.availability_label}</Badge></div>
               <p className="mt-3 text-xl font-semibold tabular-nums">{offer.price_is_from && <span className="mr-1 text-xs font-normal text-muted-foreground">от</span>}{offer.price ? `${Number(offer.price).toLocaleString('ru-RU')} ${offer.currency === 'RUB' ? '₽' : offer.currency}` : '—'}</p>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {offer.difference_from_base && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">К базе <DifferenceBadge difference={offer.difference_from_base} /></span>}
-                {offer.difference_from_listing && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">Объявление <DifferenceBadge difference={offer.difference_from_listing} /></span>}
+              <div className="mt-2 grid gap-1.5">
+                <ComparisonLine difference={offer.difference_from_base} reference="нашей базовой цены" />
+                <ComparisonLine difference={offer.difference_from_listing} reference="цены объявления" />
               </div>
               <div className="mt-3 space-y-1 text-xs text-muted-foreground">
                 {offer.quantity !== null && <p>Количество: {offer.quantity}</p>}
@@ -426,9 +470,9 @@ export default function MarketPricingPanel({
                 </div>
                 <p className="mt-3 line-clamp-2 text-sm">{offer.title || 'Название не указано'}</p>
                 <div className="mt-3 flex flex-wrap items-end justify-between gap-2"><div><p className="text-xl font-semibold tabular-nums">{offer.is_price_from && <span className="mr-1 text-xs font-normal text-muted-foreground">от</span>}{Number(offer.price).toLocaleString('ru-RU')} {offer.currency === 'RUB' ? '₽' : offer.currency}</p>{offer.currency !== 'RUB' && <p className="text-xs text-muted-foreground">{offer.normalized_price ? `≈ ${rubles(offer.normalized_price)}` : 'Конвертация недоступна'}</p>}</div><Badge variant="outline">{offer.availability_label}</Badge></div>
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {offer.difference_from_base && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">К базе <DifferenceBadge difference={offer.difference_from_base} /></span>}
-                  {offer.difference_from_listing && <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">Объявление <DifferenceBadge difference={offer.difference_from_listing} /></span>}
+                <div className="mt-2 grid gap-1.5">
+                  <ComparisonLine difference={offer.difference_from_base} reference="нашей базовой цены" />
+                  <ComparisonLine difference={offer.difference_from_listing} reference="цены объявления" />
                 </div>
                 <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs"><dt className="text-muted-foreground">Состояние</dt><dd>{offer.condition_label}</dd><dt className="text-muted-foreground">Точность</dt><dd>{Math.round(offer.match_confidence * 100)}%</dd><dt className="text-muted-foreground">Найдено по</dt><dd className="truncate" title={offer.matched_code || offer.article}>{offer.matched_code || offer.article || 'не подтверждено'}</dd><dt className="text-muted-foreground">Проверено</dt><dd>{dateTime(offer.captured_at)}</dd>{offer.quantity !== null && <><dt className="text-muted-foreground">Количество</dt><dd>{offer.quantity}</dd></>}{offer.delivery_text && <><dt className="text-muted-foreground">Доставка</dt><dd>{offer.delivery_text}</dd></>}</dl>
                 {offer.match_reasons.length > 0 && <p className="mt-3 line-clamp-2 text-xs text-muted-foreground">{offer.match_reasons.join(' · ')}</p>}

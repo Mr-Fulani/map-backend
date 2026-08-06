@@ -15,13 +15,14 @@ def _money(value):
     return str(value.quantize(Decimal('0.01'))) if value is not None else None
 
 
-def _difference(reference: Decimal | None, value: Decimal | None):
-    if reference is None or value is None or value <= 0:
+def _difference(subject: Decimal | None, reference: Decimal | None):
+    """Return how much ``subject`` is above or below ``reference``."""
+    if subject is None or reference is None or reference <= 0:
         return None
-    amount = reference - value
+    amount = subject - reference
     return {
         'amount': _money(amount),
-        'percent': str((amount / value * Decimal('100')).quantize(Decimal('0.1'))),
+        'percent': str((amount / reference * Decimal('100')).quantize(Decimal('0.1'))),
         'direction': 'above' if amount > 0 else 'below' if amount < 0 else 'equal',
     }
 
@@ -54,7 +55,7 @@ def catalog_offers(product, *, listing_price: Decimal | None = None) -> list[dic
             'checked_at': (job.finished_at or job.updated_at) if job else None,
             'url': job.source_url if job else '',
             'difference_from_listing': _difference(
-                listing_price, job.source_price if job else None,
+                job.source_price if job else None, listing_price,
             ),
             'difference_from_base': _difference(
                 job.source_price if job else None, product.price,

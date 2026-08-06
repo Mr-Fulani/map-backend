@@ -1218,7 +1218,7 @@ export default function ProductDetailPage() {
                     <div className="max-w-2xl">
                       <p className="text-sm font-medium">Полное сравнение рынка — в листинге</p>
                       <p className="mt-1 text-xs text-muted-foreground">
-                        Больше предложений, рыночная медиана и сравнение с ценой объявления
+                        Больше предложений, типичная цена на рынке и сравнение с ценой объявления
                         доступны в рабочем пространстве конкретного листинга.
                       </p>
                     </div>

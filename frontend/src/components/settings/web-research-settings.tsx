@@ -30,10 +30,18 @@ interface ResearchSettings {
   updated_at: string;
 }
 
-const COUNTRY_OPTIONS = [
+const CIS_COUNTRIES = [
   ['RU', 'Россия'], ['BY', 'Беларусь'], ['KZ', 'Казахстан'],
   ['AM', 'Армения'], ['KG', 'Кыргызстан'], ['UZ', 'Узбекистан'],
   ['AZ', 'Азербайджан'], ['MD', 'Молдова'], ['TJ', 'Таджикистан'],
+] as const;
+
+const OTHER_COUNTRIES = [
+  ['GE', 'Грузия'], ['TR', 'Турция'], ['DE', 'Германия'], ['PL', 'Польша'],
+  ['CZ', 'Чехия'], ['LT', 'Литва'], ['LV', 'Латвия'], ['EE', 'Эстония'],
+  ['CN', 'Китай'], ['KR', 'Южная Корея'], ['JP', 'Япония'], ['AE', 'ОАЭ'],
+  ['US', 'США'], ['GB', 'Великобритания'], ['FR', 'Франция'], ['IT', 'Италия'],
+  ['ES', 'Испания'], ['NL', 'Нидерланды'], ['UA', 'Украина'],
 ] as const;
 
 function ToggleRow({
@@ -46,12 +54,15 @@ function ToggleRow({
   disabled?: boolean;
 }) {
   return (
-    <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+    <div className={`flex items-start justify-between gap-4 rounded-lg border p-3 transition-colors ${checked ? 'border-primary/35 bg-primary/5' : 'bg-card'}`}>
       <div className="min-w-0">
         <p className="text-sm font-medium">{title}</p>
         <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+        <p className={`mt-1 text-[11px] font-medium ${checked ? 'text-primary' : 'text-muted-foreground'}`}>
+          {checked ? 'Включено' : 'Выключено'}
+        </p>
       </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
+      <Switch aria-label={title} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} />
     </div>
   );
 }
@@ -61,6 +72,7 @@ export function WebResearchSettingsCard() {
   const [canEdit, setCanEdit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savedFeedback, setSavedFeedback] = useState(false);
 
   useEffect(() => {
     webResearchApi.settings()
@@ -76,30 +88,56 @@ export function WebResearchSettingsCard() {
     return <Skeleton className="h-[520px] w-full rounded-xl" />;
   }
 
-  const update = <K extends keyof ResearchSettings>(key: K, value: ResearchSettings[K]) => {
-    setSettings((current) => current ? { ...current, [key]: value } : current);
+  const persist = async (next: ResearchSettings): Promise<boolean> => {
+    const previous = settings;
+    setSettings(next);
+    setSaving(true);
+    setSavedFeedback(false);
+    try {
+      const response = await webResearchApi.updateSettings(next);
+      setSettings(response.data.data);
+      setSavedFeedback(true);
+      window.setTimeout(() => setSavedFeedback(false), 2500);
+      return true;
+    } catch (error: unknown) {
+      setSettings(previous);
+      const data = (error as { response?: { data?: Record<string, unknown> } })?.response?.data;
+      const detail = typeof data?.detail === 'string' ? data.detail : 'Проверьте выбранные значения';
+      toast.error(detail);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateAndSave = <K extends keyof ResearchSettings>(key: K, value: ResearchSettings[K]) => {
+    void persist({ ...settings, [key]: value });
+  };
+
+  const changeRegion = (region: ResearchSettings['region_preset']) => {
+    const countryCodes = region === 'russia'
+      ? ['RU']
+      : region === 'russia_cis'
+        ? CIS_COUNTRIES.map(([code]) => code)
+        : region === 'worldwide'
+          ? []
+          : settings.country_codes.length > 0 ? settings.country_codes : ['RU'];
+    void persist({ ...settings, region_preset: region, country_codes: countryCodes });
   };
 
   const toggleCountry = (code: string) => {
     const next = settings.country_codes.includes(code)
       ? settings.country_codes.filter((item) => item !== code)
       : [...settings.country_codes, code];
-    update('country_codes', next);
+    if (next.length === 0) {
+      toast.info('Выберите хотя бы одну страну');
+      return;
+    }
+    void persist({ ...settings, country_codes: next });
   };
 
   const save = async () => {
-    setSaving(true);
-    try {
-      const response = await webResearchApi.updateSettings(settings);
-      setSettings(response.data.data);
-      toast.success('Настройки интернет-исследования сохранены');
-    } catch (error: unknown) {
-      const data = (error as { response?: { data?: Record<string, unknown> } })?.response?.data;
-      const detail = typeof data?.detail === 'string' ? data.detail : 'Проверьте выбранные значения';
-      toast.error(detail);
-    } finally {
-      setSaving(false);
-    }
+    if (await persist(settings)) toast.success('Настройки интернет-исследования сохранены');
   };
 
   return (
@@ -124,8 +162,8 @@ export function WebResearchSettingsCard() {
           title="Искать рыночные предложения"
           description="Разрешает ручной поиск цен из drawer листинга. Автоматические периодические запуски не включаются."
           checked={settings.market_research_enabled}
-          onCheckedChange={(value) => update('market_research_enabled', value)}
-          disabled={!canEdit}
+          onCheckedChange={(value) => updateAndSave('market_research_enabled', value)}
+          disabled={!canEdit || saving}
         />
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -134,17 +172,17 @@ export function WebResearchSettingsCard() {
             <select
               id="research-region"
               value={settings.region_preset}
-              onChange={(event) => update('region_preset', event.target.value as ResearchSettings['region_preset'])}
-              disabled={!canEdit}
+              onChange={(event) => changeRegion(event.target.value as ResearchSettings['region_preset'])}
+              disabled={!canEdit || saving}
               className="h-10 w-full rounded-md border bg-background px-3 text-sm"
             >
               <option value="russia">Россия</option>
-              <option value="russia_cis">Россия и СНГ</option>
+              <option value="russia_cis">Россия и страны СНГ</option>
               <option value="custom">Выбранные страны</option>
-              <option value="worldwide">Без ограничения</option>
+              <option value="worldwide">Весь мир — без ограничения</option>
             </select>
             <p className="text-xs text-muted-foreground">
-              Для каждой выбранной страны выполняется отдельный локализованный запрос и проверяется страна продавца.
+              Выбор сохраняется автоматически. Для каждой страны выполняется отдельный локализованный запрос.
             </p>
           </div>
           <div className="space-y-2">
@@ -155,8 +193,9 @@ export function WebResearchSettingsCard() {
               min={1}
               max={720}
               value={settings.price_ttl_hours}
-              onChange={(event) => update('price_ttl_hours', Number(event.target.value))}
-              disabled={!canEdit}
+              onChange={(event) => setSettings({ ...settings, price_ttl_hours: Number(event.target.value) })}
+              onBlur={() => void persist(settings)}
+              disabled={!canEdit || saving}
             />
             <p className="text-xs text-muted-foreground">
               Пока данные свежие, обычное обновление не расходует платный поисковый запрос.
@@ -164,18 +203,44 @@ export function WebResearchSettingsCard() {
           </div>
         </div>
 
-        {(settings.region_preset === 'russia_cis' || settings.region_preset === 'custom') && (
+        {settings.region_preset === 'russia_cis' && (
+          <div className="rounded-lg border bg-muted/25 p-3">
+            <p className="text-sm font-medium">Где будет выполняться поиск</p>
+            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              {CIS_COUNTRIES.map(([, label]) => label).join(', ')}. Настройка уже сохранена.
+            </p>
+          </div>
+        )}
+
+        {settings.region_preset === 'custom' && (
           <div className="space-y-2">
-            <Label>Страны</Label>
+            <Label>Выберите страны</Label>
+            <p className="text-xs text-muted-foreground">Каждое изменение сохраняется сразу.</p>
+            <p className="pt-1 text-xs font-medium">Россия и СНГ</p>
             <div className="flex flex-wrap gap-2">
-              {COUNTRY_OPTIONS.map(([code, label]) => (
+              {CIS_COUNTRIES.map(([code, label]) => (
                 <Button
                   key={code}
                   type="button"
                   size="sm"
                   variant={settings.country_codes.includes(code) ? 'default' : 'outline'}
                   onClick={() => toggleCountry(code)}
-                  disabled={!canEdit}
+                  disabled={!canEdit || saving}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+            <p className="pt-3 text-xs font-medium">Другие страны</p>
+            <div className="flex flex-wrap gap-2">
+              {OTHER_COUNTRIES.map(([code, label]) => (
+                <Button
+                  key={code}
+                  type="button"
+                  size="sm"
+                  variant={settings.country_codes.includes(code) ? 'default' : 'outline'}
+                  onClick={() => toggleCountry(code)}
+                  disabled={!canEdit || saving}
                 >
                   {label}
                 </Button>
@@ -189,36 +254,36 @@ export function WebResearchSettingsCard() {
             title="Маркетплейсы"
             description="Включать предложения крупных площадок вместе с интернет-магазинами."
             checked={settings.include_marketplaces}
-            onCheckedChange={(value) => update('include_marketplaces', value)}
-            disabled={!canEdit}
+            onCheckedChange={(value) => updateAndSave('include_marketplaces', value)}
+            disabled={!canEdit || saving}
           />
           <ToggleRow
             title="Товары б/у"
             description="По умолчанию сравнение строится только по новым деталям."
             checked={settings.include_used}
-            onCheckedChange={(value) => update('include_used', value)}
-            disabled={!canEdit}
+            onCheckedChange={(value) => updateAndSave('include_used', value)}
+            disabled={!canEdit || saving}
           />
           <ToggleRow
             title="Предложения под заказ"
             description="Показывать цены продавцов, у которых деталь доступна по предзаказу."
             checked={settings.include_preorder}
-            onCheckedChange={(value) => update('include_preorder', value)}
-            disabled={!canEdit}
+            onCheckedChange={(value) => updateAndSave('include_preorder', value)}
+            disabled={!canEdit || saving}
           />
           <ToggleRow
             title="Возможные аналоги"
             description="Показывать заменители отдельно; они не попадут в статистику без проверки."
             checked={settings.include_analogues}
-            onCheckedChange={(value) => update('include_analogues', value)}
-            disabled={!canEdit}
+            onCheckedChange={(value) => updateAndSave('include_analogues', value)}
+            disabled={!canEdit || saving}
           />
           <ToggleRow
             title="Только точные совпадения"
             description="Строго проверять артикул/OEM, бренд и тип детали перед сравнением цены."
             checked={settings.exact_matches_only}
-            onCheckedChange={(value) => update('exact_matches_only', value)}
-            disabled={!canEdit}
+            onCheckedChange={(value) => updateAndSave('exact_matches_only', value)}
+            disabled={!canEdit || saving}
           />
           <div className="rounded-lg border p-3">
             <p className="text-sm font-medium">Валюта сравнения</p>
@@ -233,13 +298,13 @@ export function WebResearchSettingsCard() {
           <div className="flex items-start gap-3">
             <SearchCheck className="mt-0.5 h-5 w-5 text-emerald-600" />
             <p className="text-sm text-muted-foreground">
-              Сомнительные совпадения сохраняются для проверки, но не влияют на минимум, медиану и максимум.
+              Сомнительные совпадения сохраняются для проверки, но не влияют на расчёт типичной, самой низкой и самой высокой цены.
             </p>
           </div>
           {canEdit && (
             <Button onClick={save} disabled={saving} className="shrink-0">
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Сохранить настройки
+              {saving ? 'Сохраняем…' : savedFeedback ? 'Сохранено' : 'Сохранить сейчас'}
             </Button>
           )}
         </div>

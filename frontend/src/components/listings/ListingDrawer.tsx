@@ -178,6 +178,7 @@ export default function ListingDrawer({
   const [publishing, setPublishing] = useState(false);
   const [activePanel, setActivePanel] = useState<'listing' | 'pricing'>(initialPanel);
   const [marketPriceApplied, setMarketPriceApplied] = useState(false);
+  const [pricingRefreshKey, setPricingRefreshKey] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const publishPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Листинг, для которого уже выполнена авто-подстановка адреса по умолчанию.
@@ -506,8 +507,9 @@ export default function ListingDrawer({
       applyListingState(res.data.data);
       setMarketPriceApplied(false);
       setEditing(false);
+      setPricingRefreshKey((value) => value + 1);
       onActionDone();
-      toast.success('Сохранено');
+      toast.success('Сохранено. Сравнение цен пересчитано.');
     } catch (err: unknown) {
       const message = (err as { response?: { data?: { message?: string; detail?: string } } })
         ?.response?.data;
@@ -637,6 +639,7 @@ export default function ListingDrawer({
                     listingId={listing.id}
                     listingStatus={listing.status}
                     onApplyPrice={applyMarketPrice}
+                    refreshKey={pricingRefreshKey}
                   />
                 </section>
 
