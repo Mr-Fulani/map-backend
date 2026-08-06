@@ -61,7 +61,7 @@ services:
       redis:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "celery", "-A", "config", "inspect", "ping", "-d", "celery@worker-images"]
+      test: ["CMD-SHELL", "celery -A config inspect ping -d worker-images@$$HOSTNAME"]
       interval: 30s
       timeout: 10s
       retries: 3
