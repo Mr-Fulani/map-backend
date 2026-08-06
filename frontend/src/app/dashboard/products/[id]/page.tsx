@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, type RefObject } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { productApi, imageApi } from '@/lib/api';
@@ -59,6 +59,12 @@ interface ImageSearchResult {
   eligible_count?: number;
   download_failed_count?: number;
   sources?: string[];
+}
+
+interface PublicationFeedback {
+  state: 'running' | 'success' | 'error';
+  message: string;
+  listingCount?: number;
 }
 
 interface ProductDetail {
@@ -423,6 +429,7 @@ export default function ProductDetailPage() {
 
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
   const [imageSearchResult, setImageSearchResult] = useState<ImageSearchResult | null>(null);
+  const [publicationFeedback, setPublicationFeedback] = useState<PublicationFeedback | null>(null);
 
   useEffect(() => {
     const previousHref = getPreviousDashboardHref();
@@ -445,8 +452,16 @@ export default function ProductDetailPage() {
   const webResearchRunning = webResearchRunId !== null;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const publicationSectionRef = useRef<HTMLDivElement>(null);
+  const imagesSectionRef = useRef<HTMLDivElement>(null);
   const descriptionPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
+
+  const scrollToSection = useCallback((sectionRef: RefObject<HTMLDivElement>) => {
+    window.requestAnimationFrame(() => {
+      sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }, []);
 
   const loadProduct = useCallback(async () => {
     const res = await productApi.get(Number(id));
@@ -725,10 +740,23 @@ export default function ProductDetailPage() {
 
   async function runAction(action: 'publish' | 'archive') {
     setActionLoading(action);
+    if (action === 'publish') {
+      setPublicationFeedback({
+        state: 'running',
+        message: 'Создаём или обновляем черновики для подключённых аккаунтов...',
+      });
+      scrollToSection(publicationSectionRef);
+    }
     try {
       if (action === 'publish') {
-        await productApi.publish(Number(id));
-        toast.success('Листинги созданы. Откройте вкладку «Листинги» чтобы опубликовать.');
+        const response = await productApi.publish(Number(id));
+        const listingIds = (response.data.data?.listing_ids ?? []) as number[];
+        setPublicationFeedback({
+          state: 'success',
+          listingCount: listingIds.length,
+          message: 'Черновики подготовлены. Проверьте цену, контакты и адрес, затем отправьте их на публикацию.',
+        });
+        toast.success('Листинги подготовлены');
         return;
       }
       await productApi.archive(Number(id));
@@ -736,14 +764,21 @@ export default function ProductDetailPage() {
     } catch (err: unknown) {
       const code = (err as { response?: { data?: { code?: string; message?: string } } })?.response?.data?.code;
       const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
+      let userMessage = 'Не удалось выполнить действие. Попробуйте ещё раз.';
       if (code === 'quota_exceeded') {
-        toast.error('AI-кредиты исчерпаны. Обновите тариф в разделе Биллинг.');
+        userMessage = 'AI-кредиты исчерпаны. Обновите тариф в разделе «Биллинг».';
       } else if (code === 'no_active_listings') {
-        toast.warning(message ?? 'Нет активных объявлений для архивации.');
+        userMessage = message ?? 'Нет активных объявлений для архивации.';
       } else if (code === 'no_accounts') {
-        toast.error('Нет подключённых аккаунтов. Добавьте аккаунт в настройках.');
+        userMessage = 'Нет подключённых аккаунтов. Добавьте аккаунт в настройках.';
+      }
+      if (action === 'publish') {
+        setPublicationFeedback({ state: 'error', message: userMessage });
+      }
+      if (code === 'no_active_listings') {
+        toast.warning(userMessage);
       } else {
-        toast.error('Не удалось выполнить действие. Попробуйте ещё раз.');
+        toast.error(userMessage);
       }
     } finally {
       setActionLoading(null);
@@ -802,6 +837,7 @@ export default function ProductDetailPage() {
   async function startSearch() {
     setActionLoading('search');
     setImageSearchResult(null);
+    scrollToSection(imagesSectionRef);
     try {
       const res = await imageApi.search(Number(id));
       setSearchTaskId(res.data.data.task_id);
@@ -1362,19 +1398,68 @@ export default function ProductDetailPage() {
             </CardContent>
           </Card>
 
+          {publicationFeedback && (
+            <Card ref={publicationSectionRef} className="scroll-mt-24" aria-live="polite">
+              <CardHeader>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <CardTitle className="text-sm font-medium">Публикация</CardTitle>
+                  <Badge
+                    variant={publicationFeedback.state === 'error'
+                      ? 'destructive'
+                      : publicationFeedback.state === 'success' ? 'default' : 'secondary'}
+                  >
+                    {publicationFeedback.state === 'running'
+                      ? 'Подготовка...'
+                      : publicationFeedback.state === 'success' ? 'Черновики готовы' : 'Нужна проверка'}
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="flex items-start gap-2 text-sm">
+                  {publicationFeedback.state === 'running' && (
+                    <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" />
+                  )}
+                  <div>
+                    {publicationFeedback.state === 'success' && (
+                      <p className="font-medium">
+                        Подготовлено листингов: {publicationFeedback.listingCount ?? 0}
+                      </p>
+                    )}
+                    <p className={publicationFeedback.state === 'success'
+                      ? 'mt-1 text-muted-foreground'
+                      : publicationFeedback.state === 'error' ? 'text-destructive' : 'text-muted-foreground'}
+                    >
+                      {publicationFeedback.message}
+                    </p>
+                  </div>
+                </div>
+                {publicationFeedback.state === 'success' && (
+                  <Button asChild size="sm">
+                    <Link href="/dashboard/listings">Перейти к листингам</Link>
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           {/* Фотографии */}
-          <Card>
+          <Card ref={imagesSectionRef} className="scroll-mt-24">
             <CardHeader>
               <CardTitle className="text-sm font-medium">
                 Фотографии {images.length > 0 && `(${images.length})`}
               </CardTitle>
             </CardHeader>
             <CardContent>
-              {searching && (
-                <div className="mb-4 flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200">
+              {(searching || actionLoading === 'search') && (
+                <div
+                  role="status"
+                  className="mb-4 flex items-start gap-2 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800 dark:border-blue-800 dark:bg-blue-950 dark:text-blue-200"
+                >
                   <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin" />
                   <div>
-                    <p className="font-medium">Идёт поиск фотографий...</p>
+                    <p className="font-medium">
+                      {searching ? 'Идёт поиск фотографий...' : 'Запускаем поиск фотографий...'}
+                    </p>
                     <p className="mt-0.5 text-xs opacity-80">
                       Проверяем Brave и резервный Tavily по OEM, названию и применяемости. Не нажимайте кнопку повторно.
                     </p>
