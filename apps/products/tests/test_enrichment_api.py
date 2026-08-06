@@ -971,6 +971,74 @@ def test_assign_catalog_category_to_selected_products():
 
 
 @pytest.mark.django_db
+def test_unassign_catalog_category_persists_manual_clear_and_keeps_shared_mapping():
+    tenant, api_key = make_tenant('catalog-category-unassign')
+    product = make_product(
+        tenant,
+        name='Фильтр масляный CHERY',
+        category_1c='Фильтры 1С',
+    )
+    category = TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Масляные фильтры',
+        root_domain=CatalogDomain.objects.get(slug='auto_parts'),
+        domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+    )
+    client = Client()
+    headers = {'HTTP_AUTHORIZATION': f'Bearer {api_key}'}
+
+    assign_response = client.post(
+        '/api/v1/products/catalog-categories/assign/',
+        {'product_ids': [product.pk], 'catalog_category': category.pk},
+        content_type='application/json',
+        **headers,
+    )
+    assert assign_response.status_code == 200
+    assert TenantCategoryMapping.objects.filter(
+        tenant=tenant,
+        source_category='Фильтры 1С',
+        category=category,
+    ).exists()
+
+    remove_response = client.post(
+        '/api/v1/products/catalog-categories/assign/',
+        {'product_ids': [product.pk], 'catalog_category': None},
+        content_type='application/json',
+        **headers,
+    )
+
+    assert remove_response.status_code == 200
+    product.refresh_from_db()
+    assert product.catalog_category_id is None
+    assert product.catalog_category_manually_cleared is True
+    assert ProductEnrichmentService.get_product_tenant_category(product) is None
+    product.refresh_from_db()
+    assert product.catalog_category_id is None
+    assert product.catalog_classification.source == ProductCatalogClassification.Source.RULES
+    assert product.catalog_classification.confidence != 0.95
+    assert TenantCategoryMapping.objects.filter(
+        tenant=tenant,
+        source_category='Фильтры 1С',
+        category=category,
+    ).exists()
+
+    detail_response = client.get(f'/api/v1/products/{product.pk}/', **headers)
+    assert detail_response.status_code == 200
+    assert detail_response.json()['data']['catalog_category'] is None
+
+    reassign_response = client.post(
+        '/api/v1/products/catalog-categories/assign/',
+        {'product_ids': [product.pk], 'catalog_category': category.pk},
+        content_type='application/json',
+        **headers,
+    )
+    assert reassign_response.status_code == 200
+    product.refresh_from_db()
+    assert product.catalog_category == category
+    assert product.catalog_category_manually_cleared is False
+
+
+@pytest.mark.django_db
 def test_assign_catalog_category_creates_source_mapping():
     """Ручное назначение категории запоминается как маппинг «категория 1С →
     категория каталога»: следующий импорт с той же категорией источника

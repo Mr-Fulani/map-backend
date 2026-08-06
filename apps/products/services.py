@@ -578,6 +578,8 @@ class ProductEnrichmentService:
     def get_product_tenant_category(product: Product) -> TenantCatalogCategory | None:
         if product.catalog_category_id:
             return product.catalog_category
+        if product.catalog_category_manually_cleared:
+            return None
         if not product.category_1c:
             return ProductEnrichmentService.infer_product_tenant_category(product)
         mapping = (

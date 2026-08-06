@@ -265,6 +265,11 @@ const ENRICHMENT_SOURCE_LABELS: Record<string, string> = {
   rossko: 'Росско',
   euroauto: 'Euroauto',
   web_research: 'Интернет-исследование',
+  brave: 'Brave',
+  tavily: 'Tavily',
+  manual: 'Загружено вручную',
+  '1c': '1С',
+  csv: 'Файл',
 };
 
 const ENRICHMENT_FACT_LABELS: Record<string, string> = {
@@ -425,6 +430,7 @@ export default function ProductDetailPage() {
   const [catalogCategories, setCatalogCategories] = useState<CatalogCategoryOption[]>([]);
   const [categoryAssignValue, setCategoryAssignValue] = useState('');
   const [categoryAssignLoading, setCategoryAssignLoading] = useState(false);
+  const [categoryAssignAction, setCategoryAssignAction] = useState<'apply' | 'remove' | null>(null);
   const [reviewAction, setReviewAction] = useState<string | null>(null);
   const [showAllFitments, setShowAllFitments] = useState(false);
   const [showAllEnrichmentFacts, setShowAllEnrichmentFacts] = useState(false);
@@ -822,11 +828,16 @@ export default function ProductDetailPage() {
 
   async function assignCatalogCategory(categoryId: number | null) {
     setCategoryAssignLoading(true);
+    setCategoryAssignAction(categoryId === null ? 'remove' : 'apply');
     try {
       await productApi.assignCatalogCategory({
         product_ids: [Number(id)],
         catalog_category: categoryId,
       });
+      if (categoryId === null) {
+        setCategoryAssignValue('');
+        setProduct((current) => current ? {...current, catalog_category: null} : current);
+      }
       await loadProduct();
       toast.success(categoryId ? 'Категория товара обновлена' : 'Категория товара снята');
     } catch (error: unknown) {
@@ -836,6 +847,7 @@ export default function ProductDetailPage() {
       toast.error(message ?? 'Не удалось изменить категорию товара');
     } finally {
       setCategoryAssignLoading(false);
+      setCategoryAssignAction(null);
     }
   }
 
@@ -1615,6 +1627,11 @@ export default function ProductDetailPage() {
                           {img.is_primary ? 'Главное • ' : ''}
                           {IMAGE_STATUS_LABELS[img.status] ?? img.status}
                         </Badge>
+                        {img.source_id && (
+                          <p className="truncate text-center text-[11px] text-muted-foreground">
+                            Источник: {ENRICHMENT_SOURCE_LABELS[img.source_id] ?? img.source_id}
+                          </p>
+                        )}
                         <div className="flex gap-1">
                           {!img.is_primary && (
                             <Button
@@ -1696,7 +1713,7 @@ export default function ProductDetailPage() {
                       ? 'Эта категория уже применена'
                       : undefined}
                   >
-                    {categoryAssignLoading ? (
+                    {categoryAssignAction === 'apply' ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : (
                       <Check className="mr-2 h-4 w-4" />
@@ -1709,9 +1726,20 @@ export default function ProductDetailPage() {
                     onClick={() => assignCatalogCategory(null)}
                     disabled={categoryAssignLoading || !product.catalog_category}
                   >
-                    Снять
+                    {categoryAssignAction === 'remove' ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <X className="mr-2 h-4 w-4" />
+                    )}
+                    {categoryAssignAction === 'remove' ? 'Снимаем...' : 'Снять'}
                   </Button>
                 </div>
+                {!product.catalog_category && (
+                  <p className="rounded-md border border-dashed p-2 text-xs text-muted-foreground">
+                    Категория каталога не назначена. Автоматическая классификация ниже остаётся
+                    подсказкой и не заменяет выбранную категорию.
+                  </p>
+                )}
               </div>
               <Separator />
               {product.catalog_classification ? (

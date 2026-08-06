@@ -1,6 +1,7 @@
 import hashlib
 import io
 import re
+from urllib.parse import urlparse
 
 import requests
 from PIL import Image, UnidentifiedImageError
@@ -16,6 +17,24 @@ DOWNLOAD_TIMEOUT = 15
 # Макс. расстояние Хэмминга между aHash, при котором изображения считаем одним
 # (одна фотография из разных источников: tachka/rossko/поиск). 0 — идентичны.
 PERCEPTUAL_DUP_DISTANCE = 6
+
+_BROWSER_IMAGE_ACCEPT = 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8'
+_BROWSER_USER_AGENT = (
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
+    '(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36'
+)
+
+
+def source_image_request_headers(source_url: str, source_id: str = '') -> dict[str, str]:
+    """Возвращает безопасные заголовки, необходимые CDN конкретного каталога."""
+    hostname = (urlparse(str(source_url or '')).hostname or '').lower()
+    if source_id.lower() == 'rossko' or hostname == 'imgs.rossko.ru':
+        return {
+            'User-Agent': _BROWSER_USER_AGENT,
+            'Accept': _BROWSER_IMAGE_ACCEPT,
+            'Referer': 'https://rossko.ru/',
+        }
+    return {}
 
 
 def perceptual_hash(img: Image.Image) -> str:
@@ -134,7 +153,12 @@ class PhotoUploadPipeline:
             return None
 
         try:
-            response = requests.get(source_url, timeout=DOWNLOAD_TIMEOUT)
+            request_headers = source_image_request_headers(source_url, source_id)
+            response = requests.get(
+                source_url,
+                timeout=DOWNLOAD_TIMEOUT,
+                **({'headers': request_headers} if request_headers else {}),
+            )
             response.raise_for_status()
             raw = response.content
         except requests.RequestException:

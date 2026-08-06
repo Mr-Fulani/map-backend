@@ -762,7 +762,10 @@ class ProductCatalogCategoryAssignView(APIView):
         )
         skipped_count = max(len(set(product_ids)) - len(valid_ids), 0)
         with transaction.atomic():
-            Product.objects.filter(tenant=request.tenant, pk__in=valid_ids).update(catalog_category=category)
+            Product.objects.filter(tenant=request.tenant, pk__in=valid_ids).update(
+                catalog_category=category,
+                catalog_category_manually_cleared=category is None,
+            )
             products = (
                 Product.objects
                 .filter(tenant=request.tenant, pk__in=valid_ids)

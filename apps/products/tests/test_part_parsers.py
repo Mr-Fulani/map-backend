@@ -876,6 +876,27 @@ def test_rossko_parser_extracts_images():
     assert 'https://imgs.rossko.ru/46/8C/NSII0016446647/2.jpg' in parsed.image_urls
 
 
+def test_rossko_parser_excludes_nested_analogue_images():
+    html = """
+    <div itemtype="https://schema.org/Product" itemscope>
+      <meta itemprop="name" content="480-1012010 • Chery/Exeed Фильтр масляный" />
+      <link itemprop="image" href="https://imgs.rossko.ru/main/1.jpg" />
+      <div itemtype="https://schema.org/Product" itemscope>
+        <meta itemprop="name" content="LC-171 • LYNXauto Масляный фильтр" />
+        <link itemprop="image" href="https://imgs.rossko.ru/analogue/1.jpg" />
+      </div>
+    </div>
+    """
+
+    parsed = RosskoPartParser().parse_html(
+        html,
+        brand='CHERY',
+        article='4801012010',
+    )
+
+    assert parsed.image_urls == ['https://imgs.rossko.ru/main/1.jpg']
+
+
 def test_rossko_parser_find_product_url_from_search():
     parser = RosskoPartParser()
     url = parser._extract_product_url(ROSSKO_SEARCH_HTML, 'P50136')

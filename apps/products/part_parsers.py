@@ -995,7 +995,7 @@ class RosskoPartParser:
 
         attributes, cross_codes = self._parse_features(tree)
         fitments = self._parse_applicability(tree)
-        image_urls = self._parse_images(tree)
+        image_urls = self._parse_images(tree, article)
 
         parsed = ParsedPart(
             brand=brand.strip().upper(),
@@ -1165,10 +1165,37 @@ class RosskoPartParser:
 
         return _dedupe_fitments(fitments)
 
-    def _parse_images(self, tree: HTMLParser) -> list[str]:
-        """Извлекает URL изображений из microdata Schema.org Product."""
+    def _parse_images(self, tree: HTMLParser, article: str = '') -> list[str]:
+        """Извлекает изображения только основного Schema.org Product.
+
+        Rossko вкладывает карточки аналогов внутрь microdata основного товара.
+        Обычный descendant-селектор поэтому возвращает и фотографии аналогов.
+        """
+        product_nodes = tree.css('[itemtype*="schema.org/Product"]')
+        if not product_nodes:
+            return []
+
+        normalized_article = normalize_part_code(article)
+        product_node = next((
+            node
+            for node in product_nodes
+            if normalized_article and normalized_article in normalize_part_code(
+                (
+                    (name_node.attributes.get('content') or name_node.text(separator=' '))
+                    if (name_node := node.css_first('[itemprop="name"]')) else ''
+                ),
+            )
+        ), product_nodes[0])
+
         urls: list[str] = []
-        for link in tree.css('[itemtype*="schema.org/Product"] link[itemprop="image"]'):
+        for link in product_node.css('link[itemprop="image"]'):
+            nearest_product = link.parent
+            while nearest_product is not None and 'schema.org/Product' not in (
+                nearest_product.attributes.get('itemtype') or ''
+            ):
+                nearest_product = nearest_product.parent
+            if nearest_product != product_node:
+                continue
             href = (link.attributes.get('href') or '').strip()
             if href and href not in urls:
                 urls.append(href)

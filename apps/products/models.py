@@ -237,6 +237,11 @@ class Product(TimestampedModel):
         TenantCatalogCategory, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='products', verbose_name='Категория каталога',
     )
+    catalog_category_manually_cleared = models.BooleanField(
+        default=False,
+        verbose_name='Категория каталога снята вручную',
+        help_text='Не применять к товару автоматический маппинг категории после ручного снятия.',
+    )
     condition = models.CharField(
         max_length=10, choices=CONDITION_CHOICES, default=CONDITION_NEW, verbose_name='Состояние',
     )

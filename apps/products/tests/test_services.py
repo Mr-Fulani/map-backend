@@ -329,6 +329,33 @@ class TestPhotoUploadPipeline:
         assert image.source_id == 'tachka'
         assert image.status == ProductImage.Status.NEEDS_REVIEW
 
+    def test_photo_pipeline_uses_browser_headers_for_rossko_cdn(self):
+        from apps.products.storage import PhotoUploadPipeline
+
+        tenant = make_tenant('photo-rossko-headers')
+        ds = make_datasource(tenant)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        mock_storage = MagicMock()
+        mock_storage.save = MagicMock(side_effect=lambda key, _: key)
+
+        with patch('apps.products.storage.requests.get') as mock_get:
+            mock_get.return_value = self._mock_response(
+                self._make_jpeg_bytes(size=(640, 480)),
+            )
+            image = PhotoUploadPipeline(storage=mock_storage).process(
+                'https://imgs.rossko.ru/73/27/NSIN0016149478/1.jpg',
+                product,
+                source_id='rossko',
+                status=ProductImage.Status.NEEDS_REVIEW,
+                validate_quality=True,
+            )
+
+        assert image is not None
+        _, kwargs = mock_get.call_args
+        assert kwargs['headers']['Referer'] == 'https://rossko.ru/'
+        assert kwargs['headers']['Accept'].startswith('image/')
+        assert 'Mozilla/5.0' in kwargs['headers']['User-Agent']
+
     def test_photo_pipeline_uses_tenant_domain_category_s3_key(self):
         from apps.products.storage import PhotoUploadPipeline
 
