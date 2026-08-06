@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { accountApi, listingApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -85,6 +86,9 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | '
 };
 
 export default function ListingsPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const [listings, setListings] = useState<Listing[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
@@ -101,6 +105,22 @@ export default function ListingsPage() {
   const [bulkContactPhone, setBulkContactPhone] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
   const [rowActionId, setRowActionId] = useState<number | null>(null);
+  const requestedPanel = searchParams.get('panel') === 'pricing' ? 'pricing' : 'listing';
+
+  useEffect(() => {
+    const listingParam = Number(searchParams.get('listing'));
+    if (Number.isInteger(listingParam) && listingParam > 0) {
+      setSelectedId(listingParam);
+    }
+  }, [searchParams]);
+
+  const closeDrawer = useCallback(() => {
+    setSelectedId(null);
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete('listing');
+    next.delete('panel');
+    router.replace(next.size ? `${pathname}?${next}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -617,7 +637,8 @@ export default function ListingsPage() {
 
       <ListingDrawer
         listingId={selectedId}
-        onClose={() => setSelectedId(null)}
+        initialPanel={requestedPanel}
+        onClose={closeDrawer}
         onActionDone={load}
       />
     </div>

@@ -268,7 +268,14 @@ class ListingService:
     def update_listing_fields(listing_id: int, tenant, data: dict) -> Listing:
         """Обновляет аккаунт и цену листинга с tenant-safe проверками."""
         listing = ListingService.get_for_tenant(listing_id, tenant)
-        if listing.status in (Listing.STATUS_ACTIVE, Listing.STATUS_DELETED):
+        active_price_only = (
+            listing.status == Listing.STATUS_ACTIVE
+            and bool(data)
+            and set(data) <= {'price_on_listing', 'margin_pct'}
+        )
+        if listing.status == Listing.STATUS_DELETED or (
+            listing.status == Listing.STATUS_ACTIVE and not active_price_only
+        ):
             raise InvalidListingStatus(f'Нельзя редактировать листинг в статусе {listing.status}')
 
         update_fields = []
@@ -311,6 +318,8 @@ class ListingService:
 
         if update_fields:
             listing.save(update_fields=update_fields)
+            if active_price_only:
+                transaction.on_commit(lambda: _enqueue_price_update(listing.pk))
         return listing
 
     @staticmethod
