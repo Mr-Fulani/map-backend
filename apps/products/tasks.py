@@ -332,19 +332,49 @@ def _queue_enrichment_images(result: dict) -> None:
         )
 
 
-def _save_enrichment_images(result: dict) -> None:
+def _save_enrichment_images(result: dict) -> dict:
     product_id = result.get('product_id')
-    image_urls = result.get('image_urls') or []
+    image_urls = _clean_enrichment_image_urls(result.get('image_urls') or [])
+    summary = {
+        'state': 'completed',
+        'found_count': len(image_urls),
+        'saved_count': 0,
+        'error': '',
+    }
     if not product_id or not image_urls:
-        return
+        _record_enrichment_image_result(result, summary)
+        return summary
 
     try:
         from apps.products.models import Product
         product = Product.objects.get(pk=product_id)
-        _download_enrichment_images(product, image_urls, result.get('source_id') or 'tachka')
-    except Exception:
+        download_result = _download_enrichment_images(
+            product,
+            image_urls,
+            result.get('source_id') or 'tachka',
+        )
+        summary['saved_count'] = download_result['saved']
+    except Exception as exc:
+        summary['error'] = str(exc)[:500]
         logger.warning(
             'Failed to save enrichment images for product=%s',
             product_id,
             exc_info=True,
         )
+    _record_enrichment_image_result(result, summary)
+    return summary
+
+
+def _record_enrichment_image_result(result: dict, summary: dict) -> None:
+    """Помечает обработку фото завершённой после фактического сохранения файлов."""
+    job_id = result.get('job_id')
+    if not job_id:
+        return
+    from apps.products.models import ProductParseJob
+    job = ProductParseJob.objects.filter(pk=job_id).first()
+    if job is None:
+        return
+    parsed_data = dict(job.parsed_data or {})
+    parsed_data['image_processing'] = summary
+    job.parsed_data = parsed_data
+    job.save(update_fields=['parsed_data', 'updated_at'])

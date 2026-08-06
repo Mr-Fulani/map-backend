@@ -182,6 +182,12 @@ interface ProductParseJob {
   error_message: string;
   parsed_data: {
     image_urls?: string[];
+    image_processing?: {
+      state: 'completed';
+      found_count: number;
+      saved_count: number;
+      error: string;
+    };
   } | null;
   source_offer: {
     price: string | null;
@@ -667,14 +673,19 @@ export default function ProductDetailPage() {
         );
         const jobs = responses.map((response) => response.data.data as ProductParseJob);
         const terminalJobs = jobs.filter((job) => !['pending', 'running'].includes(job.status));
-        const newlyFinishedJobs = terminalJobs.filter((job) => !observedTerminalJobs.has(job.id));
+        const settledJobs = terminalJobs.filter((job) => {
+          const imageUrls = job.parsed_data?.image_urls ?? [];
+          return imageUrls.length === 0
+            || job.parsed_data?.image_processing?.state === 'completed';
+        });
+        const newlyFinishedJobs = settledJobs.filter((job) => !observedTerminalJobs.has(job.id));
 
         if (newlyFinishedJobs.length > 0) {
           newlyFinishedJobs.forEach((job) => observedTerminalJobs.add(job.id));
           await Promise.all([loadProduct(), loadImages()]);
         }
 
-        if (terminalJobs.length === jobs.length) {
+        if (settledJobs.length === jobs.length) {
           setParseJobIds([]);
           setPrimaryParseJobId(null);
           const job = jobs.find((item) => item.id === primaryParseJobId) ?? jobs[0];

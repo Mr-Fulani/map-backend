@@ -554,6 +554,47 @@ def test_parse_task_saves_enrichment_images_before_finishing():
     save_images.assert_called_once_with(result)
 
 
+@pytest.mark.django_db
+def test_save_enrichment_images_records_completion_after_download():
+    from apps.products.tasks import _save_enrichment_images
+
+    tenant = make_tenant('image-processing-completion')
+    product = make_product(tenant)
+    job = ProductEnrichmentService.create_parse_job(
+        tenant=tenant,
+        product=product,
+        brand=product.brand,
+        article=product.article,
+        normalized_article=product.article,
+        source_id='rossko',
+    )
+    job.parsed_data = {
+        'image_urls': ['https://imgs.rossko.ru/main/1.jpg'],
+    }
+    job.save(update_fields=['parsed_data', 'updated_at'])
+    result = {
+        'job_id': job.pk,
+        'product_id': product.pk,
+        'source_id': 'rossko',
+        'image_urls': ['https://imgs.rossko.ru/main/1.jpg'],
+    }
+
+    with patch(
+        'apps.products.tasks._download_enrichment_images',
+        return_value={'product_id': product.pk, 'saved': 1},
+    ):
+        summary = _save_enrichment_images(result)
+
+    job.refresh_from_db()
+    assert summary == {
+        'state': 'completed',
+        'found_count': 1,
+        'saved_count': 1,
+        'error': '',
+    }
+    assert job.parsed_data['image_processing'] == summary
+
+
 def test_clean_enrichment_image_urls_filters_service_images_and_tachka_variants():
     from apps.products.tasks import _clean_enrichment_image_urls
 
