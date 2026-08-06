@@ -37,7 +37,16 @@ LOW_VALUE_PHRASES = [
     'является важной частью автомобиля',
     'конкретные комплектации в диапазонах дат',
     'vin/номер',
+    'в названии позиции указаны модели',
+    'в названии товара указаны модели',
+    'название позиции содержит модели',
+    'название товара содержит модели',
 ]
+
+_TRUNCATED_MODEL_FRAGMENT_RE = re.compile(
+    r'(?im)(?:совместимость с автомобилями|указаны модели)[^\n]{0,300},\s*'
+    r'[A-Za-zА-Яа-яЁё]{1,3}\.\s*(?:$|\n)',
+)
 
 # Регулярка для удаления контактных данных из текста объявления
 _CONTACTS_RE = re.compile(
@@ -99,6 +108,8 @@ def validate_description(text: str) -> str:
             f'Неконкретная применяемость в описании: {", ".join(vague_fitment)}'
         )
     low_value = [phrase for phrase in LOW_VALUE_PHRASES if phrase in lower]
+    if _TRUNCATED_MODEL_FRAGMENT_RE.search(text):
+        low_value.append('обрезанное название модели автомобиля')
     if re.search(r'\b\d+\s+(?:запис|подтверждени)', lower):
         low_value.append('внутренний счётчик применяемости')
     if low_value:

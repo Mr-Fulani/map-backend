@@ -41,12 +41,14 @@ def test_prompt_router_prefers_exact_catalog_domain(prompt_product):
 
     assert selection.template is not None
     assert selection.template.catalog_domain == 'auto_parts'
-    assert selection.version == 'db-v7'
+    assert selection.version == 'db-v8'
     assert 'Номера для поиска и проверки совместимости' in selection.system_prompt
     assert 'fitment_presentation' in selection.system_prompt
     assert 'content_profile' in selection.system_prompt
     assert 'rich:' in selection.system_prompt
     assert 'Не называй варианты «записями»' in selection.system_prompt
+    assert 'Совместимость с автомобилями' in selection.system_prompt
+    assert 'в названии позиции указаны модели' in selection.system_prompt
 
 
 @pytest.mark.django_db

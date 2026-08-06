@@ -120,6 +120,7 @@ def test_parse_endpoint_creates_tenant_scoped_job(django_capture_on_commit_callb
     assert call(job.pk) in delay.call_args_list
     jobs = tenant.product_parse_jobs.filter(product=product)
     assert set(jobs.values_list('source_id', flat=True)) == {'tachka', 'rossko', 'euroauto'}
+    assert set(data['job_ids']) == set(jobs.values_list('pk', flat=True))
     assert delay.call_count == 3
 
 

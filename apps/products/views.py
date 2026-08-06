@@ -969,6 +969,7 @@ class ProductParseView(APIView):
             'status': 'ok',
             'data': {
                 'job_id': primary_job.pk,
+                'job_ids': [job.pk for job in jobs],
                 'state': primary_job.status,
                 'generate_after': generate_after,
             },

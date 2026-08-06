@@ -452,9 +452,10 @@ export default function ProductDetailPage() {
   }, [returnTo]);
   const searching = searchTaskId !== null;
   const [generatingDescription, setGeneratingDescription] = useState(false);
-  const [parseJobId, setParseJobId] = useState<number | null>(null);
+  const [parseJobIds, setParseJobIds] = useState<number[]>([]);
+  const [primaryParseJobId, setPrimaryParseJobId] = useState<number | null>(null);
   const [parseThenGenerate, setParseThenGenerate] = useState(false);
-  const enriching = parseJobId !== null;
+  const enriching = parseJobIds.length > 0;
   const [webResearch, setWebResearch] = useState<WebResearchRun | null>(null);
   const [webResearchRunId, setWebResearchRunId] = useState<number | null>(null);
 
@@ -637,12 +638,14 @@ export default function ProductDetailPage() {
   }, [searchTaskId, id, loadImages]);
 
   useEffect(() => {
-    if (!parseJobId) return;
+    if (parseJobIds.length === 0) return;
     const prevDescription = product?.description_ai ?? '';
     const deadline = Date.now() + 90_000;
+    const observedTerminalJobs = new Set<number>();
     const interval = setInterval(async () => {
       if (Date.now() > deadline) {
-        setParseJobId(null);
+        setParseJobIds([]);
+        setPrimaryParseJobId(null);
         setParseThenGenerate(false);
         clearInterval(interval);
         toast.warning('Обогащение заняло слишком долго. Проверьте очередь задач или попробуйте запустить снова.');
@@ -650,11 +653,22 @@ export default function ProductDetailPage() {
       }
 
       try {
-        const res = await productApi.parseJobStatus(parseJobId);
-        const job = res.data.data as ProductParseJob;
-        if (!['pending', 'running'].includes(job.status)) {
-          setParseJobId(null);
+        const responses = await Promise.all(
+          parseJobIds.map((jobId) => productApi.parseJobStatus(jobId)),
+        );
+        const jobs = responses.map((response) => response.data.data as ProductParseJob);
+        const terminalJobs = jobs.filter((job) => !['pending', 'running'].includes(job.status));
+        const newlyFinishedJobs = terminalJobs.filter((job) => !observedTerminalJobs.has(job.id));
+
+        if (newlyFinishedJobs.length > 0) {
+          newlyFinishedJobs.forEach((job) => observedTerminalJobs.add(job.id));
           await Promise.all([loadProduct(), loadImages()]);
+        }
+
+        if (terminalJobs.length === jobs.length) {
+          setParseJobIds([]);
+          setPrimaryParseJobId(null);
+          const job = jobs.find((item) => item.id === primaryParseJobId) ?? jobs[0];
           if (parseThenGenerate) {
             // The parser task schedules the fallback immediately before it exits;
             // give the worker a short moment to create the corresponding run.
@@ -684,25 +698,28 @@ export default function ProductDetailPage() {
             waitForGeneratedDescription(prevDescription);
             return;
           }
-          if (job.status === 'success') {
+          if (jobs.some((item) => item.status === 'success')) {
             toast.success('Данные товара обогащены');
-          } else if (job.status === 'need_review') {
+          } else if (jobs.some((item) => item.status === 'need_review')) {
             toast.warning('Данные частично найдены. Проверьте блок «Обогащение данных» в карточке товара.');
-          } else if (job.status === 'not_found') {
-            toast.warning('Источник не нашёл этот товар');
+          } else if (jobs.every((item) => item.status === 'not_found')) {
+            toast.warning('Каталоги не нашли этот товар');
           } else {
-            toast.error(job.error_message || 'Обогащение завершилось с ошибкой');
+            const failedJob = jobs.find((item) => item.status === 'failed');
+            toast.error(failedJob?.error_message || 'Обогащение завершилось с ошибкой');
           }
         }
       } catch {
-        setParseJobId(null);
+        setParseJobIds([]);
+        setPrimaryParseJobId(null);
         setParseThenGenerate(false);
         toast.error('Ошибка при проверке статуса обогащения');
       }
     }, 2000);
     return () => clearInterval(interval);
   }, [
-    parseJobId,
+    parseJobIds,
+    primaryParseJobId,
     parseThenGenerate,
     product?.description_ai,
     loadImages,
@@ -715,7 +732,14 @@ export default function ProductDetailPage() {
     setActionLoading(generateAfter ? 'enrich-generate' : 'enrich');
     try {
       const res = await productApi.parse(Number(id), '', generateAfter);
-      setParseJobId(res.data.data.job_id);
+      const primaryJobId = Number(res.data.data.job_id);
+      const jobIds = Array.isArray(res.data.data.job_ids)
+        ? res.data.data.job_ids
+          .map((value: unknown) => Number(value))
+          .filter((value: number) => Number.isFinite(value))
+        : [primaryJobId];
+      setParseJobIds(jobIds.length > 0 ? jobIds : [primaryJobId]);
+      setPrimaryParseJobId(primaryJobId);
       setParseThenGenerate(generateAfter);
       toast.info(generateAfter ? 'Запущено: обогащение, затем генерация описания' : 'Обогащение запущено');
     } catch (err: unknown) {

@@ -153,6 +153,45 @@ class TestValidators:
         })
         assert validate_json_response(raw)['confidence'] == 1.0
 
+    def test_validate_json_rejects_source_metadata_instead_of_compatibility(self):
+        raw = json.dumps({
+            'title': 'Опора двигателя CHERY ART-001 для автомобилей Chery',
+            'description': (
+                'В названии позиции указаны модели CHERY: Amulet, Tiggo 2, '
+                'Tiggo 7, Tiggo 7 Pro, Bonus 3, Ver.'
+            ),
+            'confidence': 0.8,
+        })
+
+        with pytest.raises(ValidationError, match='Шаблонная фраза без пользы'):
+            validate_json_response(raw)
+
+    def test_validate_json_rejects_truncated_model_in_compatibility(self):
+        raw = json.dumps({
+            'title': 'Фильтр масляный CHERY 4801012010 для автомобилей Chery',
+            'description': (
+                'Совместимость с автомобилями CHERY: Amulet, Tiggo 2, '
+                'Tiggo 7, Tiggo 7 Pro, Bonus 3, Ver.'
+            ),
+            'confidence': 0.8,
+        })
+
+        with pytest.raises(ValidationError, match='обрезанное название модели'):
+            validate_json_response(raw)
+
+    def test_validate_json_accepts_explicit_vehicle_compatibility(self):
+        raw = json.dumps({
+            'title': 'Фильтр масляный CHERY 4801012010 для автомобилей Chery',
+            'description': (
+                'Совместимость с автомобилями CHERY: Amulet, Tiggo 2, '
+                'Tiggo 7, Tiggo 7 Pro, Bonus 3. Перед заказом сверьте '
+                'совместимость по номеру детали или VIN.'
+            ),
+            'confidence': 0.8,
+        })
+
+        assert validate_json_response(raw)['confidence'] == 0.8
+
 
 @pytest.mark.django_db
 class TestDescriptionAgent:
