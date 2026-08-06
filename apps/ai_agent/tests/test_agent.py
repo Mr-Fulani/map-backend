@@ -92,6 +92,12 @@ class TestValidators:
         with pytest.raises(VagueFitmentError):
             validate_description('Подходит для некоторых моделей автомобилей.')
 
+    def test_low_value_replacement_phrase_raises(self):
+        with pytest.raises(ValidationError, match='без пользы'):
+            validate_description(
+                'Колодки предназначены для замены изношенных колодок в тормозной системе.'
+            )
+
     def test_strip_contacts_removes_phone(self):
         text = 'Звоните +7 (999) 123-45-67 для уточнения'
         result = strip_contacts(text)
@@ -327,6 +333,72 @@ class TestDescriptionAgent:
         assert 'Вероятные марки авто по OEM/Cross: MERCEDES-BENZ' in message
         assert 'MERCEDES-BENZ: A0004206000' in message
         assert 'MERCEDES-BENZ E-CLASS W213 E 220 d 194 л.с.' in message
+        assert payload['enrichment']['content_profile']['level'] == 'standard'
+        assert payload['enrichment']['content_profile']['target_description_chars'] == {
+            'min': 300,
+            'max': 1400,
+        }
+
+    def test_content_profile_is_sparse_without_enrichment(self):
+        tenant = make_tenant('sparse-profile-agent-co')
+        product = make_product(tenant)
+
+        payload = json.loads(DescriptionAgent()._build_message(product))
+
+        assert payload['enrichment']['content_profile']['level'] == 'sparse'
+        assert payload['enrichment']['content_profile']['available_sections'] == ['condition']
+
+    def test_rich_description_validator_rejects_short_generic_copy(self):
+        tenant = make_tenant('rich-validator-agent-co')
+        product = make_product(tenant)
+        attributes = [
+            ('Ось установки', 'задняя'),
+            ('Ширина', '114 мм'),
+            ('Высота', '55 мм'),
+            ('Толщина', '17 мм'),
+            ('Тормозная система', 'TRW'),
+            ('Датчик износа', 'подготовлено место установки'),
+        ]
+        for name, value in attributes:
+            ProductEnrichmentService.create_attribute(
+                tenant=tenant, product=product, name=name, value=value,
+            )
+        ProductEnrichmentService.create_cross_code(
+            tenant=tenant, product=product, manufacturer='MERCEDES-BENZ',
+            code='A0004206000', normalized_code='A0004206000',
+            code_type=ProductCrossCode.CodeType.OEM,
+        )
+        ProductEnrichmentService.create_fitment(
+            tenant=tenant, product=product, make='MERCEDES-BENZ',
+            model='E-CLASS', generation='W213', confidence=0.95,
+        )
+        weak = {
+            'title': 'Тормозной диск Bosch ART-001 для Mercedes-Benz E-Class W213',
+            'description': (
+                'Тормозной диск Bosch для Mercedes-Benz. '
+                'Номер A0004206000. Состояние: новое.'
+            ),
+        }
+
+        with pytest.raises(ValidationError, match='не менее 350'):
+            DescriptionAgent._validate_rich_description(product, weak)
+
+        strong_description = (
+            'Тормозной диск Bosch ART-001 для автомобиля Mercedes-Benz E-Class W213. '
+            'Деталь устанавливается на заднюю ось согласно подтверждённым данным каталога.\n\n'
+            'Совместимость\nMercedes-Benz E-Class W213. Перед покупкой сверьте номер '
+            'детали или VIN автомобиля.\n\n'
+            'Характеристики\nОсь установки: задняя. Ширина: 114 мм. Высота: 55 мм. '
+            'Толщина: 17 мм. Тормозная система: TRW. Предусмотрено место установки '
+            'датчика износа.\n\n'
+            'Номера для поиска и проверки совместимости\nA0004206000.\n\n'
+            'Состояние\nНовое.'
+        )
+        assert len(strong_description) >= 350
+        DescriptionAgent._validate_rich_description(product, {
+            **weak,
+            'description': strong_description,
+        })
 
     def test_build_message_uses_vehicle_make_from_cross_without_fitment(self):
         tenant = make_tenant('cross-make-agent-co')

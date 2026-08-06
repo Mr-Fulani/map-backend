@@ -29,6 +29,14 @@ VAGUE_FITMENT_PHRASES = [
     'совместимы с различными',
 ]
 
+LOW_VALUE_PHRASES = [
+    'предназначен для замены изношенной',
+    'предназначена для замены изношенной',
+    'предназначены для замены изношенных',
+    'служит для исправной работы',
+    'является важной частью автомобиля',
+]
+
 # Регулярка для удаления контактных данных из текста объявления
 _CONTACTS_RE = re.compile(
     r'(\+?[\d\s\-\(\)]{7,})'          # телефоны
@@ -49,6 +57,10 @@ class BannedWordsError(ValidationError):
 
 class VagueFitmentError(ValidationError):
     """AI написал неконкретную применяемость вместо фактов."""
+
+
+class LowValueContentError(ValidationError):
+    """AI заменил полезные факты очевидной или шаблонной фразой."""
 
 
 def validate_title(title: str) -> str:
@@ -83,6 +95,11 @@ def validate_description(text: str) -> str:
     if vague_fitment:
         raise VagueFitmentError(
             f'Неконкретная применяемость в описании: {", ".join(vague_fitment)}'
+        )
+    low_value = [phrase for phrase in LOW_VALUE_PHRASES if phrase in lower]
+    if low_value:
+        raise LowValueContentError(
+            f'Шаблонная фраза без пользы для покупателя: {", ".join(low_value)}'
         )
     return text
 

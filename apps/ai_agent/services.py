@@ -82,6 +82,7 @@ class DescriptionAgent:
                     self._validate_required_identity(product, result)
                     self._validate_required_fitments(product, result)
                     self._validate_required_cross_codes(product, result)
+                    self._validate_rich_description(product, result)
                 except (BannedWordsError, VagueFitmentError, ValidationError) as exc:
                     AIWalletService.release(
                         tenant, reservation, reason='validation_rejected',
@@ -286,13 +287,56 @@ class DescriptionAgent:
         codes.discard('')
         if not codes:
             return
-        combined = ''.join(
+        description = ''.join(
             character
-            for character in f'{result["title"]} {result["description"]}'.casefold()
+            for character in str(result['description']).casefold()
             if character.isalnum()
         )
-        if not any(code in combined for code in codes):
+        if not any(code in description for code in codes):
             raise ValidationError('Ответ потерял подтверждённые OEM/Cross-коды.')
+
+    @staticmethod
+    def _validate_rich_description(product, result: dict) -> None:
+        """Prevent a richly enriched product from collapsing into two generic lines."""
+        context = ProductAIEnrichmentContextBuilder().build(product)
+        profile = context.content_profile
+        if profile.get('level') != 'rich':
+            return
+
+        description = str(result.get('description') or '')
+        normalized = ''.join(character for character in description.casefold() if character.isalnum())
+        if len(description) < 350:
+            raise ValidationError(
+                'Для товара с полным обогащением описание должно содержать '
+                'не менее 350 символов полезных фактов.'
+            )
+        article = ''.join(
+            character for character in str(product.article or '').casefold()
+            if character.isalnum()
+        )
+        if article and article not in normalized:
+            raise ValidationError(
+                'Полное описание должно повторять артикул товара.'
+            )
+
+        description_lower = description.casefold()
+        section_markers = {
+            'compatibility': 'совместимост',
+            'specifications': 'характеристик',
+            'catalog_numbers': 'номер',
+            'condition': 'состояни',
+        }
+        missing_sections = [
+            section
+            for section in profile.get('available_sections', [])
+            if section in section_markers
+            and section_markers[section] not in description_lower
+        ]
+        if missing_sections:
+            raise ValidationError(
+                'Полное описание потеряло доступные разделы: '
+                + ', '.join(missing_sections)
+            )
 
     @staticmethod
     def calculate_grounding_confidence(product) -> float:

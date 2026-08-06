@@ -21,6 +21,7 @@ class ProductAIEnrichmentContext:
     trusted_fitments: list[dict] = field(default_factory=list)
     fitment_presentation: dict = field(default_factory=dict)
     catalog_number_presentation: dict = field(default_factory=dict)
+    content_profile: dict = field(default_factory=dict)
     cautious_vehicle_makes: list[str] = field(default_factory=list)
     excluded_review_count: int = 0
 
@@ -50,6 +51,7 @@ class ProductAIEnrichmentContext:
             'trusted_fitments': self.trusted_fitments,
             'fitment_presentation': self.fitment_presentation,
             'catalog_number_presentation': self.catalog_number_presentation,
+            'content_profile': self.content_profile,
             'cautious_vehicle_makes': self.cautious_vehicle_makes,
             'excluded_review_count': self.excluded_review_count,
         }
@@ -64,12 +66,60 @@ class ProductAIEnrichmentContextBuilder:
         cross_codes = list(product.cross_codes.all().order_by('manufacturer', 'code')[:20])
         fitments = list(product.fitments.all().order_by('make', 'model', 'generation')[:50])
         facts = list(product.enrichment_facts.all().order_by('fact_type', 'name')[:30])
+        trusted_fact_count = sum(1 for fact in facts if should_auto_apply_record(fact))
 
         self._add_attributes(context, attributes)
         self._add_cross_codes(context, cross_codes)
         self._add_fitments(context, fitments)
         self._add_facts(context, facts)
+        context.content_profile = self._build_content_profile(
+            product=product,
+            attributes=attributes,
+            cross_codes=cross_codes,
+            fitments=context.trusted_fitments,
+            trusted_fact_count=trusted_fact_count,
+        )
         return context
+
+    @staticmethod
+    def _build_content_profile(
+        *, product, attributes, cross_codes, fitments, trusted_fact_count,
+    ) -> dict:
+        available_sections = []
+        if fitments:
+            available_sections.append('compatibility')
+        if attributes:
+            available_sections.append('specifications')
+        if cross_codes:
+            available_sections.append('catalog_numbers')
+        if trusted_fact_count:
+            available_sections.append('verified_facts')
+        if getattr(product, 'condition', ''):
+            available_sections.append('condition')
+
+        enrichment_sections = [
+            section for section in available_sections
+            if section not in {'condition'}
+        ]
+        evidence_count = (
+            len(attributes) + len(cross_codes) + len(fitments) + trusted_fact_count
+        )
+        if len(enrichment_sections) >= 3 and evidence_count >= 8:
+            level = 'rich'
+            target = {'min': 600, 'max': 2200}
+        elif enrichment_sections:
+            level = 'standard'
+            target = {'min': 300, 'max': 1400}
+        else:
+            level = 'sparse'
+            target = {'min': 180, 'max': 700}
+        return {
+            'level': level,
+            'available_sections': available_sections,
+            'evidence_count': evidence_count,
+            'target_description_chars': target,
+            'do_not_pad': True,
+        }
 
     @staticmethod
     def _add_attributes(context: ProductAIEnrichmentContext, attributes) -> None:
