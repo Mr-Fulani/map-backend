@@ -604,37 +604,37 @@ export default function ListingDrawer({
       <Sheet open={open} onOpenChange={handleOpenChange}>
         <SheetContent
           side="right"
-          className="h-[100dvh] w-screen max-w-none overflow-hidden p-0 sm:max-w-none xl:w-[min(96vw,1440px)] xl:max-w-[min(96vw,1440px)]"
+          className="h-[100dvh] w-[100dvw] min-w-0 max-w-[100dvw] overflow-hidden p-0 sm:max-w-[100dvw] xl:w-[min(96vw,1440px)] xl:max-w-[min(96vw,1440px)]"
         >
           {loading || !listing ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               Загрузка...
             </div>
           ) : (
-            <div className="flex h-full min-h-0 flex-col">
-              <div className="shrink-0 border-b bg-background/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur xl:hidden">
+            <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+              <div className="min-w-0 shrink-0 overflow-hidden border-b bg-background/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur xl:hidden">
                 <p className="truncate pr-10 text-xs text-muted-foreground">{listing.product_article}</p>
                 <p className="truncate pr-10 text-sm font-medium">{listing.product_name}</p>
-                <div className="mt-3 grid grid-cols-2 rounded-lg bg-muted p-1">
+                <div className="mt-3 grid min-w-0 grid-cols-2 rounded-lg bg-muted p-1">
                   <button
                     type="button"
                     onClick={() => setActivePanel('listing')}
-                    className={`flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${activePanel === 'listing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
+                    className={`flex h-9 min-w-0 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${activePanel === 'listing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
                   >
                     <FileText className="h-4 w-4" /> Объявление
                   </button>
                   <button
                     type="button"
                     onClick={() => setActivePanel('pricing')}
-                    className={`flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${activePanel === 'pricing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
+                    className={`flex h-9 min-w-0 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${activePanel === 'pricing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
                   >
                     <BarChart3 className="h-4 w-4" /> Цены
                   </button>
                 </div>
               </div>
 
-              <div className="grid min-h-0 flex-1 xl:grid-cols-[minmax(600px,1fr)_minmax(520px,560px)]">
-                <section className={`${activePanel === 'pricing' ? 'block' : 'hidden'} min-h-0 overflow-y-auto overscroll-contain border-r xl:block`}>
+              <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden xl:grid-cols-[minmax(600px,1fr)_minmax(520px,560px)]">
+                <section className={`${activePanel === 'pricing' ? 'block' : 'hidden'} min-h-0 min-w-0 max-w-full overflow-x-hidden overflow-y-auto overscroll-contain border-r xl:block`}>
                   <MarketPricingPanel
                     listingId={listing.id}
                     listingStatus={listing.status}
@@ -643,17 +643,17 @@ export default function ListingDrawer({
                   />
                 </section>
 
-                <section className={`${activePanel === 'listing' ? 'block' : 'hidden'} min-h-0 overflow-y-auto overscroll-contain [scrollbar-gutter:stable] xl:block`}>
-                  <div className="space-y-5 p-4 pb-8 sm:p-5 sm:pb-8">
+                <section className={`${activePanel === 'listing' ? 'block' : 'hidden'} min-h-0 min-w-0 max-w-full overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-gutter:stable] xl:block`}>
+                  <div className="w-full min-w-0 max-w-full space-y-5 overflow-x-hidden p-4 pb-8 sm:p-5 sm:pb-8">
               <SheetHeader>
-                <div className="flex items-start gap-3">
-                  <SheetTitle className="flex-1 leading-tight">
-                    <span className="font-mono text-xs text-muted-foreground block mb-1">
+                <div className="flex min-w-0 items-start gap-3">
+                  <SheetTitle className="min-w-0 flex-1 break-words pr-1 leading-tight [overflow-wrap:anywhere]">
+                    <span className="mb-1 block min-w-0 truncate font-mono text-xs text-muted-foreground">
                       {listing.product_article}
                     </span>
                     {listing.product_name}
                   </SheetTitle>
-                  <Badge variant={STATUS_VARIANT[listing.status] ?? 'outline'}>
+                  <Badge variant={STATUS_VARIANT[listing.status] ?? 'outline'} className="max-w-[42%] shrink-0 whitespace-normal text-right leading-tight">
                     {listing.status_display}
                   </Badge>
                 </div>
@@ -801,7 +801,7 @@ export default function ListingDrawer({
                     </p>
                   </>
                 ) : (
-                  <p className="font-medium">{listing.title || '—'}</p>
+                  <p className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">{listing.title || '—'}</p>
                 )}
               </div>
 
@@ -816,7 +816,7 @@ export default function ListingDrawer({
                     className="text-sm resize-none"
                   />
                 ) : (
-                  <pre className="whitespace-pre-wrap text-sm bg-muted/40 rounded-md p-3 font-sans leading-relaxed max-h-48 overflow-y-auto">
+                  <pre className="max-h-48 min-w-0 max-w-full whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 font-sans text-sm leading-relaxed [overflow-wrap:anywhere] overflow-x-hidden overflow-y-auto">
                     {listing.description_ai || '—'}
                   </pre>
                 )}
@@ -861,14 +861,14 @@ export default function ListingDrawer({
                           <button
                             type="button"
                             key={`${option.source}-${option.name}`}
-                            className="flex w-full items-center justify-between rounded-sm px-2 py-1.5 text-left hover:bg-muted"
+                            className="flex min-w-0 w-full items-center justify-between gap-2 rounded-sm px-2 py-1.5 text-left hover:bg-muted"
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => {
                               setEditBrand(option.name);
                               setBrandInputFocused(false);
                             }}
                           >
-                            <span>{option.name}</span>
+                            <span className="min-w-0 break-words [overflow-wrap:anywhere]">{option.name}</span>
                             <span className="ml-3 shrink-0 text-xs text-muted-foreground">
                               {option.source === 'category' ? 'по категории' : option.source === 'avito' ? 'каталог Avito' : 'текущее'}
                             </span>
@@ -878,7 +878,7 @@ export default function ListingDrawer({
                     )}
                   </div>
                 ) : (
-                  <p className="font-medium">{listing.product_brand || '—'}</p>
+                  <p className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">{listing.product_brand || '—'}</p>
                 )}
                 {editingBrand && (
                   <div className="flex gap-2 pt-1">
@@ -1022,7 +1022,7 @@ export default function ListingDrawer({
                 // у товара определена — показываем её read-only, чтобы тенант видел.
                 <div className="space-y-1 rounded-md border p-3">
                   <p className="text-sm text-muted-foreground">Категория</p>
-                  <p className="font-medium">
+                  <p className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">
                     {listing.catalog_category.parent_name
                       ? `${listing.catalog_category.parent_name} → ${listing.catalog_category.name}`
                       : listing.catalog_category.name}
@@ -1059,9 +1059,9 @@ export default function ListingDrawer({
                     ))}
                   </select>
                   {selectedPlacementAddress && (
-                    <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                      <p className="font-medium text-foreground">{selectedPlacementAddress.name}</p>
-                      <p>
+                    <div className="min-w-0 rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+                      <p className="min-w-0 break-words font-medium text-foreground">{selectedPlacementAddress.name}</p>
+                      <p className="min-w-0 break-words">
                         {selectedPlacementAddress.seller_address_id
                           ? `ID адреса Avito: ${selectedPlacementAddress.seller_address_id}`
                           : selectedPlacementAddress.address || 'Адрес без текстового значения'}

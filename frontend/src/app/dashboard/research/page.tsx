@@ -135,7 +135,7 @@ export default function ResearchPage() {
   }, [load, summary.active]);
 
   return (
-    <div className="space-y-6">
+    <div className="min-w-0 space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
@@ -155,15 +155,15 @@ export default function ResearchPage() {
       {providerStatus && (
         <Card className={providerStatus.available ? '' : 'border-destructive/40'}>
           <CardContent className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
+            <div className="min-w-0">
               <p className="text-sm font-medium">Сервисы поиска</p>
               <p className="text-xs text-muted-foreground">
                 MAP автоматически выбирает доступный сервис и переключается при временной ошибке.
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex min-w-0 flex-wrap gap-2">
               {providerStatus.providers.map((provider) => (
-                <Badge key={provider.provider_id} variant="secondary">
+                <Badge key={provider.provider_id} variant="secondary" className="max-w-full whitespace-normal break-words leading-tight [overflow-wrap:anywhere]">
                   {provider.display_name}
                 </Badge>
               ))}
@@ -199,19 +199,19 @@ export default function ResearchPage() {
         {loading ? <ResearchSkeleton count={5} /> : runs.length === 0 ? (
           <EmptyState />
         ) : runs.map((run) => (
-          <Card key={run.id}>
-            <CardContent className="space-y-3 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{run.product_name}</p>
-                  <p className="font-mono text-xs text-muted-foreground">{run.product_article}</p>
+          <Card key={run.id} className="min-w-0 overflow-hidden">
+            <CardContent className="min-w-0 space-y-3 p-4">
+              <div className="flex min-w-0 flex-col items-start gap-2 min-[420px]:flex-row min-[420px]:justify-between">
+                <div className="min-w-0 max-w-full">
+                  <p className="break-words font-medium [overflow-wrap:anywhere]">{run.product_name}</p>
+                  <p className="break-all font-mono text-xs text-muted-foreground">{run.product_article}</p>
                 </div>
-                <Badge variant={statusVariant(run.status)} className="max-w-[45%] shrink-0 whitespace-normal text-right leading-tight">
+                <Badge variant={statusVariant(run.status)} className="max-w-full shrink-0 whitespace-normal leading-tight min-[420px]:max-w-[45%] min-[420px]:text-right">
                   {STATUS_LABELS[run.status] ?? run.status}
                 </Badge>
               </div>
               <RunDetails run={run} />
-              <Link href={`/dashboard/products/${run.product_id}`}>
+              <Link href={`/dashboard/products/${run.product_id}`} className="block min-w-0">
                 <Button className="w-full" variant="outline" size="sm">
                   Открыть товар <ExternalLink className="ml-2 h-3.5 w-3.5" />
                 </Button>
@@ -320,10 +320,13 @@ function SummaryCard({ icon: Icon, label, value, loading }: {
 
 function RunDetails({ run }: { run: ResearchRun }) {
   return (
-    <div className="space-y-1 text-xs text-muted-foreground">
-      <p>{run.result_count} страниц · {run.claim_count} фактов</p>
-      <p>{run.search_provider || 'Провайдер не выбран'} · {new Date(run.created_at).toLocaleString('ru-RU')}</p>
-      {run.error_message && <p className="line-clamp-2 text-destructive">{run.error_message}</p>}
+    <div className="min-w-0 space-y-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">
+      <p className="min-w-0 break-words">{run.result_count} страниц · {run.claim_count} фактов</p>
+      <p className="min-w-0 break-words">
+        <span className="break-all">{run.search_provider || 'Провайдер не выбран'}</span>
+        {' · '}{new Date(run.created_at).toLocaleString('ru-RU')}
+      </p>
+      {run.error_message && <p className="min-w-0 whitespace-pre-wrap break-words text-destructive">{run.error_message}</p>}
     </div>
   );
 }
