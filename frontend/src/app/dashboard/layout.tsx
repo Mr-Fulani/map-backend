@@ -52,7 +52,7 @@ export default function DashboardLayout({
         <Sidebar />
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           <Header />
-          <main className="min-w-0 flex-1 overflow-y-auto px-3 py-4 sm:px-4 lg:p-6">
+          <main className="min-w-0 flex-1 overflow-x-clip overflow-y-auto overscroll-contain px-3 py-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:px-4 lg:p-6">
             {children}
           </main>
         </div>

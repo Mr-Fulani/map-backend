@@ -146,7 +146,7 @@ export function StepCategories({ onNext, onBack }: StepCategoriesProps) {
         {unmapped.map((cat) => (
           <div
             key={cat.category_source}
-            className="flex items-center gap-4 rounded-lg border p-3"
+            className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:gap-4"
           >
             <div className="flex-1">
               <p className="text-sm font-medium">{cat.category_source}</p>
@@ -154,7 +154,7 @@ export function StepCategories({ onNext, onBack }: StepCategoriesProps) {
                 {cat.count} товаров
               </Badge>
             </div>
-            <div className="w-48">
+            <div className="w-full sm:w-48">
               <Label className="sr-only">Категория Avito</Label>
               <Select
                 value={mappings[cat.category_source] || ''}
@@ -181,12 +181,12 @@ export function StepCategories({ onNext, onBack }: StepCategoriesProps) {
         ))}
       </div>
 
-      <div className="flex justify-between">
+      <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-between">
         <Button type="button" variant="outline" onClick={onBack}>
           <ArrowLeft className="mr-2 h-4 w-4" />
           Назад
         </Button>
-        <Button onClick={handleSave} disabled={isSaving}>
+        <Button onClick={handleSave} disabled={isSaving} className="w-full sm:w-auto">
           {isSaving ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

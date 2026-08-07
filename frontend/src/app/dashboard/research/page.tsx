@@ -206,7 +206,7 @@ export default function ResearchPage() {
                   <p className="truncate font-medium">{run.product_name}</p>
                   <p className="font-mono text-xs text-muted-foreground">{run.product_article}</p>
                 </div>
-                <Badge variant={statusVariant(run.status)}>
+                <Badge variant={statusVariant(run.status)} className="max-w-[45%] shrink-0 whitespace-normal text-right leading-tight">
                   {STATUS_LABELS[run.status] ?? run.status}
                 </Badge>
               </div>

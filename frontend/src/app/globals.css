@@ -69,7 +69,11 @@
 
   html,
   body {
-    @apply min-w-0 overflow-x-hidden;
+    @apply w-full min-w-0 max-w-full overflow-x-hidden;
+  }
+
+  body {
+    overflow-wrap: break-word;
   }
 
   code,
