@@ -545,8 +545,8 @@ export default function MarketPricingPanel({
       <section className="space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div><h3 className="text-sm font-medium">Предложения из интернета</h3><p className="text-xs text-muted-foreground">Сомнительные совпадения помечены и не участвуют в статистике</p></div>
-          <div className="flex gap-2">
-            <div className="grid min-w-44 gap-1 text-[11px] text-muted-foreground">
+          <div className="grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 sm:w-auto">
+            <div className="grid min-w-0 gap-1 text-[11px] text-muted-foreground sm:min-w-44">
               <span className="inline-flex items-center gap-1"><ArrowDownUp className="h-3 w-3" />Сортировка</span>
               <Select value={sort} onValueChange={(value) => setSort(value as typeof sort)}>
                 <SelectTrigger aria-label="Сортировка предложений" className="h-9 bg-background">
@@ -572,7 +572,7 @@ export default function MarketPricingPanel({
               <article key={offer.id} className="rounded-xl border bg-card p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0"><p className="truncate font-medium">{offer.seller_name || offer.domain}</p><p className="truncate text-xs text-muted-foreground">{offer.domain} {offer.country_code && `· ${RESEARCH_COUNTRY_LABELS[offer.country_code] ?? offer.country_code}`}</p></div>
-                  <Badge variant={offer.review_status === 'verified' ? 'secondary' : 'outline'} className={offer.review_status === 'verified' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-amber-500/30 text-amber-700 dark:text-amber-300'}>{offer.match_type_label}</Badge>
+                  <Badge variant={offer.review_status === 'verified' ? 'secondary' : 'outline'} className={`max-w-[55%] shrink-0 whitespace-normal text-right leading-tight ${offer.review_status === 'verified' ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-amber-500/30 text-amber-700 dark:text-amber-300'}`}>{offer.match_type_label}</Badge>
                 </div>
                 <p className="mt-3 line-clamp-2 text-sm">{offer.title || 'Название не указано'}</p>
                 <div className="mt-3 flex flex-wrap items-end justify-between gap-2"><div><p className="text-xl font-semibold tabular-nums">{offer.is_price_from && <span className="mr-1 text-xs font-normal text-muted-foreground">от</span>}{Number(offer.price).toLocaleString('ru-RU')} {offer.currency === 'RUB' ? '₽' : offer.currency}</p>{offer.currency !== 'RUB' && <p className="text-xs text-muted-foreground">{offer.normalized_price ? `≈ ${rubles(offer.normalized_price)}` : 'Конвертация недоступна'}</p>}</div><Badge variant="outline">{offer.availability_label}</Badge></div>
@@ -580,7 +580,7 @@ export default function MarketPricingPanel({
                   <ComparisonLine difference={offer.difference_from_base} reference="нашей базовой цены" />
                   <ComparisonLine difference={offer.difference_from_listing} reference="цены объявления" />
                 </div>
-                <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs"><dt className="text-muted-foreground">Состояние</dt><dd>{offer.condition_label}</dd><dt className="text-muted-foreground">Точность</dt><dd>{Math.round(offer.match_confidence * 100)}%</dd><dt className="text-muted-foreground">Найдено по</dt><dd className="truncate" title={offer.matched_code || offer.article}>{offer.matched_code || offer.article || 'не подтверждено'}</dd><dt className="text-muted-foreground">Проверено</dt><dd>{dateTime(offer.captured_at)}</dd>{offer.quantity !== null && <><dt className="text-muted-foreground">Количество</dt><dd>{offer.quantity}</dd></>}{offer.delivery_text && <><dt className="text-muted-foreground">Доставка</dt><dd>{offer.delivery_text}</dd></>}</dl>
+                <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs [&_dd]:min-w-0 [&_dd]:break-words"><dt className="text-muted-foreground">Состояние</dt><dd>{offer.condition_label}</dd><dt className="text-muted-foreground">Точность</dt><dd>{Math.round(offer.match_confidence * 100)}%</dd><dt className="text-muted-foreground">Найдено по</dt><dd className="truncate" title={offer.matched_code || offer.article}>{offer.matched_code || offer.article || 'не подтверждено'}</dd><dt className="text-muted-foreground">Проверено</dt><dd>{dateTime(offer.captured_at)}</dd>{offer.quantity !== null && <><dt className="text-muted-foreground">Количество</dt><dd>{offer.quantity}</dd></>}{offer.delivery_text && <><dt className="text-muted-foreground">Доставка</dt><dd>{offer.delivery_text}</dd></>}</dl>
                 {offer.match_reasons.length > 0 && <p className="mt-3 line-clamp-2 text-xs text-muted-foreground">{offer.match_reasons.join(' · ')}</p>}
                 <div className="mt-4 flex flex-wrap gap-2"><Button size="sm" variant="outline" asChild><a href={offer.url} target="_blank" rel="noreferrer">Открыть <ExternalLink className="ml-1 h-3.5 w-3.5" /></a></Button><Button size="sm" onClick={() => { onApplyPrice(offer.normalized_price!); toast.success(listingStatus === 'active' ? 'Цена подготовлена. После сохранения отправим безопасное обновление в Avito.' : 'Цена подставлена в черновик объявления.'); }} disabled={!offer.normalized_price}>Подставить цену</Button></div>
                 <p className="mt-2 text-[11px] text-muted-foreground">Источник поиска: {offer.provider_id || 'не указан'}. Подстановка не публикует изменение автоматически.</p>

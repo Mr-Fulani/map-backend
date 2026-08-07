@@ -168,13 +168,13 @@ export function StepAutoload({ data, onNext, onBack }: StepAutoloadProps) {
       )}
 
       {/* Кнопки */}
-      <div className="flex items-center justify-between gap-3">
-        <Button variant="ghost" onClick={onBack}>
+      <div className="flex flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <Button variant="ghost" onClick={onBack} className="w-full sm:w-auto">
           <ArrowLeft className="mr-2 h-4 w-4" />
           Назад
         </Button>
 
-        <div className="flex gap-3">
+        <div className="grid gap-2 sm:flex sm:gap-3">
           {!activated && (
             <Button variant="ghost" onClick={handleSkip}>
               Настроить позже

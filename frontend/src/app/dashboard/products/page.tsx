@@ -893,14 +893,14 @@ export default function ProductsPage() {
                     </div>
                   </Link>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 flex-col gap-2 min-[520px]:flex-row min-[520px]:items-start min-[520px]:justify-between">
                       <Link
                         href={`/dashboard/products/${p.id}?returnTo=${encodeURIComponent(currentListHref)}`}
                         className="min-w-0 break-words text-sm font-medium leading-5 hover:underline"
                       >
                         {p.name}
                       </Link>
-                      <div className="flex shrink-0 gap-1">
+                      <div className="flex flex-wrap gap-1 min-[520px]:shrink-0 min-[520px]:justify-end">
                         {p.sync_excluded && (
                           <Badge variant="outline" className="border-destructive/50 text-destructive">
                             Исключён
@@ -914,7 +914,7 @@ export default function ProductsPage() {
                     <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
                       <Link
                         href={`/dashboard/products/${p.id}?returnTo=${encodeURIComponent(currentListHref)}`}
-                        className="font-mono font-medium text-primary hover:underline"
+                        className="break-all font-mono font-medium text-primary hover:underline"
                       >
                         {p.article}
                       </Link>

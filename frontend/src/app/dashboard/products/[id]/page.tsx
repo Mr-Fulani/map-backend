@@ -389,9 +389,9 @@ function SourcePriceCard({
 
   return (
     <div className="rounded-lg border bg-card p-3">
-      <div className="flex items-start justify-between gap-2">
-        <span className="font-medium">{label}</span>
-        <Badge variant="outline" className={`whitespace-nowrap text-[11px] ${statusClass}`}>
+      <div className="flex flex-col items-start gap-2 min-[420px]:flex-row min-[420px]:justify-between">
+        <span className="min-w-0 break-words font-medium">{label}</span>
+        <Badge variant="outline" className={`shrink-0 text-[11px] ${statusClass}`}>
           {statusLabel}
         </Badge>
       </div>
@@ -410,8 +410,8 @@ function SourcePriceCard({
           <p className={`mt-1 text-xs font-medium ${comparisonClass}`}>{comparisonText}</p>
         )}
       </div>
-      <div className="mt-3 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-        <span>
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span className="min-w-0 break-words">
           {job?.finished_at
             ? `Проверено ${new Date(job.finished_at).toLocaleString('ru-RU')}`
             : checking ? 'Проверка выполняется' : 'Запустите обогащение'}
@@ -997,7 +997,7 @@ export default function ProductDetailPage() {
   return (
     <div className="space-y-6">
       {/* Навигация */}
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <Link href={catalogHref}>
           <Button variant="ghost" size="sm">
             <ArrowLeft className="mr-2 h-4 w-4" />
@@ -1005,31 +1005,31 @@ export default function ProductDetailPage() {
           </Button>
         </Link>
         <span className="text-muted-foreground">/</span>
-        <span className="font-mono text-sm">{product.article}</span>
+        <span className="min-w-0 truncate font-mono text-sm" title={product.article}>{product.article}</span>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Основная информация + Фото */}
         <div className="space-y-6 lg:col-span-2">
           <Card>
-            <CardHeader className="flex flex-row items-start justify-between">
-              <div>
-                <CardTitle className="text-xl">{product.name}</CardTitle>
-                <p className="mt-1 font-mono text-sm text-muted-foreground">{product.article}</p>
+            <CardHeader className="flex flex-col items-start gap-3 min-[480px]:flex-row min-[480px]:justify-between">
+              <div className="min-w-0">
+                <CardTitle className="break-words text-xl">{product.name}</CardTitle>
+                <p className="mt-1 break-all font-mono text-sm text-muted-foreground">{product.article}</p>
               </div>
-              <Badge variant={product.export_enabled ? 'default' : 'secondary'}>
+              <Badge variant={product.export_enabled ? 'default' : 'secondary'} className="shrink-0">
                 {product.export_enabled ? 'Выгружается' : 'Не выгружается'}
               </Badge>
             </CardHeader>
             <CardContent>
               <Separator className="mb-4" />
               <div className="divide-y">
-                <div className="flex items-center justify-between gap-4 py-2">
+                <div className="flex flex-col gap-2 py-2 min-[480px]:flex-row min-[480px]:items-center min-[480px]:justify-between min-[480px]:gap-4">
                   <span className="text-sm text-muted-foreground">Бренд</span>
                   {editingBrand ? (
-                    <div className="flex items-center gap-2">
+                    <div className="flex min-w-0 w-full items-center gap-2 min-[480px]:w-auto">
                       <Input
-                        className="h-8 w-48"
+                        className="h-8 min-w-0 flex-1 min-[480px]:w-48 min-[480px]:flex-none"
                         value={brandValue}
                         onChange={(e) => setBrandValue(e.target.value)}
                         placeholder="Например: Hyundai-KIA"
@@ -1050,8 +1050,8 @@ export default function ProductDetailPage() {
                       </Button>
                     </div>
                   ) : (
-                    <span className="flex items-center gap-2 text-right text-sm font-medium">
-                      {product.brand || '—'}
+                    <span className="flex min-w-0 flex-wrap items-center gap-2 text-sm font-medium min-[480px]:justify-end min-[480px]:text-right">
+                      <span className="min-w-0 break-words">{product.brand || '—'}</span>
                       <Badge
                         variant={
                           product.brand_needs_review

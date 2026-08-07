@@ -12,6 +12,13 @@ import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store, Search } from 'lucide-react';
@@ -171,6 +178,19 @@ const SETTINGS_TABS = [
   'catalog-categories', 'pricing', 'web-research', 'ai', 'notifications',
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
+
+const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
+  profile: 'Профиль',
+  organization: 'Организация',
+  'api-keys': 'API-ключи',
+  marketplaces: 'Маркетплейсы',
+  datasources: 'Источники данных',
+  'catalog-categories': 'Категории',
+  pricing: 'Наценки',
+  'web-research': 'Интернет-исследование',
+  ai: 'AI-модели',
+  notifications: 'Уведомления',
+};
 
 const FALLBACK_DOMAIN_LABELS: Record<string, string> = {
   auto_parts: 'Автозапчасти',
@@ -1272,18 +1292,26 @@ export default function SettingsPage() {
       </div>
 
       <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as SettingsTab)}>
-        <div className="overflow-x-auto pb-1">
-          <TabsList className="w-full sm:w-auto">
-            <TabsTrigger value="profile">Профиль</TabsTrigger>
-            <TabsTrigger value="organization">Организация</TabsTrigger>
-            <TabsTrigger value="api-keys">API-ключи</TabsTrigger>
-            <TabsTrigger value="marketplaces">Маркетплейсы</TabsTrigger>
-            <TabsTrigger value="datasources">Источники данных</TabsTrigger>
-            <TabsTrigger value="catalog-categories">Категории</TabsTrigger>
-            <TabsTrigger value="pricing">Наценки</TabsTrigger>
-            <TabsTrigger value="web-research">Интернет-исследование</TabsTrigger>
-            <TabsTrigger value="ai">AI-модели</TabsTrigger>
-            <TabsTrigger value="notifications">Уведомления</TabsTrigger>
+        <div className="lg:hidden">
+          <Label htmlFor="settings-section" className="mb-1.5 block text-xs text-muted-foreground">
+            Раздел настроек
+          </Label>
+          <Select value={activeTab} onValueChange={(value) => setActiveTab(value as SettingsTab)}>
+            <SelectTrigger id="settings-section" className="w-full bg-background">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SETTINGS_TABS.map((tab) => (
+                <SelectItem key={tab} value={tab}>{SETTINGS_TAB_LABELS[tab]}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="hidden overflow-x-auto pb-1 lg:block">
+          <TabsList>
+            {SETTINGS_TABS.map((tab) => (
+              <TabsTrigger key={tab} value={tab}>{SETTINGS_TAB_LABELS[tab]}</TabsTrigger>
+            ))}
           </TabsList>
         </div>
 

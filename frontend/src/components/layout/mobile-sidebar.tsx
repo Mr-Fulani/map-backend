@@ -56,7 +56,7 @@ export function MobileSidebar({ onNavigate }: MobileSidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-1 px-2 py-3">
+      <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain px-2 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
         {navItems.map((item) => {
           const isActive =
             pathname === item.href ||

@@ -175,7 +175,7 @@ function CountryGroup({
   return (
     <div>
       <p className="text-xs font-medium">{title}</p>
-      <div className="mt-2 flex flex-wrap gap-2">
+      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
         {countries.map(([code, label]) => {
           const selected = selectedCodes.includes(code);
           return (
@@ -187,13 +187,15 @@ function CountryGroup({
               aria-pressed={selected}
               disabled={disabled}
               onClick={() => onToggle(code)}
-              className={`h-8 rounded-full px-3 text-xs ${
+              className={`h-auto min-h-9 w-full justify-start whitespace-normal rounded-lg px-2.5 py-1.5 text-left text-xs leading-tight ${
                 selected
-                  ? 'border-primary bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
-                  : 'bg-background'
+                  ? 'border-primary bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary'
+                  : 'bg-background hover:border-primary/40'
               }`}
             >
-              {selected && <Check className="mr-1.5 h-3 w-3" />}
+              <span className={`mr-1.5 flex h-4 w-4 shrink-0 items-center justify-center rounded border ${selected ? 'border-primary bg-primary text-primary-foreground' : 'border-muted-foreground/40'}`}>
+                {selected && <Check className="h-3 w-3" />}
+              </span>
               {label}
             </Button>
           );
