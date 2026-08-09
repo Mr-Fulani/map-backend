@@ -134,6 +134,8 @@ class TenantMiddleware:
             '/api/docs/',
             '/api/schema/',
             '/api/v1/health/',
+            '/api/v1/live/',
+            '/api/v1/ready/',
             '/api/v1/auth/register/',
             '/api/v1/auth/token/',
             '/api/v1/billing/plans/',

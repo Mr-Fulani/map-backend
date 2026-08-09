@@ -95,8 +95,10 @@ reviewers и определить:
 при branch coverage ниже 70%. После изменения production-секретов сначала
 проверьте конфигурацию вручную и только затем разрешайте deploy в environment.
 
-На сервере скопируйте `.deploy.env.example` в `.deploy.env`, задайте публичный
-HTTPS endpoint `PROD_SMOKE_URL` и ограничьте доступ к файлу (`chmod 600`). Скрипт:
+На сервере скопируйте `.deploy.env.example` в `.deploy.env`, направьте
+`PROD_SMOKE_URL` на публичный `/api/v1/ready/` и ограничьте доступ к файлу
+(`chmod 600`). `/api/v1/live/` проверяет только HTTP-процесс, а readiness также
+проверяет PostgreSQL и cache. Скрипт:
 
 1. блокирует параллельный ручной запуск и проверяет SHA, чистоту working tree,
    Compose-конфигурацию, доступность Docker и запас диска;
