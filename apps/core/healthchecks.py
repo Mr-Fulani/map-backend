@@ -4,6 +4,8 @@ import time
 from pathlib import Path
 
 DEFAULT_HEARTBEAT_FILE = '/tmp/celerybeat-heartbeat'
+
+
 def celery_beat_heartbeat_is_fresh(now=None):
     heartbeat_file = Path(
         os.environ.get('CELERY_BEAT_HEARTBEAT_FILE', DEFAULT_HEARTBEAT_FILE)
