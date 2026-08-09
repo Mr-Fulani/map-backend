@@ -32,3 +32,17 @@ def test_runtime_healthchecks_cover_http_workers_beat_and_proxy():
     assert 'HeartbeatDatabaseScheduler' in services['celery_beat']['command']
     assert services['celery_beat']['healthcheck']['test'][-1] == 'celery-beat'
     assert '/nginx-health' in ' '.join(services['nginx']['healthcheck']['test'])
+
+
+def test_cache_and_durable_broker_are_separate_services():
+    services = COMPOSE['services']
+    cache_command = ' '.join(services['redis']['command'])
+    broker_command = ' '.join(services['redis_broker']['command'])
+
+    assert 'allkeys-lru' in cache_command
+    assert 'appendonly yes' in broker_command
+    assert 'appendfsync everysec' in broker_command
+    assert 'noeviction' in broker_command
+    assert services['redis_broker']['volumes'] == ['redis_broker_data:/data']
+    for name in ('django', 'celery_worker', 'celery_beat', 'celery_worker_images'):
+        assert services[name]['depends_on']['redis_broker']['condition'] == 'service_healthy'

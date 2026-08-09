@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from celery import shared_task
-from django.core.cache import cache
+from django.core.cache import caches
 from django.utils.timezone import now
 
 from apps.products.models import Product, ProductParseJob
@@ -9,6 +9,9 @@ from apps.web_research.models import WebResearchRun
 from apps.web_research.services import (
     WebResearchService, enrichment_coverage, should_run_web_research,
 )
+
+
+cache = caches['coordination']
 
 
 @shared_task(

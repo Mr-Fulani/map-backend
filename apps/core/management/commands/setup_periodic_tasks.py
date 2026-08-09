@@ -37,6 +37,12 @@ class Command(BaseCommand):
 
         tasks = [
             {
+                'name': 'dispatch_due_product_bulk_jobs',
+                'task': 'apps.products.tasks.dispatch_due_product_bulk_jobs',
+                'schedule': every_1m,
+                'queue': 'part_parsing_bulk',
+            },
+            {
                 'name': 'dispatch_pending_webhooks',
                 'task': 'apps.tenants.tasks.dispatch_pending_webhooks',
                 'schedule': every_1m,

@@ -1,11 +1,12 @@
 import os
-from urllib.parse import urlparse
 
 import sentry_sdk
 from cryptography.fernet import Fernet
 from django.core.exceptions import ImproperlyConfigured
 from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.django import DjangoIntegration
+
+from config.redis_config import validate_production_redis_layout
 
 from .base import *  # noqa: F401, F403
 
@@ -37,9 +38,19 @@ database_url = _required_env('DATABASE_URL')
 if 'map_password' in database_url:
     raise ImproperlyConfigured('Dev-пароль БД запрещён в production DATABASE_URL.')
 
-redis_url = _required_env('REDIS_URL')
-if not urlparse(redis_url).password:
-    raise ImproperlyConfigured('Production REDIS_URL должен содержать пароль.')
+cache_redis_url = _required_env('CACHE_REDIS_URL')
+celery_broker_url = _required_env('CELERY_BROKER_URL')
+celery_result_backend = _required_env('CELERY_RESULT_BACKEND')
+coordination_redis_url = _required_env('COORDINATION_REDIS_URL')
+try:
+    validate_production_redis_layout(
+        cache_redis_url,
+        celery_broker_url,
+        celery_result_backend,
+        coordination_redis_url,
+    )
+except ValueError as exc:
+    raise ImproperlyConfigured(str(exc)) from exc
 
 if not FIELD_ENCRYPTION_KEYS:
     raise ImproperlyConfigured('FIELD_ENCRYPTION_KEYS или FIELD_ENCRYPTION_KEY обязателен.')

@@ -175,11 +175,14 @@ npm run dev
 ## Переменные окружения
 
 Полный актуальный перечень находится в [`.env.example`](.env.example). Ключевые
-имена: `DJANGO_SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `FIELD_ENCRYPTION_KEYS`,
-`YC_S3_*`, ключи AI-провайдеров, `AVITO_*`, `YOOKASSA_*`, `SENDPULSE_SMTP_*` и
-`SENTRY_DSN`.
+имена: `DJANGO_SECRET_KEY`, `DATABASE_URL`, `CACHE_REDIS_URL`,
+`CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `COORDINATION_REDIS_URL`,
+`FIELD_ENCRYPTION_KEYS`, `YC_S3_*`, ключи AI-провайдеров, `AVITO_*`,
+`YOOKASSA_*`, `SENDPULSE_SMTP_*` и `SENTRY_DSN`. `REDIS_URL` используется только
+как fallback локальной разработки.
 
-Для production обязательны отдельные случайные PostgreSQL/Redis/Fernet secrets.
+Для production обязательны отдельные случайные PostgreSQL/cache-Redis/
+broker-Redis/Fernet secrets.
 Порядок ротации, webhook delivery, retention и egress policy описаны в
 [`docs/PRODUCTION_SECURITY.md`](docs/PRODUCTION_SECURITY.md).
 

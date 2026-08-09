@@ -1048,6 +1048,9 @@ class ProductBulkActionJob(TimestampedModel):
     batch_size = models.PositiveIntegerField(default=20, verbose_name='Размер batch')
     pause_seconds = models.PositiveIntegerField(default=60, verbose_name='Пауза между batch, сек')
     next_batch_at = models.DateTimeField(null=True, blank=True, verbose_name='Следующий batch')
+    last_dispatched_at = models.DateTimeField(
+        null=True, blank=True, verbose_name='Последняя постановка batch в очередь',
+    )
     error_message = models.TextField(blank=True, verbose_name='Ошибка')
     started_at = models.DateTimeField(null=True, blank=True, verbose_name='Начато')
     finished_at = models.DateTimeField(null=True, blank=True, verbose_name='Завершено')
@@ -1059,6 +1062,12 @@ class ProductBulkActionJob(TimestampedModel):
             models.Index(fields=['tenant', '-created_at']),
             models.Index(fields=['status', '-created_at']),
             models.Index(fields=['tenant', 'status']),
+            models.Index(
+                fields=['status', 'next_batch_at'], name='prod_bulk_status_due_idx',
+            ),
+            models.Index(
+                fields=['status', 'last_dispatched_at'], name='prod_bulk_dispatch_idx',
+            ),
         ]
 
     def __str__(self):

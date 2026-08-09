@@ -66,6 +66,7 @@ from apps.products.serializers import (
     VehicleFitmentSerializer,
 )
 from apps.products.services import (
+    MAX_BULK_ACTION_PAUSE_SECONDS, MAX_BULK_ACTION_PRODUCT_IDS,
     AutoPartsEnrichmentDisabled, ProductBrandService, ProductBulkActionService,
     ProductCategorySeedService, ProductEnrichmentService, ProductIsNotAutoPart,
     ProductKnowledgeGraphService, ProductService,
@@ -1168,13 +1169,38 @@ class ProductBulkActionView(APIView):
         action = request.data.get('action')
         product_ids = request.data.get('product_ids', [])
         source = str(request.data.get('source') or DEFAULT_PART_SOURCE).strip()
-        batch_size = int(request.data.get('batch_size') or 20)
-        pause_seconds = int(request.data.get('pause_seconds') or 60)
+        raw_batch_size = request.data.get('batch_size', 20)
+        raw_pause_seconds = request.data.get('pause_seconds', 60)
+        try:
+            batch_size = int(20 if raw_batch_size in (None, '') else raw_batch_size)
+            pause_seconds = int(60 if raw_pause_seconds in (None, '') else raw_pause_seconds)
+        except (TypeError, ValueError):
+            return Response(
+                {'status': 'error', 'code': 'validation_error',
+                 'message': 'batch_size и pause_seconds должны быть целыми числами.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not isinstance(product_ids, list):
             return Response(
                 {'status': 'error', 'code': 'validation_error',
                  'errors': {'product_ids': ['Ожидается список ID.']}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(product_ids) > MAX_BULK_ACTION_PRODUCT_IDS:
+            return Response(
+                {'status': 'error', 'code': 'validation_error',
+                 'errors': {'product_ids': [
+                     f'Допустимо не более {MAX_BULK_ACTION_PRODUCT_IDS} ID.',
+                 ]}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not 0 <= pause_seconds <= MAX_BULK_ACTION_PAUSE_SECONDS:
+            return Response(
+                {'status': 'error', 'code': 'validation_error',
+                 'errors': {'pause_seconds': [
+                     f'Допустимое значение: 0–{MAX_BULK_ACTION_PAUSE_SECONDS}.',
+                 ]}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
@@ -1198,7 +1224,19 @@ class ProductBulkActionView(APIView):
             )
 
         from apps.products.tasks import process_bulk_product_action
-        transaction.on_commit(lambda: process_bulk_product_action.delay(job.pk))
+        job.last_dispatched_at = now()
+        job.save(update_fields=['last_dispatched_at', 'updated_at'])
+
+        def enqueue_initial_batch():
+            try:
+                process_bulk_product_action.delay(job.pk)
+            except Exception:
+                ProductBulkActionJob.objects.filter(pk=job.pk).update(
+                    last_dispatched_at=None,
+                )
+                raise
+
+        transaction.on_commit(enqueue_initial_batch)
 
         return Response({
             'status': 'ok',

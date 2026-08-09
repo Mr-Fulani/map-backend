@@ -3,11 +3,13 @@ import logging
 from urllib.parse import unquote, urlparse
 
 from celery import shared_task
+from django.db import transaction
+from django.db.models import Q
 from django.utils.timezone import now
 
 from apps.datasources.models import DataSourceConnection
 from apps.datasources.registry import get_adapter
-from apps.products.models import Product
+from apps.products.models import Product, ProductBulkActionJob
 from apps.products.services import (
     ProductBulkActionService, ProductEnrichmentService, ProductService,
 )
@@ -245,13 +247,72 @@ def parse_single_part_then_generate_description(self, job_id: int):
         raise self.retry(exc=exc)
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60,
-             retry_backoff=True, queue='part_parsing_bulk')
+@shared_task(
+    bind=True,
+    max_retries=3,
+    default_retry_delay=60,
+    retry_backoff=True,
+    queue='part_parsing_bulk',
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
 def process_bulk_product_action(self, bulk_job_id: int):
     try:
         return ProductBulkActionService.process_next_batch(bulk_job_id)
     except Exception as exc:
         raise self.retry(exc=exc)
+
+
+@shared_task(
+    queue='part_parsing_bulk',
+    acks_late=True,
+    reject_on_worker_lost=True,
+    ignore_result=True,
+)
+def dispatch_due_product_bulk_jobs(limit: int = 100):
+    """Recover PENDING/due bulk jobs from PostgreSQL instead of Redis ETA."""
+    dispatch_time = now()
+    retry_before = dispatch_time - timedelta(minutes=5)
+    batch_limit = max(1, min(int(limit), 500))
+
+    due_state = (
+        Q(status=ProductBulkActionJob.Status.PENDING)
+        | Q(
+            status=ProductBulkActionJob.Status.COOLING_DOWN,
+            next_batch_at__lte=dispatch_time,
+        )
+    )
+    retryable_dispatch = (
+        Q(last_dispatched_at__isnull=True)
+        | Q(last_dispatched_at__lte=retry_before)
+    )
+
+    with transaction.atomic():
+        job_ids = list(
+            ProductBulkActionJob.objects
+            .select_for_update(skip_locked=True)
+            .filter(due_state, retryable_dispatch)
+            .order_by('next_batch_at', 'created_at')
+            .values_list('pk', flat=True)[:batch_limit]
+        )
+        ProductBulkActionJob.objects.filter(pk__in=job_ids).update(
+            last_dispatched_at=dispatch_time,
+        )
+
+        def publish_selected_jobs():
+            for job_id in job_ids:
+                try:
+                    process_bulk_product_action.delay(job_id)
+                except Exception:
+                    logger.exception('Не удалось поставить bulk job=%s в очередь.', job_id)
+                    ProductBulkActionJob.objects.filter(
+                        pk=job_id,
+                        last_dispatched_at=dispatch_time,
+                    ).update(last_dispatched_at=None)
+
+        transaction.on_commit(publish_selected_jobs)
+
+    return {'selected': len(job_ids)}
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60,

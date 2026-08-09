@@ -27,6 +27,10 @@ from apps.products.source_policy import (
 from apps.tenants.models import CatalogDomain, TenantCatalogDomain
 
 
+MAX_BULK_ACTION_PAUSE_SECONDS = 3600
+MAX_BULK_ACTION_PRODUCT_IDS = 500
+
+
 # Латинские буквы-двойники → кириллица. В источниках (1С/CSV) названия часто
 # приходят с подменой: «Oпopa шapoвaя» = латинские O/o/p/a. Для матчинга категорий
 # приводим к кириллице (на отображение товара не влияет).
@@ -1357,6 +1361,10 @@ class ProductBulkActionService:
     ) -> ProductBulkActionJob:
         if action not in ProductBulkActionService.ALLOWED_ACTIONS:
             raise ValueError('Unknown bulk action')
+        if len(set(product_ids)) > MAX_BULK_ACTION_PRODUCT_IDS:
+            raise ValueError(
+                f'Bulk action accepts at most {MAX_BULK_ACTION_PRODUCT_IDS} product IDs.'
+            )
         if action in [
             ProductBulkActionJob.Action.ENRICH_SELECTED,
             ProductBulkActionJob.Action.ENRICH_MISSING_DATA,
@@ -1384,9 +1392,16 @@ class ProductBulkActionService:
             total_count=len(valid_ids),
             skipped_count=skipped_count,
             batch_size=max(1, min(batch_size or source_config['batch_size'], source_config['batch_size'])),
-            pause_seconds=max(
-                source_config['min_pause_seconds'],
-                pause_seconds or source_config['default_pause_seconds'],
+            pause_seconds=min(
+                MAX_BULK_ACTION_PAUSE_SECONDS,
+                max(
+                    source_config['min_pause_seconds'],
+                    (
+                        source_config['default_pause_seconds']
+                        if pause_seconds is None
+                        else pause_seconds
+                    ),
+                ),
             ),
         )
 
@@ -1404,8 +1419,20 @@ class ProductBulkActionService:
             ]:
                 return {'job_id': job_id, 'status': job.status}
 
+            current_time = now()
+            if (
+                job.status == ProductBulkActionJob.Status.COOLING_DOWN
+                and job.next_batch_at is not None
+                and job.next_batch_at > current_time
+            ):
+                return {
+                    'job_id': job_id,
+                    'status': job.status,
+                    'next_batch_at': job.next_batch_at.isoformat(),
+                }
+
             if job.started_at is None:
-                job.started_at = now()
+                job.started_at = current_time
             job.status = ProductBulkActionJob.Status.RUNNING
             remaining_ids = job.product_ids[job.processed_count:]
             batch_ids = remaining_ids[:job.batch_size]
@@ -1414,7 +1441,11 @@ class ProductBulkActionService:
                 job.status = ProductBulkActionJob.Status.SUCCESS
                 job.finished_at = now()
                 job.next_batch_at = None
-                job.save(update_fields=['status', 'finished_at', 'next_batch_at', 'updated_at'])
+                job.last_dispatched_at = None
+                job.save(update_fields=[
+                    'status', 'finished_at', 'next_batch_at',
+                    'last_dispatched_at', 'updated_at',
+                ])
                 return {'job_id': job_id, 'status': job.status}
 
             products = Product.objects.filter(
@@ -1486,15 +1517,11 @@ class ProductBulkActionService:
                 from datetime import timedelta
                 job.status = ProductBulkActionJob.Status.COOLING_DOWN
                 job.next_batch_at = now() + timedelta(seconds=job.pause_seconds)
-                from apps.products.tasks import process_bulk_product_action
-                transaction.on_commit(
-                    lambda: process_bulk_product_action.apply_async(
-                        args=[job.pk], countdown=job.pause_seconds,
-                    )
-                )
+            job.last_dispatched_at = None
             job.save(update_fields=[
                 'status', 'started_at', 'processed_count', 'queued_count',
                 'success_count', 'skipped_count', 'finished_at', 'next_batch_at', 'updated_at',
+                'last_dispatched_at',
             ])
             return {
                 'job_id': job_id,

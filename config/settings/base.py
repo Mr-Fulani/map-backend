@@ -298,22 +298,38 @@ DATABASES = {
 }
 
 # --- Redis / Cache ---
-REDIS_URL = os.environ.get('REDIS_URL', 'redis://redis:6379/0')
+# REDIS_URL остаётся только development fallback. Production обязан задавать
+# отдельные URL для eviction-cache и durable Celery/coordination Redis.
+REDIS_URL = os.environ.get('REDIS_URL', '').strip() or 'redis://redis:6379/0'
+CACHE_REDIS_URL = os.environ.get('CACHE_REDIS_URL', '').strip() or REDIS_URL
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', '').strip() or REDIS_URL
+CELERY_RESULT_BACKEND = (
+    os.environ.get('CELERY_RESULT_BACKEND', '').strip() or CELERY_BROKER_URL
+)
+COORDINATION_REDIS_URL = (
+    os.environ.get('COORDINATION_REDIS_URL', '').strip() or CELERY_BROKER_URL
+)
 
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': REDIS_URL,
+        'LOCATION': CACHE_REDIS_URL,
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
         },
         'KEY_PREFIX': 'map',
-    }
+    },
+    'coordination': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': COORDINATION_REDIS_URL,
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        },
+        'KEY_PREFIX': 'map_coord',
+    },
 }
 
 # --- Celery ---
-CELERY_BROKER_URL = REDIS_URL
-CELERY_RESULT_BACKEND = REDIS_URL
 CELERY_ACCEPT_CONTENT = ['json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
@@ -325,6 +341,24 @@ CELERY_BEAT_SCHEDULE = {}
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 3600
 CELERY_TASK_SOFT_TIME_LIMIT = 3300
+CELERY_TASK_IGNORE_RESULT = True
+CELERY_RESULT_EXPIRES = 86400
+CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
+CELERY_TASK_PUBLISH_RETRY = True
+CELERY_TASK_PUBLISH_RETRY_POLICY = {
+    'max_retries': 5,
+    'interval_start': 0,
+    'interval_step': 0.5,
+    'interval_max': 3,
+}
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+CELERY_BROKER_TRANSPORT_OPTIONS = {
+    'visibility_timeout': 14400,
+    'global_keyprefix': 'map_broker_',
+}
+CELERY_RESULT_BACKEND_TRANSPORT_OPTIONS = {
+    'global_keyprefix': 'map_result_',
+}
 
 # Очереди и их приоритеты
 CELERY_TASK_QUEUES = {
@@ -343,6 +377,9 @@ CELERY_TASK_QUEUES = {
     'part_parsing_bulk':  {'exchange': 'part_parsing_bulk',  'routing_key': 'part_parsing_bulk'},
 }
 CELERY_TASK_DEFAULT_QUEUE = 'sync_import'
+CELERY_TASK_ROUTES = {
+    'apps.image_search.tasks.search_images_for_product': {'queue': 'image_search'},
+}
 
 # --- DRF ---
 REST_FRAMEWORK = {

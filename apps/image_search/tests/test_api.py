@@ -8,6 +8,13 @@ from apps.products.models import Product, ProductImage
 from apps.tenants.services import TenantService
 
 
+def test_image_search_task_has_dedicated_queue_and_result_backend():
+    from apps.image_search.tasks import search_images_for_product
+
+    assert search_images_for_product.queue == 'image_search'
+    assert search_images_for_product.ignore_result is False
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

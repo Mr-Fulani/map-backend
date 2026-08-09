@@ -135,6 +135,7 @@ class TenantSourceCategoryListResponseSerializer(serializers.Serializer):
 class ProductCategoryAssignRequestSerializer(serializers.Serializer):
     product_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
+        max_length=500,
         allow_empty=False,
     )
     catalog_category = serializers.IntegerField(
@@ -221,7 +222,9 @@ class ProductBulkActionRequestSerializer(serializers.Serializer):
     )
     source = serializers.CharField(required=False)
     batch_size = serializers.IntegerField(min_value=1, default=20, required=False)
-    pause_seconds = serializers.IntegerField(min_value=0, default=60, required=False)
+    pause_seconds = serializers.IntegerField(
+        min_value=0, max_value=3600, default=60, required=False,
+    )
 
 
 class ProductBulkActionResponseSerializer(serializers.Serializer):

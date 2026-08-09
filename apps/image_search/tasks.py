@@ -3,15 +3,23 @@
 import logging
 
 from celery import shared_task
-from django.core.cache import cache
+from django.core.cache import caches
 
 logger = logging.getLogger(__name__)
+cache = caches['coordination']
 
 # Максимальное время удержания лока (секунды) — перекрывает максимальный pipeline run
 _LOCK_TIMEOUT = 300
 
 
-@shared_task(bind=True, max_retries=3, retry_backoff=True, retry_backoff_max=120)
+@shared_task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=120,
+    queue='image_search',
+    ignore_result=False,
+)
 def search_images_for_product(self, product_id: int) -> dict:
     """Запускает поиск изображений для товара через каскадный pipeline.
 

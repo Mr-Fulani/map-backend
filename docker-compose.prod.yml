@@ -3,8 +3,8 @@ x-egress-environment: &egress-environment
   HTTPS_PROXY: http://egress_proxy:3128
   http_proxy: http://egress_proxy:3128
   https_proxy: http://egress_proxy:3128
-  NO_PROXY: localhost,127.0.0.1,db,redis,django,frontend,nginx,egress_proxy
-  no_proxy: localhost,127.0.0.1,db,redis,django,frontend,nginx,egress_proxy
+  NO_PROXY: localhost,127.0.0.1,db,redis,redis_broker,django,frontend,nginx,egress_proxy
+  no_proxy: localhost,127.0.0.1,db,redis,redis_broker,django,frontend,nginx,egress_proxy
 
 x-default-logging: &default-logging
   driver: json-file
@@ -33,6 +33,8 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis_broker:
         condition: service_healthy
       egress_proxy:
         condition: service_started
@@ -64,6 +66,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redis_broker:
+        condition: service_healthy
       egress_proxy:
         condition: service_started
     networks: [backend]
@@ -94,6 +98,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redis_broker:
+        condition: service_healthy
       egress_proxy:
         condition: service_started
     networks: [backend]
@@ -121,6 +127,8 @@ services:
       db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      redis_broker:
         condition: service_healthy
       egress_proxy:
         condition: service_started
@@ -176,16 +184,33 @@ services:
   redis:
     <<: *runtime-policy
     image: redis:7-alpine
-    command: redis-server --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD is required} --maxmemory 512mb --maxmemory-policy allkeys-lru
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$CACHE_REDIS_PASSWORD\" --maxmemory 512mb --maxmemory-policy allkeys-lru"]
     environment:
-      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD is required}
+      CACHE_REDIS_PASSWORD: ${CACHE_REDIS_PASSWORD:?CACHE_REDIS_PASSWORD is required}
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$CACHE_REDIS_PASSWORD redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 5
     networks: [backend]
     stop_grace_period: 30s
+
+  redis_broker:
+    <<: *runtime-policy
+    image: redis:7-alpine
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$CELERY_REDIS_PASSWORD\" --appendonly yes --appendfsync everysec --maxmemory 1gb --maxmemory-policy noeviction"]
+    environment:
+      CELERY_REDIS_PASSWORD: ${CELERY_REDIS_PASSWORD:?CELERY_REDIS_PASSWORD is required}
+    volumes:
+      - redis_broker_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$CELERY_REDIS_PASSWORD redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [backend]
+    stop_grace_period: 60s
 
   egress_proxy:
     <<: *runtime-policy
@@ -223,6 +248,7 @@ services:
 
 volumes:
   postgres_data:
+  redis_broker_data:
   static_volume:
 
 networks:

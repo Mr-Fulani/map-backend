@@ -19,14 +19,15 @@ COMPOSE_FILE="$ROOT_DIR/docker-compose.prod.yml"
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
 BUILD_SERVICES=(django celery_worker celery_beat celery_worker_images frontend)
 APPLICATION_SERVICES=(django celery_worker celery_beat celery_worker_images frontend nginx)
-HEALTH_SERVICES=(db redis egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
-LOG_SERVICES=(db redis egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
+HEALTH_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
+LOG_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
 
 PROD_HEALTH_RETRIES="${PROD_HEALTH_RETRIES:-40}"
 PROD_HEALTH_INTERVAL_SECONDS="${PROD_HEALTH_INTERVAL_SECONDS:-3}"
 PROD_LOG_TAIL="${PROD_LOG_TAIL:-200}"
 PROD_MIN_FREE_DISK_MB="${PROD_MIN_FREE_DISK_MB:-2048}"
 PROD_ROLLBACK_ENABLED="${PROD_ROLLBACK_ENABLED:-true}"
+PROD_BROKER_MIGRATION_CONFIRMED="${PROD_BROKER_MIGRATION_CONFIRMED:-false}"
 PROD_SMOKE_URL="${PROD_SMOKE_URL:-}"
 PREVIOUS_SHA="${PREVIOUS_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
 
@@ -156,6 +157,8 @@ preflight() {
   validate_integer_setting PROD_MIN_FREE_DISK_MB "$PROD_MIN_FREE_DISK_MB"
   [[ "$PROD_ROLLBACK_ENABLED" == "true" || "$PROD_ROLLBACK_ENABLED" == "false" ]] \
     || fail "PROD_ROLLBACK_ENABLED должен быть true или false."
+  [[ "$PROD_BROKER_MIGRATION_CONFIRMED" == "true" ]] \
+    || fail "сначала выполните drain legacy Celery queue и установите PROD_BROKER_MIGRATION_CONFIRMED=true."
 
   [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] \
     || fail "deploy.sh ожидает полный 40-символьный commit SHA."
@@ -210,9 +213,10 @@ capture_rollback_images
 DEPLOY_PHASE="infrastructure readiness"
 SERVICES_CHANGED=true
 echo "==> Запуск инфраструктурных зависимостей..."
-"${COMPOSE[@]}" up -d --no-build db redis egress_proxy
+"${COMPOSE[@]}" up -d --no-build db redis redis_broker egress_proxy
 wait_for_service db
 wait_for_service redis
+wait_for_service redis_broker
 wait_for_service egress_proxy
 
 DEPLOY_PHASE="application build"

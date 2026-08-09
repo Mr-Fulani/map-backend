@@ -1,7 +1,7 @@
 import datetime
 
 from celery import shared_task
-from django.core.cache import cache
+from django.core.cache import caches
 from django.utils.dateparse import parse_datetime
 from django.utils.timezone import now
 
@@ -17,6 +17,9 @@ from apps.marketplaces.adapters.avito.feed_builder import get_ad_id
 from apps.marketplaces.adapters.avito.rate_limiter import RateLimitError
 from apps.marketplaces.models import Listing
 from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR, LEVEL_SUCCESS
+
+
+cache = caches['coordination']
 
 
 def _notify_error(tenant, message: str, listing=None) -> None:
