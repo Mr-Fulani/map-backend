@@ -42,7 +42,7 @@ load_deploy_env() {
 
     key="${BASH_REMATCH[1]}"
     value="${BASH_REMATCH[2]}"
-    if [[ "$value" == *'$'* || "$value" == *'`'* || "$value" == *'\'* \
+    if [[ "$value" == *'$'* || "$value" == *'`'* || "$value" == *\\* \
       || "$value" == *'"'* || "$value" == *"'"* ]]; then
       fail "${deploy_env_file}:${line_number}: кавычки, escaping и shell-подстановки в значениях запрещены."
       return 1
@@ -68,7 +68,7 @@ load_deploy_env() {
     fi
     seen_keys["$key"]=1
     printf -v "$key" '%s' "$value"
-    export "$key"
+    export "${key?}"
   done < "$deploy_env_file"
 }
 
