@@ -10,6 +10,11 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { toast } from 'sonner';
 import { Loader2, CheckCircle2 } from 'lucide-react';
+import {
+  canStartBillingMutation,
+  loadBillingPageData,
+  type BillingLoadState,
+} from '@/lib/billing-page-loader';
 
 interface Plan {
   id: number;
@@ -107,7 +112,16 @@ function billingErrorMessage(error: unknown, fallback: string): string {
     return 'Платёж требует ручной проверки. Новый платёж создавать не нужно.';
   }
   if (payload?.code === 'idempotency_conflict') {
-    return 'Параметры платёжной попытки изменились. Повторите операцию.';
+    return 'Параметры платёжной попытки не совпадают. Не создавайте новый платёж — обратитесь в поддержку.';
+  }
+  if (payload?.code === 'checkout_key_limit') {
+    return 'Лимит ключей этой платёжной попытки исчерпан. Не повторяйте оплату — обратитесь в поддержку.';
+  }
+  if (payload?.code === 'active_subscription_change_not_supported') {
+    return 'Новый тариф можно оплатить после завершения текущего оплаченного периода.';
+  }
+  if (payload?.code === 'subscription_checkout_in_progress') {
+    return 'Другой платёж подписки ещё не завершён. Дождитесь его статуса; новый платёж не создавайте.';
   }
   if (payload?.code === 'checkout_terminal') {
     return 'Предыдущая попытка уже завершена. Нажмите ещё раз, чтобы создать новый платёж.';
@@ -131,26 +145,107 @@ export default function BillingPage() {
   const [usage, setUsage] = useState<AIUsage | null>(null);
   const [aiPackages, setAIPackages] = useState<AICreditPackage[]>([]);
   const [loading, setLoading] = useState(true);
+  const [subscriptionState, setSubscriptionState] = useState<BillingLoadState>('loading');
+  const [plansError, setPlansError] = useState(false);
+  const [plansRetrying, setPlansRetrying] = useState(false);
+  const [invoicesState, setInvoicesState] = useState<BillingLoadState>('loading');
+  const [usageState, setUsageState] = useState<BillingLoadState>('loading');
+  const [packagesState, setPackagesState] = useState<BillingLoadState>('loading');
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [topupLoading, setTopupLoading] = useState<number | null>(null);
 
   useEffect(() => {
-    Promise.all([
-      billingApi.getSubscription(),
-      billingApi.getPlans(),
-      billingApi.getInvoices(),
-      billingApi.getUsage(),
-      billingApi.getAIPackages(),
-    ]).then(([subRes, plansRes, invRes, usageRes, packagesRes]) => {
-      setSubscription(subRes.data.data);
-      setPlans(plansRes.data.data);
-      setInvoices(invRes.data.data);
-      setUsage(usageRes.data.data);
-      setAIPackages(packagesRes.data.data);
-    }).catch(() => {
-      toast.error('Не удалось загрузить данные биллинга');
-    }).finally(() => setLoading(false));
+    let active = true;
+    const load = loadBillingPageData({
+      subscription: () => billingApi.getSubscription(),
+      plans: () => billingApi.getPlans(),
+      invoices: () => billingApi.getInvoices(),
+      usage: () => billingApi.getUsage(),
+      packages: () => billingApi.getAIPackages(),
+    });
+
+    void load.subscription.then((result) => {
+      if (!active) return;
+      if (result.status === 'fulfilled') {
+        setSubscription(result.value.data.data);
+        setSubscriptionState('loaded');
+      } else {
+        setSubscriptionState('error');
+        toast.error('Не удалось загрузить текущую подписку');
+      }
+    });
+
+    void load.plans.then((result) => {
+      if (!active) return;
+      if (result.status === 'fulfilled') {
+        setPlans(result.value.data.data);
+      } else {
+        setPlansError(true);
+        toast.error('Не удалось загрузить тарифные планы');
+      }
+      setLoading(false);
+    });
+
+    void load.invoices.then((result) => {
+      if (!active) return;
+      if (result.status === 'fulfilled') {
+        setInvoices(result.value.data.data);
+        setInvoicesState('loaded');
+      } else {
+        setInvoicesState('error');
+      }
+    });
+
+    void load.usage.then((result) => {
+      if (!active) return;
+      if (result.status === 'fulfilled') {
+        setUsage(result.value.data.data);
+        setUsageState('loaded');
+      } else {
+        setUsageState('error');
+      }
+    });
+
+    void load.packages.then((result) => {
+      if (!active) return;
+      if (result.status === 'fulfilled') {
+        setAIPackages(result.value.data.data);
+        setPackagesState('loaded');
+      } else {
+        setPackagesState('error');
+      }
+    });
+
+    return () => {
+      active = false;
+    };
   }, []);
+
+  async function retrySubscription() {
+    setSubscriptionState('loading');
+    try {
+      const response = await billingApi.getSubscription();
+      setSubscription(response.data.data);
+      setSubscriptionState('loaded');
+    } catch {
+      setSubscriptionState('error');
+      toast.error('Не удалось загрузить текущую подписку');
+    }
+  }
+
+  async function retryPlans() {
+    setPlansRetrying(true);
+    try {
+      const response = await billingApi.getPlans();
+      setPlans(response.data.data);
+      setPlansError(false);
+    } catch {
+      setPlansError(true);
+      toast.error('Не удалось загрузить тарифные планы');
+    } finally {
+      setPlansRetrying(false);
+    }
+  }
 
   async function checkout(planSlug: string, period: 'monthly' | 'yearly') {
     setCheckoutLoading(`${planSlug}-${period}`);
@@ -193,6 +288,8 @@ export default function BillingPage() {
     ? (subscription.effective_status ?? subscription.status)
     : null;
   const hasFullAccess = subscription?.access_mode === 'full';
+  const billingMutationAllowed = canStartBillingMutation(subscriptionState);
+  const subscriptionCheckoutAllowed = billingMutationAllowed && !hasFullAccess;
   const aiPercentUsed = Math.min(
     100,
     Number(usage?.ai_credits.included_percent_used ?? 0),
@@ -205,7 +302,28 @@ export default function BillingPage() {
         <p className="text-muted-foreground">Управление подпиской и платежами</p>
       </div>
 
-      {subscription && (
+      {subscriptionState === 'loading' && (
+        <Card>
+          <CardContent className="p-4">
+            <Skeleton className="h-12 w-full" />
+          </CardContent>
+        </Card>
+      )}
+
+      {subscriptionState === 'error' && (
+        <Card className="border-destructive/50">
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <p className="text-sm text-destructive">
+              Статус подписки недоступен. Оплата временно заблокирована, чтобы исключить повторное списание.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => void retrySubscription()}>
+              Повторить проверку
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {subscriptionState === 'loaded' && subscription && (
         <Card className={hasFullAccess ? '' : 'border-destructive/50'}>
           <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
@@ -233,6 +351,35 @@ export default function BillingPage() {
       {/* Тарифные планы */}
       <div>
         <h2 className="mb-3 text-lg font-semibold">Тарифные планы</h2>
+        {hasFullAccess && (
+          <p className="mb-3 text-sm text-muted-foreground">
+            Новый тариф можно оплатить после завершения текущего оплаченного периода.
+          </p>
+        )}
+        {plansError && (
+          <Card className="border-destructive/50">
+            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-sm text-destructive">
+                Тарифные планы временно недоступны.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={plansRetrying}
+                onClick={() => void retryPlans()}
+              >
+                {plansRetrying ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Повторить'}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+        {!plansError && plans.length === 0 && (
+          <Card>
+            <CardContent className="p-4 text-sm text-muted-foreground">
+              Доступных тарифных планов сейчас нет.
+            </CardContent>
+          </Card>
+        )}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           {plans.map((plan) => {
             const isCurrent = plan.slug === currentPlanSlug;
@@ -261,7 +408,11 @@ export default function BillingPage() {
                       className="w-full"
                       size="sm"
                       variant={isCurrent ? 'outline' : 'default'}
-                      disabled={(isCurrent && !canRenewCurrent) || checkoutLoading !== null}
+                      disabled={
+                        !subscriptionCheckoutAllowed
+                        || (isCurrent && !canRenewCurrent)
+                        || checkoutLoading !== null
+                      }
                       onClick={() => checkout(plan.slug, 'monthly')}
                     >
                       {checkoutLoading === `${plan.slug}-monthly`
@@ -274,7 +425,7 @@ export default function BillingPage() {
                           className="w-full"
                           size="sm"
                           variant="outline"
-                          disabled={checkoutLoading !== null}
+                          disabled={!subscriptionCheckoutAllowed || checkoutLoading !== null}
                           onClick={() => checkout(plan.slug, 'yearly')}
                         >
                           {checkoutLoading === `${plan.slug}-yearly`
@@ -303,7 +454,13 @@ export default function BillingPage() {
             <CardTitle className="text-base">Баланс</CardTitle>
           </CardHeader>
           <CardContent className="space-y-5">
-            <div className="space-y-2">
+            {usageState === 'loading' ? (
+              <Skeleton className="h-32 w-full rounded-lg" />
+            ) : usageState === 'error' ? (
+              <p className="text-sm text-destructive">
+                Баланс AI-кредитов временно недоступен.
+              </p>
+            ) : <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span>
                   Использовано{' '}
@@ -332,9 +489,9 @@ export default function BillingPage() {
               <p className="text-xs text-muted-foreground">
                 Уведомления отправляются при достижении 80%, 90% и 100%.
               </p>
-            </div>
+            </div>}
 
-            <div className="grid gap-3 sm:grid-cols-3">
+            {usageState === 'loaded' && <div className="grid gap-3 sm:grid-cols-3">
               <div className="rounded-lg border p-4">
                 <p className="text-xs text-muted-foreground">Доступно</p>
                 <p className="mt-1 text-2xl font-bold">
@@ -355,11 +512,21 @@ export default function BillingPage() {
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">Не сгорает при продлении</p>
               </div>
-            </div>
+            </div>}
 
             <div>
               <p className="mb-3 text-sm font-medium">Пополнить баланс</p>
-              <div className="grid gap-3 md:grid-cols-3">
+              {packagesState === 'loading' ? (
+                <Skeleton className="h-32 w-full rounded-lg" />
+              ) : packagesState === 'error' ? (
+                <p className="text-sm text-destructive">
+                  Пакеты пополнения временно недоступны.
+                </p>
+              ) : aiPackages.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  Доступных пакетов пополнения сейчас нет.
+                </p>
+              ) : <div className="grid gap-3 md:grid-cols-3">
                 {aiPackages.map((item) => (
                   <div key={item.id} className="rounded-lg border p-4">
                     <p className="font-semibold">{item.name}</p>
@@ -369,7 +536,7 @@ export default function BillingPage() {
                     <Button
                       className="mt-4 w-full"
                       size="sm"
-                      disabled={topupLoading !== null}
+                      disabled={!billingMutationAllowed || topupLoading !== null}
                       onClick={() => topupAI(item.id)}
                     >
                       {topupLoading === item.id
@@ -378,7 +545,7 @@ export default function BillingPage() {
                     </Button>
                   </div>
                 ))}
-              </div>
+              </div>}
               <p className="mt-3 text-xs text-muted-foreground">
                 Перед AI-запросом система резервирует ожидаемую стоимость, затем списывает
                 фактическую по использованным токенам. При ошибке резерв возвращается.
@@ -393,7 +560,16 @@ export default function BillingPage() {
         <h2 className="mb-3 text-lg font-semibold">История платежей</h2>
         <Card>
           <CardContent className="p-0">
-            {invoices.length === 0 ? (
+            {invoicesState === 'loading' ? (
+              <div className="space-y-2 p-4">
+                <Skeleton className="h-12 w-full" />
+                <Skeleton className="h-12 w-full" />
+              </div>
+            ) : invoicesState === 'error' ? (
+              <p className="py-8 text-center text-sm text-destructive">
+                История платежей временно недоступна.
+              </p>
+            ) : invoices.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">Платежей пока нет</p>
             ) : (
               <>

@@ -118,12 +118,15 @@ export default function ReviewQueuePage() {
   const [type, setType] = useState<ReviewType>('all');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
+  const [loadingOverride, setLoading] = useState(true);
+  const [loadedRequestKey, setLoadedRequestKey] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [catalogCategories, setCatalogCategories] = useState<CatalogCategoryOption[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<Record<string, string>>({});
   const [error, setError] = useState('');
   const debouncedSearch = useDebounce(search, 300);
+  const requestKey = JSON.stringify([page, type, debouncedSearch]);
+  const loading = loadingOverride || loadedRequestKey !== requestKey;
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -145,12 +148,31 @@ export default function ReviewQueuePage() {
   }, [page, type, debouncedSearch]);
 
   useEffect(() => {
-    setPage(1);
-  }, [type, debouncedSearch]);
+    let active = true;
+    const params: Record<string, unknown> = { page };
+    if (type !== 'all') params.type = type;
+    if (debouncedSearch) params.search = debouncedSearch;
 
-  useEffect(() => {
-    load();
-  }, [load]);
+    productApi.reviewQueue(params)
+      .then((response) => {
+        if (!active) return;
+        setItems(response.data.data ?? []);
+        setMeta(response.data.meta ?? null);
+      })
+      .catch((err: unknown) => {
+        if (!active) return;
+        setItems([]);
+        setMeta(null);
+        setError(getErrorMessage(err, 'Не удалось загрузить очередь проверки'));
+      })
+      .finally(() => {
+        if (!active) return;
+        setLoadedRequestKey(requestKey);
+        setLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [debouncedSearch, page, requestKey, type]);
 
   useEffect(() => {
     productApi.catalogCategories({ assignable: true })
@@ -218,12 +240,23 @@ export default function ReviewQueuePage() {
           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
           <Input
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              setError('');
+              setPage(1);
+              setSearch(event.target.value);
+            }}
             placeholder="Артикул, товар или бренд"
             className="pl-9"
           />
         </div>
-        <Select value={type} onValueChange={(value) => setType(value as ReviewType)}>
+        <Select
+          value={type}
+          onValueChange={(value) => {
+            setError('');
+            setPage(1);
+            setType(value as ReviewType);
+          }}
+        >
           <SelectTrigger className="w-full md:w-56">
             <SelectValue />
           </SelectTrigger>
@@ -379,7 +412,10 @@ export default function ReviewQueuePage() {
               variant="outline"
               size="sm"
               disabled={!meta.prev || loading}
-              onClick={() => setPage((current) => Math.max(current - 1, 1))}
+              onClick={() => {
+                setLoading(true);
+                setPage((current) => Math.max(current - 1, 1));
+              }}
             >
               <ChevronLeft className="mr-1 h-4 w-4" />
               Назад
@@ -389,7 +425,10 @@ export default function ReviewQueuePage() {
               variant="outline"
               size="sm"
               disabled={!meta.next || loading}
-              onClick={() => setPage((current) => current + 1)}
+              onClick={() => {
+                setLoading(true);
+                setPage((current) => current + 1);
+              }}
             >
               Вперёд
               <ChevronRight className="ml-1 h-4 w-4" />

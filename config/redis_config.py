@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 
 @dataclass(frozen=True)
@@ -30,7 +30,7 @@ def parse_redis_location(name: str, value: str) -> RedisLocation:
     return RedisLocation(
         endpoint=(parsed.hostname, parsed.port or 6379),
         database=database,
-        password=parsed.password,
+        password=unquote(parsed.password),
         scheme=parsed.scheme,
     )
 
@@ -40,11 +40,29 @@ def validate_production_redis_layout(
     broker_url: str,
     result_url: str,
     coordination_url: str,
+    *,
+    cache_server_password: str,
+    broker_server_password: str,
 ) -> None:
     cache = parse_redis_location('CACHE_REDIS_URL', cache_url)
     broker = parse_redis_location('CELERY_BROKER_URL', broker_url)
     result = parse_redis_location('CELERY_RESULT_BACKEND', result_url)
     coordination = parse_redis_location('COORDINATION_REDIS_URL', coordination_url)
+
+    if cache.password != cache_server_password:
+        raise ValueError(
+            'CACHE_REDIS_URL должен использовать CACHE_REDIS_PASSWORD '
+            'запущенного cache Redis.'
+        )
+    if broker.password != broker_server_password:
+        raise ValueError(
+            'CELERY_BROKER_URL должен использовать CELERY_REDIS_PASSWORD '
+            'запущенного durable Redis.'
+        )
+    if cache_server_password == broker_server_password:
+        raise ValueError(
+            'Cache Redis и durable Redis должны использовать разные пароли.'
+        )
 
     if cache.endpoint == broker.endpoint:
         raise ValueError(

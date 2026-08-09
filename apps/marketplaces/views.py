@@ -1,4 +1,5 @@
 import datetime
+import logging
 from decimal import Decimal
 
 from django.db import transaction
@@ -51,6 +52,9 @@ from apps.marketplaces.services import (
     MarketplaceAccountService,
 )
 from apps.tenants.permissions import TenantAdminPermission, TenantAdminWritePermission
+
+
+logger = logging.getLogger(__name__)
 
 
 def _ok_response(name, data):
@@ -796,10 +800,17 @@ class ListingRefreshBrandCatalogView(APIView):
             from apps.marketplaces.adapters.avito.brand_sync import sync_brand_catalog
             sync_brand_catalog(listing.account)
         except Exception as exc:
+            # Provider exceptions may embed request URLs or other integration
+            # details. Keep the client response and logs structural.
+            logger.warning(
+                'Avito brand catalog refresh failed for listing=%s (%s).',
+                listing.pk,
+                type(exc).__name__,
+            )
             return Response({
                 'status': 'error',
                 'code': 'catalog_sync_failed',
-                'message': f'Не удалось обновить справочник Avito: {exc}',
+                'message': 'Не удалось обновить справочник Avito.',
             }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         listing = ListingService.get_for_tenant(pk, request.tenant)
         return Response({

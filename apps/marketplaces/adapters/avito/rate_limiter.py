@@ -8,6 +8,9 @@ RATE_LIMITS = {
     'delete':  {'rate': 10, 'per': 60},
 }
 
+# Пауза между повторными проверками лимита Avito Autoload «1 загрузка/час».
+AUTOLOAD_RATE_LIMIT_RETRY_AFTER = 660
+
 
 class RateLimitError(Exception):
     """Превышен лимит запросов к Avito API."""

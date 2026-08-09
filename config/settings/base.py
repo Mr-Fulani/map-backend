@@ -545,10 +545,10 @@ SPECTACULAR_SETTINGS = {
 }
 
 # --- Файловое хранилище (Yandex Cloud S3) ---
-YC_S3_BUCKET = os.environ.get('YC_S3_BUCKET', '')
-YC_S3_ACCESS_KEY = os.environ.get('YC_S3_ACCESS_KEY', '')
-YC_S3_SECRET_KEY = os.environ.get('YC_S3_SECRET_KEY', '')
-YC_CDN_DOMAIN = os.environ.get('YC_CDN_DOMAIN', '')
+YC_S3_BUCKET = os.environ.get('YC_S3_BUCKET', '').strip()
+YC_S3_ACCESS_KEY = os.environ.get('YC_S3_ACCESS_KEY', '').strip()
+YC_S3_SECRET_KEY = os.environ.get('YC_S3_SECRET_KEY', '').strip()
+YC_CDN_DOMAIN = os.environ.get('YC_CDN_DOMAIN', '').strip()
 MEDIA_KEY_PREFIX = os.environ.get('MEDIA_KEY_PREFIX', '').strip('/')
 
 if YC_S3_BUCKET:
@@ -754,6 +754,10 @@ WEB_RESEARCH_RESULTS_PER_QUERY = min(
     20,
     max(1, int(os.environ.get('WEB_RESEARCH_RESULTS_PER_QUERY', '8'))),
 )
+
+# Public URL transport uses direct DNS pinning when empty (development).
+# Production settings require the exact trusted Squid endpoint instead.
+PUBLIC_HTTP_PROXY_URL = os.environ.get('PUBLIC_HTTP_PROXY_URL', '').strip()
 
 # --- Avito ---
 AVITO_CLIENT_ID = os.environ.get('AVITO_CLIENT_ID', '')

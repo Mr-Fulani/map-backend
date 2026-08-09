@@ -2,6 +2,15 @@
 # Marketplace Automation Platform (MAP)
 ### SaaS B2B | Автозапчасти | v1.0
 
+> [!WARNING]
+> **Статус: исторический артефакт, не runbook.** Этот документ фиксирует исходное
+> ТЗ v1.0; версии стека, env-примеры, Docker/deploy и backup-фрагменты ниже не
+> должны исполняться как текущие инструкции. Operational truth находится в
+> [README](README.md), [DEV](DEV.md),
+> [production deployment](docs/DEPLOYMENT.md),
+> [security runbook](docs/PRODUCTION_SECURITY.md) и
+> [backup/restore runbook](docs/BACKUP_RESTORE.md).
+
 **Стек:** Django 5 · PostgreSQL 16 · Celery · Redis 7 · Yandex Cloud S3 · Next.js 14  
 **Разработчик:** 1 fullstack-разработчик  
 **MVP-маркетплейс:** Avito (Автозапчасти)  

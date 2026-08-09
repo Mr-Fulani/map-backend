@@ -12,6 +12,8 @@ SECRET_KEY = os.environ.get(
 
 ALLOWED_HOSTS = ['*']
 MEDIA_KEY_PREFIX = os.environ.get('MEDIA_KEY_PREFIX', 'dev').strip('/')
+# Development always keeps direct DNS-pinned public URL connections.
+PUBLIC_HTTP_PROXY_URL = ''
 
 DATABASES = {
     'default': dj_database_url.config(

@@ -94,7 +94,6 @@ export default function ListingsPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bulkAction, setBulkAction] = useState('update_placement');
   const [bulkAccountId, setBulkAccountId] = useState('');
@@ -106,16 +105,17 @@ export default function ListingsPage() {
   const [bulkSaving, setBulkSaving] = useState(false);
   const [rowActionId, setRowActionId] = useState<number | null>(null);
   const requestedPanel = searchParams.get('panel') === 'pricing' ? 'pricing' : 'listing';
+  const listingParam = Number(searchParams.get('listing'));
+  const selectedId = Number.isInteger(listingParam) && listingParam > 0 ? listingParam : null;
 
-  useEffect(() => {
-    const listingParam = Number(searchParams.get('listing'));
-    if (Number.isInteger(listingParam) && listingParam > 0) {
-      setSelectedId(listingParam);
-    }
-  }, [searchParams]);
+  const openDrawer = useCallback((listingId: number) => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set('listing', String(listingId));
+    next.delete('panel');
+    router.replace(`${pathname}?${next}`, { scroll: false });
+  }, [pathname, router, searchParams]);
 
   const closeDrawer = useCallback(() => {
-    setSelectedId(null);
     const next = new URLSearchParams(searchParams.toString());
     next.delete('listing');
     next.delete('panel');
@@ -137,8 +137,26 @@ export default function ListingsPage() {
     }
   }, [page, statusFilter]);
 
-  useEffect(() => { setPage(1); }, [statusFilter]);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let active = true;
+    const params: Record<string, unknown> = { page };
+    if (statusFilter) params.status = statusFilter;
+
+    listingApi.list(params)
+      .then((response) => {
+        if (!active) return;
+        setListings(response.data.data);
+        setMeta(response.data.meta);
+      })
+      .catch(() => {
+        if (active) setListings([]);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [page, statusFilter]);
 
   useEffect(() => {
     accountApi.list().then((res) => setAccounts(res.data.data ?? res.data)).catch(() => setAccounts([]));
@@ -150,6 +168,9 @@ export default function ListingsPage() {
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     !bulkAccountId || address.account === Number(bulkAccountId)
   ));
+  const validBulkPlacementAddressId = visiblePlacementAddresses.some(
+    (address) => address.id === Number(bulkPlacementAddressId),
+  ) ? bulkPlacementAddressId : '';
   // Контакты из сохранённых адресов (Настройки → Маркетплейсы) для выпадающих списков.
   const bulkManagerOptions = Array.from(new Set(
     visiblePlacementAddresses.map((a) => a.manager_name).filter(Boolean),
@@ -157,14 +178,6 @@ export default function ListingsPage() {
   const bulkPhoneOptions = Array.from(new Set(
     visiblePlacementAddresses.map((a) => a.contact_phone).filter(Boolean),
   ));
-
-  useEffect(() => {
-    if (!bulkPlacementAddressId) return;
-    const selected = placementAddresses.find((address) => address.id === Number(bulkPlacementAddressId));
-    if (selected && bulkAccountId && selected.account !== Number(bulkAccountId)) {
-      setBulkPlacementAddressId('');
-    }
-  }, [bulkAccountId, bulkPlacementAddressId, placementAddresses]);
 
   async function applyBulkAction() {
     if (!bulkAccountId && !bulkStatus) return;
@@ -190,7 +203,9 @@ export default function ListingsPage() {
       if (bulkAction === 'update_placement') {
         // Отправляем только заполненные поля — пустое значение означает «не менять»,
         // а не «очистить у всех листингов».
-        if (bulkPlacementAddressId) payload.placement_address = Number(bulkPlacementAddressId);
+        if (validBulkPlacementAddressId) {
+          payload.placement_address = Number(validBulkPlacementAddressId);
+        }
         if (bulkManagerName) payload.manager_name_override = bulkManagerName;
         if (bulkContactPhone) payload.contact_phone_override = bulkContactPhone;
       }
@@ -252,7 +267,12 @@ export default function ListingsPage() {
             key={f.value}
             size="sm"
             variant={statusFilter === f.value ? 'default' : 'outline'}
-            onClick={() => setStatusFilter(f.value)}
+            onClick={() => {
+              if (f.value === statusFilter) return;
+              setLoading(true);
+              setPage(1);
+              setStatusFilter(f.value);
+            }}
           >
             {f.label}
           </Button>
@@ -301,7 +321,7 @@ export default function ListingsPage() {
           {bulkAction === 'update_placement' && (
             <>
               <select
-                value={bulkPlacementAddressId}
+                value={validBulkPlacementAddressId}
                 onChange={(e) => setBulkPlacementAddressId(e.target.value)}
                 className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm lg:col-span-3"
               >
@@ -378,7 +398,7 @@ export default function ListingsPage() {
               <div
                 key={l.id}
                 className="rounded-lg border bg-card p-3"
-                onClick={() => setSelectedId(l.id)}
+                onClick={() => openDrawer(l.id)}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -515,7 +535,7 @@ export default function ListingsPage() {
                   <tr
                     key={l.id}
                     className="border-b transition-colors hover:bg-muted/30 cursor-pointer"
-                    onClick={() => setSelectedId(l.id)}
+                    onClick={() => openDrawer(l.id)}
                   >
                     <td className="px-4 py-3">
                       <Badge variant={STATUS_VARIANT[l.status] ?? 'outline'}>
@@ -625,10 +645,26 @@ export default function ListingsPage() {
             Страница {meta.page} из {Math.ceil(meta.total / meta.page_size)}
           </p>
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => setPage((p) => p - 1)} disabled={!meta.prev}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setLoading(true);
+                setPage((current) => current - 1);
+              }}
+              disabled={!meta.prev}
+            >
               <ChevronLeft className="h-4 w-4" /> Назад
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setPage((p) => p + 1)} disabled={!meta.next}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setLoading(true);
+                setPage((current) => current + 1);
+              }}
+              disabled={!meta.next}
+            >
               Вперёд <ChevronRight className="h-4 w-4" />
             </Button>
           </div>

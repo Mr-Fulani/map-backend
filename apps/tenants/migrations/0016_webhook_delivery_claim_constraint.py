@@ -14,7 +14,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='webhookdelivery',
             constraint=models.CheckConstraint(
-                check=(
+                condition=(
                     models.Q(
                         status__in=['queued', 'delivering'],
                         claim_token__isnull=False,

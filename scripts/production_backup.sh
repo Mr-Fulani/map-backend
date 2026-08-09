@@ -11,4 +11,10 @@ if [[ ! "$DEPLOY_GIT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
 fi
 export DEPLOY_GIT_SHA
 
-exec docker compose -f docker-compose.prod.yml --profile ops run --rm backup
+COMPOSE=(
+  docker compose
+  --project-name saas_poster
+  --project-directory "$ROOT_DIR"
+  -f "$ROOT_DIR/docker-compose.prod.yml"
+)
+exec "${COMPOSE[@]}" --profile ops run --rm backup

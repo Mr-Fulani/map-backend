@@ -111,10 +111,10 @@ class Migration(migrations.Migration):
         ),
         migrations.AddConstraint(
             model_name='apikey',
-            constraint=models.CheckConstraint(check=models.Q(('role__in', ['viewer', 'operator'])), name='api_key_limited_role'),
+            constraint=models.CheckConstraint(condition=models.Q(('role__in', ['viewer', 'operator'])), name='api_key_limited_role'),
         ),
         migrations.AddConstraint(
             model_name='apikey',
-            constraint=models.CheckConstraint(check=models.Q(('is_active', False), ('revoked_at__isnull', True), _connector='OR'), name='active_api_key_not_revoked'),
+            constraint=models.CheckConstraint(condition=models.Q(('is_active', False), ('revoked_at__isnull', True), _connector='OR'), name='active_api_key_not_revoked'),
         ),
     ]

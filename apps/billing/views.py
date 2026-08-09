@@ -13,16 +13,16 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.billing.models import (
-    AICreditPackage, BillingWebhookEvent, Invoice, Plan,
+    AICreditPackage, BillingWebhookEvent, Invoice, Plan, Subscription,
 )
 from apps.billing.serializers import (
     AICreditPackageSerializer, AITopupCheckoutSerializer, CheckoutSerializer,
     InvoiceSerializer, PlanSerializer, SubscriptionSerializer,
 )
 from apps.billing.services import (
-    BillingService, CheckoutConflictError, CheckoutKeyLimitError,
-    CheckoutManualReviewError, CheckoutPendingError, CheckoutTerminalError,
-    LimitChecker,
+    ActiveSubscriptionCheckoutError, BillingService, CheckoutConflictError,
+    CheckoutKeyLimitError, CheckoutManualReviewError, CheckoutPendingError,
+    CheckoutTerminalError, LimitChecker, SubscriptionCheckoutInProgressError,
 )
 from apps.billing.webhook import is_yookassa_ip
 from apps.billing.webhook_processing import (  # noqa: F401
@@ -86,6 +86,35 @@ _PAYMENT_URL_RESPONSE = inline_serializer(
 
 
 def _checkout_error_response(exc):
+    if isinstance(exc, ActiveSubscriptionCheckoutError):
+        return Response(
+            {
+                'status': 'error',
+                'code': 'active_subscription_change_not_supported',
+                'message': str(exc),
+                'data': {
+                    'retryable': False,
+                    'current_plan_slug': exc.plan_slug,
+                    'current_billing_period': exc.billing_period,
+                    'current_period_end': exc.current_period_end.isoformat(),
+                },
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+    if isinstance(exc, SubscriptionCheckoutInProgressError):
+        return Response(
+            {
+                'status': 'error',
+                'code': 'subscription_checkout_in_progress',
+                'message': str(exc),
+                'data': {
+                    'invoice_id': exc.invoice_id,
+                    'retryable': False,
+                    'reuse_existing_checkout': True,
+                },
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
     if isinstance(exc, CheckoutConflictError):
         return Response(
             {
@@ -235,7 +264,7 @@ class SubscriptionView(APIView):
     def get(self, request):
         try:
             sub = request.tenant.subscription
-        except Exception:
+        except Subscription.DoesNotExist:
             return Response({'status': 'ok', 'data': None})
 
         return Response({
@@ -368,11 +397,13 @@ class CheckoutView(APIView):
                 idempotency_key=serializer.validated_data['idempotency_key'],
             )
         except (
+            ActiveSubscriptionCheckoutError,
             CheckoutConflictError,
             CheckoutKeyLimitError,
             CheckoutManualReviewError,
             CheckoutPendingError,
             CheckoutTerminalError,
+            SubscriptionCheckoutInProgressError,
         ) as exc:
             return _checkout_error_response(exc)
         return Response({'status': 'ok', 'data': {'payment_url': confirmation_url}})

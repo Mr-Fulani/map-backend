@@ -1,11 +1,15 @@
 # MAP Dashboard
 
-Next.js 14 dashboard для Marketplace Automation Platform.
+Next.js 16.3 / React 19.2 dashboard для Marketplace Automation Platform.
+
+Поддерживаемый toolchain совпадает с CI и production image: Node.js 24.18.0,
+npm 11.19.0. Зависимости устанавливаются только по lock-файлу с проверенным
+allowlist install scripts.
 
 ## Локальный запуск
 
 ```bash
-npm ci
+npm ci --strict-allow-scripts
 NEXT_PUBLIC_API_URL=http://localhost:8000 npm run dev
 ```
 
@@ -15,9 +19,18 @@ Frontend доступен на `http://localhost:3000`, Django API — на
 ## Проверки
 
 ```bash
+npm run test:unit
+npm run typecheck
 npm run lint
 npm run build
+npm audit --audit-level=moderate
+npm run audit:prod
 ```
+
+`test:unit` покрывает критичные контракты browser-session coordination,
+refresh/CSRF и idempotency платежей. Это быстрый Node-уровень защиты; перед
+production обязательны также полный CI и smoke checks из
+[`../docs/RELEASE_CHECKLIST.md`](../docs/RELEASE_CHECKLIST.md).
 
 ## API и авторизация
 

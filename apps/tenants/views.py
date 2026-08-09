@@ -590,6 +590,8 @@ class MeView(APIView):
         # Subscription info
         subscription_data = None
         if tenant:
+            from apps.billing.models import Subscription
+
             try:
                 sub = tenant.subscription
                 subscription_data = {
@@ -599,7 +601,7 @@ class MeView(APIView):
                     'access_mode': sub.access_mode,
                     'current_period_end': sub.current_period_end.isoformat() if sub.current_period_end else None,
                 }
-            except Exception:
+            except Subscription.DoesNotExist:
                 pass
 
         return Response({

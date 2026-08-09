@@ -41,8 +41,12 @@ def readiness_check(request):
     """Return 200 only when request-critical dependencies are usable."""
     try:
         ready = _database_is_ready() and _cache_is_ready()
-    except Exception:
-        logger.warning('Readiness dependency check failed.', exc_info=True)
+    except Exception as exc:
+        # Backend exceptions can contain credential-bearing connection strings.
+        logger.warning(
+            'Readiness dependency check failed (%s).',
+            type(exc).__name__,
+        )
         ready = False
 
     return JsonResponse(

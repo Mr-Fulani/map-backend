@@ -6,13 +6,25 @@ on:
   pull_request:
     branches: [main, develop]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
 
     services:
       db:
-        image: postgres:16-alpine
+        image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
         env:
           POSTGRES_DB: map_db
           POSTGRES_USER: map_user
@@ -26,7 +38,7 @@ jobs:
           --health-retries 5
 
       redis:
-        image: redis:7-alpine
+        image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
         ports:
           - 6379:6379
         options: >-
@@ -44,17 +56,83 @@ jobs:
       BACKUP_INTEGRATION_DATABASE_URL: postgres://map_user:map_password@localhost:5432/map_db
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Настроить Python 3.12
-        uses: actions/setup-python@v5
+      - name: Получить исходный код
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          python-version: '3.12'
-          cache: 'pip'
-          cache-dependency-path: 'requirements/dev.txt'
+          persist-credentials: false
 
-      - name: Установить зависимости
-        run: pip install -r requirements/dev.txt
+      - name: Настроить Python 3.12.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12.13'
+          cache: 'pip'
+          cache-dependency-path: |
+            requirements/base.in
+            requirements/ci-tools.in
+            requirements/ci-tools.txt
+            requirements/dev.in
+            requirements/dev.txt
+            requirements/prod.in
+            requirements/prod.txt
+            backup/requirements.in
+            backup/requirements.txt
+
+      - name: Установить проверенные CI-инструменты
+        run: >-
+          python -m pip install
+          --require-hashes
+          --only-binary=:all:
+          --requirement requirements/ci-tools.txt
+
+      - name: Проверить воспроизводимость Python lock-файлов
+        run: |
+          scripts/compile_requirements.sh
+          lock_files=(
+            requirements/prod.txt
+            requirements/dev.txt
+            requirements/ci-tools.txt
+            backup/requirements.txt
+          )
+          git ls-files --error-unmatch "${lock_files[@]}" > /dev/null
+          git diff --exit-code -- "${lock_files[@]}"
+
+      - name: Установить проверенные dev-зависимости
+        run: |
+          python -m pip install \
+            --require-hashes \
+            --only-binary=:all: \
+            --requirement requirements/dev.txt
+          python -m pip check
+
+      - name: Проверить production Python-зависимости на уязвимости
+        run: |
+          for lock_file in \
+            requirements/prod.txt \
+            requirements/dev.txt \
+            requirements/ci-tools.txt \
+            backup/requirements.txt
+          do
+            python -m pip_audit \
+              --requirement "$lock_file" \
+              --require-hashes \
+              --disable-pip \
+              --progress-spinner off \
+              --strict
+          done
+
+      - name: Сформировать воспроизводимые Python SBOM
+        run: |
+          mkdir -p "$RUNNER_TEMP/sbom"
+          cyclonedx-py requirements \
+            --output-reproducible \
+            --output-format JSON \
+            --output-file "$RUNNER_TEMP/sbom/backend.cdx.json" \
+            requirements/prod.txt
+          cyclonedx-py requirements \
+            --output-reproducible \
+            --output-format JSON \
+            --output-file "$RUNNER_TEMP/sbom/backup.cdx.json" \
+            backup/requirements.txt
 
       - name: Установить PostgreSQL client и ShellCheck
         run: |
@@ -62,20 +140,56 @@ jobs:
           sudo apt-get install --no-install-recommends -y postgresql-client-16 shellcheck
 
       - name: Проверить линтером (flake8)
-        run: >-
-          flake8 apps/ config/ backup/
-          tests/test_backup_tools.py
-          tests/test_backup_postgres_integration.py
-          tests/test_runtime_contract.py
+        run: flake8 .
 
-      - name: Проверить production shell-скрипты
+      - name: Проверить инкрементальный backend type baseline (mypy)
+        run: mypy
+
+      - name: Проверить shell-скрипты
         run: >-
-          shellcheck deploy.sh scripts/backup.sh scripts/restore.sh
+          shellcheck dev.sh deploy.sh scripts/backup.sh scripts/restore.sh
+          scripts/compile_requirements.sh
           scripts/check_backup_freshness.sh scripts/production_backup.sh
           scripts/production_backup_check.sh scripts/production_restore.sh
+          scripts/reload_production_nginx.sh
 
-      - name: Проверить production Compose и собрать backup image
+      - name: Проверить runtime-контракты без запуска сервисов
+        run: >-
+          python -m pytest
+          tests/test_runtime_contract.py
+          tests/test_healthchecks.py
+          tests/test_deploy_contract.py
+          -q
+
+      - name: Установить checksum-проверенный Trivy 0.72.0
         env:
+          # Direct release assets are not updated by Dependabot: bump the
+          # version, URL and official checksum together during runtime review.
+          TRIVY_TARBALL_SHA256: bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea
+        run: |
+          trivy_tarball="$RUNNER_TEMP/trivy_0.72.0_Linux-64bit.tar.gz"
+          curl \
+            --fail \
+            --location \
+            --proto '=https' \
+            --proto-redir '=https' \
+            --retry 3 \
+            --show-error \
+            --silent \
+            --tlsv1.2 \
+            https://github.com/aquasecurity/trivy/releases/download/v0.72.0/trivy_0.72.0_Linux-64bit.tar.gz \
+            --output "$trivy_tarball"
+          printf '%s  %s\n' "$TRIVY_TARBALL_SHA256" "$trivy_tarball" \
+            | sha256sum -c -
+          tar -xzf "$trivy_tarball" -C "$RUNNER_TEMP" trivy
+          mv "$RUNNER_TEMP/trivy" "$RUNNER_TEMP/trivy-0.72.0"
+          chmod 0755 "$RUNNER_TEMP/trivy-0.72.0"
+          test "$("$RUNNER_TEMP/trivy-0.72.0" --version | head -n 1)" = \
+            'Version: 0.72.0'
+
+      - name: Проверить Compose и собрать production images
+        env:
+          COMPOSE_PROJECT_NAME: saas-poster-ci-${{ github.run_id }}-${{ github.run_attempt }}
           POSTGRES_DB: map_db
           POSTGRES_USER: map_user
           POSTGRES_PASSWORD: map_password
@@ -86,16 +200,81 @@ jobs:
           RESTORE_S3_ACCESS_KEY: ci-read-access
           RESTORE_S3_SECRET_KEY: ci-read-secret
         run: |
+          cleanup() {
+            if [[ -f .restore.env ]]; then
+              docker compose --env-file .restore.env \
+                -f docker-compose.restore.yml down --remove-orphans \
+                >/dev/null 2>&1 || true
+            fi
+            docker compose -f docker-compose.prod.yml down --remove-orphans \
+              >/dev/null 2>&1 || true
+            rm -f .env .backup.env .restore.env /tmp/backup-age-identity.txt
+          }
+          trap cleanup EXIT
           cp .env.example .env
           cp .backup.env.example .backup.env
+          docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.prod.yml --profile ops config --quiet
-          docker compose -f docker-compose.prod.yml --profile ops build backup
+          docker compose -f docker-compose.prod.yml --profile ops build \
+            django celery_worker celery_beat celery_worker_images frontend backup
+          docker compose -f docker-compose.prod.yml pull \
+            db redis redis_broker egress_proxy nginx
+          docker compose -f docker-compose.prod.yml up \
+            --detach --wait --wait-timeout 60 egress_proxy
+          docker compose -f docker-compose.prod.yml exec -T egress_proxy \
+            /bin/bash -ec 'exec 3<>/dev/tcp/127.0.0.1/3128'
+          docker compose -f docker-compose.prod.yml stop egress_proxy
+          docker compose -f docker-compose.prod.yml rm --force egress_proxy
           cp .restore.env.example .restore.env
           install -m 600 /dev/null /tmp/backup-age-identity.txt
           sed -i 's|^RESTORE_AGE_IDENTITY_HOST_FILE=.*|RESTORE_AGE_IDENTITY_HOST_FILE=/tmp/backup-age-identity.txt|' .restore.env
           docker compose --env-file .restore.env -f docker-compose.restore.yml config --quiet
           docker compose --env-file .restore.env -f docker-compose.restore.yml build restore
-          rm -f .env .backup.env .restore.env /tmp/backup-age-identity.txt
+          scan_services=(
+            django
+            celery_worker
+            celery_beat
+            celery_worker_images
+            frontend
+            backup
+            db
+            redis
+            redis_broker
+            egress_proxy
+            nginx
+          )
+          image_list="$RUNNER_TEMP/production-images.txt"
+          docker compose -f docker-compose.prod.yml --profile ops \
+            config --images "${scan_services[@]}" > "$image_list"
+          docker compose --env-file .restore.env -f docker-compose.restore.yml \
+            config --images restore >> "$image_list"
+          sort --unique "$image_list" --output "$image_list"
+          mapfile -t image_refs < "$image_list"
+          test "${#image_refs[@]}" -gt 0
+          declare -A scanned_image_ids=()
+          for image_ref in "${image_refs[@]}"
+          do
+            image_id="$(docker image inspect --format '{{.Id}}' "$image_ref")"
+            test -n "$image_id"
+            if [[ -n "${scanned_image_ids[$image_id]:-}" ]]; then
+              continue
+            fi
+            scanned_image_ids["$image_id"]=1
+            echo "==> Trivy: $image_ref ($image_id)"
+            "$RUNNER_TEMP/trivy-0.72.0" image \
+              --cache-dir "$RUNNER_TEMP/trivy-cache" \
+              --disable-telemetry \
+              --image-src docker \
+              --scanners vuln \
+              --pkg-types os,library \
+              --severity HIGH,CRITICAL \
+              --ignore-unfixed \
+              --exit-code 1 \
+              --format table \
+              --no-progress \
+              --timeout 10m \
+              "$image_id"
+          done
 
       - name: Проверить незаписанные изменения моделей
         run: python manage.py makemigrations --check --dry-run
@@ -110,24 +289,77 @@ jobs:
         run: pytest --cov=apps --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml
 
       - name: Загрузить покрытие
-        uses: codecov/codecov-action@v4
-        if: always()
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        if: ${{ !cancelled() && hashFiles('coverage.xml') != '' }}
         with:
-          file: coverage.xml
+          files: coverage.xml
+          disable_search: true
+          disable_telem: true
+          version: v11.3.1
 
-      - name: Настроить Node.js 20
-        uses: actions/setup-node@v4
+      - name: Настроить Node.js 24.18.0
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
-          node-version: '20'
+          node-version: '24.18.0'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Настроить npm 11.19.0
+        env:
+          NPM_TARBALL_SHA512: 48377f8478372aa1c4e47b763475b135836da82436a5700f2e5e8eb5084fc840f93c7b117eb3ad3b5f7d3194c81b6710a10d59448f6ddbcb21ac3fb672bdc003
+        run: |
+          npm_tarball="$RUNNER_TEMP/npm-11.19.0.tgz"
+          curl \
+            --fail \
+            --location \
+            --proto '=https' \
+            --proto-redir '=https' \
+            --retry 3 \
+            --show-error \
+            --silent \
+            --tlsv1.2 \
+            https://registry.npmjs.org/npm/-/npm-11.19.0.tgz \
+            --output "$npm_tarball"
+          printf '%s  %s\n' "$NPM_TARBALL_SHA512" "$npm_tarball" \
+            | sha512sum -c -
+          npm install --global "$npm_tarball" \
+            --ignore-scripts --no-audit --no-fund
+          rm -f "$npm_tarball"
+          test "$(npm --version)" = "11.19.0"
+
       - name: Установить frontend-зависимости
         working-directory: frontend
-        run: npm ci
+        run: npm ci --strict-allow-scripts
+
+      - name: Проверить frontend-зависимости на уязвимости
+        working-directory: frontend
+        run: |
+          npm audit --audit-level=moderate
+          npm run audit:prod
+
+      - name: Сформировать frontend SBOM
+        working-directory: frontend
+        run: >-
+          npm sbom
+          --omit=dev
+          --sbom-format=cyclonedx
+          --sbom-type=application
+          > "$RUNNER_TEMP/sbom/frontend.cdx.json"
 
       - name: Проверить и собрать frontend
         working-directory: frontend
         run: |
+          npm run typecheck
           npm run lint
+          npm run test:unit
           npm run build
+
+      - name: Сохранить SBOM артефакты
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sbom-${{ github.sha }}
+          path: ${{ runner.temp }}/sbom/*.cdx.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+          overwrite: true

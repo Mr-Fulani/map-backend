@@ -1,5 +1,12 @@
 # AUDIT: Enrichment MVP
 
+> [!WARNING]
+> **Исторический снимок аудита на 2026-05-28, не текущий статус и не runbook.**
+> Часть перечисленных gaps уже закрыта. Актуальные команды и production-контракт:
+> [README](README.md), [DEV](DEV.md),
+> [deployment](docs/DEPLOYMENT.md) и
+> [release checklist](docs/RELEASE_CHECKLIST.md).
+
 > Date: 2026-05-28  
 > Scope: product enrichment, parser, Celery, API, dashboard, AI description context  
 > Result: MVP core is mostly implemented; release-readiness requires closing several operational gaps.

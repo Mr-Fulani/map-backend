@@ -304,6 +304,73 @@ def test_provider_poll_hard_limit_manual_reviews_pending_invoice(settings):
     assert invoice.status == Invoice.STATUS_MANUAL_REVIEW
 
 
+@pytest.mark.django_db
+def test_targeted_force_resolves_unsettled_manual_checkout_from_provider(settings):
+    settings.YOOKASSA_RECONCILIATION_MAX_ATTEMPTS = 1
+    tenant = make_tenant('reconcile-manual-checkout-targeted')
+    invoice = Invoice.objects.create(
+        tenant=tenant,
+        amount=Decimal('1490.00'),
+        currency='RUB',
+        status=Invoice.STATUS_MANUAL_REVIEW,
+        purchase_type=Invoice.TYPE_SUBSCRIPTION,
+        yookassa_payment_id='pay_reconcile_manual_checkout',
+        checkout_state=Invoice.CHECKOUT_MANUAL_REVIEW,
+        checkout_last_error='Автосверка исчерпана.',
+        reconciliation_attempts=1,
+    )
+    snapshot = PaymentSnapshot(
+        id=invoice.yookassa_payment_id,
+        status='canceled',
+        amount=invoice.amount,
+        currency=invoice.currency,
+        test=False,
+    )
+
+    with patch(
+        'apps.billing.reconciliation.fetch_payment',
+        return_value=snapshot,
+    ) as fetch_payment:
+        result = reconcile_yookassa_billing(
+            event_ids=[-1],
+            invoice_ids=[invoice.pk],
+            force=True,
+        )
+
+    invoice.refresh_from_db()
+    fetch_payment.assert_called_once_with(invoice.yookassa_payment_id)
+    assert result['invoices_claimed'] == 1
+    assert result['invoices_final'] == 1
+    assert invoice.status == Invoice.STATUS_FAILED
+    assert invoice.checkout_state == Invoice.CHECKOUT_PROVIDER_CREATED
+    assert invoice.checkout_last_error == ''
+
+
+@pytest.mark.django_db
+def test_periodic_reconciliation_does_not_sweep_manual_checkout():
+    tenant = make_tenant('reconcile-manual-checkout-periodic-skip')
+    invoice = Invoice.objects.create(
+        tenant=tenant,
+        amount=Decimal('1490.00'),
+        currency='RUB',
+        status=Invoice.STATUS_MANUAL_REVIEW,
+        purchase_type=Invoice.TYPE_SUBSCRIPTION,
+        yookassa_payment_id='pay_reconcile_manual_periodic_skip',
+        checkout_state=Invoice.CHECKOUT_MANUAL_REVIEW,
+    )
+
+    with patch('apps.billing.reconciliation.fetch_payment') as fetch_payment:
+        result = reconcile_yookassa_billing(
+            event_ids=[-1],
+            invoice_ids=None,
+        )
+
+    fetch_payment.assert_not_called()
+    assert result['invoices_claimed'] == 0
+    invoice.refresh_from_db()
+    assert invoice.status == Invoice.STATUS_MANUAL_REVIEW
+
+
 def test_reconciliation_command_invoice_target_skips_event_sweep():
     with patch(
         'apps.billing.management.commands.reconcile_yookassa.reconcile_yookassa_billing',

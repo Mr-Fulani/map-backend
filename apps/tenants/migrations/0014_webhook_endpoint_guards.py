@@ -109,7 +109,7 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='webhookendpoint',
             constraint=models.CheckConstraint(
-                check=(
+                condition=(
                     Q(deleted_at__isnull=False)
                     | Q(url__startswith='https://')
                 ),

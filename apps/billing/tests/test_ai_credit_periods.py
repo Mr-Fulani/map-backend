@@ -166,3 +166,25 @@ def test_yearly_period_lookup_returns_current_month_not_full_year():
         subscription,
         date(2026, 2, 28),
     ) == (date(2026, 2, 28), date(2026, 3, 31))
+
+
+@pytest.mark.django_db
+def test_monthly_composite_term_keeps_monthly_ai_credit_boundaries():
+    tenant = make_tenant('composite-monthly-period-lookup')
+    subscription = tenant.subscription
+    subscription.billing_period = Subscription.PERIOD_MONTHLY
+    subscription.current_period_start = date(2026, 1, 31)
+    subscription.current_period_end = date(2026, 4, 15)
+
+    assert ai_credit_period_for_date(
+        subscription,
+        date(2026, 2, 27),
+    ) == (date(2026, 1, 31), date(2026, 2, 28))
+    assert ai_credit_period_for_date(
+        subscription,
+        date(2026, 2, 28),
+    ) == (date(2026, 2, 28), date(2026, 3, 31))
+    assert ai_credit_period_for_date(
+        subscription,
+        date(2026, 4, 1),
+    ) == (date(2026, 3, 31), date(2026, 4, 15))

@@ -15,6 +15,9 @@ from rest_framework_simplejwt.utils import datetime_from_epoch
 from apps.tenants.models import TenantUser
 
 
+_POSTGRES_BIGINT_MAX = (1 << 63) - 1
+
+
 def _invalid_refresh() -> InvalidToken:
     return InvalidToken('Refresh token недействителен или уже использован.')
 
@@ -30,9 +33,23 @@ def _decode_refresh(raw_token: str) -> RefreshToken:
 
 def _claim_id(token, name: str) -> int:
     value = token.get(name)
-    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+    if isinstance(value, bool):
         raise _invalid_refresh()
-    return value
+    if isinstance(value, int):
+        claim_id = value
+    elif (
+        isinstance(value, str)
+        and 1 <= len(value) <= 20
+        and value.isascii()
+        and value.isdecimal()
+        and not (len(value) > 1 and value.startswith('0'))
+    ):
+        claim_id = int(value)
+    else:
+        raise _invalid_refresh()
+    if not 0 < claim_id <= _POSTGRES_BIGINT_MAX:
+        raise _invalid_refresh()
+    return claim_id
 
 
 def _browser_session_id(token, fallback_jti: str) -> str:

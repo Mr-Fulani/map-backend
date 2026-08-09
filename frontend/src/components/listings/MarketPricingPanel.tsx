@@ -265,34 +265,60 @@ export default function MarketPricingPanel({
   const [loading, setLoading] = useState(true);
   const [refreshingRunId, setRefreshingRunId] = useState<number | null>(null);
   const [filterOpen, setFilterOpen] = useState(false);
-  const [sort, setSort] = useState<'price' | 'availability' | 'confidence'>('price');
-  const [country, setCountry] = useState('');
-  const [onlyInStock, setOnlyInStock] = useState(false);
-  const [onlyNew, setOnlyNew] = useState(false);
-  const [showAnalogues, setShowAnalogues] = useState(false);
-  const [filtersReady, setFiltersReady] = useState(false);
+  const [initialFilters] = useState(savedFilters);
+  const [sort, setSort] = useState<'price' | 'availability' | 'confidence'>(initialFilters.sort ?? 'price');
+  const [country, setCountry] = useState(initialFilters.country ?? '');
+  const [onlyInStock, setOnlyInStock] = useState(initialFilters.onlyInStock ?? false);
+  const [onlyNew, setOnlyNew] = useState(initialFilters.onlyNew ?? false);
+  const [showAnalogues, setShowAnalogues] = useState(initialFilters.showAnalogues ?? false);
   const [expanded, setExpanded] = useState(false);
   const [researchSettings, setResearchSettings] = useState<TenantResearchSettings | null>(null);
   const [canEditGeography, setCanEditGeography] = useState(false);
   const [savingGeography, setSavingGeography] = useState(false);
 
-  const load = useCallback(async (quiet = false) => {
+  const requestComparison = useCallback(async () => {
     void refreshKey;
-    if (!quiet) setLoading(true);
+    const response = await listingApi.marketComparison(listingId);
+    return response.data.data as Comparison;
+  }, [listingId, refreshKey]);
+
+  const applyComparison = useCallback((data: Comparison) => {
+    setComparison(data);
+    if (data.active_run) setRefreshingRunId(data.active_run.id);
+    const availableCountries = new Set(
+      data.internet_offers.map((offer) => offer.country_code).filter(Boolean),
+    );
+    setCountry((current) => current && !availableCountries.has(current) ? '' : current);
+  }, []);
+
+  const load = useCallback(async () => {
     try {
-      const response = await listingApi.marketComparison(listingId);
-      const data = response.data.data as Comparison;
-      setComparison(data);
-      if (data.active_run) setRefreshingRunId(data.active_run.id);
+      applyComparison(await requestComparison());
     } catch {
       setComparison(null);
       toast.error('Не удалось загрузить сравнение рынка');
     } finally {
-      if (!quiet) setLoading(false);
+      setLoading(false);
     }
-  }, [listingId, refreshKey]);
+  }, [applyComparison, requestComparison]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    let cancelled = false;
+    requestComparison()
+      .then((data) => {
+        if (!cancelled) applyComparison(data);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setComparison(null);
+          toast.error('Не удалось загрузить сравнение рынка');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [applyComparison, requestComparison]);
 
   useEffect(() => {
     webResearchApi.settings()
@@ -306,21 +332,12 @@ export default function MarketPricingPanel({
   }, []);
 
   useEffect(() => {
-    const saved = savedFilters();
-    if (saved.sort) setSort(saved.sort);
-    setCountry(saved.country ?? '');
-    setOnlyInStock(saved.onlyInStock ?? false);
-    setOnlyNew(saved.onlyNew ?? false);
-    setShowAnalogues(saved.showAnalogues ?? false);
-    setFiltersReady(true);
-  }, []);
-
-  useEffect(() => {
-    if (!filtersReady) return;
     window.localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
       sort, country, onlyInStock, onlyNew, showAnalogues,
     }));
-  }, [country, filtersReady, onlyInStock, onlyNew, showAnalogues, sort]);
+  }, [country, onlyInStock, onlyNew, showAnalogues, sort]);
+
+  const productPoll = (runId: number) => webResearchApi.get(runId);
 
   useEffect(() => {
     if (!refreshingRunId) return;
@@ -331,7 +348,7 @@ export default function MarketPricingPanel({
         if (!['queued', 'running'].includes(run.status)) {
           window.clearInterval(interval);
           setRefreshingRunId(null);
-          await load(true);
+          await load();
           if (run.status === 'failed') toast.error(run.error_message || 'Ошибка поискового провайдера');
           else toast.success(run.status === 'no_results' ? 'Новых предложений не найдено' : 'Предложения обновлены');
         }
@@ -344,8 +361,6 @@ export default function MarketPricingPanel({
     return () => window.clearInterval(interval);
   }, [load, refreshingRunId]);
 
-  const productPoll = (runId: number) => webResearchApi.get(runId);
-
   const refresh = async () => {
     if (!comparison) return;
     try {
@@ -355,7 +370,7 @@ export default function MarketPricingPanel({
         setRefreshingRunId(run.id);
         toast.success('Поиск предложений запущен');
       } else {
-        await load(true);
+        await load();
       }
     } catch (error: unknown) {
       const message = (error as { response?: { data?: { message?: string } } })?.response?.data?.message;
@@ -412,11 +427,6 @@ export default function MarketPricingPanel({
     ));
   }, [comparison]);
 
-  useEffect(() => {
-    if (!comparison) return;
-    if (country && !countries.some((item) => item.code === country)) setCountry('');
-  }, [comparison, countries, country]);
-
   const filtered = useMemo(() => {
     const result = (comparison?.internet_offers ?? []).filter((offer) => (
       (!country || offer.country_code === country)
@@ -442,7 +452,7 @@ export default function MarketPricingPanel({
   if (!comparison) {
     return (
       <div className="flex min-h-[360px] items-center justify-center p-8 text-center">
-        <div><AlertTriangle className="mx-auto h-8 w-8 text-amber-500" /><p className="mt-3 font-medium">Сравнение временно недоступно</p><Button className="mt-4" variant="outline" onClick={() => load()}>Повторить</Button></div>
+        <div><AlertTriangle className="mx-auto h-8 w-8 text-amber-500" /><p className="mt-3 font-medium">Сравнение временно недоступно</p><Button className="mt-4" variant="outline" onClick={() => { setLoading(true); void load(); }}>Повторить</Button></div>
       </div>
     );
   }

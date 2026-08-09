@@ -4,9 +4,12 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RESTORE_ENV_FILE="${RESTORE_ENV_FILE:-/secure/saas-poster/restore.env}"
 RESTORE_PROJECT_NAME="saas-poster-restore"
+RESTORE_LOCK_DIR="/run/lock/saas-poster"
+RESTORE_LOCK_FILE="$RESTORE_LOCK_DIR/restore.lock"
 COMPOSE=(
   docker compose
   --project-name "$RESTORE_PROJECT_NAME"
+  --project-directory "$ROOT_DIR"
   --env-file "$RESTORE_ENV_FILE"
   -f "$ROOT_DIR/docker-compose.restore.yml"
 )
@@ -25,7 +28,7 @@ cleanup() {
   local cleanup_code
   trap - EXIT HUP INT TERM
   set +e
-  "${COMPOSE[@]}" down --volumes
+  "${COMPOSE[@]}" down --volumes --remove-orphans
   cleanup_code="$?"
   if ((cleanup_code != 0)); then
     echo "CRITICAL: restore cleanup failed; the plaintext dump may remain in" \
@@ -50,8 +53,16 @@ case "$(file_mode "$RESTORE_ENV_FILE")" in
   *) fail "RESTORE_ENV_FILE must have mode 400 or 600" ;;
 esac
 
-exec 9<"$RESTORE_ENV_FILE"
-flock -n 9 || fail "another restore process is already running"
+[[ -d "$RESTORE_LOCK_DIR" && ! -L "$RESTORE_LOCK_DIR" && -O "$RESTORE_LOCK_DIR" ]] \
+  || fail "$RESTORE_LOCK_DIR must be a non-symlink directory owned by the restore user"
+[[ "$(file_mode "$RESTORE_LOCK_DIR")" == "700" ]] \
+  || fail "$RESTORE_LOCK_DIR must have mode 700"
+
+# One host-wide lock protects the fixed Compose project and its plaintext
+# workspace across every RESTORE_ENV_FILE. Locking the env file itself would let
+# two different drill configs delete one another's containers/volume.
+exec 9>"$RESTORE_LOCK_FILE"
+flock -n 9 || fail "another restore process is already running on this host"
 
 # A restore file is trusted operator input. Loading it keeps secret values out of
 # process arguments; the dedicated Compose file forwards only the allowlisted
@@ -100,6 +111,9 @@ trap 'cleanup $?' EXIT
 trap 'cleanup 129' HUP
 trap 'cleanup 130' INT
 trap 'cleanup 143' TERM
+# Remove resources left by SIGKILL/host failure before a new archive can enter
+# the fixed plaintext workspace. The global lock guarantees no live run owns it.
+"${COMPOSE[@]}" down --volumes --remove-orphans
 "${COMPOSE[@]}" config --quiet
 "${COMPOSE[@]}" build restore
 "${COMPOSE[@]}" run --rm restore

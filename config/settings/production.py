@@ -3,7 +3,8 @@ from urllib.parse import urlsplit
 
 import sentry_sdk
 from cryptography.fernet import Fernet
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import ImproperlyConfigured, ValidationError
+from django.core.validators import EmailValidator, URLValidator
 from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.django import DjangoIntegration
 
@@ -13,6 +14,8 @@ from config.sentry_scrubbing import scrub_sentry_breadcrumb, scrub_sentry_event
 from .base import *  # noqa: F401, F403
 
 DEBUG = False
+_https_url_validator = URLValidator(schemes=['https'])
+_email_validator = EmailValidator()
 
 
 def _required_env(name: str) -> str:
@@ -20,6 +23,45 @@ def _required_env(name: str) -> str:
     if not value:
         raise ImproperlyConfigured(f'{name} обязателен в production.')
     return value
+
+
+def _is_https_origin(value: str) -> bool:
+    if any(character.isspace() for character in value):
+        return False
+    try:
+        _https_url_validator(value)
+        parsed = urlsplit(value)
+        parsed.port
+    except (ValidationError, ValueError):
+        return False
+    return bool(
+        parsed.scheme == 'https'
+        and parsed.hostname
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path == ''
+        and not parsed.query
+        and not parsed.fragment
+        and not parsed.netloc.endswith(':')
+    )
+
+
+def _required_https_origin(name: str) -> str:
+    value = _required_env(name)
+    if not _is_https_origin(value):
+        raise ImproperlyConfigured(
+            f'{name} должен быть чистым HTTPS origin без path/query/fragment.',
+        )
+    return value
+
+
+def _required_https_origins(name: str) -> list[str]:
+    values = [value.strip() for value in _required_env(name).split(',')]
+    if any(not value or not _is_https_origin(value) for value in values):
+        raise ImproperlyConfigured(
+            f'{name} должен содержать только чистые HTTPS origins.',
+        )
+    return values
 
 
 SECRET_KEY = _required_env('DJANGO_SECRET_KEY')
@@ -30,26 +72,65 @@ ALLOWED_HOSTS = [host.strip() for host in _required_env('ALLOWED_HOSTS').split('
 if '*' in ALLOWED_HOSTS:
     raise ImproperlyConfigured('Wildcard ALLOWED_HOSTS запрещён в production.')
 
-CSRF_TRUSTED_ORIGINS = [
-    origin.strip()
-    for origin in _required_env('CSRF_TRUSTED_ORIGINS').split(',')
-    if origin.strip()
-]
+CORS_ALLOWED_ORIGINS = _required_https_origins('CORS_ALLOWED_ORIGINS')
+CSRF_TRUSTED_ORIGINS = _required_https_origins('CSRF_TRUSTED_ORIGINS')
+SITE_URL = _required_https_origin('SITE_URL')
+FRONTEND_URL = _required_https_origin('FRONTEND_URL')
+
+EMAIL_BACKEND = 'apps.core.email_backend.HTTPProxySMTPEmailBackend'
+EMAIL_HOST = _required_env('SENDPULSE_SMTP_HOST')
+if EMAIL_HOST != 'smtp.sendpulse.com':
+    raise ImproperlyConfigured(
+        'SENDPULSE_SMTP_HOST в production должен быть smtp.sendpulse.com.',
+    )
+EMAIL_PORT = 587
+EMAIL_USE_TLS = True
+EMAIL_USE_SSL = False
+EMAIL_TIMEOUT = 10
+EMAIL_HOST_USER = _required_env('SENDPULSE_SMTP_LOGIN')
+EMAIL_HOST_PASSWORD = _required_env('SENDPULSE_SMTP_PASSWORD')
+DEFAULT_FROM_EMAIL = _required_env('DEFAULT_FROM_EMAIL')
+try:
+    _email_validator(DEFAULT_FROM_EMAIL)
+except ValidationError as exc:
+    raise ImproperlyConfigured(
+        'DEFAULT_FROM_EMAIL должен быть корректным email без display name.',
+    ) from exc
+EMAIL_HTTP_PROXY_URL = _required_env('EMAIL_HTTP_PROXY_URL')
+if EMAIL_HTTP_PROXY_URL != 'http://egress_proxy:3128':
+    raise ImproperlyConfigured(
+        'EMAIL_HTTP_PROXY_URL в production должен быть http://egress_proxy:3128.',
+    )
+PUBLIC_HTTP_PROXY_URL = _required_env('PUBLIC_HTTP_PROXY_URL')
+if PUBLIC_HTTP_PROXY_URL != 'http://egress_proxy:3128':
+    raise ImproperlyConfigured(
+        'PUBLIC_HTTP_PROXY_URL в production должен быть http://egress_proxy:3128.',
+    )
 
 database_url = _required_env('DATABASE_URL')
 if 'map_password' in database_url:
     raise ImproperlyConfigured('Dev-пароль БД запрещён в production DATABASE_URL.')
 
+# Production containers run with a read-only root filesystem. Local media
+# fallback would therefore pass health checks but fail every upload at runtime.
+YC_S3_BUCKET = _required_env('YC_S3_BUCKET')
+YC_S3_ACCESS_KEY = _required_env('YC_S3_ACCESS_KEY')
+YC_S3_SECRET_KEY = _required_env('YC_S3_SECRET_KEY')
+
 cache_redis_url = _required_env('CACHE_REDIS_URL')
 celery_broker_url = _required_env('CELERY_BROKER_URL')
 celery_result_backend = _required_env('CELERY_RESULT_BACKEND')
 coordination_redis_url = _required_env('COORDINATION_REDIS_URL')
+cache_redis_password = _required_env('CACHE_REDIS_PASSWORD')
+celery_redis_password = _required_env('CELERY_REDIS_PASSWORD')
 try:
     validate_production_redis_layout(
         cache_redis_url,
         celery_broker_url,
         celery_result_backend,
         coordination_redis_url,
+        cache_server_password=cache_redis_password,
+        broker_server_password=celery_redis_password,
     )
 except ValueError as exc:
     raise ImproperlyConfigured(str(exc)) from exc
@@ -62,27 +143,6 @@ try:
 except (TypeError, ValueError) as exc:
     raise ImproperlyConfigured('Некорректный Fernet-ключ FIELD_ENCRYPTION_KEYS.') from exc
 
-if not SITE_URL.startswith('https://') or not FRONTEND_URL.startswith('https://'):
-    raise ImproperlyConfigured('SITE_URL и FRONTEND_URL должны использовать HTTPS в production.')
-
-
-def _is_https_origin(value: str) -> bool:
-    try:
-        parsed = urlsplit(value)
-        parsed.port
-    except ValueError:
-        return False
-    return bool(
-        parsed.scheme == 'https'
-        and parsed.hostname
-        and parsed.username is None
-        and parsed.password is None
-        and parsed.path in ('', '/')
-        and not parsed.query
-        and not parsed.fragment
-    )
-
-
 if not BILLING_RETURN_URL_ALLOWED_ORIGINS or not all(
     _is_https_origin(origin)
     for origin in BILLING_RETURN_URL_ALLOWED_ORIGINS
@@ -90,6 +150,15 @@ if not BILLING_RETURN_URL_ALLOWED_ORIGINS or not all(
     raise ImproperlyConfigured(
         'BILLING_RETURN_URL_ALLOWED_ORIGINS должен содержать только HTTPS origins.',
     )
+for origin_setting_name, allowed_origins in (
+    ('CORS_ALLOWED_ORIGINS', CORS_ALLOWED_ORIGINS),
+    ('CSRF_TRUSTED_ORIGINS', CSRF_TRUSTED_ORIGINS),
+    ('BILLING_RETURN_URL_ALLOWED_ORIGINS', BILLING_RETURN_URL_ALLOWED_ORIGINS),
+):
+    if FRONTEND_URL not in allowed_origins:
+        raise ImproperlyConfigured(
+            f'{origin_setting_name} должен включать FRONTEND_URL.',
+        )
 if YOOKASSA_ALLOW_TEST_PAYMENTS:
     raise ImproperlyConfigured('YOOKASSA_ALLOW_TEST_PAYMENTS запрещён в production.')
 YOOKASSA_SHOP_ID = _required_env('YOOKASSA_SHOP_ID')

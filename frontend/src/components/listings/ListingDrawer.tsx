@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useCallback, useState, useEffect, useRef } from 'react';
 import { toast } from 'sonner';
 import { accountApi, listingApi, imageApi, productApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
@@ -142,10 +142,21 @@ function ConfidenceBar({ value, label }: { value: number | null; label: string }
 }
 
 export default function ListingDrawer({
+  ...props
+}: Props) {
+  return (
+    <ListingDrawerContent
+      key={`${props.listingId ?? 'closed'}:${props.initialPanel ?? 'listing'}`}
+      {...props}
+    />
+  );
+}
+
+function ListingDrawerContent({
   listingId, initialPanel = 'listing', onClose, onActionDone,
 }: Props) {
   const [listing, setListing] = useState<ListingDetail | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(listingId !== null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [editingBrand, setEditingBrand] = useState(false);
@@ -181,19 +192,10 @@ export default function ListingDrawer({
   const [pricingRefreshKey, setPricingRefreshKey] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const publishPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Листинг, для которого уже выполнена авто-подстановка адреса по умолчанию.
-  const placementInitRef = useRef<number | null>(null);
 
   const open = listingId !== null;
 
-  useEffect(() => {
-    if (listingId !== null) {
-      setActivePanel(initialPanel);
-      setMarketPriceApplied(false);
-    }
-  }, [initialPanel, listingId]);
-
-  const applyListingState = (data: ListingDetail) => {
+  const applyListingState = useCallback((data: ListingDetail) => {
     setListing(data);
     setEditTitle(data.title);
     setEditDesc(data.description_ai);
@@ -212,44 +214,60 @@ export default function ListingDrawer({
     setEditAdType(data.ad_type || DEFAULT_AD_TYPE);
     // Храним выбранную категорию одним id; путь до корня строится по дереву.
     setEditCategoryId(data.catalog_category ? String(data.catalog_category.id) : '');
-  };
-
-  useEffect(() => {
-    if (listingId === null) {
-      setListing(null);
-      setEditing(false);
-      setEditingBrand(false);
-      setActiveIdx(0);
-      setPublishing(false);
-      setMarketPriceApplied(false);
-      placementInitRef.current = null;
-      if (publishPollRef.current) clearInterval(publishPollRef.current);
-      return;
-    }
-    setLoading(true);
-    listingApi.get(listingId)
-      .then((res) => {
-        const data: ListingDetail = res.data.data;
-        applyListingState(data);
-        // Ставим главное фото активным
-        const primaryIdx = data.images.findIndex((i) => i.is_primary);
-        setActiveIdx(primaryIdx >= 0 ? primaryIdx : 0);
-      })
-      .catch(() => onClose())
-      .finally(() => setLoading(false));
-  }, [listingId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    accountApi.list()
-      .then((res) => setAccounts(res.data.data ?? res.data))
-      .catch(() => setAccounts([]));
-    accountApi.listPlacementAddresses()
-      .then((res) => setPlacementAddresses(res.data.data ?? res.data))
-      .catch(() => setPlacementAddresses([]));
-    productApi.catalogCategories({ assignable: true })
-      .then((res) => setCategories(res.data.data ?? res.data))
-      .catch(() => setCategories([]));
   }, []);
+
+  useEffect(() => {
+    if (listingId === null) return undefined;
+    let cancelled = false;
+
+    const loadDrawer = async () => {
+      const auxiliaryData = Promise.all([
+        accountApi.list().catch(() => null),
+        accountApi.listPlacementAddresses().catch(() => null),
+        productApi.catalogCategories({ assignable: true }).catch(() => null),
+      ]);
+      let data: ListingDetail;
+      try {
+        const listingResponse = await listingApi.get(listingId);
+        if (cancelled) return;
+
+        data = listingResponse.data.data;
+        applyListingState(data);
+
+        const primaryIdx = data.images.findIndex((image) => image.is_primary);
+        setActiveIdx(primaryIdx >= 0 ? primaryIdx : 0);
+      } catch {
+        if (!cancelled) onClose();
+        return;
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+
+      const [accountsResponse, addressesResponse, categoriesResponse] = await auxiliaryData;
+      if (cancelled) return;
+
+      const loadedAddresses: PlacementAddress[] = addressesResponse
+        ? (addressesResponse.data.data ?? addressesResponse.data)
+        : [];
+      setAccounts(accountsResponse ? (accountsResponse.data.data ?? accountsResponse.data) : []);
+      setPlacementAddresses(loadedAddresses);
+      setCategories(categoriesResponse ? (categoriesResponse.data.data ?? categoriesResponse.data) : []);
+      if (!data.placement_address && !data.address_override && !data.seller_address_id_override) {
+        const fallback = loadedAddresses.find(
+          (address) => address.account === data.account_id && address.is_default,
+        );
+        if (fallback) {
+          setEditPlacementAddressId((current) => current || String(fallback.id));
+        }
+      }
+    };
+
+    void loadDrawer();
+    return () => {
+      cancelled = true;
+      if (publishPollRef.current) clearInterval(publishPollRef.current);
+    };
+  }, [applyListingState, listingId, onClose]);
 
   useEffect(() => {
     if (!editingBrand || !listing) return;
@@ -300,26 +318,6 @@ export default function ListingDrawer({
     );
     return found ? String(found.id) : '';
   };
-
-  useEffect(() => {
-    if (!editPlacementAddressId) return;
-    const selected = placementAddresses.find((address) => address.id === Number(editPlacementAddressId));
-    if (selected && editAccountId && selected.account !== Number(editAccountId)) {
-      setEditPlacementAddressId('');
-    }
-  }, [editAccountId, editPlacementAddressId, placementAddresses]);
-
-  // Авто-подстановка адреса по умолчанию при открытии листинга без явного адреса.
-  // Тенант может затем выбрать другой адрес или «адрес аккаунта». Выполняется
-  // один раз на листинг, чтобы не перетирать ручной выбор «без адреса».
-  useEffect(() => {
-    if (!listing || placementAddresses.length === 0) return;
-    if (placementInitRef.current === listing.id) return;
-    placementInitRef.current = listing.id;
-    if (listing.placement_address || listing.address_override || listing.seller_address_id_override) return;
-    const fallback = defaultAddressIdForAccount(String(listing.account_id));
-    if (fallback) setEditPlacementAddressId(fallback);
-  }, [listing, placementAddresses]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleOpenChange = (isOpen: boolean) => {
     if (!isOpen) onClose();

@@ -12,7 +12,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from apps.core.middleware import TenantMiddleware
 from apps.tenants.jwt_serializers import TenantTokenObtainPairSerializer
 from apps.tenants.models import Tenant, TenantUser
-from apps.tenants.session_tokens import rotate_refresh_token
+from apps.tenants.session_tokens import _claim_id, rotate_refresh_token
 from apps.tenants.services import TenantService
 
 
@@ -22,6 +22,37 @@ def _session(slug='session', email='session@example.com', password='CorrectHorse
     membership.user._current_tenant_membership = membership
     refresh = TenantTokenObtainPairSerializer.get_token(membership.user)
     return tenant, membership.user, str(refresh), str(refresh.access_token)
+
+
+def test_claim_id_accepts_simplejwt_string_ids_and_legacy_integers():
+    assert _claim_id({'user_id': '42'}, 'user_id') == 42
+    assert _claim_id({'user_id': 42}, 'user_id') == 42
+    assert _claim_id({'user_id': '9223372036854775807'}, 'user_id') == 2**63 - 1
+
+
+@pytest.mark.parametrize(
+    'value',
+    (
+        True,
+        False,
+        0,
+        -1,
+        2**63,
+        10**100,
+        '',
+        '0',
+        '-1',
+        '+1',
+        '01',
+        '1.0',
+        '１',
+        '9223372036854775808',
+        '9' * 21,
+    ),
+)
+def test_claim_id_rejects_noncanonical_or_unbounded_values(value):
+    with pytest.raises(InvalidToken):
+        _claim_id({'user_id': value}, 'user_id')
 
 
 @pytest.mark.django_db

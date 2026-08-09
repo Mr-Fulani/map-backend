@@ -185,10 +185,16 @@ Backup image основан на той же major-версии PostgreSQL, чт
 Первый ручной запуск:
 
 ```bash
-docker compose -f docker-compose.prod.yml --profile ops build backup
-docker compose -f docker-compose.prod.yml --profile ops run --rm backup
-docker compose -f docker-compose.prod.yml --profile ops run --rm --no-deps \
-  backup python3 -m backup.check_freshness
+production_root="$(pwd -P)"
+production_compose=(
+  docker compose
+  --project-name saas_poster
+  --project-directory "$production_root"
+  -f "$production_root/docker-compose.prod.yml"
+)
+"${production_compose[@]}" --profile ops build backup
+./scripts/production_backup.sh
+./scripts/production_backup_check.sh
 ```
 
 Успех подтверждён только если команда завершилась с кодом `0`, вывела object key,
@@ -197,7 +203,11 @@ docker compose -f docker-compose.prod.yml --profile ops run --rm --no-deps \
 
 ## 4. Расписание и мониторинг
 
-Установите готовые systemd units (пути и пользователя при необходимости измените):
+Готовые units используют `User=saas-poster`, `Group=docker` и checkout
+`/opt/saas_poster`, то есть тот же стандартный operator contract, что deploy.
+Если ваш layout отличается, сначала измените управляемые копии units, владельца
+checkout и mode/owner `.env`/`.backup.env`; только затем устанавливайте и включайте
+timer-ы:
 
 ```bash
 sudo install -o root -g root -m 0644 ops/systemd/saas-poster-backup.service \
@@ -247,9 +257,14 @@ REVOKE CONNECT ON DATABASE map_restore_202608 FROM PUBLIC;
 GRANT CONNECT ON DATABASE map_restore_202608 TO map_restore_202608;
 ```
 
-3. Доставьте age identity на recovery host по защищённому каналу во временный
-   каталог с правами `0700`; после drill удалите локальную временную копию по
-   принятой процедуре.
+3. Создайте принадлежащий recovery operator временный каталог с правами `0700`,
+   затем доставьте туда age identity по защищённому каналу. После drill удалите
+   локальную временную копию по принятой процедуре:
+
+```bash
+sudo install -d -o "$(id -un)" -g "$(id -gn)" -m 0700 /secure/drill
+```
+
 4. Скопируйте restore-шаблон за пределы checkout. В
    `RESTORE_PRODUCTION_DATABASE_NAME` укажите только каноническое имя production
    database: пароль и сетевой доступ к production restore-процессу не нужны.
@@ -267,7 +282,7 @@ Public signing key берите из независимой доверенной
 
 ```dotenv
 RESTORE_PRODUCTION_DATABASE_NAME='map_db'
-RESTORE_DATABASE_URL='postgresql://restore_user:secret@db:5432/map_restore_202608'
+RESTORE_DATABASE_URL='postgresql://restore_user:secret@restore-postgres.internal:5432/map_restore_202608'
 RESTORE_OBJECT_KEY='postgres/monthly/2026/08/20260801T000000Z_abcdef123456_a1b2c3d4e5f6.dump.age'
 RESTORE_CONFIRM_DATABASE='map_restore_202608'
 RESTORE_AGE_IDENTITY_HOST_FILE='/secure/drill/backup-age-identity.txt'
@@ -280,11 +295,29 @@ RESTORE_S3_ACCESS_KEY='<temporary-read-only-access-key>'
 RESTORE_S3_SECRET_KEY='<temporary-read-only-secret-key>'
 ```
 
-6. Запустите отдельный restore-контур. Скрипт проверит права `400/600` и запретит
-   backup writer/private-key переменные. Он использует уникальное Compose project
-   name и host lock, поднимает собственный `egress_proxy`, собирает одноразовый restore image,
-   а при любом завершении удаляет контейнеры, сеть и volume с временным открытым
-   dump. Другие Compose-проекты на хосте не затрагиваются:
+Hostname в `RESTORE_DATABASE_URL` должен указывать на заранее созданный recovery
+PostgreSQL, быть разрешимым из временной Compose-сети и не совпадать с production
+DB endpoint. В restore Compose нет сервиса с именем `db`.
+
+6. На recovery host создайте единый каталог блокировок, принадлежащий restore
+   operator и имеющий mode `0700`. Если host переживает reboot, создавайте его
+   через `/etc/tmpfiles.d/saas-poster.conf` по тому же образцу, что и production
+   deploy-каталог:
+
+```bash
+restore_user="$(id -un)"
+restore_group="$(id -gn)"
+sudo install -d -o "$restore_user" -g "$restore_group" -m 0700 /run/lock/saas-poster
+```
+
+7. Запустите отдельный restore-контур. Скрипт проверит права `400/600` и запретит
+   backup writer/private-key переменные. Он использует выделенный фиксированный
+   Compose project и единый host-wide lock
+   `/run/lock/saas-poster/restore.lock`, общий для всех `RESTORE_ENV_FILE`. Перед новым
+   запуском удаляются ресурсы, оставшиеся после `SIGKILL`/потери хоста. Затем
+   поднимается собственный `egress_proxy`, собирается одноразовый restore image,
+   а при любом штатном завершении удаляются контейнеры, сеть и volume с временным
+   открытым dump. Другие Compose-проекты на хосте не затрагиваются:
 
 ```bash
 RESTORE_ENV_FILE=/secure/drill/restore.env ./scripts/production_restore.sh
@@ -297,9 +330,11 @@ S3 идёт через поднятый Squid благодаря proxy variables
 только его изолированные ресурсы:
 
 ```bash
+restore_checkout="$(pwd -P)"
 docker compose --project-name saas-poster-restore \
+  --project-directory "$restore_checkout" \
   --env-file /secure/drill/restore.env \
-  -f docker-compose.restore.yml down --volumes
+  -f "$restore_checkout/docker-compose.restore.yml" down --volumes --remove-orphans
 ```
 
 После drill отзовите временные S3 credentials и удалите локальные secret-файлы

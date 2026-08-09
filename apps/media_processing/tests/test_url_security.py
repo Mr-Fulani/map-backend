@@ -9,10 +9,12 @@ import requests
 from apps.core.image_security import ImagePixelLimitExceeded, validate_image_pixel_budget
 from apps.core.url_security import (
     REDIRECT_NONE,
+    TRUSTED_PUBLIC_HTTP_PROXY_URL,
     RequestDeadlineExceeded,
     ResponseTooLarge,
     UnsafePublicURL,
     _PinnedIPAdapter,
+    _TrustedProxyAdapter,
     is_safe_public_http_url,
     read_response_limited,
     request_public_http_url,
@@ -184,6 +186,150 @@ def test_pinned_adapter_rejects_proxy():
             proxies={'https': 'http://proxy.internal:8080'},
             cert=None,
         )
+
+
+def test_production_transport_pre_resolves_then_uses_only_trusted_proxy(
+    settings,
+    monkeypatch,
+):
+    settings.PUBLIC_HTTP_PROXY_URL = TRUSTED_PUBLIC_HTTP_PROXY_URL
+    monkeypatch.setenv('HTTPS_PROXY', 'http://attacker.invalid:8080')
+    resolver = MagicMock(side_effect=public_resolver)
+    response = FakeStreamResponse(chunks=[b'ok'])
+    session = FakeSession(response)
+
+    with patch('apps.core.url_security.requests.Session', return_value=session):
+        result = request_public_http_url(
+            'https://origin.example/path',
+            timeout=(2, 5),
+            max_response_bytes=10,
+            resolver=resolver,
+        )
+
+    assert result.content == b'ok'
+    resolver.assert_called_once()
+    assert resolver.call_args.args == ('origin.example', 443)
+    assert session.trust_env is False
+    assert session.requests[0][1] == 'https://origin.example/path'
+    assert session.requests[0][2]['proxies'] == {
+        'https': TRUSTED_PUBLIC_HTTP_PROXY_URL,
+    }
+    adapter = session.mounted[0][1]
+    assert isinstance(adapter, _TrustedProxyAdapter)
+    assert adapter.target.approved_ips == (PUBLIC_IP,)
+    assert adapter.max_retries.total == 0
+
+
+def test_public_transport_rejects_arbitrary_configured_proxy(settings):
+    settings.PUBLIC_HTTP_PROXY_URL = 'http://attacker.invalid:8080'
+    session_factory = MagicMock()
+
+    with patch('apps.core.url_security.requests.Session', session_factory):
+        with pytest.raises(UnsafePublicURL, match='доверенный'):
+            request_public_http_url(
+                'https://origin.example/path',
+                timeout=5,
+                max_response_bytes=10,
+                resolver=public_resolver,
+            )
+
+    session_factory.assert_not_called()
+
+
+def test_trusted_proxy_adapter_rejects_other_proxy_and_origin():
+    target = resolve_public_http_url(
+        'https://origin.example/path',
+        resolver=public_resolver,
+    )
+    adapter = _TrustedProxyAdapter(target, TRUSTED_PUBLIC_HTTP_PROXY_URL)
+    prepared = requests.Request(
+        'GET',
+        target.url,
+        headers={'Host': 'attacker.invalid'},
+    ).prepare()
+
+    with patch.object(
+        requests.adapters.HTTPAdapter,
+        'get_connection_with_tls_context',
+        return_value='proxy-pool',
+    ) as base_connection:
+        connection = adapter.get_connection_with_tls_context(
+            prepared,
+            verify=True,
+            proxies={'https': TRUSTED_PUBLIC_HTTP_PROXY_URL},
+            cert=None,
+        )
+    adapter.add_headers(prepared)
+
+    assert connection == 'proxy-pool'
+    assert prepared.headers['Host'] == 'origin.example'
+    assert base_connection.call_args.kwargs['proxies'] == {
+        'https': TRUSTED_PUBLIC_HTTP_PROXY_URL,
+    }
+
+    with pytest.raises(UnsafePublicURL, match='доверенный'):
+        adapter.get_connection_with_tls_context(
+            prepared,
+            verify=True,
+            proxies={'https': 'http://attacker.invalid:8080'},
+            cert=None,
+        )
+
+    wrong_origin = requests.Request('GET', 'https://cdn.example.com/path').prepare()
+    with pytest.raises(UnsafePublicURL, match='origin'):
+        adapter.get_connection_with_tls_context(
+            wrong_origin,
+            verify=True,
+            proxies={'https': TRUSTED_PUBLIC_HTTP_PROXY_URL},
+            cert=None,
+        )
+
+
+@pytest.mark.parametrize('scheme', ('http', 'https'))
+def test_real_requests_session_passes_only_explicit_proxy_to_adapter(
+    monkeypatch,
+    scheme,
+):
+    target = resolve_public_http_url(
+        f'{scheme}://origin.example/path',
+        resolver=public_resolver,
+    )
+    adapter = _TrustedProxyAdapter(target, TRUSTED_PUBLIC_HTTP_PROXY_URL)
+    original_get_connection = adapter.get_connection_with_tls_context
+    captured = {}
+
+    class StopBeforeNetwork(Exception):
+        pass
+
+    def capture_after_validation(request, verify, proxies=None, cert=None):
+        captured['proxies'] = dict(proxies or {})
+        original_get_connection(
+            request,
+            verify,
+            proxies=proxies,
+            cert=cert,
+        )
+        raise StopBeforeNetwork
+
+    adapter.get_connection_with_tls_context = capture_after_validation
+    session = requests.Session()
+    session.trust_env = False
+    session.adapters.clear()
+    session.mount(f'{scheme}://', adapter)
+    monkeypatch.setenv(f'{scheme.upper()}_PROXY', 'http://attacker.invalid:8080')
+    try:
+        with pytest.raises(StopBeforeNetwork):
+            session.request(
+                'GET',
+                target.url,
+                timeout=1,
+                allow_redirects=False,
+                proxies={scheme: TRUSTED_PUBLIC_HTTP_PROXY_URL},
+            )
+    finally:
+        session.close()
+
+    assert captured['proxies'] == {scheme: TRUSTED_PUBLIC_HTTP_PROXY_URL}
 
 
 def test_cross_origin_redirect_strips_auth_and_sensitive_headers():

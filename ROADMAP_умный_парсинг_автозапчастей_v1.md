@@ -1,5 +1,12 @@
 # ROADMAP v1: Умный парсинг автозапчастей и применяемости
 
+> [!WARNING]
+> **Исторический design/roadmap artifact, зафиксированный на 2026-06-07.**
+> Checkbox-ы, приоритеты и статусы ниже не отражают текущую готовность проекта и
+> не являются инструкцией запуска/deploy. Operational truth: [README](README.md),
+> [DEV](DEV.md), [deployment](docs/DEPLOYMENT.md) и
+> [release checklist](docs/RELEASE_CHECKLIST.md).
+
 > **Проект:** MAP
 > **Версия:** 1.2
 > **Оценка:** 6-8 недель на production-ready MVP с запасом на разбор верстки источника

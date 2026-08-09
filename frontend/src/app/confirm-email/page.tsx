@@ -11,28 +11,48 @@ type State = 'loading' | 'success' | 'error';
 function ConfirmEmailContent() {
   const [state, setState] = useState<State>('loading');
   const [errorMessage, setErrorMessage] = useState('');
-  const fragmentConsumed = useRef(false);
+  const confirmationRef = useRef<{
+    token: string;
+    request: Promise<unknown> | null;
+  } | null>(null);
 
   useLayoutEffect(() => {
-    if (fragmentConsumed.current) return;
-    fragmentConsumed.current = true;
-    const currentUrl = new URL(window.location.href);
-    const fragment = new URLSearchParams(currentUrl.hash.replace(/^#/, ''));
-    const token = fragment.get('token') ?? '';
-    window.history.replaceState(window.history.state, '', currentUrl.pathname);
-    if (!token) {
-      setState('error');
-      setErrorMessage('Токен не найден. Проверьте ссылку из письма.');
-      return;
+    let active = true;
+    if (!confirmationRef.current) {
+      const currentUrl = new URL(window.location.href);
+      const fragment = new URLSearchParams(currentUrl.hash.replace(/^#/, ''));
+      confirmationRef.current = {
+        token: fragment.get('token') ?? '',
+        request: null,
+      };
+      window.history.replaceState(window.history.state, '', currentUrl.pathname);
     }
 
-    profileApi.confirmEmail(token)
-      .then(() => setState('success'))
+    const confirmation = confirmationRef.current;
+    const token = confirmation.token;
+    if (!token) {
+      queueMicrotask(() => {
+        if (!active) return;
+        setState('error');
+        setErrorMessage('Токен не найден. Проверьте ссылку из письма.');
+      });
+      return () => { active = false; };
+    }
+
+    const request = confirmation.request ?? profileApi.confirmEmail(token);
+    confirmation.request = request;
+    request
+      .then(() => {
+        if (active) setState('success');
+      })
       .catch((err: unknown) => {
+        if (!active) return;
         const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
         setErrorMessage(msg ?? 'Ошибка подтверждения. Попробуйте запросить смену email заново.');
         setState('error');
       });
+
+    return () => { active = false; };
   }, []);
 
   return (

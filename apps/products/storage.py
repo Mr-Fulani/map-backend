@@ -42,7 +42,7 @@ def perceptual_hash(img: Image.Image) -> str:
     """64-битный average hash (aHash) в hex — для дедупа похожих изображений."""
     try:
         small = img.convert('L').resize((8, 8), Image.LANCZOS)
-        pixels = list(small.getdata())
+        pixels = list(small.get_flattened_data())
         avg = sum(pixels) / len(pixels)
         bits = 0
         for pixel in pixels:

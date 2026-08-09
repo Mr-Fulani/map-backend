@@ -13,10 +13,12 @@ import {
   type BrowserSessionLockGuard,
   type BrowserSessionVersion,
   withBrowserSessionLock,
-} from '@/lib/browser-session-lock';
+} from './browser-session-lock';
 
 // Пустое значение означает same-origin: в production Nginx проксирует /api/ в Django.
 export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+const BILLING_READ_TIMEOUT_MS = 10_000;
+const BILLING_MUTATION_TIMEOUT_MS = 30_000;
 
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api/v1`,
@@ -563,7 +565,7 @@ api.interceptors.response.use(
       && typeof window !== 'undefined'
       && !window.location.pathname.startsWith('/dashboard/billing')
     ) {
-      window.location.assign('/dashboard/billing?subscription=inactive');
+      window.location.replace('/dashboard/billing?subscription=inactive');
       return Promise.reject(error);
     }
 
@@ -786,15 +788,12 @@ function clearAllBillingAttempts() {
   }
 }
 
-function shouldReuseBillingAttempt(error: unknown): boolean {
-  if (!axios.isAxiosError(error) || !error.response) return true;
-  const code = error.response.data?.code;
+function shouldRotateBillingAttempt(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || !error.response) return false;
+  const payload = error.response.data;
   return (
-    code === 'checkout_pending'
-    || code === 'checkout_manual_review'
-    || error.response.status === 408
-    || error.response.status === 429
-    || error.response.status >= 500
+    payload?.code === 'checkout_terminal'
+    && payload?.data?.rotate_idempotency_key === true
   );
 }
 
@@ -812,23 +811,26 @@ async function postBillingAttempt<T>(
     assertSessionRevision(expectedRevision);
     const requestConfig: AxiosRequestConfig & SessionRequestConfig = {
       _browserSessionRevision: expectedRevision,
+      timeout: BILLING_MUTATION_TIMEOUT_MS,
     };
     return await api.post<T>(path, {
       ...payload,
       idempotency_key: idempotencyKey,
     }, requestConfig);
   } catch (error) {
-    if (!shouldReuseBillingAttempt(error)) clearBillingAttempt(fingerprint);
+    // Fail closed: a transport error or an arbitrary 4xx must keep the same
+    // key. Only the backend's explicit terminal-intent signal may rotate it.
+    if (shouldRotateBillingAttempt(error)) clearBillingAttempt(fingerprint);
     throw error;
   }
 }
 
 export const billingApi = {
-  getPlans: () => api.get('/billing/plans/'),
-  getSubscription: () => api.get('/billing/subscription/'),
-  getUsage: () => api.get('/billing/usage/'),
-  getInvoices: () => api.get('/billing/invoices/'),
-  getAIPackages: () => api.get('/billing/ai-packages/'),
+  getPlans: () => api.get('/billing/plans/', { timeout: BILLING_READ_TIMEOUT_MS }),
+  getSubscription: () => api.get('/billing/subscription/', { timeout: BILLING_READ_TIMEOUT_MS }),
+  getUsage: () => api.get('/billing/usage/', { timeout: BILLING_READ_TIMEOUT_MS }),
+  getInvoices: () => api.get('/billing/invoices/', { timeout: BILLING_READ_TIMEOUT_MS }),
+  getAIPackages: () => api.get('/billing/ai-packages/', { timeout: BILLING_READ_TIMEOUT_MS }),
   checkout: (plan_slug: string, period: 'monthly' | 'yearly') => (
     postBillingAttempt<BillingPaymentResponse>(
       `r${sessionVersion.revision}:subscription:${plan_slug}:${period}`,

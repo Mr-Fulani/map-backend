@@ -2,7 +2,7 @@
 
 ## Обязательные секреты
 
-Production settings останавливают запуск при отсутствии или небезопасном значении:
+Production-контур останавливает запуск при отсутствии или небезопасном значении:
 
 - `DJANGO_SECRET_KEY` — случайная строка не короче 50 символов;
 - `DATABASE_URL` и отдельные `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`;
@@ -10,7 +10,17 @@ Production settings останавливают запуск при отсутс�
 - отдельный `CELERY_REDIS_PASSWORD`, `CELERY_BROKER_URL`,
   `CELERY_RESULT_BACKEND` и `COORDINATION_REDIS_URL` для durable Redis;
 - `FIELD_ENCRYPTION_KEYS` либо `FIELD_ENCRYPTION_KEY` с валидным Fernet-ключом;
-- `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, HTTPS `SITE_URL` и `FRONTEND_URL`.
+- `YC_S3_BUCKET`, `YC_S3_ACCESS_KEY` и `YC_S3_SECRET_KEY` для production media;
+- `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY` и
+  `BILLING_RETURN_URL_ALLOWED_ORIGINS`; production принимает только HTTPS origins,
+  фиксированный `https://api.yookassa.ru/v3` и `YOOKASSA_ALLOW_TEST_PAYMENTS=false`;
+- `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, HTTPS
+  `SITE_URL` и `FRONTEND_URL`;
+- `SENDPULSE_SMTP_HOST=smtp.sendpulse.com`, `SENDPULSE_SMTP_LOGIN`,
+  `SENDPULSE_SMTP_PASSWORD`, валидный plain-email `DEFAULT_FROM_EMAIL` и
+  `EMAIL_HTTP_PROXY_URL=http://egress_proxy:3128`;
+- `PUBLIC_HTTP_PROXY_URL=http://egress_proxy:3128`; другой public HTTP proxy в
+  production запрещён;
 - отдельный `.backup.env` с read-only DB role, S3 credentials без права удаления,
   публичными `BACKUP_AGE_RECIPIENTS` и Ed25519 signing key; private age identity
   на production отсутствует.
@@ -27,6 +37,9 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 Секреты должны храниться в secret manager или защищённом `.env` на сервере. `.env`
 не коммитится в Git.
 
+Полный bootstrap production host, текущий доменный/TLS-контракт и согласованный
+набор значений описаны в [`DEPLOYMENT.md`](DEPLOYMENT.md).
+
 ## Redis и миграция Celery broker
 
 Production использует два физических Redis-процесса:
@@ -37,7 +50,10 @@ Production использует два физических Redis-процесс
 
 Разные logical DB одного процесса не изолируют eviction и persistence, поэтому
 cache запрещено направлять на endpoint broker-а. Production settings проверяют
-схему, пароль, endpoint-ы и уникальность DB до запуска приложения.
+схему, endpoint-ы и уникальность DB до запуска приложения. Они также сравнивают
+URL-decoded credentials с фактическими `CACHE_REDIS_PASSWORD`/
+`CELERY_REDIS_PASSWORD`, переданными Redis-процессам, и требуют разные raw
+password. Несогласованная пара останавливает pre-deploy до drain/миграций.
 
 Первое переключение нельзя выполнять простым изменением URL: сообщения останутся
 в legacy Redis незамеченными. Нужен maintenance window:
@@ -116,11 +132,14 @@ cache запрещено направлять на endpoint broker-а. Productio
 - `DATASOURCE_XML_MAX_BYTES` ограничивает распакованное HTTP-клиентом тело XML
   выгрузки 1С;
 - `DATASOURCE_HTTP_MAX_BYTES` ограничивает JSON-ответ HTTP-интеграции 1С;
-- Все внешние HTTP(S) URL разрешаются ровно один раз на каждом redirect-hop;
-  соединение открывается к зафиксированному публичному IP, при этом исходный
-  hostname сохраняется в `Host`, TLS SNI и проверке сертификата. Ответ DNS,
-  содержащий хотя бы один loopback/private/metadata адрес, отклоняется целиком;
-- системные proxy (`trust_env`), автоматические retry и redirect отключены.
+- Все внешние HTTP(S) URL разрешаются приложением на каждом redirect-hop, и DNS
+  ответ с любым loopback/private/metadata адресом отклоняется целиком. В
+  development соединение открывается к зафиксированному публичному IP. В
+  production запрос с исходным hostname передаётся только через фиксированный
+  `PUBLIC_HTTP_PROXY_URL=http://egress_proxy:3128`, а Squid независимо разрешает
+  hostname и повторно блокирует непубличный итоговый IP через `dst` ACL;
+- системные proxy (`trust_env`), произвольный proxy, автоматические retry и
+  redirect отключены.
   Redirect обрабатывается вручную, новый URL заново разрешается и фиксируется,
   а credentials и чувствительные заголовки не переходят на другой origin;
 - тот же DNS-pinned транспорт и лимиты ответа применяются к изображениям,
@@ -176,7 +195,19 @@ registry-записи. Новый alias сверх лимита получает
 `partially_refunded`, `refunded`) не возвращает устаревший confirmation URL: API отвечает
 `409 checkout_terminal` с `rotate_idempotency_key=true`. Только этот код разрешает
 frontend удалить сохранённый ключ и создать новый. `checkout_pending` и
-`checkout_manual_review` ключ не освобождают.
+`checkout_manual_review`, произвольные `4xx/5xx`, timeout и network error ключ не
+освобождают.
+
+Для subscription checkout действует дополнительный финансовый барьер. У tenant
+может существовать только один незавершённый subscription intent независимо от
+plan/period; конкурирующий payload получает
+`409 subscription_checkout_in_progress` до второго provider request. Пока
+proration/credit явно не реализованы, изменение или продление действующей
+оплаченной подписки отклоняется кодом
+`409 active_subscription_change_not_supported` до создания Invoice. Это не даёт
+сжечь остаток уже оплаченного периода при немедленной смене плана. Trial conversion
+и восстановление billing-only подписки разрешены; новый месяц/год добавляется от
+`max(today, current_period_end)`, поэтому уже обещанные дни не теряются.
 
 Уведомления об оплате, истечении подписки и порогах AI-баланса, а также повторная
 постановка листингов после снятия лимита сохраняются в `BillingOutboxEvent` внутри
@@ -237,7 +268,20 @@ python manage.py purge_retained_data --dry-run
 Production-контейнеры находятся во внутренней Docker-сети без прямого маршрута в
 интернет. Исходящие HTTP(S)-запросы проходят через Squid. Proxy запрещает private,
 loopback, link-local, multicast и служебные диапазоны, но разрешает публичные
-endpoint-ы, необходимые Avito, AI-провайдерам, S3 и tenant webhook-ам.
+endpoint-ы, необходимые Avito, AI-провайдерам, S3 и tenant webhook-ам. Public URL
+transport принимает только точный `PUBLIC_HTTP_PROXY_URL`; application DNS
+admission и Squid `dst` ACL являются независимыми проверками одного назначения.
+`check_public_http_connectivity` выполняет только GET несуществующего YooKassa
+payment sentinel и до drain проверяет этот маршрут, TLS и credentials без записи.
+
+SMTP является отдельным узким исключением: Squid принимает CONNECT на порт 587
+только для точного имени `smtp.sendpulse.com`. Django не использует прямой
+`smtplib` socket наружу, а открывает CONNECT tunnel через внутренний proxy;
+SMTP greeting, STARTTLS, проверка upstream-сертификата и login происходят внутри
+туннеля. `check_email_connectivity` не отправляет письмо и скрывает текст provider
+errors, но перед drain доказывает доступность маршрута и credentials из нового
+image. Изменение host/порта/proxy требует отдельного threat review и синхронного
+обновления backend, Squid ACL, Compose contract и тестов.
 
 `NO_PROXY` содержит только внутренние имена `db`, `redis`, `redis_broker`,
 `django`, `frontend`, `nginx` и `egress_proxy`. Изменять этот список следует только
@@ -264,7 +308,9 @@ reviewers и определить:
 
 На сервере скопируйте `.deploy.env.example` в `.deploy.env`, направьте
 `PROD_SMOKE_URL` на публичный `/api/v1/ready/` и ограничьте доступ к файлу
-(`chmod 600`). `/api/v1/live/` проверяет только HTTP-процесс, а readiness также
+(`chmod 600`). Файл должен быть обычным, не symlink, принадлежать deploy
+user и содержать только разрешённые уникальные `KEY=value` без shell-
+синтаксиса. `/api/v1/live/` проверяет только HTTP-процесс, а readiness также
 проверяет PostgreSQL и cache. `PROD_DRAIN_TIMEOUT_SECONDS` должен быть больше
 наибольшего hard time limit фоновой задачи (по умолчанию 3700 секунд при лимите
 3600 секунд). Скрипт:
@@ -273,8 +319,9 @@ reviewers и определить:
    Compose-конфигурацию, доступность Docker и запас диска;
 2. сохраняет image ID текущего release и собирает новый до переключения web/worker
    процессов;
-3. выполняет `check --deploy` и migration plan, затем включает maintenance:
-   останавливает ingress, beat, старый web и workers с graceful drain;
+3. выполняет `check --deploy`, migration plan и bounded connectivity gates для
+   Redis, SMTP и public HTTPS/YooKassa, затем включает maintenance: останавливает
+   ingress, beat, старый web и workers с graceful drain;
 4. при остановленных writers делает обязательный зашифрованный S3 backup и только
    после его успеха применяет миграции в one-shot контейнере;
 5. готовит release data, запускает новый release, ждёт readiness всех сервисов и

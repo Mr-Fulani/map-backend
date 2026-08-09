@@ -300,11 +300,11 @@ class APIKey(TimestampedModel):
         ]
         constraints = [
             models.CheckConstraint(
-                check=Q(role__in=['viewer', 'operator']),
+                condition=Q(role__in=['viewer', 'operator']),
                 name='api_key_limited_role',
             ),
             models.CheckConstraint(
-                check=Q(is_active=False) | Q(revoked_at__isnull=True),
+                condition=Q(is_active=False) | Q(revoked_at__isnull=True),
                 name='active_api_key_not_revoked',
             ),
         ]
@@ -401,7 +401,7 @@ class WebhookEndpoint(SoftDeleteModel):
         verbose_name_plural = 'Вебхук-эндпоинты'
         constraints = [
             models.CheckConstraint(
-                check=(
+                condition=(
                     Q(deleted_at__isnull=False)
                     | Q(url__startswith='https://')
                 ),
@@ -533,7 +533,7 @@ class WebhookDelivery(TimestampedModel):
                 name='unique_webhook_event_endpoint_delivery',
             ),
             models.CheckConstraint(
-                check=(
+                condition=(
                     Q(
                         status__in=['queued', 'delivering'],
                         claim_token__isnull=False,

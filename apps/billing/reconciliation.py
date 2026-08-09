@@ -13,6 +13,7 @@ from apps.billing.services import (
     CheckoutManualReviewError,
     CheckoutPendingError,
     CheckoutTerminalError,
+    _is_unsettled_checkout_manual,
     reconciliation_delay_seconds,
 )
 from apps.billing.webhook_processing import (
@@ -214,11 +215,22 @@ def _invoice_candidate_ids(
     invoice_ids: list[int] | None,
     force: bool,
 ) -> list[int]:
-    queryset = Invoice.objects.filter(status=Invoice.STATUS_PENDING)
+    queryset = Invoice.objects.all()
     if invoice_ids is not None:
         queryset = queryset.filter(pk__in=invoice_ids)
+        if force:
+            queryset = queryset.filter(
+                Q(status=Invoice.STATUS_PENDING)
+                | Q(
+                    status=Invoice.STATUS_MANUAL_REVIEW,
+                    paid_at__isnull=True,
+                    refund_review_required=False,
+                )
+            )
+        else:
+            queryset = queryset.filter(status=Invoice.STATUS_PENDING)
     else:
-        queryset = queryset.filter(
+        queryset = queryset.filter(status=Invoice.STATUS_PENDING).filter(
             Q(
                 checkout_state__in=(
                     Invoice.CHECKOUT_INTENT_CREATED,
@@ -251,7 +263,13 @@ def _claim_provider_invoice(
         invoice = Invoice.objects.select_for_update().select_related('tenant').get(
             pk=invoice_id,
         )
-        if invoice.status != Invoice.STATUS_PENDING:
+        recovering_manual_checkout = (
+            force and _is_unsettled_checkout_manual(invoice)
+        )
+        if (
+            invoice.status != Invoice.STATUS_PENDING
+            and not recovering_manual_checkout
+        ):
             return invoice, 'final'
         if not invoice.yookassa_payment_id:
             return invoice, 'missing_payment_id'
@@ -264,27 +282,42 @@ def _claim_provider_invoice(
         if (
             invoice.reconciliation_attempts
             >= settings.YOOKASSA_RECONCILIATION_MAX_ATTEMPTS
+            and not recovering_manual_checkout
         ):
             reason = 'Исчерпан лимит автоматической сверки состояния платежа YooKassa.'
             BillingService._mark_invoice_manual_review_locked(invoice, reason)
             return invoice, 'exhausted'
 
-        invoice.reconciliation_attempts += 1
         invoice.last_reconciliation_at = now
-        invoice.next_reconciliation_at = now + timedelta(
-            seconds=reconciliation_delay_seconds(invoice.reconciliation_attempts),
-        )
-        invoice.save(update_fields=[
-            'reconciliation_attempts', 'last_reconciliation_at',
-            'next_reconciliation_at', 'updated_at',
-        ])
+        if recovering_manual_checkout:
+            # Explicit operator recovery gets one authoritative read without
+            # weakening the automatic retry ceiling or scheduling a sweep loop.
+            invoice.next_reconciliation_at = None
+            update_fields = [
+                'last_reconciliation_at', 'next_reconciliation_at', 'updated_at',
+            ]
+        else:
+            invoice.reconciliation_attempts += 1
+            invoice.next_reconciliation_at = now + timedelta(
+                seconds=reconciliation_delay_seconds(
+                    invoice.reconciliation_attempts,
+                ),
+            )
+            update_fields = [
+                'reconciliation_attempts', 'last_reconciliation_at',
+                'next_reconciliation_at', 'updated_at',
+            ]
+        invoice.save(update_fields=update_fields)
         return invoice, 'claimed'
 
 
 def _record_invoice_poll_error(invoice_id: int, message: str) -> None:
     with transaction.atomic():
         invoice = Invoice.objects.select_for_update().get(pk=invoice_id)
-        if invoice.status != Invoice.STATUS_PENDING:
+        if (
+            invoice.status != Invoice.STATUS_PENDING
+            and not _is_unsettled_checkout_manual(invoice)
+        ):
             return
         invoice.checkout_last_error = message[:500]
         invoice.save(update_fields=['checkout_last_error', 'updated_at'])
@@ -333,6 +366,31 @@ def _process_payment_state(invoice: Invoice, stats: ReconciliationStats) -> None
             f'Платёж YooKassa пока находится в статусе {snapshot.status}.',
         )
         stats.invoices_waiting += 1
+        return
+
+    if _is_unsettled_checkout_manual(invoice):
+        # This branch is reachable only through an explicit targeted --force
+        # reconciliation. The provider snapshot has been authenticated and
+        # amount/currency/test flags were revalidated above, so it can safely
+        # close an unpaid manual checkout without replaying a finalized event.
+        if snapshot.status == 'succeeded':
+            resolved = BillingService.handle_payment_success_webhook(
+                invoice.pk,
+                payment_id=snapshot.id,
+                amount=snapshot.amount,
+                currency=snapshot.currency,
+            )
+        elif snapshot.status == 'canceled':
+            resolved = BillingService.handle_payment_failed_webhook(
+                invoice.pk,
+                payment_id=snapshot.id,
+            )
+        else:
+            resolved = False
+        if resolved:
+            stats.invoices_final += 1
+        else:
+            stats.manual_review += 1
         return
 
     event_type = f'payment.{snapshot.status}'
@@ -401,10 +459,17 @@ def _reconcile_invoices(
         try:
             invoice = Invoice.objects.only(
                 'pk', 'yookassa_payment_id', 'status', 'checkout_state',
+                'paid_at', 'refund_review_required',
             ).get(pk=invoice_id)
         except Invoice.DoesNotExist:
             continue
-        if invoice.status != Invoice.STATUS_PENDING:
+        recovering_manual_checkout = (
+            force and _is_unsettled_checkout_manual(invoice)
+        )
+        if (
+            invoice.status != Invoice.STATUS_PENDING
+            and not recovering_manual_checkout
+        ):
             stats.invoices_final += 1
             continue
 

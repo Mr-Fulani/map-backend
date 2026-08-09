@@ -14,7 +14,10 @@ from apps.marketplaces.adapters.avito.error_handler import (
     backoff,
 )
 from apps.marketplaces.adapters.avito.feed_builder import get_ad_id
-from apps.marketplaces.adapters.avito.rate_limiter import RateLimitError
+from apps.marketplaces.adapters.avito.rate_limiter import (
+    AUTOLOAD_RATE_LIMIT_RETRY_AFTER,
+    RateLimitError,
+)
 from apps.marketplaces.models import Listing
 from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR, LEVEL_SUCCESS
 
@@ -99,7 +102,7 @@ def _send_listing_to_review(listing: Listing, reason: str) -> None:
 
 
 # Пауза перед повтором при лимите Avito «1 автозагрузка/час» (~11 минут).
-RATE_LIMIT_RETRY_COUNTDOWN = 660
+RATE_LIMIT_RETRY_COUNTDOWN = AUTOLOAD_RATE_LIMIT_RETRY_AFTER
 
 
 def _account_feed_listings(account) -> list:

@@ -20,7 +20,10 @@ class Command(BaseCommand):
         parser.add_argument(
             '--force',
             action='store_true',
-            help='Игнорировать только backoff; hard limit попыток сохраняется.',
+            help=(
+                'Игнорировать backoff для выбранных ID; для unsettled '
+                'manual-review Invoice разрешить одну авторитетную сверку.'
+            ),
         )
         parser.add_argument(
             '--event-id',

@@ -121,8 +121,32 @@ export default function ResearchPage() {
     }
   }, [page, statusFilter]);
 
-  useEffect(() => setPage(1), [statusFilter]);
-  useEffect(() => { load().catch(() => undefined); }, [load]);
+  useEffect(() => {
+    let active = true;
+    const params: Record<string, unknown> = { page };
+    if (statusFilter) params.status = statusFilter;
+
+    webResearchApi.list(params)
+      .then((response) => {
+        if (!active) return;
+        setRuns(response.data.data ?? []);
+        setMeta(response.data.meta ?? null);
+        setSummary(response.data.summary ?? {
+          total: 0,
+          active: 0,
+          need_review: 0,
+          failed: 0,
+        });
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (!active) return;
+        setLoading(false);
+        setRefreshing(false);
+      });
+
+    return () => { active = false; };
+  }, [page, statusFilter]);
   useEffect(() => {
     webResearchApi.providers()
       .then((response) => setProviderStatus(response.data.data ?? null))
@@ -188,7 +212,12 @@ export default function ResearchPage() {
             key={filter.value}
             size="sm"
             variant={statusFilter === filter.value ? 'default' : 'outline'}
-            onClick={() => setStatusFilter(filter.value)}
+            onClick={() => {
+              if (filter.value === statusFilter) return;
+              setLoading(true);
+              setPage(1);
+              setStatusFilter(filter.value);
+            }}
           >
             {filter.label}
           </Button>
@@ -284,10 +313,26 @@ export default function ResearchPage() {
             Страница {meta.page} из {Math.ceil(meta.total / meta.page_size)}
           </p>
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" disabled={!meta.prev} onClick={() => setPage((value) => value - 1)}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!meta.prev}
+              onClick={() => {
+                setLoading(true);
+                setPage((value) => value - 1);
+              }}
+            >
               <ChevronLeft className="mr-1 h-4 w-4" /> Назад
             </Button>
-            <Button size="sm" variant="outline" disabled={!meta.next} onClick={() => setPage((value) => value + 1)}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={!meta.next}
+              onClick={() => {
+                setLoading(true);
+                setPage((value) => value + 1);
+              }}
+            >
               Вперёд <ChevronRight className="ml-1 h-4 w-4" />
             </Button>
           </div>

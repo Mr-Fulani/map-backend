@@ -78,6 +78,36 @@ class CheckoutTerminalError(RuntimeError):
         )
 
 
+class ActiveSubscriptionCheckoutError(RuntimeError):
+    """Paid active terms cannot be changed without an explicit proration policy."""
+
+    def __init__(
+        self,
+        *,
+        plan_slug: str,
+        billing_period: str,
+        current_period_end: date,
+    ):
+        self.plan_slug = plan_slug
+        self.billing_period = billing_period
+        self.current_period_end = current_period_end
+        super().__init__(
+            'Изменение или продление действующей платной подписки '
+            'до окончания текущего периода недоступно.',
+        )
+
+
+class SubscriptionCheckoutInProgressError(RuntimeError):
+    """A tenant may have only one unfinished subscription purchase intent."""
+
+    def __init__(self, invoice_id: int):
+        self.invoice_id = invoice_id
+        super().__init__(
+            'Уже есть незавершённый checkout подписки; '
+            'завершите или дождитесь его финального статуса.',
+        )
+
+
 def _checkout_payload_hash(payload: dict) -> str:
     encoded = json.dumps(
         payload,
@@ -93,6 +123,22 @@ def _provider_checkout_key(tenant_id: int, client_key: uuid.UUID) -> str:
         _CHECKOUT_NAMESPACE,
         f'yookassa:tenant:{tenant_id}:checkout:{client_key}',
     ))
+
+
+def _blocks_subscription_checkout(invoice: Invoice) -> bool:
+    """An unpaid manual-review payment can still become a provider charge."""
+    return (
+        invoice.status == Invoice.STATUS_MANUAL_REVIEW
+        and invoice.paid_at is None
+    )
+
+
+def _is_unsettled_checkout_manual(invoice: Invoice) -> bool:
+    """Manual checkout eligible for authoritative terminal recovery."""
+    return (
+        _blocks_subscription_checkout(invoice)
+        and not invoice.refund_review_required
+    )
 
 
 def _assert_checkout_transaction_boundary() -> None:
@@ -266,21 +312,36 @@ def ai_credit_period_for_date(
     subscription_end = subscription.current_period_end
     if target_date < subscription_start or target_date >= subscription_end:
         return None
-    if subscription.billing_period != Subscription.PERIOD_YEARLY:
-        return subscription_start, subscription_end
 
-    period_start = subscription_start
-    for month_index in range(1, 13):
+    # A recovered subscription may contain preserved residual days followed by
+    # the newly purchased duration. Locate its anchored AI month in O(1): the
+    # calendar-month distance is either the exact boundary index or one step
+    # ahead when the anchor day was clamped (31 Jan -> 28 Feb, for example).
+    month_index = (
+        (target_date.year - subscription_start.year) * 12
+        + target_date.month
+        - subscription_start.month
+    )
+    period_start = add_billing_months(subscription_start, month_index)
+    if period_start > target_date:
+        month_index -= 1
+        period_start = add_billing_months(subscription_start, month_index)
+
+    next_month_index = month_index + 1
+    subscription_end_month_index = (
+        (subscription_end.year - subscription_start.year) * 12
+        + subscription_end.month
+        - subscription_start.month
+    )
+    if next_month_index > subscription_end_month_index:
+        # Avoid constructing year 10000 when a valid term ends in Dec 9999.
+        period_end = subscription_end
+    else:
         period_end = min(
-            add_billing_months(subscription_start, month_index),
+            add_billing_months(subscription_start, next_month_index),
             subscription_end,
         )
-        if target_date < period_end:
-            return period_start, period_end
-        period_start = period_end
-        if period_end >= subscription_end:
-            break
-    return None
+    return period_start, period_end
 
 
 class LimitChecker:
@@ -555,20 +616,11 @@ class BillingService:
         client_key: uuid.UUID,
         payload_hash: str,
     ) -> Invoice:
-        # Immutable intents can be returned without locking their Invoice. For a
-        # new key, Subscription is the per-tenant creation mutex; any FK binding
-        # to an existing Invoice happens only after that mutex is released.
-        existing = BillingService._checkout_intent_for_client_key(
-            tenant_id=tenant.pk,
-            client_key=client_key,
-            payload_hash=payload_hash,
-        )
-        if existing is not None:
-            return existing
-
         with transaction.atomic():
-            subscription = Subscription.objects.select_for_update().get(
-                tenant_id=tenant.pk,
+            subscription = (
+                Subscription.objects.select_for_update()
+                .select_related('plan')
+                .get(tenant_id=tenant.pk)
             )
             invoice = BillingService._checkout_intent_for_client_key(
                 tenant_id=tenant.pk,
@@ -576,21 +628,102 @@ class BillingService:
                 payload_hash=payload_hash,
                 bind_legacy_key=False,
             )
-            if invoice is None:
-                # Different browser tabs may legitimately generate different
-                # UUIDs for the same purchase. The Subscription lock serializes
-                # intent creation; the partial constraint is the final invariant.
-                invoice = Invoice.objects.filter(
+
+            # Read every unresolved subscription payment in one statement. A
+            # pending provider attempt can be changed to manual_review by the
+            # reconciler without taking the Subscription lock; keeping this as
+            # one snapshot avoids a gap in which the first query sees no manual
+            # row and a later query no longer sees the transitioned pending row.
+            # Do not lock Invoice here: fulfillment locks Invoice -> Subscription,
+            # while checkout creation already owns Subscription, and reversing
+            # that order would introduce a database deadlock.
+            unresolved_invoices = list(
+                Invoice.objects.filter(
                     tenant_id=tenant.pk,
                     purchase_type=Invoice.TYPE_SUBSCRIPTION,
-                    checkout_payload_hash=payload_hash,
-                    status=Invoice.STATUS_PENDING,
-                    checkout_state__in=(
-                        Invoice.CHECKOUT_INTENT_CREATED,
-                        Invoice.CHECKOUT_PROVIDER_PENDING,
-                        Invoice.CHECKOUT_PROVIDER_CREATED,
+                )
+                .filter(
+                    Q(
+                        status=Invoice.STATUS_MANUAL_REVIEW,
+                        paid_at__isnull=True,
+                    )
+                    | Q(
+                        status=Invoice.STATUS_PENDING,
+                        checkout_state__in=(
+                            Invoice.CHECKOUT_LEGACY,
+                            Invoice.CHECKOUT_MANUAL_REVIEW,
+                            Invoice.CHECKOUT_INTENT_CREATED,
+                            Invoice.CHECKOUT_PROVIDER_PENDING,
+                            Invoice.CHECKOUT_PROVIDER_CREATED,
+                        ),
+                    )
+                )
+                .order_by('created_at', 'pk')
+            )
+            manual_review_invoice = next(
+                (
+                    candidate
+                    for candidate in unresolved_invoices
+                    if _blocks_subscription_checkout(candidate)
+                    or candidate.checkout_state in (
+                        Invoice.CHECKOUT_LEGACY,
+                        Invoice.CHECKOUT_MANUAL_REVIEW,
+                    )
+                ),
+                None,
+            )
+            if manual_review_invoice is not None:
+                # Manual-review and legacy subscription payments are unresolved
+                # financial obligations, not terminal invoices. A provider-side
+                # payment may still succeed after our local intent was
+                # quarantined, so even an already-known browser key must not
+                # resume another charge until an operator resolves the old one.
+                raise CheckoutManualReviewError(
+                    manual_review_invoice.pk,
+                    manual_review_invoice.checkout_last_error
+                    or 'Незавершённый платёж подписки требует ручной проверки.',
+                )
+
+            if invoice is None and (
+                subscription.effective_status == Subscription.STATUS_ACTIVE
+                and subscription.access_mode == Subscription.ACCESS_FULL
+            ):
+                # A plan/period change in the middle of a paid term requires a
+                # separately specified proration/credit policy. Fail before an
+                # Invoice or provider payment exists instead of silently
+                # discarding or converting already-paid access.
+                raise ActiveSubscriptionCheckoutError(
+                    plan_slug=subscription.plan.slug,
+                    billing_period=subscription.billing_period,
+                    current_period_end=subscription.current_period_end,
+                )
+
+            if invoice is None:
+                # Subscription is the per-tenant mutex. Apart from deduplicating
+                # identical browser-tab requests, it prevents two different
+                # subscription payments from reaching the provider concurrently.
+                pending_invoice = next(
+                    (
+                        candidate
+                        for candidate in unresolved_invoices
+                        if candidate.status == Invoice.STATUS_PENDING
+                        and candidate.checkout_state in (
+                            Invoice.CHECKOUT_INTENT_CREATED,
+                            Invoice.CHECKOUT_PROVIDER_PENDING,
+                            Invoice.CHECKOUT_PROVIDER_CREATED,
+                        )
                     ),
-                ).order_by('created_at', 'pk').first()
+                    None,
+                )
+                if (
+                    pending_invoice is not None
+                    and pending_invoice.checkout_payload_hash == payload_hash
+                ):
+                    invoice = pending_invoice
+                elif pending_invoice is not None:
+                    raise SubscriptionCheckoutInProgressError(
+                        pending_invoice.pk,
+                    )
 
             if invoice is None:
                 plan = Plan.objects.get(slug=plan_slug, is_active=True)
@@ -770,21 +903,21 @@ class BillingService:
         return f'MAP {plan_name} ({period_label})'[:128], metadata
 
     @staticmethod
-    def _set_checkout_manual_review(invoice_id: int, reason: str) -> None:
-        with transaction.atomic():
-            invoice = Invoice.objects.select_for_update().select_related('tenant').get(
-                pk=invoice_id,
-            )
-            invoice.status = Invoice.STATUS_MANUAL_REVIEW
-            invoice.checkout_state = Invoice.CHECKOUT_MANUAL_REVIEW
-            invoice.checkout_last_error = reason[:500]
-            invoice.next_reconciliation_at = None
-            invoice.save(update_fields=[
-                'status', 'checkout_state', 'checkout_last_error',
-                'next_reconciliation_at', 'updated_at',
-            ])
-            tenant = invoice.tenant
+    def _audit_checkout_manual_review(
+        invoice_id: int,
+        tenant_id: int,
+        reason: str,
+    ) -> None:
+        """Emit best-effort audit after the financial state was committed."""
         logger.error('Invoice %s переведён на ручную проверку: %s', invoice_id, reason)
+        try:
+            tenant = Tenant.objects.only('pk').get(pk=tenant_id)
+        except Tenant.DoesNotExist:
+            logger.error(
+                'Не удалось записать manual-review audit: tenant=%s удалён.',
+                tenant_id,
+            )
+            return
         _write_billing_log(tenant, 'error', f'Invoice {invoice_id}: {reason}')
 
     @staticmethod
@@ -837,13 +970,48 @@ class BillingService:
                     invoice.pk,
                     invoice.status,
                 )
-            if invoice.checkout_confirmation_url:
+            if invoice.purchase_type == Invoice.TYPE_SUBSCRIPTION:
+                try:
+                    current_subscription = Subscription.objects.only(
+                        'status', 'current_period_end',
+                    ).get(tenant_id=invoice.tenant_id)
+                except Subscription.DoesNotExist:
+                    manual_reason = 'Подписка тенанта не найдена до оплаты.'
+                else:
+                    if (
+                        current_subscription.effective_status
+                        == Subscription.STATUS_ACTIVE
+                        and current_subscription.access_mode
+                        == Subscription.ACCESS_FULL
+                    ):
+                        # Never create/return a payable provider checkout after
+                        # another path has activated a paid term. Fulfillment's
+                        # expected-version check happens after money may move and
+                        # therefore cannot be the first line of defence.
+                        manual_reason = (
+                            'Подписка стала активной после создания checkout; '
+                            'платёж требует ручной сверки.'
+                        )
+
+            if not manual_reason and invoice.checkout_confirmation_url:
                 return invoice.checkout_confirmation_url
-            if not invoice.provider_idempotency_key or not invoice.checkout_client_key:
+            if (
+                not manual_reason
+                and (
+                    not invoice.provider_idempotency_key
+                    or not invoice.checkout_client_key
+                )
+            ):
                 manual_reason = 'Checkout intent не содержит устойчивый provider key.'
-            elif invoice.checkout_attempt_count >= settings.YOOKASSA_RECONCILIATION_MAX_ATTEMPTS:
+            elif (
+                not manual_reason
+                and invoice.checkout_attempt_count
+                >= settings.YOOKASSA_RECONCILIATION_MAX_ATTEMPTS
+            ):
                 manual_reason = 'Исчерпан лимит повторов создания платежа.'
             elif (
+                not manual_reason
+                and
                 invoice.checkout_first_attempt_at is not None
                 and invoice.checkout_first_attempt_at < now - _PROVIDER_IDEMPOTENCY_HORIZON
             ):
@@ -852,6 +1020,8 @@ class BillingService:
                     'автоповтор может создать дубль платежа.'
                 )
             elif (
+                not manual_reason
+                and
                 respect_backoff
                 and invoice.next_reconciliation_at is not None
                 and invoice.next_reconciliation_at > now
@@ -872,6 +1042,7 @@ class BillingService:
                     'next_reconciliation_at', 'updated_at',
                 ])
                 manual_invoice_id = invoice.pk
+                manual_tenant_id = invoice.tenant_id
             else:
                 invoice.checkout_attempt_count += 1
                 if invoice.checkout_first_attempt_at is None:
@@ -898,13 +1069,18 @@ class BillingService:
                     'updated_at',
                 ])
                 manual_invoice_id = invoice.pk if manual_reason else None
+                manual_tenant_id = invoice.tenant_id if manual_reason else None
                 if not manual_reason:
                     provider_key = invoice.provider_idempotency_key
                     amount = invoice.amount
                     return_url = invoice.checkout_return_url
 
         if manual_invoice_id is not None:
-            BillingService._set_checkout_manual_review(manual_invoice_id, manual_reason)
+            BillingService._audit_checkout_manual_review(
+                manual_invoice_id,
+                manual_tenant_id,
+                manual_reason,
+            )
             raise CheckoutManualReviewError(manual_invoice_id, manual_reason)
 
         try:
@@ -1224,7 +1400,11 @@ class BillingService:
             Invoice.STATUS_REFUNDED,
         ):
             return True
-        if invoice.status != Invoice.STATUS_PENDING:
+        recovering_manual_checkout = _is_unsettled_checkout_manual(invoice)
+        if (
+            invoice.status != Invoice.STATUS_PENDING
+            and not recovering_manual_checkout
+        ):
             logger.error(
                 'Нельзя применить успешный платёж к invoice=%s в статусе %s',
                 invoice.pk,
@@ -1251,10 +1431,14 @@ class BillingService:
             invoice.paid_at = timezone.now()
             invoice.checkout_last_error = ''
             invoice.next_reconciliation_at = None
-            invoice.save(update_fields=[
+            update_fields = [
                 'status', 'paid_at', 'checkout_last_error',
                 'next_reconciliation_at', 'updated_at',
-            ])
+            ]
+            if recovering_manual_checkout:
+                invoice.checkout_state = Invoice.CHECKOUT_PROVIDER_CREATED
+                update_fields.append('checkout_state')
+            invoice.save(update_fields=update_fields)
             AIWalletService.topup(
                 tenant,
                 credits,
@@ -1395,10 +1579,20 @@ class BillingService:
             sub.save(update_fields=['status', 'billing_version', 'updated_at'])
         else:
             today = timezone.localdate()
+            # Checkout is blocked while a paid term is active, but a legacy
+            # accepted intent may still arrive and billing-only recovery remains
+            # available. Preserve paid/reserved days in those flows. Trial time
+            # is promotional, so conversion starts the paid term today instead
+            # of creating an implicit multi-period renewal.
+            term_base = (
+                today
+                if sub.status == Subscription.STATUS_TRIAL
+                else max(today, sub.current_period_end)
+            )
             end = (
-                add_billing_year(today)
+                add_billing_year(term_base)
                 if period == Subscription.PERIOD_YEARLY
-                else add_billing_month(today)
+                else add_billing_month(term_base)
             )
             sub.plan = plan
             sub.billing_period = period
@@ -1406,11 +1600,10 @@ class BillingService:
             sub.current_period_start = today
             sub.current_period_end = end
             sub.ai_period_start = today
-            sub.ai_period_end = (
-                min(add_billing_months(today, 1), end)
-                if period == Subscription.PERIOD_YEARLY
-                else end
-            )
+            # A recovered monthly subscription may contain residual paid days
+            # plus the newly purchased month. Included AI credits still reset
+            # on anchored one-month boundaries, exactly like yearly terms.
+            sub.ai_period_end = min(add_billing_months(today, 1), end)
             sub.cancelled_at = None
             sub.billing_version += 1
             sub.save()
@@ -1420,10 +1613,14 @@ class BillingService:
         invoice.paid_at = timezone.now()
         invoice.checkout_last_error = ''
         invoice.next_reconciliation_at = None
-        invoice.save(update_fields=[
+        update_fields = [
             'status', 'paid_at', 'entitlement_snapshot', 'entitlement_plan',
             'checkout_last_error', 'next_reconciliation_at', 'updated_at',
-        ])
+        ]
+        if recovering_manual_checkout:
+            invoice.checkout_state = Invoice.CHECKOUT_PROVIDER_CREATED
+            update_fields.append('checkout_state')
+        invoice.save(update_fields=update_fields)
 
         if not legacy_status_only:
             Tenant.objects.filter(pk=tenant.pk).update(ai_credits_used=0)
@@ -1501,7 +1698,11 @@ class BillingService:
             return False
         if invoice.status == Invoice.STATUS_FAILED:
             return True
-        if invoice.status != Invoice.STATUS_PENDING:
+        recovering_manual_checkout = _is_unsettled_checkout_manual(invoice)
+        if (
+            invoice.status != Invoice.STATUS_PENDING
+            and not recovering_manual_checkout
+        ):
             logger.warning(
                 'Отмена payment_id=%s не меняет invoice=%s в статусе %s',
                 payment_id,
@@ -1510,7 +1711,16 @@ class BillingService:
             )
             return False
         invoice.status = Invoice.STATUS_FAILED
-        invoice.save(update_fields=['status', 'updated_at'])
+        invoice.checkout_last_error = ''
+        invoice.next_reconciliation_at = None
+        update_fields = [
+            'status', 'checkout_last_error', 'next_reconciliation_at',
+            'updated_at',
+        ]
+        if recovering_manual_checkout:
+            invoice.checkout_state = Invoice.CHECKOUT_PROVIDER_CREATED
+            update_fields.append('checkout_state')
+        invoice.save(update_fields=update_fields)
         _write_billing_log(
             invoice.tenant,
             'warn',

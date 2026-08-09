@@ -16,7 +16,11 @@ from apps.marketplaces.adapters.avito.error_handler import (
     handle_avito_error,
 )
 from apps.marketplaces.adapters.avito.feed_builder import build_feed, build_stop_feed
-from apps.marketplaces.adapters.avito.rate_limiter import AvitoRateLimiter, RateLimitError
+from apps.marketplaces.adapters.avito.rate_limiter import (
+    AUTOLOAD_RATE_LIMIT_RETRY_AFTER,
+    AvitoRateLimiter,
+    RateLimitError,
+)
 from apps.marketplaces.base import BaseMarketplaceAdapter
 
 logger = logging.getLogger(__name__)
@@ -189,10 +193,7 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         # а частотный лимит: пробрасываем RateLimitError, чтобы задача
         # повторила попытку после открытия окна.
         if resp.status_code == 429:
-            raise RateLimitError(
-                'Avito: автозагрузку можно запускать не чаще 1 раза в час. '
-                'Повтор произойдёт автоматически через ~10 минут.'
-            )
+            raise RateLimitError(retry_after=AUTOLOAD_RATE_LIMIT_RETRY_AFTER)
         raise FeedUploadError(
             f'Avito Autoload не принял фид: HTTP {resp.status_code}.'
         )

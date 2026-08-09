@@ -239,10 +239,6 @@ function MarginEditor({
   );
   const [saving, setSaving] = useState<Record<number, boolean>>({});
 
-  useEffect(() => {
-    setValues(Object.fromEntries(categories.map((c) => [c.id, c.default_margin_pct ?? ''])));
-  }, [categories]);
-
   const handleSave = async (id: number) => {
     setSaving((prev) => ({ ...prev, [id]: true }));
     try {
@@ -432,7 +428,8 @@ export default function SettingsPage() {
   }, [activeTab]);
 
   // Profile state
-  const [phone, setPhone] = useState('');
+  const [phoneDraft, setPhoneDraft] = useState<string | null>(null);
+  const phone = phoneDraft ?? user?.phone ?? '';
   const [savingPhone, setSavingPhone] = useState(false);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -478,34 +475,39 @@ export default function SettingsPage() {
         is_enabled_for_tenant: true,
       }));
   const enabledDomainOptions = domainOptions.filter((domain) => domain.is_enabled_for_tenant);
+  const activeNewCatalogCategoryDomain = enabledDomainOptions.some(
+    (domain) => domain.slug === newCatalogCategoryDomain,
+  ) ? newCatalogCategoryDomain : enabledDomainOptions[0]?.slug ?? '';
+  const newCatalogCategoryParentOptions = catalogCategories.filter(
+    (category) => (
+      category.is_active
+      && category.root_domain_slug === activeNewCatalogCategoryDomain
+    ),
+  );
+  const activeNewCatalogCategoryParent = newCatalogCategoryParentOptions.some(
+    (category) => String(category.id) === newCatalogCategoryParent,
+  ) ? newCatalogCategoryParent : '';
 
   const loadDatasources = useCallback(async () => {
     const r = await datasourceApi.list();
     setDatasources(r.data.data ?? r.data);
   }, []);
 
-  // Подставляем телефон из данных пользователя при загрузке
   useEffect(() => {
-    if (user && 'phone' in user) {
-      setPhone((user as { phone?: string }).phone ?? '');
-    }
-  }, [user]);
+    let active = true;
 
-  useEffect(() => {
-    if (enabledDomainOptions.length === 0) return;
-    if (!enabledDomainOptions.some((domain) => domain.slug === newCatalogCategoryDomain)) {
-      setNewCatalogCategoryDomain(enabledDomainOptions[0].slug);
-    }
-  }, [enabledDomainOptions, newCatalogCategoryDomain]);
-
-  useEffect(() => {
     tenantApi.getApiKeys()
-      .then((r) => setApiKeys(r.data.data ?? r.data))
+      .then((r) => {
+        if (active) setApiKeys(r.data.data ?? r.data);
+      })
       .catch(() => {})
-      .finally(() => setLoadingKeys(false));
+      .finally(() => {
+        if (active) setLoadingKeys(false);
+      });
 
     accountApi.list()
       .then((r) => {
+        if (!active) return;
         const list: Account[] = r.data.data ?? r.data;
         setAccounts(list);
         // Подставляем последний известный статус Автозагрузки, чтобы плашка
@@ -528,22 +530,58 @@ export default function SettingsPage() {
         });
       })
       .catch(() => {})
-      .finally(() => setLoadingAccounts(false));
+      .finally(() => {
+        if (active) setLoadingAccounts(false);
+      });
 
-    loadPlacementAddresses();
+    accountApi.listPlacementAddresses()
+      .then((r) => {
+        if (active) setPlacementAddresses(r.data.data ?? r.data);
+      })
+      .catch(() => {
+        if (active) setPlacementAddresses([]);
+      });
 
-    loadDatasources()
+    datasourceApi.list()
+      .then((r) => {
+        if (active) setDatasources(r.data.data ?? r.data);
+      })
       .catch(() => {})
-      .finally(() => setLoadingDatasources(false));
+      .finally(() => {
+        if (active) setLoadingDatasources(false);
+      });
 
     tenantApi.catalogDomains()
-      .then((r) => setCatalogDomains(r.data.data ?? r.data))
-      .catch(() => setCatalogDomains([]));
+      .then((r) => {
+        if (active) setCatalogDomains(r.data.data ?? r.data);
+      })
+      .catch(() => {
+        if (active) setCatalogDomains([]);
+      });
 
-    loadCatalogCategories();
+    Promise.all([
+      productApi.catalogCategories(),
+      productApi.catalogSourceCategories(),
+      productApi.catalogCategoryMappings(),
+    ])
+      .then(([categoriesRes, sourceRes, mappingsRes]) => {
+        if (!active) return;
+        const categories: CatalogCategory[] = categoriesRes.data.data ?? categoriesRes.data;
+        categories.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+        setCatalogCategories(categories);
+        setSourceCategories(sourceRes.data.data ?? sourceRes.data);
+        setCatalogMappings(mappingsRes.data.data ?? mappingsRes.data);
+      })
+      .catch(() => {
+        if (active) toast.error('Не удалось загрузить категории каталога');
+      })
+      .finally(() => {
+        if (active) setLoadingCatalogCategories(false);
+      });
 
     notificationApi.getSettings()
       .then((r) => {
+        if (!active) return;
         const d = r.data.data as NotificationSettings;
         setNotifSettings(d);
         setNotifEmail(d.notify_email);
@@ -551,16 +589,25 @@ export default function SettingsPage() {
         setNotifOnCritical(d.notify_on_critical);
       })
       .catch(() => {})
-      .finally(() => setLoadingNotif(false));
+      .finally(() => {
+        if (active) setLoadingNotif(false);
+      });
 
     Promise.all([aiApi.getModels(), aiApi.getSettings()])
       .then(([modelsRes, settingsRes]) => {
+        if (!active) return;
         setAIModels(modelsRes.data.data ?? modelsRes.data);
         setAISettings(settingsRes.data.data ?? settingsRes.data);
       })
-      .catch(() => toast.error('Не удалось загрузить настройки AI'))
-      .finally(() => setLoadingAI(false));
-  }, [loadDatasources]);
+      .catch(() => {
+        if (active) toast.error('Не удалось загрузить настройки AI');
+      })
+      .finally(() => {
+        if (active) setLoadingAI(false);
+      });
+
+    return () => { active = false; };
+  }, []);
 
   async function saveAISettings() {
     if (!aiSettings?.default_model) return;
@@ -599,15 +646,6 @@ export default function SettingsPage() {
       toast.error('Не удалось загрузить категории каталога');
     } finally {
       setLoadingCatalogCategories(false);
-    }
-  }
-
-  async function loadPlacementAddresses() {
-    try {
-      const res = await accountApi.listPlacementAddresses();
-      setPlacementAddresses(res.data.data ?? res.data);
-    } catch {
-      setPlacementAddresses([]);
     }
   }
 
@@ -929,7 +967,9 @@ export default function SettingsPage() {
   async function createCatalogCategory(e: React.FormEvent) {
     e.preventDefault();
     if (!newCatalogCategoryName.trim()) return;
-    const rootDomain = enabledDomainOptions.find((domain) => domain.slug === newCatalogCategoryDomain);
+    const rootDomain = enabledDomainOptions.find(
+      (domain) => domain.slug === activeNewCatalogCategoryDomain,
+    );
     if (!rootDomain) {
       toast.error('Сначала включите корневую категорию');
       return;
@@ -938,8 +978,9 @@ export default function SettingsPage() {
     try {
       // Если выбран родитель — создаём подкатегорию (root_domain выведет бэкенд),
       // иначе — корневую категорию в выбранном домене.
-      const payload: Record<string, unknown> = newCatalogCategoryParent
-        ? { name: newCatalogCategoryName.trim(), parent: Number(newCatalogCategoryParent), aliases: [], is_active: true }
+      const isSubcategory = Boolean(activeNewCatalogCategoryParent);
+      const payload: Record<string, unknown> = isSubcategory
+        ? { name: newCatalogCategoryName.trim(), parent: Number(activeNewCatalogCategoryParent), aliases: [], is_active: true }
         : {
             name: newCatalogCategoryName.trim(),
             root_domain: rootDomain.id,
@@ -952,7 +993,7 @@ export default function SettingsPage() {
       setNewCatalogCategoryParent('');
       setNewCatalogCategoryDomain(enabledDomainOptions[0]?.slug ?? '');
       await loadCatalogCategories();
-      toast.success(newCatalogCategoryParent ? 'Подкатегория создана' : 'Категория создана');
+      toast.success(isSubcategory ? 'Подкатегория создана' : 'Категория создана');
     } catch {
       toast.error('Не удалось создать категорию');
     } finally {
@@ -1044,7 +1085,15 @@ export default function SettingsPage() {
     try {
       await tenantApi.setCatalogDomainEnabled(domainSlug, isEnabled);
       const res = await tenantApi.catalogDomains();
-      setCatalogDomains(res.data.data ?? res.data);
+      const refreshedDomains: CatalogDomain[] = res.data.data ?? res.data;
+      setCatalogDomains(refreshedDomains);
+      if (!isEnabled && domainSlug === activeNewCatalogCategoryDomain) {
+        const nextDomain = refreshedDomains.find(
+          (domain) => domain.is_enabled_for_tenant,
+        );
+        setNewCatalogCategoryDomain(nextDomain?.slug ?? '');
+        setNewCatalogCategoryParent('');
+      }
       await loadCatalogCategories();
       toast.success(isEnabled ? 'Корневая категория включена' : 'Корневая категория отключена');
     } catch {
@@ -1351,7 +1400,7 @@ export default function SettingsPage() {
                     <Input
                       placeholder="+7 999 000-00-00"
                       value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
+                      onChange={(e) => setPhoneDraft(e.target.value)}
                     />
                     <Button onClick={savePhone} disabled={savingPhone}>
                       {savingPhone ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Сохранить'}
@@ -2392,7 +2441,7 @@ export default function SettingsPage() {
                 />
                 <select
                   className="rounded-md border bg-background px-3 py-2 text-sm"
-                  value={newCatalogCategoryDomain}
+                  value={activeNewCatalogCategoryDomain}
                   onChange={(e) => { setNewCatalogCategoryDomain(e.target.value); setNewCatalogCategoryParent(''); }}
                 >
                   {enabledDomainOptions.map((domain) => (
@@ -2401,13 +2450,13 @@ export default function SettingsPage() {
                 </select>
                 <select
                   className="rounded-md border bg-background px-3 py-2 text-sm"
-                  value={newCatalogCategoryParent}
+                  value={activeNewCatalogCategoryParent}
                   onChange={(e) => setNewCatalogCategoryParent(e.target.value)}
                   title="Родительская категория (для подкатегории)"
                 >
                   <option value="">— как корневую —</option>
                   {buildCategoryTree(
-                    catalogCategories.filter((c) => c.root_domain_slug === newCatalogCategoryDomain),
+                    newCatalogCategoryParentOptions,
                   ).map(({ category, depth }) => (
                     <option key={category.id} value={category.id}>
                       {'   '.repeat(depth) + category.name}

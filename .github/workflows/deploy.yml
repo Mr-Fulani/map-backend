@@ -8,13 +8,17 @@ on:
 permissions:
   contents: read
 
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
 concurrency:
   group: production-deploy
   cancel-in-progress: false
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 150
     environment:
       name: production
@@ -42,26 +46,104 @@ jobs:
           test -n "$PROD_USER"
           test -n "$PROD_SSH_KEY"
           test -n "$PROD_HOST_FINGERPRINT"
+          case "$PROD_HOST" in
+            ''|-*|*[!A-Za-z0-9._:-]*)
+              echo "Некорректный PROD_HOST" >&2
+              exit 1
+              ;;
+          esac
+          case "$PROD_USER" in
+            ''|-*|*[!A-Za-z0-9._-]*)
+              echo "Некорректный PROD_USER" >&2
+              exit 1
+              ;;
+          esac
+          case "$PROD_HOST_FINGERPRINT" in
+            SHA256:?*) ;;
+            *)
+              echo "PROD_HOST_FINGERPRINT должен быть SHA256 fingerprint" >&2
+              exit 1
+              ;;
+          esac
+          fingerprint_value=${PROD_HOST_FINGERPRINT#SHA256:}
+          case "$fingerprint_value" in
+            *[!A-Za-z0-9+/=_-]*)
+              echo "Некорректный PROD_HOST_FINGERPRINT" >&2
+              exit 1
+              ;;
+          esac
           case "$DEPLOY_SHA" in
             ''|*[!0-9a-f]*) echo "Некорректный commit SHA" >&2; exit 1 ;;
           esac
           test "${#DEPLOY_SHA}" -eq 40
 
       - name: Деплой на продакшн-сервер
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.PROD_HOST }}
-          username: ${{ secrets.PROD_USER }}
-          key: ${{ secrets.PROD_SSH_KEY }}
-          fingerprint: ${{ secrets.PROD_HOST_FINGERPRINT }}
-          command_timeout: 140m
-          script: |
-            set -eu
-            cd /opt/saas_poster
-            target_sha='${{ github.event.workflow_run.head_sha }}'
-            previous_sha="$(git rev-parse HEAD)"
-            git fetch --no-tags origin main
-            git cat-file -e "${target_sha}^{commit}"
-            git merge-base --is-ancestor "$target_sha" origin/main
-            git checkout --detach "$target_sha"
-            PREVIOUS_SHA="$previous_sha" ./deploy.sh "$target_sha"
+        env:
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_HOST_FINGERPRINT: ${{ secrets.PROD_HOST_FINGERPRINT }}
+        run: |
+          ssh_dir="$(mktemp -d "$RUNNER_TEMP/deploy-ssh.XXXXXX")"
+          chmod 700 "$ssh_dir"
+          trap 'rm -rf -- "$ssh_dir"' EXIT
+          printf '%s\n' "$PROD_SSH_KEY" > "$ssh_dir/id"
+          chmod 600 "$ssh_dir/id"
+
+          ssh-keyscan -T 10 "$PROD_HOST" > "$ssh_dir/scanned-host-keys"
+          fingerprint_matched=false
+          while IFS= read -r host_key; do
+            case "$host_key" in
+              ''|'#'*) continue ;;
+            esac
+            printf '%s\n' "$host_key" > "$ssh_dir/candidate-host-key"
+            key_info="$(
+              ssh-keygen -lf "$ssh_dir/candidate-host-key" -E sha256
+            )"
+            candidate_fingerprint="${key_info#* }"
+            candidate_fingerprint="${candidate_fingerprint%% *}"
+            if [ "$candidate_fingerprint" = "$PROD_HOST_FINGERPRINT" ]; then
+              printf '%s\n' "$host_key" > "$ssh_dir/known_hosts"
+              fingerprint_matched=true
+              break
+            fi
+          done < "$ssh_dir/scanned-host-keys"
+          if [ "$fingerprint_matched" != true ]; then
+            echo "SSH host fingerprint не совпадает" >&2
+            exit 1
+          fi
+
+          timeout --foreground --signal=TERM --kill-after=30s 140m \
+            ssh \
+              -i "$ssh_dir/id" \
+              -o BatchMode=yes \
+              -o ClearAllForwardings=yes \
+              -o ConnectTimeout=30 \
+              -o GlobalKnownHostsFile=/dev/null \
+              -o IdentitiesOnly=yes \
+              -o KbdInteractiveAuthentication=no \
+              -o LogLevel=ERROR \
+              -o PasswordAuthentication=no \
+              -o ServerAliveCountMax=3 \
+              -o ServerAliveInterval=30 \
+              -o StrictHostKeyChecking=yes \
+              -o UpdateHostKeys=no \
+              -o UserKnownHostsFile="$ssh_dir/known_hosts" \
+              -o VerifyHostKeyDNS=no \
+              "$PROD_USER@$PROD_HOST" \
+              bash -se -- "$DEPLOY_SHA" <<'REMOTE'
+          set -euo pipefail
+          cd /opt/saas_poster
+          target_sha=$1
+          previous_sha="$(git rev-parse HEAD)"
+          git fetch --no-tags origin main
+          git cat-file -e "${target_sha}^{commit}"
+          main_sha="$(git rev-parse FETCH_HEAD)"
+          if [ "$target_sha" != "$main_sha" ]; then
+            echo "Пропуск устаревшего deploy: main уже указывает на другой commit."
+            exit 0
+          fi
+          git checkout --detach "$target_sha"
+          PREVIOUS_SHA="$previous_sha" ./deploy.sh "$target_sha"
+          REMOTE

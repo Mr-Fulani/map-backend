@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import requests
+from django.conf import settings
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
@@ -30,6 +31,7 @@ REDIRECT_POLICIES = frozenset({
     REDIRECT_PUBLIC,
 })
 MAX_PUBLIC_URL_LENGTH = 4096
+TRUSTED_PUBLIC_HTTP_PROXY_URL = 'http://egress_proxy:3128'
 SAFE_CROSS_ORIGIN_HEADERS = frozenset({
     'accept',
     'user-agent',
@@ -264,6 +266,61 @@ class _PinnedIPAdapter(HTTPAdapter):
         request.headers['Host'] = self.target.authority
 
 
+class _TrustedProxyAdapter(HTTPAdapter):
+    """Bind one admitted origin to the only trusted production proxy."""
+
+    def __init__(self, target: ResolvedPublicTarget, proxy_url: str):
+        if proxy_url != TRUSTED_PUBLIC_HTTP_PROXY_URL:
+            raise UnsafePublicURL('Разрешён только доверенный public HTTP proxy.')
+        self.target = target
+        self.proxy_url = proxy_url
+        no_retry = Retry(
+            total=0,
+            connect=0,
+            read=0,
+            redirect=0,
+            status=0,
+            other=0,
+            raise_on_redirect=False,
+            raise_on_status=False,
+        )
+        super().__init__(max_retries=no_retry)
+
+    def get_connection_with_tls_context(
+        self,
+        request,
+        verify,
+        proxies=None,
+        cert=None,
+    ):
+        expected_proxies = {self.target.scheme: self.proxy_url}
+        if dict(proxies or {}) != expected_proxies:
+            raise UnsafePublicURL('Разрешён только доверенный public HTTP proxy.')
+        request_origin = _parse_public_http_url(request.url).origin
+        if request_origin != self.target.origin:
+            raise UnsafePublicURL('HTTP request не совпадает с проверенным origin.')
+        return super().get_connection_with_tls_context(
+            request,
+            verify,
+            proxies=proxies,
+            cert=cert,
+        )
+
+    def add_headers(self, request, **kwargs):
+        request.headers['Host'] = self.target.authority
+
+
+def _configured_public_http_proxy_url() -> str | None:
+    proxy_url = str(
+        getattr(settings, 'PUBLIC_HTTP_PROXY_URL', '') or '',
+    ).strip()
+    if not proxy_url:
+        return None
+    if proxy_url != TRUSTED_PUBLIC_HTTP_PROXY_URL:
+        raise UnsafePublicURL('Разрешён только доверенный public HTTP proxy.')
+    return proxy_url
+
+
 @contextmanager
 def _open_pinned_response(
     target: ResolvedPublicTarget,
@@ -276,10 +333,18 @@ def _open_pinned_response(
     params,
     auth,
 ):
+    proxy_url = _configured_public_http_proxy_url()
     session = requests.Session()
     session.trust_env = False
     session.adapters.clear()
-    session.mount(f'{target.scheme}://', _PinnedIPAdapter(target))
+    adapter: HTTPAdapter
+    if proxy_url is None:
+        adapter = _PinnedIPAdapter(target)
+        request_proxies = {}
+    else:
+        adapter = _TrustedProxyAdapter(target, proxy_url)
+        request_proxies = {target.scheme: proxy_url}
+    session.mount(f'{target.scheme}://', adapter)
     request_headers = {
         str(key): str(value)
         for key, value in (headers or {}).items()
@@ -303,7 +368,7 @@ def _open_pinned_response(
             stream=True,
             allow_redirects=False,
             verify=True,
-            proxies={},
+            proxies=request_proxies,
         )
         yield response
     finally:
@@ -343,12 +408,14 @@ def request_public_http_url(
     max_elapsed_seconds: float = DEFAULT_MAX_ELAPSED_SECONDS,
     resolver: Callable | None = None,
 ):
-    """Perform a DNS-pinned public request and return a closed bounded response.
+    """Perform a public request and return a closed bounded response.
 
-    Production callers cannot supply a requester callback: DNS resolution, proxy
-    policy, TLS identity and the TCP destination are controlled here as one unit.
-    The elapsed budget is a hard total across DNS, connect/TLS, response headers,
-    redirects and body streaming; per-socket ``requests`` timeouts are secondary.
+    Development connects to the admitted DNS result directly. Production first
+    admits only public DNS answers and then uses the exact trusted proxy, whose
+    ``dst`` ACL independently resolves and rejects non-public final addresses.
+    System/environment proxies remain disabled in both modes. The elapsed budget
+    is a hard total across DNS, connect/TLS, response headers, redirects and body
+    streaming; per-socket ``requests`` timeouts are secondary.
     """
     normalized_method = str(method or '').upper()
     if normalized_method not in {'GET', 'HEAD', 'POST'}:
@@ -476,10 +543,20 @@ def _request_public_http_url_sync(
                         current_url = next_parsed.url
                         continue
 
-                    payload = b'' if status_only else read_response_limited(
-                        response,
-                        max_bytes=max_response_bytes,
-                    )
+                    if status_only:
+                        payload = b''
+                    else:
+                        # The public entrypoint validates this before entering
+                        # the blocking worker. Keep the internal boundary
+                        # defensive and explicit for direct callers and typing.
+                        if max_response_bytes is None:
+                            raise ValueError(
+                                'Для ответа обязателен положительный byte budget.',
+                            )
+                        payload = read_response_limited(
+                            response,
+                            max_bytes=max_response_bytes,
+                        )
                     _freeze_response_body(response, payload)
                     return response
             except HTTPDeadlineExceeded as exc:

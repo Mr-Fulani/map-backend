@@ -5,18 +5,90 @@ set -Eeuo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 
+fail() {
+  echo "ОШИБКА: $*" >&2
+  return 1
+}
+
+validate_private_regular_file() {
+  local secret_file="$1"
+  local secret_mode
+
+  [[ -e "$secret_file" || -L "$secret_file" ]] \
+    || fail "отсутствует защищённый файл ${secret_file}."
+  [[ -f "$secret_file" && ! -L "$secret_file" && -O "$secret_file" ]] \
+    || fail "${secret_file} должен быть обычным файлом владельца deploy user, а не symlink."
+  secret_mode="$(stat -c '%a' -- "$secret_file")" \
+    || fail "не удалось проверить права ${secret_file}."
+  [[ "$secret_mode" == "600" || "$secret_mode" == "400" ]] \
+    || fail "${secret_file} должен иметь права 600 или 400 (сейчас ${secret_mode})."
+}
+
+load_deploy_env() {
+  local deploy_env_file="$1"
+  local line key value
+  local line_number=0
+  local -A seen_keys=()
+
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line_number=$((line_number + 1))
+    if [[ "$line" =~ ^[[:space:]]*$ || "$line" =~ ^[[:space:]]*# ]]; then
+      continue
+    fi
+    if [[ ! "$line" =~ ^([A-Z][A-Z0-9_]*)=([^[:space:]]+)$ ]]; then
+      fail "${deploy_env_file}:${line_number}: ожидается простая запись KEY=value без пробелов и shell-синтаксиса."
+      return 1
+    fi
+
+    key="${BASH_REMATCH[1]}"
+    value="${BASH_REMATCH[2]}"
+    if [[ "$value" == *'$'* || "$value" == *'`'* || "$value" == *'\'* \
+      || "$value" == *'"'* || "$value" == *"'"* ]]; then
+      fail "${deploy_env_file}:${line_number}: кавычки, escaping и shell-подстановки в значениях запрещены."
+      return 1
+    fi
+    case "$key" in
+      PROD_SMOKE_URL | \
+        PROD_MIN_FREE_DISK_MB | \
+        PROD_HEALTH_RETRIES | \
+        PROD_HEALTH_INTERVAL_SECONDS | \
+        PROD_LOG_TAIL | \
+        PROD_ROLLBACK_ENABLED | \
+        PROD_BACKUP_TIMEOUT_SECONDS | \
+        PROD_DRAIN_TIMEOUT_SECONDS | \
+        PROD_BROKER_MIGRATION_CONFIRMED) ;;
+      *)
+        fail "${deploy_env_file}:${line_number}: параметр ${key} не разрешён в .deploy.env."
+        return 1
+        ;;
+    esac
+    if [[ -n "${seen_keys[$key]+x}" ]]; then
+      fail "${deploy_env_file}:${line_number}: параметр ${key} указан повторно."
+      return 1
+    fi
+    seen_keys["$key"]=1
+    printf -v "$key" '%s' "$value"
+    export "$key"
+  done < "$deploy_env_file"
+}
+
 TARGET_SHA="${1:-}"
 DEPLOY_ENV_FILE="${DEPLOY_ENV_FILE:-$ROOT_DIR/.deploy.env}"
-if [[ -f "$DEPLOY_ENV_FILE" ]]; then
-  # This file is operator-managed and must be readable only by the deploy user.
-  set -a
-  # shellcheck disable=SC1090
-  source "$DEPLOY_ENV_FILE"
-  set +a
+if [[ -e "$DEPLOY_ENV_FILE" || -L "$DEPLOY_ENV_FILE" ]]; then
+  command -v stat >/dev/null 2>&1 || fail "команда stat не установлена."
+  validate_private_regular_file "$DEPLOY_ENV_FILE"
+  load_deploy_env "$DEPLOY_ENV_FILE"
 fi
 
 COMPOSE_FILE="$ROOT_DIR/docker-compose.prod.yml"
-COMPOSE=(docker compose -f "$COMPOSE_FILE")
+PROD_LOCK_DIR="/run/lock/saas-poster"
+DEPLOY_LOCK_FILE="$PROD_LOCK_DIR/deploy.lock"
+COMPOSE=(
+  docker compose
+  --project-name saas_poster
+  --project-directory "$ROOT_DIR"
+  -f "$COMPOSE_FILE"
+)
 BUILD_SERVICES=(django celery_worker celery_beat celery_worker_images frontend backup)
 APPLICATION_SERVICES=(django celery_worker celery_beat celery_worker_images frontend nginx)
 DRAIN_SERVICES=(celery_beat celery_worker celery_worker_images django frontend)
@@ -40,11 +112,6 @@ MIGRATIONS_APPLIED=false
 MIGRATIONS_STARTED=false
 declare -A ROLLBACK_IMAGE_IDS=()
 declare -A ROLLBACK_IMAGE_NAMES=()
-
-fail() {
-  echo "ОШИБКА: $*" >&2
-  return 1
-}
 
 show_logs() {
   echo ""
@@ -152,7 +219,7 @@ validate_integer_setting() {
 }
 
 preflight() {
-  local command_name available_kb required_kb secret_file secret_mode
+  local command_name available_kb required_kb
 
   DEPLOY_PHASE="preflight"
   for command_name in git docker curl flock df awk stat timeout; do
@@ -174,8 +241,8 @@ preflight() {
     || fail "deploy.sh ожидает полный 40-символьный commit SHA."
   [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]] \
     || fail "рабочая копия должна быть переключена на TARGET_SHA до запуска deploy.sh."
-  if ! git diff --quiet || ! git diff --cached --quiet; then
-    fail "на production-сервере есть незакоммиченные tracked-изменения."
+  if [[ -n "$(git status --porcelain=v1 --untracked-files=normal --ignore-submodules=none)" ]]; then
+    fail "production checkout содержит tracked или untracked изменения; image build не будет соответствовать TARGET_SHA."
   fi
 
   git fetch --no-tags origin main
@@ -183,18 +250,19 @@ preflight() {
   git merge-base --is-ancestor "$TARGET_SHA" origin/main \
     || fail "commit ${TARGET_SHA} не принадлежит актуальной ветке origin/main."
 
-  [[ -f "$ROOT_DIR/.env" ]] || fail "отсутствует production-файл .env."
-  [[ -f "$ROOT_DIR/.backup.env" ]] || fail "отсутствует production-файл .backup.env."
-  for secret_file in "$ROOT_DIR/.env" "$ROOT_DIR/.backup.env" "$DEPLOY_ENV_FILE"; do
-    [[ -f "$secret_file" ]] || continue
-    secret_mode="$(stat -c '%a' "$secret_file")"
-    [[ "$secret_mode" == "600" || "$secret_mode" == "400" ]] \
-      || fail "${secret_file} должен иметь права 600 или 400 (сейчас ${secret_mode})."
-  done
+  validate_private_regular_file "$ROOT_DIR/.env"
+  validate_private_regular_file "$ROOT_DIR/.backup.env"
+  if [[ -e "$DEPLOY_ENV_FILE" || -L "$DEPLOY_ENV_FILE" ]]; then
+    validate_private_regular_file "$DEPLOY_ENV_FILE"
+  fi
   [[ "$PROD_SMOKE_URL" =~ ^https://[^[:space:]]+$ ]] \
     || fail "PROD_SMOKE_URL обязателен и должен быть публичным HTTPS URL."
 
-  exec 9>"${DEPLOY_LOCK_FILE:-/tmp/saas-poster-deploy.lock}"
+  [[ -d "$PROD_LOCK_DIR" && ! -L "$PROD_LOCK_DIR" && -O "$PROD_LOCK_DIR" ]] \
+    || fail "$PROD_LOCK_DIR должен быть обычным каталогом владельца deploy user."
+  [[ "$(stat -c '%a' "$PROD_LOCK_DIR")" == "700" ]] \
+    || fail "$PROD_LOCK_DIR должен иметь права 700."
+  exec 9>"$DEPLOY_LOCK_FILE"
   flock -n 9 || fail "другой deploy уже выполняется."
 
   docker info >/dev/null
@@ -255,6 +323,22 @@ echo "==> Проверка новой Django-сборки..."
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py check --deploy
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py makemigrations --check --dry-run
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py migrate --plan
+
+DEPLOY_PHASE="runtime dependency connectivity"
+echo "==> Проверка Redis connectivity из нового Django-образа..."
+timeout --foreground --signal=TERM --kill-after=5s 60s \
+  "${COMPOSE[@]}" run --rm --no-deps django \
+    python manage.py check_redis_connectivity
+
+echo "==> Проверка SMTP connectivity и credentials из нового Django-образа..."
+timeout --foreground --signal=TERM --kill-after=5s 60s \
+  "${COMPOSE[@]}" run --rm --no-deps django \
+    python manage.py check_email_connectivity
+
+echo "==> Проверка public HTTPS transport и YooKassa credentials..."
+timeout --foreground --signal=TERM --kill-after=5s 60s \
+  "${COMPOSE[@]}" run --rm --no-deps django \
+    python manage.py check_public_http_connectivity
 
 drain_application_writers
 

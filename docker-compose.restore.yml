@@ -5,6 +5,8 @@ x-egress-environment: &egress-environment
   https_proxy: http://egress_proxy:3128
   NO_PROXY: localhost,127.0.0.1,egress_proxy
   no_proxy: localhost,127.0.0.1,egress_proxy
+  HOME: /tmp
+  XDG_CACHE_HOME: /tmp/.cache
 
 x-default-logging: &default-logging
   driver: json-file
@@ -24,6 +26,10 @@ services:
     user: "0:0"
     read_only: true
     cap_drop: [ALL]
+    # Root otherwise cannot read an operator-owned mode-0600 identity after
+    # dropping every capability. This read-only capability is the minimum
+    # needed for that bind-mounted recovery secret.
+    cap_add: [DAC_READ_SEARCH]
     security_opt:
       - no-new-privileges:true
     environment:
@@ -44,7 +50,7 @@ services:
       <<: *egress-environment
     depends_on:
       egress_proxy:
-        condition: service_started
+        condition: service_healthy
     networks: [recovery]
     volumes:
       - restore_workspace:/tmp
@@ -56,13 +62,21 @@ services:
     stop_grace_period: 5m
 
   egress_proxy:
-    image: ubuntu/squid:6.6-24.04_edge
+    image: ubuntu/squid:6.6-24.04_edge@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     volumes:
       - ./egress-proxy.conf:/etc/squid/squid.conf:ro
     networks:
       - recovery
       - egress_public
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
     logging: *default-logging
     stop_grace_period: 30s
 

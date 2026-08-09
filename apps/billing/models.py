@@ -306,6 +306,19 @@ class Invoice(TimestampedModel):
                 ),
                 name='uniq_active_checkout_payload',
             ),
+            models.UniqueConstraint(
+                fields=['tenant'],
+                condition=models.Q(
+                    purchase_type='subscription',
+                    status='pending',
+                    checkout_state__in=(
+                        'intent_created',
+                        'provider_pending',
+                        'provider_created',
+                    ),
+                ),
+                name='uniq_active_subscription_checkout',
+            ),
         ]
 
     _IMMUTABLE_INTENT_FIELDS = (

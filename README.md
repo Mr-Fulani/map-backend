@@ -89,12 +89,12 @@
 
 ## Тарифные планы
 
-| План | Активных объявлений | SKU в каталоге | AI-генераций/мес | Цена |
+| План | Активных объявлений | SKU в каталоге | AI-кредитов/мес | Цена |
 |------|-------------------|----------------|-----------------|------|
 | **Starter** | до 1 000 | до 5 000 | 1 000 | 4 900 ₽/мес |
 | **Business** | до 10 000 | до 30 000 | 5 000 | 14 900 ₽/мес |
 | **Pro** | до 50 000 | до 150 000 | 20 000 | 34 900 ₽/мес |
-| **Enterprise** | без лимита | без лимита | без лимита | от 79 900 ₽/мес |
+| **Enterprise** | без лимита | без лимита | 50 000 | от 79 900 ₽/мес |
 
 Trial: 14 дней бесплатно на плане Business. Скидка 20% при оплате за год.
 
@@ -109,20 +109,22 @@ Trial: 14 дней бесплатно на плане Business. Скидка 20%
 - **django-celery-beat** — расписание: синхронизация каждые 5 мин, обновление статистики каждый час
 - **django-unfold** — кастомизированная Django Admin с тёмной темой
 - **drf-spectacular** — автогенерация OpenAPI/Swagger
-- **Yandex Cloud S3** — хранение изображений товаров и PDF-счетов
+- **Yandex Cloud S3** — хранение изображений товаров
 - **Sentry** — мониторинг ошибок
 - **OpenAI / Anthropic / Gemini / DeepSeek / Kimi** — маршрутизируемая AI-генерация
 
 ### Frontend
-- **Next.js 14** (App Router, TypeScript)
+- **Next.js 16.3** + **React 19.2** (App Router, TypeScript)
 - **Tailwind CSS** + **shadcn/ui** — компонентная библиотека
 - **Axios** — HTTP-клиент с интерсепторами для JWT refresh
 - **Sonner** — toast-уведомления
 
 ### Инфраструктура
-- **Docker** + **docker-compose** (django, postgres, redis, celery_worker, celery_beat)
+- **Docker Compose**: Django, PostgreSQL, отдельные cache/broker Redis,
+  Celery workers/Beat, Next.js, Nginx, ограничивающий egress proxy и backup job
 - **Nginx** — reverse proxy, rate limiting
-- **GitHub Actions** — CI (pytest, flake8, строгая проверка OpenAPI) + CD только после успешного CI для main
+- **GitHub Actions** — CI (backend/frontend тесты, OpenAPI, dependency/OCI
+  vulnerability gates, SBOM) + deploy точного commit SHA только после успешного CI
 - **Timeweb Cloud** — хостинг
 
 ---
@@ -130,44 +132,48 @@ Trial: 14 дней бесплатно на плане Business. Скидка 20%
 ## Быстрый старт
 
 ### Требования
-- Docker + docker-compose
-- Python 3.12+ (для локальной разработки без Docker)
-- Node.js 20+ (для фронтенда)
+- Docker + Docker Compose plugin
+- Python 3.12.13 (версия CI/runtime; 3.12.x для локальных no-Docker проверок)
+- Node.js 24.18.0 и npm 11.19.0 (версии CI/runtime)
 
-### Запуск через Docker
+### Режим A: весь runtime в Docker Compose
 
 ```bash
 # 1. Клонировать репозиторий
-git clone <repo-url>
+git clone https://github.com/OWNER/REPOSITORY.git
 cd saas_poster
 
 # 2. Создать .env из примера
 cp .env.example .env
 # Заполнить переменные (см. раздел "Переменные окружения")
 
-# 3. Поднять все сервисы
-docker compose up -d
+# 3. Первый bootstrap: поднять только зависимости, выполнить миграции/seed/Beat
+#    one-shot командами и лишь затем запустить все сервисы, включая frontend
+make bootstrap
 
-# 4. Выполнить миграции, загрузить тарифы и настроить Celery Beat
-docker compose exec django python manage.py migrate
-docker compose exec django python manage.py seed_plans
-docker compose exec django python manage.py setup_periodic_tasks
-
-# 5. Создать суперпользователя для Django Admin
-docker compose exec django python manage.py createsuperuser
+# 4. Создать суперпользователя для Django Admin
+make superuser
 ```
+
+Замените `OWNER/REPOSITORY` на фактический путь репозитория перед клонированием.
 
 После запуска:
 - Django Admin: `http://localhost:8000/admin/`
 - API Swagger: `http://localhost:8000/api/docs/`
 - Frontend: `http://localhost:3000/`
 
-### Запуск фронтенда
+### Режим B: backend в Compose, Next.js на хосте
+
+Это взаимоисключающий с режимом A вариант: не запускайте одновременно
+containerized frontend через `make up` и локальный Next.js на том же порту.
+`dev.sh` фиксирует Compose file/project, проверяет все публикуемые порты, применяет
+миграции до старта Django и при `Ctrl+C` останавливает только этот проект.
 
 ```bash
 cd frontend
-npm install
-npm run dev
+npm ci --strict-allow-scripts
+cd ..
+./dev.sh
 ```
 
 ---
@@ -178,8 +184,8 @@ npm run dev
 имена: `DJANGO_SECRET_KEY`, `DATABASE_URL`, `CACHE_REDIS_URL`,
 `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `COORDINATION_REDIS_URL`,
 `FIELD_ENCRYPTION_KEYS`, `YC_S3_*`, ключи AI-провайдеров, `AVITO_*`,
-`YOOKASSA_*`, `SENDPULSE_SMTP_*` и `SENTRY_DSN`. `REDIS_URL` используется только
-как fallback локальной разработки.
+`YOOKASSA_*`, `SENDPULSE_SMTP_*`, `EMAIL_HTTP_PROXY_URL` и `SENTRY_DSN`.
+`REDIS_URL` используется только как fallback локальной разработки.
 
 Для production обязательны отдельные случайные PostgreSQL/cache-Redis/
 broker-Redis/Fernet secrets.
@@ -287,12 +293,16 @@ saas_poster/
 │   ├── settings/        — base, development, production
 │   ├── celery.py
 │   └── urls.py
-├── frontend/            — Next.js 14 Dashboard
+├── frontend/            — Next.js 16.3 / React 19 Dashboard
 ├── requirements/
-│   ├── base.txt
-│   ├── dev.txt
-│   └── prod.txt
-├── docker-compose.yml
+│   ├── base.in          — общие прямые Python-зависимости
+│   ├── dev.in           — инструменты разработки и тестов
+│   ├── prod.in          — production WSGI/runtime слой
+│   ├── ci-tools.in      — изолированные инструменты supply-chain CI
+│   └── *.txt            — воспроизводимые hash-locked lock-файлы
+├── docker-compose.yml   — локальная разработка
+├── docker-compose.prod.yml
+├── docker-compose.restore.yml
 ├── Makefile
 └── ROADMAP_MAP.md
 ```
@@ -339,36 +349,44 @@ saas_poster/
 ```bash
 # Запустить тесты
 make test
-# или
-docker compose exec django pytest --cov=apps
 
 # Линтер
 make lint
 # или
-flake8 apps/
+flake8 .
 
 # Создать миграции
-docker compose exec django python manage.py makemigrations
+make migrations
 
 # Django shell
 make shell
+
+# Проверки без обращения к Docker daemon
+make runtime-check
+make frontend-test
+cd frontend && npm run typecheck && npm run lint && npm run build
 ```
 
 ### Команды Makefile
 
 | Команда | Описание |
 |---------|----------|
+| `make bootstrap` | Безопасно подготовить пустую БД и запустить первый dev runtime |
 | `make up` | Поднять все сервисы |
 | `make down` | Остановить все сервисы |
 | `make shell` | Django shell |
 | `make migrate` | Применить миграции |
 | `make test` | Запустить тесты с coverage |
-| `make lint` | Проверить код (flake8) |
+| `make lint` | Проверить весь Python-код через flake8 |
+| `make typecheck-backend` | Проверить расширяемый type-clean baseline из `mypy.ini` |
+| `make runtime-check` | Проверить Compose/deploy/health contracts без Docker daemon |
+| `make frontend-test` | Запустить критичные frontend unit/contract тесты без Docker |
 | `make backup` | Создать зашифрованный production backup (ops profile) |
 | `make backup-check` | Проверить свежесть последнего production backup |
 
-Production runbooks: [security](docs/PRODUCTION_SECURITY.md) и
-[backup/restore](docs/BACKUP_RESTORE.md).
+Production runbooks: [deployment](docs/DEPLOYMENT.md),
+[security](docs/PRODUCTION_SECURITY.md), [backup/restore](docs/BACKUP_RESTORE.md)
+и [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ---
 

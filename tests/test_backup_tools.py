@@ -494,7 +494,10 @@ def test_backup_container_and_deploy_contracts():
     assert '.restore.env*' in dockerignore
     assert '.deploy.env*' in dockerignore
     assert '*signing*.env' in dockerignore
-    assert dockerfile.startswith('FROM postgres:16-alpine')
+    assert dockerfile.startswith(
+        'FROM postgres:16.14-alpine@sha256:'
+        '57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777\n'
+    )
     assert 'USER postgres' in dockerfile
     assert 'BACKUP_AGE_IDENTITY_FILE' not in dockerfile
 

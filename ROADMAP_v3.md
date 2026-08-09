@@ -1,5 +1,16 @@
 # ROADMAP v3: Поиск изображений для автозапчастей (Исправленный)
 
+> [!WARNING]
+> **Статус: исторический артефакт, не runbook.** Чеклисты, версии зависимостей и
+> инфраструктурные команды ниже описывают исходный план и намеренно не обновляются
+> как operational truth. Для текущего запуска и deploy используйте
+> [README](README.md), [DEV](DEV.md),
+> [production deployment](docs/DEPLOYMENT.md),
+> [security runbook](docs/PRODUCTION_SECURITY.md) и
+> [backup/restore runbook](docs/BACKUP_RESTORE.md). Актуальные зависимости заданы
+> в `requirements/*.in`, сгенерированных hash-lock `requirements/*.txt`,
+> `frontend/package.json`/`package-lock.json` и Dockerfile-ах.
+
 > **Адаптировано:** под существующую архитектуру MAP  
 > **Хранилище:** Yandex Cloud S3 (текущее)  
 > **Источники:** Free-only (pluggable на будущее)  
