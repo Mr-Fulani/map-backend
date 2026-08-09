@@ -3,7 +3,7 @@
 Next.js 16.3 / React 19.2 dashboard для Marketplace Automation Platform.
 
 Поддерживаемый toolchain совпадает с CI и production image: Node.js 24.18.0,
-npm 11.19.0. Зависимости устанавливаются только по lock-файлу с проверенным
+npm 12.0.2. Зависимости устанавливаются только по lock-файлу с проверенным
 allowlist install scripts.
 
 ## Локальный запуск

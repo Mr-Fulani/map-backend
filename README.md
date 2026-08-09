@@ -134,7 +134,7 @@ Trial: 14 дней бесплатно на плане Business. Скидка 20%
 ### Требования
 - Docker + Docker Compose plugin
 - Python 3.12.13 (версия CI/runtime; 3.12.x для локальных no-Docker проверок)
-- Node.js 24.18.0 и npm 11.19.0 (версии CI/runtime)
+- Node.js 24.18.0 и npm 12.0.2 (версии CI/runtime)
 
 ### Режим A: весь runtime в Docker Compose
 

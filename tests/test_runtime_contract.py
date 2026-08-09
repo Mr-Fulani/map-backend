@@ -15,8 +15,8 @@ NGINX_CONFIG = (ROOT / 'nginx.conf').read_text()
 SQUID_CONFIG = (ROOT / 'egress-proxy.conf').read_text()
 DEPENDABOT = yaml.safe_load((ROOT / '.github/dependabot.yml').read_text())
 NPM_TARBALL_SHA512 = (
-    '48377f8478372aa1c4e47b763475b135836da82436a5700f2e5e8eb5084fc840'
-    'f93c7b117eb3ad3b5f7d3194c81b6710a10d59448f6ddbcb21ac3fb672bdc003'
+    'b885e890b9418fa1693544d05f53e64f9a73ec194837d4258b15fecdd692347b'
+    '1dd2a517b1b0cbaf9d31cd8e92c3b70956bd2ecc72833a57b4b3098f5bfa7943'
 )
 TRIVY_TARBALL_SHA256 = (
     'bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea'
@@ -209,7 +209,7 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
     assert 'FROM deps AS dev' in dockerfiles['frontend']
     assert 'FROM deps AS builder' in dockerfiles['frontend']
     assert 'FROM base AS runner' in dockerfiles['frontend']
-    assert 'npm-11.19.0.tgz' in dockerfiles['frontend']
+    assert 'npm-12.0.2.tgz' in dockerfiles['frontend']
     assert 'sha512sum -c -' in dockerfiles['frontend']
     assert NPM_TARBALL_SHA512 in dockerfiles['frontend']
     assert 'RUN npm ci --strict-allow-scripts' in dockerfiles['frontend']
@@ -299,7 +299,7 @@ def test_ci_actions_are_commit_pinned_and_job_is_bounded():
     assert 'COMPOSE_PROJECT_NAME: saas-poster-ci-' in CI_WORKFLOW
     assert "python-version: '3.12.13'" in CI_WORKFLOW
     assert "node-version: '24.18.0'" in CI_WORKFLOW
-    assert 'npm-11.19.0.tgz' in CI_WORKFLOW
+    assert 'npm-12.0.2.tgz' in CI_WORKFLOW
     assert 'sha512sum -c -' in CI_WORKFLOW
     assert NPM_TARBALL_SHA512 in CI_WORKFLOW
     assert '--proto-redir \'=https\'' in CI_WORKFLOW
