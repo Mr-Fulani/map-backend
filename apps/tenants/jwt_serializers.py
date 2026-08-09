@@ -6,8 +6,35 @@ JWT-сериализаторы с tenant-контекстом.
 без дополнительных запросов к БД.
 """
 
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
+from rest_framework_simplejwt.serializers import TokenObtainPairSerializer, TokenRefreshSerializer
+from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
+
+
+class TenantTokenTenantSerializer(serializers.Serializer):
+    """Организация, выбранная при входе."""
+
+    id = serializers.IntegerField(read_only=True)
+    slug = serializers.SlugField(read_only=True)
+    name = serializers.CharField(read_only=True)
+
+
+class TenantTokenUserSerializer(serializers.Serializer):
+    """Краткие данные вошедшего пользователя."""
+
+    id = serializers.IntegerField(read_only=True)
+    email = serializers.EmailField(read_only=True)
+
+
+class TenantTokenObtainPairResponseSerializer(serializers.Serializer):
+    """Точный payload успешного tenant-aware JWT login."""
+
+    access = serializers.CharField(read_only=True)
+    refresh = serializers.CharField(read_only=True)
+    tenant = TenantTokenTenantSerializer(read_only=True)
+    role = serializers.CharField(read_only=True)
+    user = TenantTokenUserSerializer(read_only=True)
 
 
 class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
@@ -94,3 +121,24 @@ class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         token['email'] = user.email
         return token
+
+
+class TenantTokenRefreshSerializer(TokenRefreshSerializer):
+    """Не обновляет токен после удаления пользователя из tenant-а."""
+
+    def validate(self, attrs):
+        refresh = RefreshToken(attrs['refresh'])
+        user_id = refresh.get('user_id')
+        tenant_id = refresh.get('tenant_id')
+
+        from apps.tenants.models import TenantUser
+
+        membership_exists = TenantUser.objects.filter(
+            user_id=user_id,
+            tenant_id=tenant_id,
+            tenant__is_active=True,
+            user__is_active=True,
+        ).exists()
+        if not membership_exists:
+            raise AuthenticationFailed('Доступ к организации отозван.')
+        return super().validate(attrs)

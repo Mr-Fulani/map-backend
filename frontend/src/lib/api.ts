@@ -5,7 +5,8 @@
 
 import axios from 'axios';
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Пустое значение означает same-origin: в production Nginx проксирует /api/ в Django.
+export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
 
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api/v1`,

@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from celery import shared_task
+from django.conf import settings
 from django.utils.timezone import now
 
 
@@ -34,6 +35,6 @@ def cleanup_old_logs():
     """
     from apps.sync.models import SyncLog
 
-    cutoff = now() - timedelta(days=90)
+    cutoff = now() - timedelta(days=settings.SYNC_LOG_RETENTION_DAYS)
     deleted, _ = SyncLog.objects.filter(created_at__lt=cutoff).delete()
     return {'deleted': deleted}

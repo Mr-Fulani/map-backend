@@ -50,7 +50,7 @@
 - **Shadow ban detector:** мониторинг CTR, предупреждение при аномально низких показателях
 
 ### AI-агент
-- Генерация продающих описаний по характеристикам товара (Claude API)
+- Генерация описаний через настраиваемые OpenAI, Anthropic и OpenAI-compatible модели
 - Валидация готовых описаний перед отправкой на Avito
 - Подсчёт использованных AI-кредитов по тарифному плану
 - Промпты адаптированы для ниши автозапчастей
@@ -111,7 +111,7 @@ Trial: 14 дней бесплатно на плане Business. Скидка 20%
 - **drf-spectacular** — автогенерация OpenAPI/Swagger
 - **Yandex Cloud S3** — хранение изображений товаров и PDF-счетов
 - **Sentry** — мониторинг ошибок
-- **Claude API (Anthropic)** — AI-генерация описаний
+- **OpenAI / Anthropic / Gemini / DeepSeek / Kimi** — маршрутизируемая AI-генерация
 
 ### Frontend
 - **Next.js 14** (App Router, TypeScript)
@@ -122,7 +122,7 @@ Trial: 14 дней бесплатно на плане Business. Скидка 20%
 ### Инфраструктура
 - **Docker** + **docker-compose** (django, postgres, redis, celery_worker, celery_beat)
 - **Nginx** — reverse proxy, rate limiting
-- **GitHub Actions** — CI (pytest, flake8) + CD (деплой при пуше в main)
+- **GitHub Actions** — CI (pytest, flake8, строгая проверка OpenAPI) + CD (деплой при пуше в main)
 - **Timeweb Cloud** — хостинг
 
 ---
@@ -148,9 +148,10 @@ cp .env.example .env
 # 3. Поднять все сервисы
 docker compose up -d
 
-# 4. Выполнить миграции и загрузить тарифные планы
+# 4. Выполнить миграции, загрузить тарифы и настроить Celery Beat
 docker compose exec django python manage.py migrate
-docker compose exec django python manage.py loaddata billing_plans
+docker compose exec django python manage.py seed_plans
+docker compose exec django python manage.py setup_periodic_tasks
 
 # 5. Создать суперпользователя для Django Admin
 docker compose exec django python manage.py createsuperuser
@@ -173,43 +174,18 @@ npm run dev
 
 ## Переменные окружения
 
-```env
-# Django
-SECRET_KEY=your-secret-key
-DEBUG=True
-ALLOWED_HOSTS=localhost,127.0.0.1
+Полный актуальный перечень находится в [`.env.example`](.env.example). Ключевые
+имена: `DJANGO_SECRET_KEY`, `DATABASE_URL`, `REDIS_URL`, `FIELD_ENCRYPTION_KEYS`,
+`YC_S3_*`, ключи AI-провайдеров, `AVITO_*`, `YOOKASSA_*`, `SENDPULSE_SMTP_*` и
+`SENTRY_DSN`.
 
-# База данных
-DATABASE_URL=postgres://user:password@postgres:5432/map_db
+Для production обязательны отдельные случайные PostgreSQL/Redis/Fernet secrets.
+Порядок ротации, webhook delivery, retention и egress policy описаны в
+[`docs/PRODUCTION_SECURITY.md`](docs/PRODUCTION_SECURITY.md).
 
-# Redis
-REDIS_URL=redis://redis:6379/0
-
-# Yandex Cloud S3
-YC_BUCKET_NAME=your-bucket
-YC_ACCESS_KEY_ID=your-key
-YC_SECRET_ACCESS_KEY=your-secret
-YC_ENDPOINT_URL=https://storage.yandexcloud.net
-
-# Claude API (AI-генерация описаний)
-ANTHROPIC_API_KEY=sk-ant-...
-
-# ЮKassa (биллинг)
-YOOKASSA_SHOP_ID=your-shop-id
-YOOKASSA_SECRET_KEY=your-secret-key
-
-# Telegram-уведомления
-TELEGRAM_BOT_TOKEN=your-bot-token
-
-# Email (SendPulse SMTP)
-EMAIL_HOST=smtp.sendpulse.com
-EMAIL_PORT=587
-EMAIL_HOST_USER=your-email
-EMAIL_HOST_PASSWORD=your-password
-
-# Sentry
-SENTRY_DSN=https://...@sentry.io/...
-```
+Для локального frontend используйте `NEXT_PUBLIC_API_URL=http://localhost:8000`.
+В production оставьте `NEXT_PUBLIC_API_URL` пустым: браузер будет обращаться к
+same-origin `/api`, который Nginx проксирует в Django.
 
 ---
 
@@ -228,7 +204,7 @@ SENTRY_DSN=https://...@sentry.io/...
               │   ├── OneCXMLAdapter         │
               │   └── CSVAdapter             │
               │                              │
-              │   AI Agent (Claude API)      │
+              │   AI Agent (multi-provider)  │
               │   Anti-ban System            │
               │   Billing (ЮKassa)           │
               │   Notifications              │
@@ -244,7 +220,7 @@ SENTRY_DSN=https://...@sentry.io/...
 ```
 
 **Поток синхронизации:**
-1. Celery Beat каждые 5 минут запускает `sync_all_tenants_task`
+1. Celery Beat каждые 5 минут запускает `sync_all_tenants`
 2. Для каждого активного тенанта: DataSource Adapter тянет изменения из источника
 3. Изменения сохраняются в `Product` (цена, остаток, описание)
 4. Если товар новый → AI-агент генерирует описание
@@ -258,14 +234,15 @@ SENTRY_DSN=https://...@sentry.io/...
 
 Базовый URL: `/api/v1/`
 
-Аутентификация: Bearer JWT или API Key в заголовке `Authorization: Api-Key <key>`
+Аутентификация: JWT или API Key в заголовке `Authorization: Bearer <token>`.
+API-ключ имеет префикс `map_sk_`.
 
 ### Основные эндпоинты
 
 | Метод | Путь | Описание |
 |-------|------|----------|
 | `POST` | `/auth/register/` | Регистрация тенанта |
-| `POST` | `/auth/jwt/create/` | Получить JWT-токен |
+| `POST` | `/auth/token/` | Получить JWT-токен |
 | `GET` | `/products/` | Каталог товаров (поиск, фильтры, пагинация) |
 | `GET/PATCH` | `/products/{id}/` | Карточка товара, включение/выключение выгрузки |
 | `GET` | `/listings/` | Листинги (фильтр по статусу) |
@@ -274,9 +251,10 @@ SENTRY_DSN=https://...@sentry.io/...
 | `GET` | `/billing/subscription/` | Текущая подписка тенанта |
 | `POST` | `/billing/checkout/` | Создать платёж (ЮKassa) |
 | `GET` | `/billing/invoices/` | История платежей |
-| `GET` | `/analytics/summary/` | KPI: CTR, просмотры, конверсия |
-| `GET/POST` | `/tenants/api-keys/` | Управление API-ключами |
-| `GET/POST` | `/tenants/webhooks/` | Настройка вебхуков |
+| `GET` | `/analytics/` | KPI: CTR, просмотры, конверсия |
+| `GET/POST` | `/tenant/api-keys/` | Управление API-ключами |
+| `GET/POST` | `/webhooks/` | Настройка webhook endpoint-ов |
+| `GET` | `/webhooks/deliveries/` | Аудит и статусы webhook-доставок |
 
 Полная документация: `/api/docs/` (Swagger UI)
 
@@ -294,6 +272,9 @@ saas_poster/
 │   ├── core/            — TimestampedModel, middleware, утилиты
 │   ├── datasources/     — адаптеры 1С/CSV, шифрование
 │   ├── marketplaces/    — Avito-аккаунты, листинги, адаптер Avito
+│   ├── image_search/    — поиск и оценка изображений
+│   ├── media_processing/— обработка изображений
+│   ├── web_research/    — товарные и ценовые интернет-исследования
 │   ├── notifications/   — Telegram + Email уведомления
 │   ├── products/        — каталог товаров и изображений
 │   ├── sync/            — SyncLog, задачи синхронизации
@@ -325,7 +306,7 @@ saas_poster/
 - [x] Источники данных: 1С HTTP, 1С XML, CSV (с шифрованием credentials)
 - [x] Каталог товаров: импорт, хранение, фильтрация, изображения на S3
 - [x] Avito-адаптер: публикация, обновление, архивирование, retry
-- [x] AI-агент: генерация описаний через Claude, подсчёт кредитов
+- [x] AI-агент: multi-provider routing, генерация описаний, кошелёк и кредиты
 - [x] Anti-ban: gradual ramp-up, velocity control, shadow ban detector
 - [x] Уведомления: Telegram + Email, настройки per-tenant
 - [x] Логи синхронизаций: SyncLog, фильтрация, автоочистка > 90 дней
@@ -333,8 +314,10 @@ saas_poster/
 - [x] Celery Beat: расписание всех фоновых задач
 - [x] Next.js Dashboard: KPI, каталог, листинги, логи, аналитика, биллинг, настройки
 - [x] REST API + OpenAPI/Swagger документация
-- [x] Вебхуки на события синхронизации
-- [x] CI/CD: GitHub Actions (lint + тесты + деплой)
+- [x] Управление webhook endpoint-ами и безопасная тестовая отправка
+- [x] Transactional webhook outbox, HMAC-подпись, retry и аудит доставок
+- [x] Soft-delete и автоматическая retention-очистка критичных сущностей
+- [x] CI/CD: GitHub Actions (lint + тесты + OpenAPI без предупреждений + деплой)
 
 ### 🚧 В планах (Phase 3)
 

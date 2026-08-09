@@ -2,7 +2,8 @@ from django.contrib.auth import get_user_model
 from rest_framework import serializers
 
 from apps.tenants.models import (
-    APIKey, CatalogDomain, Tenant, TenantUser, WEBHOOK_EVENTS, WebhookEndpoint,
+    APIKey, CatalogDomain, Tenant, TenantUser, WEBHOOK_EVENTS,
+    WebhookDelivery, WebhookEndpoint,
 )
 
 User = get_user_model()
@@ -29,8 +30,9 @@ class RegisterSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
-            # Пользователь уже существует — это допустимо (можно создать новый тенант)
-            pass
+            raise serializers.ValidationError(
+                'Пользователь с таким email уже существует. Войдите в аккаунт.',
+            )
         return value
 
 
@@ -90,13 +92,23 @@ class APIKeyCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100)
 
 
+class APIKeyCreatedSerializer(APIKeySerializer):
+    """API key response shown once immediately after creation."""
+
+    key = serializers.CharField(read_only=True)
+    warning = serializers.CharField(read_only=True)
+
+    class Meta(APIKeySerializer.Meta):
+        fields = [*APIKeySerializer.Meta.fields, 'key', 'warning']
+
+
 class WebhookEndpointSerializer(serializers.ModelSerializer):
     """Сериализатор вебхук-эндпоинта для чтения."""
 
     class Meta:
         model = WebhookEndpoint
-        fields = ['id', 'url', 'secret', 'events', 'is_active', 'created_at']
-        read_only_fields = ['id', 'secret', 'is_active', 'created_at']
+        fields = ['id', 'url', 'events', 'is_active', 'created_at']
+        read_only_fields = ['id', 'is_active', 'created_at']
 
 
 class WebhookEndpointWriteSerializer(serializers.Serializer):
@@ -108,3 +120,33 @@ class WebhookEndpointWriteSerializer(serializers.Serializer):
         min_length=1,
         max_length=len(WEBHOOK_EVENTS),
     )
+
+    def validate_url(self, value):
+        from apps.core.url_security import is_safe_public_http_url
+
+        if not is_safe_public_http_url(value, resolve_hostname=True):
+            raise serializers.ValidationError('Webhook URL должен вести на публичный HTTP(S)-адрес.')
+        return value
+
+
+class WebhookEndpointCreatedSerializer(WebhookEndpointSerializer):
+    """Webhook response containing its one-time plaintext signing secret."""
+
+    secret = serializers.CharField(read_only=True)
+    warning = serializers.CharField(read_only=True)
+
+    class Meta(WebhookEndpointSerializer.Meta):
+        fields = [*WebhookEndpointSerializer.Meta.fields, 'secret', 'warning']
+
+
+class WebhookDeliverySerializer(serializers.ModelSerializer):
+    event_id = serializers.UUIDField(source='event.id', read_only=True)
+    event_type = serializers.CharField(source='event.event_type', read_only=True)
+
+    class Meta:
+        model = WebhookDelivery
+        fields = [
+            'id', 'event_id', 'event_type', 'endpoint_url', 'status', 'attempts',
+            'max_attempts', 'next_attempt_at', 'last_attempt_at', 'delivered_at',
+            'response_status', 'last_error', 'created_at',
+        ]

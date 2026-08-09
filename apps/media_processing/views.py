@@ -1,6 +1,8 @@
 from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
@@ -27,9 +29,47 @@ from apps.media_processing.services import activate_variant, create_processing_j
 from apps.products.models import ProductImage
 
 
+def _ok_response(name, data):
+    """Build the common MAP response envelope for OpenAPI only."""
+    return inline_serializer(
+        name=name,
+        fields={
+            'status': serializers.CharField(read_only=True),
+            'data': data,
+        },
+    )
+
+
+MEDIA_PROVIDER_RESPONSE = inline_serializer(
+    name='MediaProvider',
+    fields={
+        'provider_id': serializers.CharField(read_only=True),
+        'display_name': serializers.CharField(read_only=True),
+        'is_active': serializers.BooleanField(read_only=True),
+        'is_configured': serializers.BooleanField(read_only=True),
+        'capabilities': serializers.ListField(
+            child=serializers.CharField(), read_only=True,
+        ),
+        'priority': serializers.IntegerField(read_only=True),
+        'allowed_plan_slugs': serializers.ListField(
+            child=serializers.CharField(), read_only=True,
+        ),
+        'operation_credit_costs': serializers.DictField(read_only=True),
+    },
+)
+
+
+@extend_schema(tags=['Media processing'])
 class MediaProviderListView(APIView):
     """Configured capabilities and tariff visibility without exposing API credentials."""
 
+    @extend_schema(
+        operation_id='media_provider_list',
+        responses=_ok_response(
+            'MediaProviderListResponse',
+            MEDIA_PROVIDER_RESPONSE.__class__(many=True, read_only=True),
+        ),
+    )
     def get(self, request):
         registered = {provider.provider_id: provider for provider in list_media_providers()}
         policies = {policy.provider_id: policy for policy in MediaProviderPolicy.objects.all()}
@@ -57,7 +97,16 @@ class MediaProviderListView(APIView):
         return Response({'status': 'ok', 'data': data})
 
 
+@extend_schema(tags=['Media processing'])
 class MediaPresetListCreateView(APIView):
+    @extend_schema(
+        operation_id='media_preset_list',
+        summary='Получить пресеты обработки медиа',
+        responses=_ok_response(
+            'MediaPresetListResponse',
+            MediaProcessingPresetSerializer(many=True, read_only=True),
+        ),
+    )
     def get(self, request):
         presets = MediaProcessingPreset.objects.filter(
             Q(tenant=request.tenant) | Q(tenant__isnull=True),
@@ -68,6 +117,17 @@ class MediaPresetListCreateView(APIView):
             'data': MediaProcessingPresetSerializer(presets, many=True).data,
         })
 
+    @extend_schema(
+        operation_id='media_preset_create',
+        summary='Создать пресет обработки медиа',
+        request=MediaProcessingPresetSerializer,
+        responses={
+            201: _ok_response(
+                'MediaPresetCreateResponse',
+                MediaProcessingPresetSerializer(read_only=True),
+            ),
+        },
+    )
     def post(self, request):
         serializer = MediaProcessingPresetSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -78,11 +138,20 @@ class MediaPresetListCreateView(APIView):
         )
 
 
+@extend_schema(tags=['Media processing'])
 class TenantMediaSettingsView(APIView):
     def get_object(self, request):
         obj, _ = TenantMediaSettings.objects.get_or_create(tenant=request.tenant)
         return obj
 
+    @extend_schema(
+        operation_id='media_settings_retrieve',
+        summary='Получить настройки обработки медиа',
+        responses=_ok_response(
+            'TenantMediaSettingsResponse',
+            TenantMediaSettingsSerializer(read_only=True),
+        ),
+    )
     def get(self, request):
         return Response({
             'status': 'ok',
@@ -91,6 +160,15 @@ class TenantMediaSettingsView(APIView):
             ).data,
         })
 
+    @extend_schema(
+        operation_id='media_settings_update',
+        summary='Обновить настройки обработки медиа',
+        request=TenantMediaSettingsSerializer,
+        responses=_ok_response(
+            'TenantMediaSettingsUpdateResponse',
+            TenantMediaSettingsSerializer(read_only=True),
+        ),
+    )
     def patch(self, request):
         obj = self.get_object(request)
         serializer = TenantMediaSettingsSerializer(
@@ -101,7 +179,16 @@ class TenantMediaSettingsView(APIView):
         return Response({'status': 'ok', 'data': serializer.data})
 
 
+@extend_schema(tags=['Media processing'])
 class MediaJobListView(APIView):
+    @extend_schema(
+        operation_id='media_job_list',
+        summary='Получить задания обработки медиа',
+        responses=_ok_response(
+            'MediaJobListResponse',
+            MediaProcessingJobSerializer(many=True, read_only=True),
+        ),
+    )
     def get(self, request):
         jobs = MediaProcessingJob.objects.filter(tenant=request.tenant).select_related(
             'product_image__product', 'preset',
@@ -114,7 +201,16 @@ class MediaJobListView(APIView):
         })
 
 
+@extend_schema(tags=['Media processing'])
 class MediaJobDetailView(APIView):
+    @extend_schema(
+        operation_id='media_job_retrieve',
+        summary='Получить задание обработки медиа',
+        responses=_ok_response(
+            'MediaJobDetailResponse',
+            MediaProcessingJobSerializer(read_only=True),
+        ),
+    )
     def get(self, request, job_pk: int):
         job = get_object_or_404(
             MediaProcessingJob.objects.prefetch_related('variants'),
@@ -127,7 +223,19 @@ class MediaJobDetailView(APIView):
         })
 
 
+@extend_schema(tags=['Media processing'])
 class ProductImageProcessView(APIView):
+    @extend_schema(
+        operation_id='product_image_process',
+        summary='Запустить обработку изображения товара',
+        request=MediaJobCreateSerializer,
+        responses={
+            202: _ok_response(
+                'ProductImageProcessResponse',
+                MediaProcessingJobSerializer(read_only=True),
+            ),
+        },
+    )
     def post(self, request, product_pk: int, image_pk: int):
         image = get_object_or_404(
             ProductImage.objects.select_related('product__tenant'),
@@ -166,7 +274,17 @@ class ProductImageProcessView(APIView):
         )
 
 
+@extend_schema(tags=['Media processing'])
 class ProductImageVariantActivateView(APIView):
+    @extend_schema(
+        operation_id='media_variant_activate',
+        summary='Активировать вариант изображения',
+        request=None,
+        responses=_ok_response(
+            'ProductImageVariantActivateResponse',
+            ProductImageVariantSerializer(read_only=True),
+        ),
+    )
     def post(self, request, variant_pk: int):
         variant = get_object_or_404(
             ProductImageVariant.objects.select_related('product_image__product'),
@@ -182,7 +300,16 @@ class ProductImageVariantActivateView(APIView):
         })
 
 
+@extend_schema(tags=['Media processing'])
 class ImageAssessmentListView(APIView):
+    @extend_schema(
+        operation_id='media_assessment_list',
+        summary='Получить оценки изображений',
+        responses=_ok_response(
+            'ImageAssessmentListResponse',
+            ImageAssessmentSerializer(many=True, read_only=True),
+        ),
+    )
     def get(self, request):
         assessments = ImageAssessment.objects.filter(
             tenant=request.tenant,

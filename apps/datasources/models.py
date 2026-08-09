@@ -1,10 +1,10 @@
 from django.db import models
 
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel
 from apps.tenants.models import Tenant
 
 
-class DataSourceConnection(TimestampedModel):
+class DataSourceConnection(SoftDeleteModel):
     """Подключение к источнику данных для импорта товаров (1С, CSV и т.д.)."""
 
     TYPE_1C_HTTP = '1c_http'
@@ -46,3 +46,8 @@ class DataSourceConnection(TimestampedModel):
 
     def __str__(self):
         return f'{self.tenant.slug} / {self.name} ({self.type})'
+
+    def soft_delete(self):
+        self.is_active = False
+        self.save(update_fields=['is_active', 'updated_at'])
+        super().soft_delete()

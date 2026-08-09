@@ -1,0 +1,83 @@
+# Production security runbook
+
+## Обязательные секреты
+
+Production settings останавливают запуск при отсутствии или небезопасном значении:
+
+- `DJANGO_SECRET_KEY` — случайная строка не короче 50 символов;
+- `DATABASE_URL` и отдельные `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`;
+- `REDIS_PASSWORD` и `REDIS_URL` с тем же паролем;
+- `FIELD_ENCRYPTION_KEYS` либо `FIELD_ENCRYPTION_KEY` с валидным Fernet-ключом;
+- `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, HTTPS `SITE_URL` и `FRONTEND_URL`.
+
+Генерация значений без сохранения в shell history:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(64))"
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Секреты должны храниться в secret manager или защищённом `.env` на сервере. `.env`
+не коммитится в Git.
+
+## Ротация Fernet-ключа без простоя
+
+1. Сгенерировать новый ключ.
+2. Установить `FIELD_ENCRYPTION_KEYS=<new>,<old>` и развернуть приложение.
+3. Проверить расшифровку: `python manage.py rotate_encryption_keys --dry-run`.
+4. Выполнить `python manage.py rotate_encryption_keys` — все credentials и webhook
+   secrets будут перешифрованы первым ключом.
+5. Удалить старый ключ из `FIELD_ENCRYPTION_KEYS` и развернуть повторно.
+
+Команда не выводит расшифрованные значения.
+
+## Webhook delivery
+
+Событие и все его доставки сначала сохраняются в PostgreSQL. Недоступность Redis
+не теряет событие: периодическая задача повторно подбирает outbox каждую минуту.
+
+Поддерживаемые заголовки:
+
+- `X-MAP-Event` — тип события;
+- `X-MAP-Delivery` — UUID события;
+- `X-MAP-Signature` — `sha256=<HMAC-SHA256(raw_body, endpoint_secret)>`.
+
+Успехом считается любой HTTP `2xx`. Redirect запрещён. Повторы выполняются с
+экспоненциальными задержками до `WEBHOOK_MAX_ATTEMPTS`; история хранится
+`WEBHOOK_AUDIT_RETENTION_DAYS`.
+
+## Soft-delete и retention
+
+Товары, листинги, аккаунты маркетплейсов, источники данных и webhook endpoint-ы
+сначала скрываются через `deleted_at`. Восстановление:
+
+```bash
+python manage.py restore_soft_deleted products.Product 123
+python manage.py restore_soft_deleted marketplaces.MarketplaceAccount 42 --reactivate
+```
+
+Проверка будущего физического удаления:
+
+```bash
+python manage.py purge_retained_data --dry-run
+```
+
+Физическая очистка запускается Celery Beat ежедневно. Сроки задаются переменными
+`SOFT_DELETE_RETENTION_DAYS`, `WEBHOOK_AUDIT_RETENTION_DAYS`,
+`BILLING_AUDIT_RETENTION_DAYS` и `SYNC_LOG_RETENTION_DAYS`.
+
+## Egress policy
+
+Production-контейнеры находятся во внутренней Docker-сети без прямого маршрута в
+интернет. Исходящие HTTP(S)-запросы проходят через Squid. Proxy запрещает private,
+loopback, link-local, multicast и служебные диапазоны, но разрешает публичные
+endpoint-ы, необходимые Avito, AI-провайдерам, S3 и tenant webhook-ам.
+
+`NO_PROXY` содержит только внутренние имена `db`, `redis`, `django`, `frontend` и
+`nginx`. Изменять этот список следует только вместе с threat review.
+
+## Deployment
+
+`deploy.sh` выполняет `docker compose config --quiet` до пересборки. CI отклоняет
+изменения при branch coverage ниже 70%. После изменения
+секретов сначала выполните ту же команду вручную и только затем запускайте deploy.

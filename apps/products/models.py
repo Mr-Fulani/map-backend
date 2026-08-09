@@ -1,7 +1,7 @@
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel, TimestampedModel
 from apps.datasources.models import DataSourceConnection
 from apps.tenants.models import CatalogDomain, Tenant
 
@@ -183,7 +183,7 @@ class ProductBrandAlias(TimestampedModel):
         super().save(*args, **kwargs)
 
 
-class Product(TimestampedModel):
+class Product(SoftDeleteModel):
     """Товар из источника данных (1С, CSV и т.д.)."""
 
     class BrandResolutionStatus(models.TextChoices):
@@ -288,6 +288,12 @@ class Product(TimestampedModel):
 
     def __str__(self):
         return f'{self.article} — {self.name}'
+
+    def soft_delete(self):
+        self.listings.all().delete()
+        self.sync_excluded = True
+        self.save(update_fields=['sync_excluded', 'updated_at'])
+        super().soft_delete()
 
 
 class ProductCatalogClassification(TimestampedModel):

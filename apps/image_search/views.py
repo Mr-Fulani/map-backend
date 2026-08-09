@@ -2,7 +2,8 @@
 
 from celery.result import AsyncResult
 from django.shortcuts import get_object_or_404
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
@@ -11,6 +12,51 @@ from rest_framework.views import APIView
 from apps.image_search.serializers import ProductImageSerializer
 from apps.image_search.services import moderation
 from apps.products.models import Product, ProductImage
+
+
+def _ok_response(name, data):
+    """Build the common MAP response envelope for OpenAPI only."""
+    return inline_serializer(
+        name=name,
+        fields={
+            'status': serializers.CharField(read_only=True),
+            'data': data,
+        },
+    )
+
+
+IMAGE_SEARCH_STATUS_DATA = inline_serializer(
+    name='ImageSearchStatusData',
+    fields={
+        'state': serializers.ChoiceField(
+            choices=['running', 'done', 'failed'], read_only=True,
+        ),
+        'saved_count': serializers.IntegerField(required=False),
+        'found_count': serializers.IntegerField(required=False),
+        'rejected_count': serializers.IntegerField(required=False),
+        'eligible_count': serializers.IntegerField(required=False),
+        'download_failed_count': serializers.IntegerField(required=False),
+        'reason_code': serializers.CharField(required=False),
+        'message': serializers.CharField(required=False),
+        'sources': serializers.ListField(
+            child=serializers.CharField(), required=False,
+        ),
+        'errors': inline_serializer(
+            name='ImageSearchSourceError',
+            many=True,
+            required=False,
+            fields={
+                'source_id': serializers.CharField(),
+                'code': serializers.CharField(),
+                'message': serializers.CharField(),
+            },
+        ),
+        'cached': serializers.BooleanField(required=False),
+        'product_image_ids': serializers.ListField(
+            child=serializers.IntegerField(), required=False,
+        ),
+    },
+)
 
 
 def _get_product(product_pk: int, tenant) -> Product:
@@ -31,6 +77,13 @@ def _get_image(product: Product, image_pk: int) -> ProductImage:
 class ImageListView(APIView):
     """GET /api/v1/products/{product_pk}/images/ — список изображений товара."""
 
+    @extend_schema(
+        operation_id='product_image_list',
+        responses=_ok_response(
+            'ProductImageListResponse',
+            ProductImageSerializer(many=True, read_only=True),
+        ),
+    )
     def get(self, request, product_pk: int):
         """Возвращает все изображения товара, упорядоченные по позиции."""
         product = _get_product(product_pk, request.tenant)
@@ -45,12 +98,24 @@ class ImageListView(APIView):
 class ImageDetailView(APIView):
     """GET/DELETE /api/v1/products/{product_pk}/images/{image_pk}/."""
 
+    @extend_schema(
+        operation_id='product_image_retrieve',
+        responses=_ok_response(
+            'ProductImageDetailResponse',
+            ProductImageSerializer(read_only=True),
+        ),
+    )
     def get(self, request, product_pk: int, image_pk: int):
         """Возвращает карточку одного изображения."""
         product = _get_product(product_pk, request.tenant)
         image = _get_image(product, image_pk)
         return Response({'status': 'ok', 'data': ProductImageSerializer(image, context={'request': request}).data})
 
+    @extend_schema(
+        operation_id='product_image_delete',
+        request=None,
+        responses={204: None},
+    )
     def delete(self, request, product_pk: int, image_pk: int):
         """Помечает изображение как отклонённое (сохраняет sha256/url для дедупликации)."""
         product = _get_product(product_pk, request.tenant)
@@ -64,6 +129,17 @@ class ImageDetailView(APIView):
 class ImageSearchView(APIView):
     """POST /api/v1/products/{product_pk}/images/search/ — запустить поиск изображений."""
 
+    @extend_schema(
+        operation_id='product_image_search_start',
+        request=None,
+        responses=_ok_response(
+            'ProductImageSearchStartResponse',
+            inline_serializer(
+                name='ProductImageSearchTask',
+                fields={'task_id': serializers.CharField(read_only=True)},
+            ),
+        ),
+    )
     def post(self, request, product_pk: int):
         """Запускает Celery-задачу поиска изображений. Возвращает task_id для опроса статуса."""
         from apps.image_search.models import ImageSearchCache
@@ -80,6 +156,13 @@ class ImageSearchView(APIView):
 class ImageSearchStatusView(APIView):
     """GET /api/v1/products/{product_pk}/images/search/{task_id}/ — статус задачи поиска."""
 
+    @extend_schema(
+        operation_id='product_image_search_status',
+        responses=_ok_response(
+            'ProductImageSearchStatusResponse',
+            IMAGE_SEARCH_STATUS_DATA,
+        ),
+    )
     def get(self, request, product_pk: int, task_id: str):
         """Возвращает состояние Celery-задачи и количество сохранённых изображений."""
         get_object_or_404(Product, pk=product_pk, tenant=request.tenant)
@@ -117,6 +200,14 @@ class ImageSearchStatusView(APIView):
 class ImageApproveView(APIView):
     """POST /api/v1/products/{product_pk}/images/{image_pk}/approve/ — одобрить изображение."""
 
+    @extend_schema(
+        operation_id='product_image_approve',
+        request=None,
+        responses=_ok_response(
+            'ProductImageApproveResponse',
+            ProductImageSerializer(read_only=True),
+        ),
+    )
     def post(self, request, product_pk: int, image_pk: int):
         """Переводит изображение в статус AUTO_APPROVED."""
         product = _get_product(product_pk, request.tenant)
@@ -130,6 +221,14 @@ class ImageApproveView(APIView):
 class ImageRejectView(APIView):
     """POST /api/v1/products/{product_pk}/images/{image_pk}/reject/ — отклонить изображение."""
 
+    @extend_schema(
+        operation_id='product_image_reject',
+        request=None,
+        responses=_ok_response(
+            'ProductImageRejectResponse',
+            ProductImageSerializer(read_only=True),
+        ),
+    )
     def post(self, request, product_pk: int, image_pk: int):
         """Переводит изображение в статус REJECTED."""
         product = _get_product(product_pk, request.tenant)
@@ -143,6 +242,14 @@ class ImageRejectView(APIView):
 class ImageSetPrimaryView(APIView):
     """PUT /api/v1/products/{product_pk}/images/{image_pk}/set_primary/ — сделать главным."""
 
+    @extend_schema(
+        operation_id='product_image_set_primary',
+        request=None,
+        responses=_ok_response(
+            'ProductImageSetPrimaryResponse',
+            ProductImageSerializer(read_only=True),
+        ),
+    )
     def put(self, request, product_pk: int, image_pk: int):
         """Устанавливает изображение как главное, снимает флаг с остальных."""
         product = _get_product(product_pk, request.tenant)
@@ -157,6 +264,19 @@ class ImageUploadView(APIView):
 
     parser_classes = [MultiPartParser]
 
+    @extend_schema(
+        operation_id='product_image_upload',
+        request=inline_serializer(
+            name='ProductImageUploadRequest',
+            fields={'image': serializers.ImageField(write_only=True)},
+        ),
+        responses={
+            201: _ok_response(
+                'ProductImageUploadResponse',
+                ProductImageSerializer(read_only=True),
+            ),
+        },
+    )
     def post(self, request, product_pk: int):
         """Принимает multipart-файл, обрабатывает через Pillow и сохраняет в S3."""
         product = get_object_or_404(Product, pk=product_pk, tenant=request.tenant)
@@ -186,6 +306,29 @@ class ImageUploadView(APIView):
 class BulkSearchView(APIView):
     """POST /api/v1/images/bulk-search/ — запустить поиск для нескольких товаров."""
 
+    @extend_schema(
+        operation_id='product_image_bulk_search',
+        request=inline_serializer(
+            name='ProductImageBulkSearchRequest',
+            fields={
+                'product_ids': serializers.ListField(
+                    child=serializers.IntegerField(min_value=1),
+                ),
+            },
+        ),
+        responses=_ok_response(
+            'ProductImageBulkSearchResponse',
+            inline_serializer(
+                name='ProductImageBulkSearchResult',
+                fields={
+                    'task_ids': serializers.DictField(
+                        child=serializers.CharField(), read_only=True,
+                    ),
+                    'count': serializers.IntegerField(read_only=True),
+                },
+            ),
+        ),
+    )
     def post(self, request):
         """Принимает список product_ids, запускает задачу поиска для каждого.
 
@@ -227,6 +370,23 @@ class BulkSearchView(APIView):
 class ImageQuotaView(APIView):
     """GET /api/v1/images/quota/ — текущая квота Brave Search API."""
 
+    @extend_schema(
+        operation_id='image_search_quota_retrieve',
+        responses=_ok_response(
+            'ImageSearchQuotaResponse',
+            inline_serializer(
+                name='ImageSearchQuota',
+                fields={
+                    'source': serializers.CharField(read_only=True),
+                    'period': serializers.CharField(read_only=True),
+                    'used': serializers.IntegerField(read_only=True),
+                    'limit': serializers.IntegerField(read_only=True),
+                    'soft_cap': serializers.IntegerField(read_only=True),
+                    'is_paused': serializers.BooleanField(read_only=True),
+                },
+            ),
+        ),
+    )
     def get(self, request):
         """Возвращает персистентный счётчик запросов Brave за текущий месяц.
 

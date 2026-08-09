@@ -2,8 +2,12 @@ import hashlib
 import os
 import tempfile
 
-from rest_framework import status
+from drf_spectacular.utils import (
+    OpenApiParameter, OpenApiTypes, extend_schema, inline_serializer,
+)
+from rest_framework import serializers, status
 from rest_framework.parsers import MultiPartParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -11,13 +15,63 @@ from apps.datasources.adapters.csv_adapter import CSVAdapter, CSVValidationError
 from apps.datasources.models import DataSourceConnection
 from apps.datasources.serializers import DataSourceConnectionSerializer, DataSourceConnectionUpdateSerializer
 from apps.datasources.services import ConnectionService
+from apps.tenants.permissions import TenantAdminPermission, TenantAdminWritePermission
 
 
+_CONNECTION_TEST_RESPONSE = inline_serializer(
+    name='DataSourceConnectionTestResponse',
+    fields={
+        'ok': serializers.BooleanField(),
+        'error': serializers.CharField(required=False),
+    },
+)
+_SYNC_RESPONSE = inline_serializer(
+    name='DataSourceSyncResponse',
+    fields={
+        'status': serializers.CharField(),
+        'message': serializers.CharField(),
+    },
+)
+_CSV_UPLOAD_REQUEST = inline_serializer(
+    name='DataSourceCSVUploadRequest',
+    fields={'file': serializers.FileField()},
+)
+_CSV_UPLOAD_RESPONSE = inline_serializer(
+    name='DataSourceCSVUploadResponse',
+    fields={
+        'data': serializers.DictField(
+            child=serializers.JSONField(),
+            required=False,
+            help_text='Результат импорта или предпросмотра файла.',
+        ),
+        'headers': serializers.ListField(
+            child=serializers.CharField(), required=False,
+        ),
+        'rows': serializers.ListField(
+            child=serializers.DictField(), required=False,
+        ),
+        'total_rows': serializers.IntegerField(required=False),
+    },
+)
+
+
+@extend_schema(tags=['Data sources'])
 class DataSourceListView(APIView):
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
+    @extend_schema(
+        summary='Список источников данных',
+        responses=DataSourceConnectionSerializer(many=True),
+    )
     def get(self, request):
         qs = DataSourceConnection.objects.filter(tenant=request.tenant)
         return Response(DataSourceConnectionSerializer(qs, many=True).data)
 
+    @extend_schema(
+        summary='Создать источник данных',
+        request=DataSourceConnectionSerializer,
+        responses={201: DataSourceConnectionSerializer},
+    )
     def post(self, request):
         serializer = DataSourceConnectionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -25,33 +79,66 @@ class DataSourceListView(APIView):
         return Response(DataSourceConnectionSerializer(conn).data, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(tags=['Data sources'])
 class DataSourceDetailView(APIView):
-    def get(self, request, pk):
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
+    @extend_schema(
+        summary='Получить источник данных',
+        responses=DataSourceConnectionSerializer,
+    )
+    def get(self, request, pk: int):
         conn = DataSourceConnection.objects.get(pk=pk, tenant=request.tenant)
         return Response(DataSourceConnectionSerializer(conn).data)
 
-    def put(self, request, pk):
+    @extend_schema(
+        summary='Обновить источник данных',
+        request=DataSourceConnectionUpdateSerializer,
+        responses=DataSourceConnectionSerializer,
+    )
+    def put(self, request, pk: int):
         serializer = DataSourceConnectionUpdateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         conn = ConnectionService.update(pk, request.tenant, serializer.validated_data)
         return Response(DataSourceConnectionSerializer(conn).data)
 
-    def delete(self, request, pk):
+    @extend_schema(
+        summary='Удалить источник данных',
+        request=None,
+        responses={204: None},
+    )
+    def delete(self, request, pk: int):
         ConnectionService.delete(pk, request.tenant)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@extend_schema(tags=['Data sources'])
 class DataSourceTestView(APIView):
-    def post(self, request, pk):
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
+
+    @extend_schema(
+        summary='Проверить подключение к источнику',
+        request=None,
+        responses=_CONNECTION_TEST_RESPONSE,
+    )
+    def post(self, request, pk: int):
         result = ConnectionService.test(pk, request.tenant)
         http_status = status.HTTP_200_OK if result['ok'] else status.HTTP_502_BAD_GATEWAY
         return Response(result, status=http_status)
 
 
+@extend_schema(tags=['Data sources'])
 class DataSourceSyncView(APIView):
     """POST /api/v1/datasources/{pk}/sync/ — запустить импорт в Celery."""
 
-    def post(self, request, pk):
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
+
+    @extend_schema(
+        summary='Запустить синхронизацию источника',
+        request=None,
+        responses=_SYNC_RESPONSE,
+    )
+    def post(self, request, pk: int):
         from apps.datasources.models import DataSourceConnection
         from apps.products.tasks import import_from_datasource
 
@@ -67,9 +154,30 @@ class DataSourceSyncView(APIView):
         return Response({'status': 'ok', 'message': 'Синхронизация запущена'})
 
 
+@extend_schema(tags=['Data sources'])
 class CSVUploadView(APIView):
     parser_classes = [MultiPartParser]
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
 
+    @extend_schema(
+        summary='Загрузить CSV или Excel',
+        request=_CSV_UPLOAD_REQUEST,
+        parameters=[
+            OpenApiParameter(
+                name='preview',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description='Вернуть предпросмотр без импорта.',
+            ),
+            OpenApiParameter(
+                name='confirm',
+                type=OpenApiTypes.BOOL,
+                location=OpenApiParameter.QUERY,
+                description='Подтвердить повторную загрузку файла.',
+            ),
+        ],
+        responses=_CSV_UPLOAD_RESPONSE,
+    )
     def post(self, request):
         file_obj = request.FILES.get('file')
         if file_obj is None:

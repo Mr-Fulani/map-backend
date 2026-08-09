@@ -83,7 +83,12 @@ def _json_ld_candidates(content: str) -> list[dict]:
     except (ValueError, TypeError):
         return []
     candidates = []
-    for node in tree.xpath('//script[contains(translate(@type, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "ld+json")]'):
+    json_ld_xpath = (
+        '//script[contains('
+        'translate(@type, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), '
+        '"ld+json")]'
+    )
+    for node in tree.xpath(json_ld_xpath):
         try:
             payload = json.loads(node.text or '')
         except (json.JSONDecodeError, TypeError):
@@ -139,20 +144,33 @@ def _html_candidates(content: str) -> list[dict]:
     currency = first('//*[@itemprop="priceCurrency"]/@content | //*[@itemprop="priceCurrency"]/text()')
     source = 'microdata'
     if not price:
-        price = first('//meta[@property="product:price:amount"]/@content | //meta[@property="og:price:amount"]/@content')
-        currency = currency or first('//meta[@property="product:price:currency"]/@content | //meta[@property="og:price:currency"]/@content')
+        price = first(
+            '//meta[@property="product:price:amount"]/@content | '
+            '//meta[@property="og:price:amount"]/@content',
+        )
+        currency = currency or first(
+            '//meta[@property="product:price:currency"]/@content | '
+            '//meta[@property="og:price:currency"]/@content',
+        )
         source = 'opengraph'
     if not price:
         return []
     return [{
         'source': source,
         'title': first('//*[@itemprop="name"]/text() | //meta[@property="og:title"]/@content | //title/text()'),
-        'article': first('//*[@itemprop="sku"]/@content | //*[@itemprop="sku"]/text() | //*[@itemprop="mpn"]/@content | //*[@itemprop="mpn"]/text()'),
+        'article': first(
+            '//*[@itemprop="sku"]/@content | //*[@itemprop="sku"]/text() | '
+            '//*[@itemprop="mpn"]/@content | //*[@itemprop="mpn"]/text()',
+        ),
         'brand': first('//*[@itemprop="brand"]/@content | //*[@itemprop="brand"]//text()'),
         'seller_name': first('//*[@itemprop="seller"]/@content | //*[@itemprop="seller"]//text()'),
         'price': price,
         'currency': currency,
-        'availability': first('//*[@itemprop="availability"]/@href | //*[@itemprop="availability"]/@content | //*[@itemprop="availability"]//text()'),
+        'availability': first(
+            '//*[@itemprop="availability"]/@href | '
+            '//*[@itemprop="availability"]/@content | '
+            '//*[@itemprop="availability"]//text()',
+        ),
         'condition': first('//*[@itemprop="itemCondition"]/@href | //*[@itemprop="itemCondition"]/@content'),
         'url': '',
     }]

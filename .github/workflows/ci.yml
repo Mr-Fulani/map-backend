@@ -40,6 +40,7 @@ jobs:
       DATABASE_URL: postgres://map_user:map_password@localhost:5432/map_db
       REDIS_URL: redis://localhost:6379/0
       DJANGO_SECRET_KEY: ci-secret-key-for-testing-only
+      FIELD_ENCRYPTION_KEY: Y2ktb25seS1mZXJuZXQta2V5LTMyLWJ5dGVzISEhISE=
 
     steps:
       - uses: actions/checkout@v4
@@ -57,14 +58,37 @@ jobs:
       - name: Проверить линтером (flake8)
         run: flake8 apps/ config/
 
+      - name: Проверить незаписанные изменения моделей
+        run: python manage.py makemigrations --check --dry-run
+
       - name: Применить миграции
         run: python manage.py migrate --noinput
 
+      - name: Проверить OpenAPI-схему
+        run: python manage.py spectacular --file /tmp/openapi-schema.yml --validate --fail-on-warn
+
       - name: Запустить тесты
-        run: pytest --cov=apps --cov-fail-under=0 --cov-report=xml
+        run: pytest --cov=apps --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml
 
       - name: Загрузить покрытие
         uses: codecov/codecov-action@v4
         if: always()
         with:
           file: coverage.xml
+
+      - name: Настроить Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Установить frontend-зависимости
+        working-directory: frontend
+        run: npm ci
+
+      - name: Проверить и собрать frontend
+        working-directory: frontend
+        run: |
+          npm run lint
+          npm run build

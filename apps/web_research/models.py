@@ -159,6 +159,9 @@ class WebResearchRun(TimestampedModel):
         return f'Web research #{self.pk} — product {self.product_id}'
 
 
+WEB_RESEARCH_RUN_STATUS_CHOICES = WebResearchRun.Status.choices
+
+
 class WebResearchEvidence(TimestampedModel):
     """Search result supplied to the model as a numbered evidence document."""
 
@@ -290,6 +293,10 @@ class CompetitorOffer(TimestampedModel):
 
     def __str__(self):
         return f'{self.seller_name or self.domain}: {self.price} {self.currency}'
+
+
+COMPETITOR_OFFER_CONDITION_CHOICES = CompetitorOffer.Condition.choices
+COMPETITOR_OFFER_REVIEW_STATUS_CHOICES = CompetitorOffer.ReviewStatus.choices
 
 
 class WebSearchConnection(TimestampedModel):

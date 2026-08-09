@@ -1,6 +1,7 @@
 from django.utils import timezone
 from rest_framework.authentication import BaseAuthentication
 from rest_framework.exceptions import AuthenticationFailed
+from rest_framework_simplejwt.authentication import JWTAuthentication
 
 
 class APIKeyAuthentication(BaseAuthentication):
@@ -36,3 +37,25 @@ class APIKeyAuthentication(BaseAuthentication):
 
     def authenticate_header(self, request):
         return 'Bearer'
+
+
+class TenantJWTAuthentication(JWTAuthentication):
+    """JWT-аутентификация с проверкой актуального tenant membership."""
+
+    def authenticate(self, request):
+        result = super().authenticate(request)
+        if result is None:
+            return None
+
+        user, validated_token = result
+        tenant_id = validated_token.get('tenant_id')
+
+        from apps.tenants.models import TenantUser
+
+        if not tenant_id or not TenantUser.objects.filter(
+            tenant_id=tenant_id,
+            tenant__is_active=True,
+            user=user,
+        ).exists():
+            raise AuthenticationFailed('Доступ к организации отозван.')
+        return result

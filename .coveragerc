@@ -1,0 +1,16 @@
+[run]
+branch = True
+source = apps
+omit =
+    */migrations/*
+    */tests/*
+    */admin.py
+
+[report]
+fail_under = 70
+show_missing = True
+skip_covered = True
+precision = 1
+
+[xml]
+output = coverage.xml

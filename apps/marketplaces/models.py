@@ -2,7 +2,7 @@ import uuid
 
 from django.db import models
 
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel, TimestampedModel
 from apps.tenants.models import Tenant
 
 
@@ -73,7 +73,7 @@ class CategoryMapping(TimestampedModel):
         return f'{self.tenant.slug}: {self.category_source} → {self.category_target}'
 
 
-class MarketplaceAccount(TimestampedModel):
+class MarketplaceAccount(SoftDeleteModel):
     """Аккаунт маркетплейса (Avito) привязанный к тенанту."""
 
     MARKETPLACE_AVITO = 'avito'
@@ -124,6 +124,12 @@ class MarketplaceAccount(TimestampedModel):
 
     def __str__(self):
         return f'{self.tenant.slug} / {self.name}'
+
+    def soft_delete(self):
+        self.listings.all().delete()
+        self.is_active = False
+        self.save(update_fields=['is_active', 'updated_at'])
+        super().soft_delete()
 
 
 class AvitoAccountStatus(TimestampedModel):
@@ -317,7 +323,7 @@ class MarketplacePlacementAddress(TimestampedModel):
         return f'{self.account.name}: {self.name}'
 
 
-class Listing(TimestampedModel):
+class Listing(SoftDeleteModel):
     STATUS_DRAFT = 'draft'
     STATUS_QUEUED = 'queued'
     STATUS_PENDING = 'pending'

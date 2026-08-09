@@ -4,9 +4,11 @@
 Покрывает: ListingService.approve, request_regenerate, update_content,
 а также API-эндпоинты detail / approve / regenerate / patch.
 """
-import pytest
-from unittest.mock import patch
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
 
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
@@ -327,6 +329,29 @@ class TestListingDetailAPI:
         assert resp.json()['data']['total'] == 1
         assert listing.status == Listing.STATUS_QUEUED
         assert other_listing.status == Listing.STATUS_DRAFT
+
+
+def test_listing_catalog_category_preserves_null_default_margin():
+    """Унаследованная маржа остаётся null, а не строкой ``"None"``."""
+    from apps.marketplaces.serializers import ListingDetailSerializer
+
+    category = SimpleNamespace(
+        id=7,
+        name='Головка блока цилиндров',
+        parent_id=None,
+        parent=None,
+        default_margin_pct=None,
+    )
+    listing = SimpleNamespace(
+        product=SimpleNamespace(catalog_category=category),
+    )
+
+    data = ListingDetailSerializer().get_catalog_category(listing)
+
+    assert data['default_margin_pct'] is None
+    category.default_margin_pct = Decimal('12.50')
+    data = ListingDetailSerializer().get_catalog_category(listing)
+    assert data['default_margin_pct'] == '12.50'
 
 
 @pytest.mark.django_db

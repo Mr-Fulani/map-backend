@@ -95,14 +95,26 @@ docker compose exec django mypy apps/
 
 ---
 
+## OpenAPI
+
+```bash
+# Строгая проверка схемы: команда завершается ошибкой при любом warning/error
+python manage.py spectacular --file /tmp/openapi-schema.yml --validate --fail-on-warn
+```
+
+Эту же проверку выполняет CI. При изменении API явно описывайте request/response,
+параметры и уникальный `operation_id`; не подавляйте предупреждения генератора.
+
+---
+
 ## Django Management Commands
 
 ```bash
 make seed                        # Заполнить тарифные планы (seed_plans)
+docker compose exec django python manage.py setup_periodic_tasks
 docker compose exec django python manage.py createsuperuser
 docker compose exec django python manage.py collectstatic
 docker compose exec django python manage.py shell         # Django shell
-docker compose exec django python manage.py shell_plus    # Расширенный shell (django-extensions)
 ```
 
 ---
@@ -116,8 +128,8 @@ from apps.products.tasks import import_from_datasource
 import_from_datasource.delay(1)
 "
 
-# Мониторинг задач (Flower):
-docker compose exec celery_worker celery -A config flower
+# Проверка доступных Celery worker-ов:
+docker compose exec celery_worker celery -A config inspect ping
 
 # Очистить очередь Redis:
 docker compose exec redis redis-cli FLUSHDB

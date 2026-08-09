@@ -95,14 +95,18 @@ class TenantMiddleware:
         return None
 
     def _resolve_from_jwt(self, token_string):
-        """Декодирует JWT и извлекает tenant_id из claims."""
-        from apps.tenants.models import Tenant
+        """Декодирует JWT и проверяет актуальное членство пользователя в tenant-е."""
+        from apps.tenants.models import Tenant, TenantUser
 
         try:
             from rest_framework_simplejwt.tokens import AccessToken
             token = AccessToken(token_string)
             tenant_id = token.get('tenant_id')
-            if tenant_id:
+            user_id = token.get('user_id')
+            if tenant_id and user_id and TenantUser.objects.filter(
+                tenant_id=tenant_id,
+                user_id=user_id,
+            ).exists():
                 return Tenant.objects.get(pk=tenant_id)
         except Exception:
             pass

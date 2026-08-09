@@ -26,6 +26,7 @@ DJANGO_APPS = [
 THIRD_PARTY_APPS = [
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'drf_spectacular',
     'django_celery_beat',
@@ -318,51 +319,9 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Europe/Moscow'
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
-CELERY_BEAT_SCHEDULE = {
-    'sync-avito-brand-catalog-72h': {
-        'task': 'apps.marketplaces.tasks.sync_avito_brand_catalog',
-        'schedule': 60 * 60 * 72,
-        'options': {'queue': 'avito_update'},
-    },
-    'cleanup-old-logs-daily': {
-        'task': 'apps.notifications.tasks.cleanup_old_logs',
-        'schedule': 60 * 60 * 24,
-        'options': {'queue': 'notifications'},
-    },
-    'billing-check-expired-daily': {
-        'task': 'apps.billing.tasks.billing_check_expired',
-        'schedule': 60 * 60 * 24,
-        'options': {'queue': 'billing'},
-    },
-    'reset-monthly-ai-credits-daily': {
-        'task': 'apps.billing.tasks.reset_monthly_ai_credits',
-        'schedule': 60 * 60 * 24,
-        'options': {'queue': 'billing'},
-    },
-    'update-tenant-counters-15min': {
-        'task': 'apps.tenants.tasks.update_tenant_counters',
-        'schedule': 60 * 15,
-        'options': {'queue': 'sync_import'},
-    },
-    # Самосверка статусов с Avito: застрявшие pending → опрос, queued → публикация,
-    # active → сверка модерации. Без неё статус в БД держался только на разовом
-    # опросе при публикации и отставал от реального состояния на Avito.
-    'check-moderation-status-10min': {
-        'task': 'apps.marketplaces.tasks.check_moderation_status',
-        'schedule': 60 * 10,
-        'options': {'queue': 'avito_update'},
-    },
-    'refresh-avito-account-statuses-6h': {
-        'task': 'apps.marketplaces.tasks.refresh_avito_account_statuses',
-        'schedule': 60 * 60 * 6,
-        'options': {'queue': 'avito_update'},
-    },
-    'sync-avito-category-tree-weekly': {
-        'task': 'apps.marketplaces.tasks.sync_avito_category_tree',
-        'schedule': 60 * 60 * 24 * 7,
-        'options': {'queue': 'avito_update'},
-    },
-}
+# Единственный источник расписания — management command setup_periodic_tasks.
+# Смешивание beat_schedule и DatabaseScheduler создавало дубли одних и тех же задач.
+CELERY_BEAT_SCHEDULE = {}
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 3600
 CELERY_TASK_SOFT_TIME_LIMIT = 3300
@@ -389,10 +348,11 @@ CELERY_TASK_DEFAULT_QUEUE = 'sync_import'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'apps.tenants.authentication.APIKeyAuthentication',
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'apps.tenants.authentication.TenantJWTAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
+        'apps.tenants.permissions.TenantRolePermission',
     ],
     'DEFAULT_PAGINATION_CLASS': 'apps.core.pagination.MapPagination',
     'PAGE_SIZE': 50,
@@ -435,27 +395,41 @@ SPECTACULAR_SETTINGS = {
     ),
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
-    'SECURITY': [{'Bearer': []}],
-    'COMPONENTS': {
-        'securitySchemes': {
-            'Bearer': {
-                'type': 'http',
-                'scheme': 'bearer',
-                'bearerFormat': 'API Key or JWT',
-                'description': 'API Key (map_sk_...) или JWT access token',
-            },
-        },
+    'ENUM_NAME_OVERRIDES': {
+        'ListingStatusEnum': 'apps.marketplaces.models.Listing.STATUS_CHOICES',
+        'WebResearchRunStatusEnum': (
+            'apps.web_research.models.WEB_RESEARCH_RUN_STATUS_CHOICES'
+        ),
+        'ProductConditionEnum': 'apps.products.models.Product.CONDITION_CHOICES',
+        'ProductReviewStatusEnum': 'apps.products.models.ReviewStatus',
+        'CompetitorOfferConditionEnum': (
+            'apps.web_research.models.COMPETITOR_OFFER_CONDITION_CHOICES'
+        ),
+        'CompetitorOfferReviewStatusEnum': (
+            'apps.web_research.models.COMPETITOR_OFFER_REVIEW_STATUS_CHOICES'
+        ),
+        'DataSourceTypeEnum': 'apps.datasources.models.DataSourceConnection.TYPE_CHOICES',
     },
     'TAGS': [
         {'name': 'Auth', 'description': 'Регистрация, JWT, информация о текущем пользователе'},
         {'name': 'Tenant', 'description': 'Организация и её пользователи'},
+        {'name': 'Profile', 'description': 'Профиль и настройки текущего пользователя'},
         {'name': 'API Keys', 'description': 'Управление API-ключами'},
         {'name': 'Webhooks', 'description': 'Вебхук-эндпоинты для получения событий'},
         {'name': 'Products', 'description': 'Каталог товаров'},
+        {'name': 'Catalog Categories', 'description': 'Категории внутреннего каталога'},
+        {'name': 'Data sources', 'description': 'Подключения 1С, XML и CSV-импорт'},
         {'name': 'Listings', 'description': 'Объявления на маркетплейсах'},
         {'name': 'Accounts', 'description': 'Аккаунты маркетплейсов (Avito)'},
+        {'name': 'Category mappings', 'description': 'Сопоставление категорий с Avito'},
         {'name': 'Analytics', 'description': 'Статистика просмотров и CTR'},
         {'name': 'Billing', 'description': 'Тарифы, подписки, платежи'},
+        {'name': 'AI', 'description': 'AI-модели, настройки и расход кредитов'},
+        {'name': 'Images', 'description': 'Поиск и отбор изображений товаров'},
+        {'name': 'Media processing', 'description': 'Обработка и варианты изображений'},
+        {'name': 'Web research', 'description': 'Товарные и рыночные интернет-исследования'},
+        {'name': 'Notifications', 'description': 'Telegram, email и настройки уведомлений'},
+        {'name': 'Logs', 'description': 'Журнал синхронизаций и операций'},
     ],
     'SORT_OPERATIONS': False,
 }
@@ -494,7 +468,19 @@ if YC_S3_BUCKET:
 
 # --- Безопасность ---
 FIELD_ENCRYPTION_KEY = os.environ.get('FIELD_ENCRYPTION_KEY', '')
-WEBHOOK_SIGNING_SECRET = os.environ.get('WEBHOOK_SIGNING_SECRET', '')
+FIELD_ENCRYPTION_KEYS = [
+    key.strip()
+    for key in os.environ.get('FIELD_ENCRYPTION_KEYS', FIELD_ENCRYPTION_KEY).split(',')
+    if key.strip()
+]
+WEBHOOK_REQUEST_TIMEOUT_SECONDS = int(os.environ.get('WEBHOOK_REQUEST_TIMEOUT_SECONDS', '10'))
+WEBHOOK_MAX_ATTEMPTS = int(os.environ.get('WEBHOOK_MAX_ATTEMPTS', '8'))
+
+# --- Retention ---
+SOFT_DELETE_RETENTION_DAYS = int(os.environ.get('SOFT_DELETE_RETENTION_DAYS', '90'))
+WEBHOOK_AUDIT_RETENTION_DAYS = int(os.environ.get('WEBHOOK_AUDIT_RETENTION_DAYS', '180'))
+BILLING_AUDIT_RETENTION_DAYS = int(os.environ.get('BILLING_AUDIT_RETENTION_DAYS', '730'))
+SYNC_LOG_RETENTION_DAYS = int(os.environ.get('SYNC_LOG_RETENTION_DAYS', '90'))
 
 # --- AI ---
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')

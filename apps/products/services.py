@@ -301,11 +301,16 @@ class ProductService:
 
         # Читаем старый хэш ДО update_or_create — иначе всегда будет 'unchanged'
         try:
-            existing = Product.objects.get(**lookup)
+            existing = Product.all_objects.get(**lookup)
             old_hash = existing.hash_1c
         except Product.DoesNotExist:
             existing = None
             old_hash = None
+
+        if existing and existing.deleted_at is not None:
+            existing.restore()
+            existing.sync_excluded = False
+            existing.save(update_fields=['sync_excluded', 'updated_at'])
 
         if existing and existing.sync_excluded:
             return existing, 'unchanged', None
@@ -320,7 +325,15 @@ class ProductService:
             defaults['brand_source_id'] = existing.brand_source_id
             defaults['brand_needs_review'] = existing.brand_needs_review
 
-        product, created = Product.objects.update_or_create(**lookup, defaults=defaults)
+        if existing is None:
+            product = Product.objects.create(**lookup, **defaults)
+            created = True
+        else:
+            for field, value in defaults.items():
+                setattr(existing, field, value)
+            existing.save(update_fields=[*defaults.keys(), 'updated_at'])
+            product = existing
+            created = False
         if created:
             return product, 'created', None
         if old_hash != hash_new:

@@ -1,10 +1,11 @@
 import hashlib
 import secrets
+import uuid
 
 from django.conf import settings
 from django.db import models
 
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel, TimestampedModel
 
 WEBHOOK_EVENTS = [
     'listing.published',
@@ -254,7 +255,7 @@ class APIKey(TimestampedModel):
         return cls.objects.filter(key_hash=key_hash, is_active=True).select_related('tenant').first()
 
 
-class WebhookEndpoint(TimestampedModel):
+class WebhookEndpoint(SoftDeleteModel):
     """Вебхук-эндпоинт тенанта для получения событий системы."""
 
     tenant = models.ForeignKey(
@@ -263,7 +264,7 @@ class WebhookEndpoint(TimestampedModel):
         related_name='webhook_endpoints',
     )
     url = models.URLField(max_length=500)
-    secret = models.CharField(max_length=64)  # HMAC-секрет в plaintext (генерируется один раз)
+    secret_encrypted = models.BinaryField()  # Fernet, расшифровывается только перед подписью
     events = models.JSONField(default=list)   # список событий, напр. ['listing.published']
     is_active = models.BooleanField(default=True)
 
@@ -281,3 +282,106 @@ class WebhookEndpoint(TimestampedModel):
     def generate_secret(cls) -> str:
         """Генерирует случайный HMAC-секрет для подписи вебхуков."""
         return secrets.token_hex(32)
+
+    def set_secret(self, value: str) -> None:
+        from apps.datasources.encryption import encrypt_text
+        self.secret_encrypted = encrypt_text(value)
+
+    def get_secret(self) -> str:
+        from apps.datasources.encryption import decrypt_text
+        return decrypt_text(self.secret_encrypted)
+
+    def soft_delete(self):
+        self.is_active = False
+        self.save(update_fields=['is_active', 'updated_at'])
+        super().soft_delete()
+
+
+class WebhookEvent(TimestampedModel):
+    """Неизменяемое бизнес-событие transactional outbox."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='webhook_events_outbox',
+    )
+    event_type = models.CharField(max_length=64, choices=[(item, item) for item in WEBHOOK_EVENTS])
+    payload = models.JSONField(default=dict)
+    idempotency_key = models.CharField(max_length=200, blank=True)
+
+    class Meta:
+        verbose_name = 'Исходящее webhook-событие'
+        verbose_name_plural = 'Исходящие webhook-события'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'idempotency_key'],
+                condition=~models.Q(idempotency_key=''),
+                name='unique_tenant_webhook_event_idempotency_key',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['tenant', '-created_at'], name='wh_event_tenant_created_idx'),
+        ]
+
+
+class WebhookDelivery(TimestampedModel):
+    """Состояние доставки одного outbox-события на один endpoint."""
+
+    STATUS_PENDING = 'pending'
+    STATUS_DELIVERING = 'delivering'
+    STATUS_RETRY = 'retry'
+    STATUS_DELIVERED = 'delivered'
+    STATUS_FAILED = 'failed'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Ожидает'),
+        (STATUS_DELIVERING, 'Отправляется'),
+        (STATUS_RETRY, 'Повтор'),
+        (STATUS_DELIVERED, 'Доставлено'),
+        (STATUS_FAILED, 'Не доставлено'),
+    ]
+
+    event = models.ForeignKey(
+        WebhookEvent,
+        on_delete=models.CASCADE,
+        related_name='deliveries',
+    )
+    endpoint = models.ForeignKey(
+        WebhookEndpoint,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='deliveries',
+    )
+    endpoint_url = models.URLField(max_length=500)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_PENDING)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    max_attempts = models.PositiveSmallIntegerField(default=8)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    delivered_at = models.DateTimeField(null=True, blank=True)
+    response_status = models.PositiveSmallIntegerField(null=True, blank=True)
+    response_body = models.TextField(blank=True)
+    last_error = models.TextField(blank=True)
+
+    class Meta:
+        verbose_name = 'Доставка webhook'
+        verbose_name_plural = 'Доставки webhook'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['event', 'endpoint'],
+                name='unique_webhook_event_endpoint_delivery',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['status', 'next_attempt_at'],
+                name='wh_delivery_status_due_idx',
+            ),
+            models.Index(
+                fields=['endpoint', '-created_at'],
+                name='wh_delivery_endpoint_idx',
+            ),
+        ]

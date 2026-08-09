@@ -228,7 +228,7 @@ class TestImageDeleteView:
         image = ProductImage.objects.get(pk=product_image.pk)
         assert image.status == ProductImage.Status.REJECTED
 
-    def test_product_delete_удаляет_медиа_товара_из_storage(self, product):
+    def test_product_soft_delete_сохраняет_медиа_до_retention_purge(self, product):
         image = ProductImage.objects.create(
             product=product,
             s3_key='dev/products/test-corp-img/auto_parts/brakes/original.jpg',
@@ -240,6 +240,11 @@ class TestImageDeleteView:
 
         with patch('django.core.files.storage.default_storage.delete') as storage_delete:
             product.delete()
+
+            assert ProductImage.objects.filter(pk=image.pk).exists()
+            storage_delete.assert_not_called()
+
+            Product.all_objects.get(pk=product.pk).hard_delete()
 
         assert not ProductImage.objects.filter(pk=image.pk).exists()
         deleted_keys = {call.args[0] for call in storage_delete.call_args_list}

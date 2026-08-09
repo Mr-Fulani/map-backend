@@ -106,6 +106,9 @@ done
 echo "==> Применение миграций..."
 docker compose exec -T django python manage.py migrate
 
+echo "==> Настройка периодических задач..."
+docker compose exec -T django python manage.py setup_periodic_tasks
+
 # ── 6. Остальные backend-сервисы ──────────────────────────────────────────────
 echo "==> Запуск celery..."
 docker compose up -d celery_worker celery_beat celery_worker_images

@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.core.files.storage import default_storage
+from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
 from apps.products.models import (
@@ -149,6 +150,14 @@ class TenantCategoryMappingSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'category_name', 'category_domain', 'created_at', 'updated_at']
 
 
+class ProductEnrichmentSummarySerializer(serializers.Serializer):
+    attributes_count = serializers.IntegerField(min_value=0)
+    cross_codes_count = serializers.IntegerField(min_value=0)
+    fitments_count = serializers.IntegerField(min_value=0)
+    latest_parse_status = serializers.CharField(allow_blank=True)
+    latest_parse_at = serializers.DateTimeField(allow_null=True)
+
+
 class ProductSerializer(serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     images_count = serializers.SerializerMethodField()
@@ -156,8 +165,15 @@ class ProductSerializer(serializers.ModelSerializer):
     ai_status = serializers.SerializerMethodField()
     enrichment_status = serializers.SerializerMethodField()
     enrichment_summary = serializers.SerializerMethodField()
-    catalog_classification = ProductCatalogClassificationSerializer(read_only=True)
-    catalog_category = TenantCatalogCategorySerializer(read_only=True)
+    catalog_classification = ProductCatalogClassificationSerializer(
+        read_only=True,
+        allow_null=True,
+        required=False,
+    )
+    catalog_category = TenantCatalogCategorySerializer(
+        read_only=True,
+        allow_null=True,
+    )
     brand_ref_name = serializers.CharField(source='brand_ref.name', read_only=True)
     listing_status = serializers.SerializerMethodField()
 
@@ -222,6 +238,7 @@ class ProductSerializer(serializers.ModelSerializer):
             return latest_jobs[0].status
         return 'missing'
 
+    @extend_schema_field(ProductEnrichmentSummarySerializer())
     def get_enrichment_summary(self, obj) -> dict:
         latest_jobs = list(getattr(obj, '_prefetched_objects_cache', {}).get('parse_jobs', []))
         latest_job = latest_jobs[0] if latest_jobs else None
@@ -285,10 +302,36 @@ class ProductEnrichmentFactSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
 
-    def get_source_label(self, obj):
+    @extend_schema_field(serializers.CharField())
+    def get_source_label(self, obj) -> str:
         from apps.products.source_policy import PART_SOURCE_POLICIES
         policy = PART_SOURCE_POLICIES.get(obj.source_id)
         return policy.label if policy else obj.source_id
+
+
+class ProductSourceOfferSerializer(serializers.Serializer):
+    price = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        allow_null=True,
+    )
+    currency = serializers.CharField()
+    price_is_from = serializers.BooleanField()
+    availability = serializers.CharField()
+    availability_label = serializers.CharField()
+    availability_text = serializers.CharField()
+    quantity = serializers.IntegerField(allow_null=True)
+    checked_at = serializers.DateTimeField(allow_null=True)
+
+
+class ProductPriceComparisonSerializer(serializers.Serializer):
+    direction = serializers.ChoiceField(
+        choices=['equal', 'tenant_higher', 'tenant_lower'],
+    )
+    amount = serializers.DecimalField(max_digits=14, decimal_places=2)
+    percent = serializers.DecimalField(max_digits=7, decimal_places=1)
+    tenant_price = serializers.DecimalField(max_digits=14, decimal_places=2)
+    source_price = serializers.DecimalField(max_digits=14, decimal_places=2)
 
 
 class ProductParseJobSerializer(serializers.ModelSerializer):
@@ -305,12 +348,14 @@ class ProductParseJobSerializer(serializers.ModelSerializer):
             'started_at', 'finished_at', 'source_offer', 'price_comparison',
         ]
 
-    def get_source_label(self, obj):
+    @extend_schema_field(serializers.CharField())
+    def get_source_label(self, obj) -> str:
         from apps.products.source_policy import PART_SOURCE_POLICIES
         policy = PART_SOURCE_POLICIES.get(obj.source_id)
         return policy.label if policy else obj.source_id
 
-    def get_source_offer(self, obj):
+    @extend_schema_field(ProductSourceOfferSerializer())
+    def get_source_offer(self, obj) -> dict:
         return {
             'price': str(obj.source_price) if obj.source_price is not None else None,
             'currency': obj.source_currency,
@@ -322,7 +367,8 @@ class ProductParseJobSerializer(serializers.ModelSerializer):
             'checked_at': obj.finished_at or obj.updated_at,
         }
 
-    def get_price_comparison(self, obj):
+    @extend_schema_field(ProductPriceComparisonSerializer(allow_null=True))
+    def get_price_comparison(self, obj) -> dict | None:
         if obj.source_price is None or obj.product_id is None:
             return None
         tenant_price = obj.product.price
@@ -346,6 +392,14 @@ class ProductParseJobSerializer(serializers.ModelSerializer):
         }
 
 
+class ProductListingOptionSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    status = serializers.CharField()
+    status_display = serializers.CharField()
+    account_name = serializers.CharField()
+    title = serializers.CharField()
+
+
 class ProductDetailSerializer(ProductSerializer):
     attributes = serializers.SerializerMethodField()
     cross_codes = ProductCrossCodeSerializer(many=True, read_only=True)
@@ -361,7 +415,8 @@ class ProductDetailSerializer(ProductSerializer):
             'latest_parse_job', 'parse_jobs_summary', 'listing_options',
         ]
 
-    def get_attributes(self, obj):
+    @extend_schema_field(ProductAttributeSerializer(many=True))
+    def get_attributes(self, obj) -> list[dict]:
         from apps.products.attribute_presentation import presented_attributes
 
         result = []
@@ -385,14 +440,17 @@ class ProductDetailSerializer(ProductSerializer):
             reverse=True,
         )
 
-    def get_latest_parse_job(self, obj):
+    @extend_schema_field(ProductParseJobSerializer(allow_null=True))
+    def get_latest_parse_job(self, obj) -> dict | None:
         jobs = self._jobs_by_priority(obj)
         return ProductParseJobSerializer(jobs[0]).data if jobs else None
 
-    def get_parse_jobs_summary(self, obj):
+    @extend_schema_field(ProductParseJobSerializer(many=True))
+    def get_parse_jobs_summary(self, obj) -> list[dict]:
         return [ProductParseJobSerializer(j).data for j in self._jobs_by_priority(obj)]
 
-    def get_listing_options(self, obj):
+    @extend_schema_field(ProductListingOptionSerializer(many=True))
+    def get_listing_options(self, obj) -> list[dict]:
         return [
             {
                 'id': listing.pk,

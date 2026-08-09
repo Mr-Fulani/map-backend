@@ -37,6 +37,21 @@ class TestRegisterView:
         assert response.status_code == 400
         assert response.json()['status'] == 'error'
 
+    def test_register_existing_email_requires_login(self):
+        """Публичная регистрация не присоединяет существующий email без проверки пароля."""
+        client = Client()
+        TenantService.create_tenant('Existing', 'existing-email', 'existing@e.com', 'pass12345')
+
+        response = client.post('/api/v1/auth/register/', {
+            'name': 'Another',
+            'slug': 'another-email',
+            'email': 'existing@e.com',
+            'password': 'attacker-pass',
+        }, content_type='application/json')
+
+        assert response.status_code == 400
+        assert 'уже существует' in str(response.json())
+
     def test_register_rejects_non_ascii_slug_with_clear_error(self):
         """Кириллический slug не сохраняется и возвращает понятную ошибку."""
         client = Client()
@@ -181,3 +196,62 @@ class TestMeView:
             HTTP_AUTHORIZATION='Bearer invalidtoken',
         )
         assert response.status_code == 401
+
+
+@pytest.mark.django_db
+class TestTenantRolePermissions:
+    def _client_for_role(self, role):
+        from django.contrib.auth import get_user_model
+        from apps.tenants.models import TenantUser
+
+        tenant, _ = TenantService.create_tenant(
+            'Role Corp', f'role-{role}', f'owner-{role}@corp.com', 'pass12345',
+        )
+        email = f'{role}@corp.com'
+        user = get_user_model().objects.create_user(email, 'pass12345')
+        membership = TenantUser.objects.create(user=user, tenant=tenant, role=role)
+        login = Client().post('/api/v1/auth/token/', {
+            'email': email,
+            'password': 'pass12345',
+            'tenant_slug': tenant.slug,
+        }, content_type='application/json')
+        client = Client(HTTP_AUTHORIZATION=f"Bearer {login.json()['access']}")
+        return client, membership, login.json()
+
+    def test_viewer_can_read_but_cannot_mutate_operational_data(self):
+        from apps.tenants.models import TenantUser
+
+        client, _, _ = self._client_for_role(TenantUser.ROLE_VIEWER)
+
+        assert client.get('/api/v1/products/').status_code == 200
+        response = client.post(
+            '/api/v1/products/catalog-categories/',
+            {'name': 'Запрещённая категория'},
+            content_type='application/json',
+        )
+        assert response.status_code == 403
+
+    def test_operator_cannot_manage_api_keys(self):
+        from apps.tenants.models import TenantUser
+
+        client, _, _ = self._client_for_role(TenantUser.ROLE_OPERATOR)
+        assert client.get('/api/v1/tenant/api-keys/').status_code == 403
+
+    def test_removed_membership_revokes_access_and_refresh(self):
+        from apps.tenants.models import TenantUser
+
+        _, membership, tokens = self._client_for_role(TenantUser.ROLE_OPERATOR)
+        membership.delete()
+
+        access_response = Client().get(
+            '/api/v1/tenant/',
+            HTTP_AUTHORIZATION=f"Bearer {tokens['access']}",
+        )
+        refresh_response = Client().post(
+            '/api/v1/auth/token/refresh/',
+            {'refresh': tokens['refresh']},
+            content_type='application/json',
+        )
+
+        assert access_response.status_code == 401
+        assert refresh_response.status_code == 401

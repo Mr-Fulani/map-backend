@@ -4,7 +4,8 @@ from django.utils.html import format_html
 from unfold.admin import ModelAdmin
 
 from apps.tenants.models import (
-    APIKey, CatalogDomain, Tenant, TenantCatalogDomain, TenantUser, WebhookEndpoint,
+    APIKey, CatalogDomain, Tenant, TenantCatalogDomain, TenantUser,
+    WebhookDelivery, WebhookEndpoint, WebhookEvent,
 )
 
 
@@ -256,14 +257,10 @@ class WebhookEndpointAdmin(ModelAdmin):
     list_display = ['tenant', 'url', 'is_active', 'get_events_count', 'created_at']
     list_filter = ['is_active', 'tenant']
     search_fields = ['tenant__name', 'url']
-    readonly_fields = ['secret', 'created_at', 'updated_at']
+    readonly_fields = ['created_at', 'updated_at']
     fieldsets = [
         ('Основное', {
             'fields': ['tenant', 'url', 'is_active', 'events'],
-        }),
-        ('Безопасность', {
-            'fields': ['secret'],
-            'description': 'HMAC-секрет для подписи запросов. Генерируется при создании.',
         }),
         ('Служебное', {
             'fields': ['created_at', 'updated_at'],
@@ -275,3 +272,35 @@ class WebhookEndpointAdmin(ModelAdmin):
     def get_events_count(self, obj):
         """Возвращает количество подписанных событий."""
         return len(obj.events) if obj.events else 0
+
+
+@admin.register(WebhookEvent)
+class WebhookEventAdmin(ModelAdmin):
+    list_display = ['id', 'tenant', 'event_type', 'created_at']
+    list_filter = ['event_type', 'tenant']
+    search_fields = ['id', 'idempotency_key']
+    readonly_fields = ['id', 'tenant', 'event_type', 'payload', 'idempotency_key', 'created_at', 'updated_at']
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(WebhookDelivery)
+class WebhookDeliveryAdmin(ModelAdmin):
+    list_display = ['id', 'event', 'endpoint_url', 'status', 'attempts', 'response_status', 'created_at']
+    list_filter = ['status', 'response_status']
+    search_fields = ['event__id', 'endpoint_url', 'last_error']
+    readonly_fields = [
+        'event', 'endpoint', 'endpoint_url', 'status', 'attempts', 'max_attempts',
+        'next_attempt_at', 'last_attempt_at', 'delivered_at', 'response_status',
+        'response_body', 'last_error', 'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False

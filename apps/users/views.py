@@ -1,5 +1,5 @@
-from drf_spectacular.utils import extend_schema
-from rest_framework import status
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -12,12 +12,42 @@ from apps.users.serializers import (
 from apps.users.services import ProfileService
 
 
+_PROFILE_UPDATE_RESPONSE = inline_serializer(
+    name='ProfileUpdateResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': inline_serializer(
+            name='ProfileUpdateData',
+            fields={'phone': serializers.CharField(allow_blank=True)},
+        ),
+    },
+)
+_PROFILE_STATUS_RESPONSE = inline_serializer(
+    name='ProfileStatusResponse',
+    fields={'status': serializers.CharField()},
+)
+_PROFILE_MESSAGE_RESPONSE = inline_serializer(
+    name='ProfileMessageResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': inline_serializer(
+            name='ProfileMessageData',
+            fields={'message': serializers.CharField()},
+        ),
+    },
+)
+
+
 @extend_schema(tags=['Profile'])
 class UpdateProfileView(APIView):
     """PATCH /api/v1/auth/profile/ — обновить телефон текущего пользователя."""
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=ProfileUpdateSerializer,
+        responses=_PROFILE_UPDATE_RESPONSE,
+    )
     def patch(self, request):
         """Принимает phone, сохраняет и возвращает обновлённые данные."""
         serializer = ProfileUpdateSerializer(data=request.data)
@@ -35,6 +65,10 @@ class ChangePasswordView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=ChangePasswordSerializer,
+        responses=_PROFILE_STATUS_RESPONSE,
+    )
     def post(self, request):
         """Проверяет текущий пароль и устанавливает новый."""
         serializer = ChangePasswordSerializer(data=request.data)
@@ -59,6 +93,10 @@ class ChangeEmailRequestView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=ChangeEmailSerializer,
+        responses=_PROFILE_MESSAGE_RESPONSE,
+    )
     def post(self, request):
         """Отправляет письмо с подтверждением на новый email."""
         serializer = ChangeEmailSerializer(data=request.data)
@@ -85,6 +123,18 @@ class ConfirmEmailView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                name='token',
+                type=str,
+                location=OpenApiParameter.QUERY,
+                required=True,
+                description='Одноразовый токен подтверждения смены email.',
+            ),
+        ],
+        responses=_PROFILE_MESSAGE_RESPONSE,
+    )
     def get(self, request):
         """Верифицирует токен и обновляет email пользователя."""
         token = request.query_params.get('token', '')

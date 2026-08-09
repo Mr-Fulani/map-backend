@@ -2,11 +2,23 @@
 JWT views для Dashboard авторизации.
 """
 
-from rest_framework_simplejwt.views import TokenObtainPairView
+from drf_spectacular.utils import extend_schema, extend_schema_view
+from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from apps.tenants.jwt_serializers import TenantTokenObtainPairSerializer
+from apps.tenants.jwt_serializers import (
+    TenantTokenObtainPairResponseSerializer, TenantTokenObtainPairSerializer,
+    TenantTokenRefreshSerializer,
+)
 
 
+@extend_schema_view(
+    post=extend_schema(
+        tags=['Auth'],
+        summary='Войти по email и паролю',
+        request=TenantTokenObtainPairSerializer,
+        responses={200: TenantTokenObtainPairResponseSerializer},
+    ),
+)
 class TenantTokenObtainPairView(TokenObtainPairView):
     """
     POST /api/v1/auth/token/
@@ -31,3 +43,15 @@ class TenantTokenObtainPairView(TokenObtainPairView):
         }
     """
     serializer_class = TenantTokenObtainPairSerializer
+
+
+@extend_schema_view(
+    post=extend_schema(
+        tags=['Auth'],
+        summary='Обновить JWT access-токен',
+    ),
+)
+class TenantTokenRefreshView(TokenRefreshView):
+    """Refresh JWT с повторной проверкой tenant membership."""
+
+    serializer_class = TenantTokenRefreshSerializer

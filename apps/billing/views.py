@@ -4,9 +4,9 @@ from decimal import Decimal, InvalidOperation
 from django.conf import settings
 from django.db.models import F
 from django.utils import timezone
-from drf_spectacular.utils import extend_schema
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers, status
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -19,6 +19,57 @@ from apps.billing.serializers import (
 )
 from apps.billing.services import BillingService, LimitChecker
 from apps.billing.webhook import is_yookassa_ip
+from apps.tenants.permissions import TenantOwnerPermission
+
+
+_PLAN_LIST_RESPONSE = inline_serializer(
+    name='BillingPlanListResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': PlanSerializer(many=True),
+    },
+)
+_SUBSCRIPTION_RESPONSE = inline_serializer(
+    name='BillingSubscriptionResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': SubscriptionSerializer(allow_null=True),
+    },
+)
+_USAGE_RESPONSE = inline_serializer(
+    name='BillingUsageResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': serializers.DictField(
+            child=serializers.JSONField(),
+            help_text='Текущее использование лимитов тарифа и AI-баланса.',
+        ),
+    },
+)
+_INVOICE_LIST_RESPONSE = inline_serializer(
+    name='BillingInvoiceListResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': InvoiceSerializer(many=True),
+    },
+)
+_AI_PACKAGE_LIST_RESPONSE = inline_serializer(
+    name='BillingAICreditPackageListResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': AICreditPackageSerializer(many=True),
+    },
+)
+_PAYMENT_URL_RESPONSE = inline_serializer(
+    name='BillingPaymentUrlResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': inline_serializer(
+            name='BillingPaymentUrlData',
+            fields={'payment_url': serializers.URLField()},
+        ),
+    },
+)
 
 
 def _webhook_source_ip(request) -> str | None:
@@ -60,8 +111,9 @@ def _parse_webhook_amount(obj: dict) -> tuple[Decimal | None, str]:
 class PlanListView(APIView):
     """GET /api/v1/billing/plans/ — список доступных тарифов."""
 
-    permission_classes = []   # публичный эндпоинт
+    permission_classes = [AllowAny]
 
+    @extend_schema(responses=_PLAN_LIST_RESPONSE)
     def get(self, request):
         plans = Plan.objects.filter(is_active=True)
         return Response({
@@ -76,6 +128,7 @@ class SubscriptionView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses=_SUBSCRIPTION_RESPONSE)
     def get(self, request):
         try:
             sub = request.tenant.subscription
@@ -94,6 +147,7 @@ class UsageView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses=_USAGE_RESPONSE)
     def get(self, request):
         summary = LimitChecker().get_usage_summary(request.tenant)
         return Response({'status': 'ok', 'data': summary})
@@ -105,6 +159,7 @@ class InvoiceListView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses=_INVOICE_LIST_RESPONSE)
     def get(self, request):
         invoices = Invoice.objects.filter(tenant=request.tenant).order_by('-created_at')
         return Response({
@@ -117,6 +172,10 @@ class InvoiceListView(APIView):
 class AICreditPackageListView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        summary='Список пакетов AI-кредитов',
+        responses=_AI_PACKAGE_LIST_RESPONSE,
+    )
     def get(self, request):
         packages = AICreditPackage.objects.filter(is_active=True)
         return Response({
@@ -127,8 +186,13 @@ class AICreditPackageListView(APIView):
 
 @extend_schema(tags=['Billing'])
 class AITopupCheckoutView(APIView):
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantOwnerPermission]
 
+    @extend_schema(
+        summary='Создать платёж на пополнение AI-кредитов',
+        request=AITopupCheckoutSerializer,
+        responses={200: _PAYMENT_URL_RESPONSE},
+    )
     def post(self, request):
         serializer = AITopupCheckoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -158,8 +222,12 @@ class CheckoutView(APIView):
     Возвращает payment_url для редиректа пользователя на страницу оплаты.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantOwnerPermission]
 
+    @extend_schema(
+        request=CheckoutSerializer,
+        responses={200: _PAYMENT_URL_RESPONSE},
+    )
     def post(self, request):
         serializer = CheckoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

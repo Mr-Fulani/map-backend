@@ -574,17 +574,24 @@ class ListingService:
         cat_margin = effective_category_margin(cat) if cat else Decimal('0')
         default_price = compute_price(product.price, cat_margin)
 
-        listing, created = Listing.objects.get_or_create(
-            tenant=product.tenant,
-            product=product,
-            account=account,
-            defaults={
-                'price_on_listing': default_price,
-                'title': (product.title_ai or product.name)[:300],
-                'description_ai': product.description_ai,
-                'status': Listing.STATUS_DRAFT,
-            },
-        )
+        listing = Listing.all_objects.filter(
+            tenant=product.tenant, product=product, account=account,
+        ).first()
+        created = listing is None
+        if listing is None:
+            listing = Listing.objects.create(
+                tenant=product.tenant,
+                product=product,
+                account=account,
+                price_on_listing=default_price,
+                title=(product.title_ai or product.name)[:300],
+                description_ai=product.description_ai,
+                status=Listing.STATUS_DRAFT,
+            )
+        elif listing.deleted_at is not None:
+            listing.restore()
+            listing.status = Listing.STATUS_DRAFT
+            listing.save(update_fields=['status', 'updated_at'])
 
         if not created:
             new_price = compute_price(product.price, effective_margin(listing))
@@ -648,16 +655,30 @@ class MarketplaceAccountService:
             'client_secret': data['client_secret'],
         })
         external_id = MarketplaceAccountService._fetch_avito_user_id(credentials_enc)
-        try:
-            account = MarketplaceAccount.objects.create(
-                tenant=tenant,
-                name=data['name'],
-                marketplace=data['marketplace'],
-                external_id=external_id,
-                credentials_enc=credentials_enc,
-            )
-        except IntegrityError:
-            raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
+        deleted_account = MarketplaceAccount.all_objects.filter(
+            tenant=tenant,
+            marketplace=data['marketplace'],
+            external_id=external_id,
+            deleted_at__isnull=False,
+        ).first()
+        if deleted_account is not None:
+            account = deleted_account
+            account.name = data['name']
+            account.credentials_enc = credentials_enc
+            account.is_active = True
+            account.restore()
+            account.save(update_fields=['name', 'credentials_enc', 'is_active', 'updated_at'])
+        else:
+            try:
+                account = MarketplaceAccount.objects.create(
+                    tenant=tenant,
+                    name=data['name'],
+                    marketplace=data['marketplace'],
+                    external_id=external_id,
+                    credentials_enc=credentials_enc,
+                )
+            except IntegrityError:
+                raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
 
         # Регистрируем feed URL в Avito Autoload после коммита транзакции
         if account.marketplace == MarketplaceAccount.MARKETPLACE_AVITO:

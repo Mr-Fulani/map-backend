@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
 COMPOSE="docker compose -f docker-compose.prod.yml"
 LOG_TAIL="${PROD_LOG_TAIL:-200}"
-COMPOSE_LOG_SERVICES=(db redis django celery_worker celery_beat celery_worker_images frontend nginx)
+COMPOSE_LOG_SERVICES=(db redis egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
 
 show_logs() {
   echo ""
@@ -17,6 +17,9 @@ show_logs() {
 # ── 1. Подтянуть код ──────────────────────────────────────────────────────────
 echo "==> git pull..."
 git pull origin main
+
+echo "==> Проверка production-конфигурации и обязательных секретов..."
+$COMPOSE config --quiet
 
 # ── 2. Очистка мусора (volumes не трогаем — там БД и статика) ─────────────────
 echo "==> Очистка остановленных контейнеров и висячих образов..."

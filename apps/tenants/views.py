@@ -3,7 +3,8 @@ import hashlib
 import json
 
 import requests
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from rest_framework import serializers
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -12,17 +13,67 @@ from rest_framework.views import APIView
 from apps.tenants.models import (
     APIKey, CatalogDomain, TenantCatalogDomain, WEBHOOK_EVENTS, WebhookEndpoint,
 )
+from apps.tenants.permissions import (
+    TenantAdminPermission,
+    TenantAdminWritePermission,
+)
 from apps.tenants.serializers import (
     APIKeyCreateSerializer,
+    APIKeyCreatedSerializer,
     APIKeySerializer,
     CatalogDomainSerializer,
     RegisterSerializer,
     TenantSerializer,
     TenantUserSerializer,
+    WebhookDeliverySerializer,
+    WebhookEndpointCreatedSerializer,
     WebhookEndpointSerializer,
     WebhookEndpointWriteSerializer,
 )
 from apps.tenants.services import APIKeyService, TenantService
+
+
+def _success_response(name, data=None):
+    fields = {'status': serializers.CharField()}
+    if data is not None:
+        fields['data'] = data
+    return inline_serializer(name=name, fields=fields)
+
+
+_me_data = inline_serializer(
+    name='CurrentTenantContext',
+    fields={
+        'user': inline_serializer(
+            name='CurrentUserSummary',
+            fields={
+                'id': serializers.IntegerField(),
+                'email': serializers.EmailField(),
+                'phone': serializers.CharField(allow_blank=True),
+            },
+        ),
+        'tenant': inline_serializer(
+            name='CurrentTenantSummary',
+            fields={
+                'id': serializers.IntegerField(),
+                'slug': serializers.SlugField(),
+                'name': serializers.CharField(),
+            },
+            allow_null=True,
+        ),
+        'role': serializers.CharField(allow_null=True),
+        'subscription': inline_serializer(
+            name='CurrentSubscriptionSummary',
+            fields={
+                'plan_slug': serializers.SlugField(),
+                'plan_name': serializers.CharField(),
+                'status': serializers.CharField(),
+                'access_mode': serializers.CharField(),
+                'current_period_end': serializers.DateTimeField(allow_null=True),
+            },
+            allow_null=True,
+        ),
+    },
+)
 
 
 @extend_schema(tags=['Auth'])
@@ -31,6 +82,22 @@ class RegisterView(APIView):
 
     permission_classes = [AllowAny]
 
+    @extend_schema(
+        request=RegisterSerializer,
+        responses={
+            201: _success_response(
+                'RegisterResponse',
+                inline_serializer(
+                    name='RegisterResult',
+                    fields={
+                        'tenant': TenantSerializer(),
+                        'api_key': serializers.CharField(),
+                        'warning': serializers.CharField(),
+                    },
+                ),
+            ),
+        },
+    )
     def post(self, request):
         serializer = RegisterSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -59,6 +126,7 @@ class TenantDetailView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: _success_response('TenantDetailResponse', TenantSerializer())})
     def get(self, request):
         return Response({
             'status': 'ok',
@@ -70,8 +138,11 @@ class TenantDetailView(APIView):
 class CatalogDomainListView(APIView):
     """GET/POST /api/v1/catalog-domains/ — platform-домены для dashboard."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
 
+    @extend_schema(responses={
+        200: _success_response('CatalogDomainListResponse', CatalogDomainSerializer(many=True)),
+    })
     def get(self, request):
         domains = CatalogDomain.objects.filter(is_active=True).exclude(
             slug__in=['mixed', 'unknown'],
@@ -91,6 +162,27 @@ class CatalogDomainListView(APIView):
             ).data,
         })
 
+    @extend_schema(
+        request=inline_serializer(
+            name='CatalogDomainToggleRequest',
+            fields={
+                'domain_slug': serializers.SlugField(),
+                'is_enabled': serializers.BooleanField(),
+            },
+        ),
+        responses={
+            200: _success_response(
+                'CatalogDomainToggleResponse',
+                inline_serializer(
+                    name='CatalogDomainToggleResult',
+                    fields={
+                        'domain_slug': serializers.SlugField(),
+                        'is_enabled': serializers.BooleanField(),
+                    },
+                ),
+            ),
+        },
+    )
     def post(self, request):
         domain_slug = str(request.data.get('domain_slug') or '').strip()
         is_enabled = request.data.get('is_enabled')
@@ -132,6 +224,9 @@ class TenantUserListView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={
+        200: _success_response('TenantUserListResponse', TenantUserSerializer(many=True)),
+    })
     def get(self, request):
         members = request.tenant.members.select_related('user').all()
         return Response({
@@ -144,8 +239,11 @@ class TenantUserListView(APIView):
 class APIKeyListView(APIView):
     """GET /api/v1/tenant/api-keys/ — список API ключей. POST — создать новый."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
 
+    @extend_schema(responses={
+        200: _success_response('APIKeyListResponse', APIKeySerializer(many=True)),
+    })
     def get(self, request):
         keys = APIKey.objects.filter(tenant=request.tenant)
         return Response({
@@ -153,6 +251,12 @@ class APIKeyListView(APIView):
             'data': APIKeySerializer(keys, many=True).data,
         })
 
+    @extend_schema(
+        request=APIKeyCreateSerializer,
+        responses={
+            201: _success_response('APIKeyCreateResponse', APIKeyCreatedSerializer()),
+        },
+    )
     def post(self, request):
         serializer = APIKeyCreateSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -176,8 +280,12 @@ class APIKeyListView(APIView):
 class APIKeyRevokeView(APIView):
     """DELETE /api/v1/tenant/api-keys/{id}/ — отозвать ключ."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
 
+    @extend_schema(
+        request=None,
+        responses={200: _success_response('APIKeyRevokeResponse')},
+    )
     def delete(self, request, key_id):
         APIKeyService.revoke_key(key_id=key_id, tenant=request.tenant)
         return Response({'status': 'ok'}, status=status.HTTP_200_OK)
@@ -187,27 +295,51 @@ class APIKeyRevokeView(APIView):
 class WebhookEndpointListView(APIView):
     """GET /api/v1/webhooks/ — список вебхуков. POST — создать."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
 
+    @extend_schema(responses={
+        200: _success_response(
+            'WebhookEndpointListResponse',
+            WebhookEndpointSerializer(many=True),
+        ),
+    })
     def get(self, request):
         """Возвращает вебхук-эндпоинты текущего тенанта."""
         qs = WebhookEndpoint.objects.filter(tenant=request.tenant).order_by('-created_at')
         return Response({'status': 'ok', 'data': WebhookEndpointSerializer(qs, many=True).data})
 
+    @extend_schema(
+        request=WebhookEndpointWriteSerializer,
+        responses={
+            201: _success_response(
+                'WebhookEndpointCreateResponse',
+                WebhookEndpointCreatedSerializer(),
+            ),
+        },
+    )
     def post(self, request):
         """Создаёт новый вебхук-эндпоинт с автоматически сгенерированным секретом."""
         serializer = WebhookEndpointWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        endpoint = WebhookEndpoint.objects.create(
+        plaintext_secret = WebhookEndpoint.generate_secret()
+        endpoint = WebhookEndpoint(
             tenant=request.tenant,
             url=data['url'],
             events=data['events'],
-            secret=WebhookEndpoint.generate_secret(),
         )
+        endpoint.set_secret(plaintext_secret)
+        endpoint.save()
         return Response(
-            {'status': 'ok', 'data': WebhookEndpointSerializer(endpoint).data},
+            {
+                'status': 'ok',
+                'data': {
+                    **WebhookEndpointSerializer(endpoint).data,
+                    'secret': plaintext_secret,
+                    'warning': 'Сохраните secret — он больше не будет показан.',
+                },
+            },
             status=status.HTTP_201_CREATED,
         )
 
@@ -216,7 +348,7 @@ class WebhookEndpointListView(APIView):
 class WebhookEndpointDetailView(APIView):
     """DELETE /api/v1/webhooks/{id}/ — удалить. POST /test/ — тестовый запрос."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
 
     def _get(self, pk, tenant):
         """Возвращает вебхук тенанта или None."""
@@ -225,12 +357,13 @@ class WebhookEndpointDetailView(APIView):
         except WebhookEndpoint.DoesNotExist:
             return None
 
+    @extend_schema(request=None, responses={204: None})
     def delete(self, request, pk):
         """Удаляет вебхук-эндпоинт."""
         endpoint = self._get(pk, request.tenant)
         if endpoint is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
-        endpoint.delete()
+        endpoint.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -238,8 +371,23 @@ class WebhookEndpointDetailView(APIView):
 class WebhookEndpointTestView(APIView):
     """POST /api/v1/webhooks/{id}/test/ — отправить тестовый payload на URL вебхука."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
 
+    @extend_schema(
+        request=None,
+        responses={
+            200: _success_response(
+                'WebhookTestResponse',
+                inline_serializer(
+                    name='WebhookTestResult',
+                    fields={
+                        'http_status': serializers.IntegerField(),
+                        'ok': serializers.BooleanField(),
+                    },
+                ),
+            ),
+        },
+    )
     def post(self, request, pk):
         """Отправляет тестовый ping-запрос на зарегистрированный URL вебхука."""
         try:
@@ -253,12 +401,19 @@ class WebhookEndpointTestView(APIView):
             'data': {'message': 'MAP webhook test'},
         })
         signature = hmac.new(
-            endpoint.secret.encode(),
+            endpoint.get_secret().encode(),
             payload.encode(),
             hashlib.sha256,
         ).hexdigest()
 
         try:
+            from apps.core.url_security import is_safe_public_http_url
+
+            if not is_safe_public_http_url(endpoint.url, resolve_hostname=True):
+                return Response(
+                    {'status': 'error', 'detail': 'Webhook URL не является публичным.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
             resp = requests.post(
                 endpoint.url,
                 data=payload,
@@ -268,6 +423,7 @@ class WebhookEndpointTestView(APIView):
                     'X-MAP-Event': 'test.ping',
                 },
                 timeout=10,
+                allow_redirects=False,
             )
             return Response({
                 'status': 'ok',
@@ -284,11 +440,53 @@ class WebhookEndpointTestView(APIView):
 class WebhookEventsView(APIView):
     """GET /api/v1/webhooks/events/ — список доступных типов событий."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
 
+    @extend_schema(responses={
+        200: _success_response(
+            'WebhookEventListResponse',
+            serializers.ListField(child=serializers.CharField()),
+        ),
+    })
     def get(self, request):
         """Возвращает все поддерживаемые типы событий для вебхуков."""
         return Response({'status': 'ok', 'data': WEBHOOK_EVENTS})
+
+
+@extend_schema(tags=['Webhooks'])
+class WebhookDeliveryListView(APIView):
+    """GET /api/v1/webhooks/deliveries/ — аудит исходящих доставок."""
+
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('status', str, description='Delivery status'),
+            OpenApiParameter('endpoint_id', int, description='Webhook endpoint ID'),
+        ],
+        responses={
+            200: _success_response(
+                'WebhookDeliveryListResponse',
+                WebhookDeliverySerializer(many=True),
+            ),
+        },
+    )
+    def get(self, request):
+        from apps.tenants.models import WebhookDelivery
+
+        qs = WebhookDelivery.objects.filter(
+            event__tenant=request.tenant,
+        ).select_related('event').order_by('-created_at')
+        delivery_status = request.query_params.get('status')
+        if delivery_status:
+            qs = qs.filter(status=delivery_status)
+        endpoint_id = request.query_params.get('endpoint_id')
+        if endpoint_id:
+            qs = qs.filter(endpoint_id=endpoint_id)
+        return Response({
+            'status': 'ok',
+            'data': WebhookDeliverySerializer(qs[:200], many=True).data,
+        })
 
 
 @extend_schema(tags=['Auth'])
@@ -301,6 +499,7 @@ class MeView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(responses={200: _success_response('MeResponse', _me_data)})
     def get(self, request):
         from apps.tenants.models import TenantUser
 

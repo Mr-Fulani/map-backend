@@ -1,16 +1,67 @@
 import logging
 
 from django.conf import settings
-from drf_spectacular.utils import extend_schema
-from rest_framework import status
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.notifications.models import TenantNotificationSettings
 from apps.notifications.telegram import TelegramNotifier
+from apps.tenants.permissions import TenantAdminPermission, TenantAdminWritePermission
 
 logger = logging.getLogger(__name__)
+
+
+_NOTIFICATION_SETTINGS = inline_serializer(
+    name='NotificationSettings',
+    fields={
+        'telegram_connected': serializers.BooleanField(),
+        'telegram_username': serializers.CharField(allow_blank=True),
+        'notify_email': serializers.EmailField(allow_blank=True),
+        'notify_on_error': serializers.BooleanField(),
+        'notify_on_critical': serializers.BooleanField(),
+    },
+)
+_NOTIFICATION_SETTINGS_UPDATE = inline_serializer(
+    name='NotificationSettingsUpdate',
+    fields={
+        'notify_email': serializers.EmailField(required=False, allow_blank=True),
+        'notify_on_error': serializers.BooleanField(required=False),
+        'notify_on_critical': serializers.BooleanField(required=False),
+    },
+)
+_NOTIFICATION_SETTINGS_RESPONSE = inline_serializer(
+    name='NotificationSettingsResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': _NOTIFICATION_SETTINGS,
+    },
+)
+_TELEGRAM_CONNECT_RESPONSE = inline_serializer(
+    name='TelegramConnectResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': inline_serializer(
+            name='TelegramConnectData',
+            fields={
+                'bot_url': serializers.URLField(),
+                'expires_in_minutes': serializers.IntegerField(),
+            },
+        ),
+    },
+)
+_NOTIFICATION_TEST_RESPONSE = inline_serializer(
+    name='NotificationTestResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': inline_serializer(
+            name='NotificationTestData',
+            fields={'sent': serializers.BooleanField()},
+        ),
+    },
+)
 
 
 def _get_or_create_settings(tenant, default_email: str = '') -> TenantNotificationSettings:
@@ -45,13 +96,18 @@ class NotificationSettingsView(APIView):
     PUT принимает notify_email, notify_on_error, notify_on_critical.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
 
+    @extend_schema(responses=_NOTIFICATION_SETTINGS_RESPONSE)
     def get(self, request):
         """Возвращает текущие настройки уведомлений тенанта."""
         ns = _get_or_create_settings(request.tenant, default_email=request.user.email)
         return Response({'status': 'ok', 'data': _serialize(ns)})
 
+    @extend_schema(
+        request=_NOTIFICATION_SETTINGS_UPDATE,
+        responses=_NOTIFICATION_SETTINGS_RESPONSE,
+    )
     def put(self, request):
         """
         Обновляет email и флаги уведомлений.
@@ -81,8 +137,9 @@ class TelegramConnectView(APIView):
     Тенант переходит по ссылке, нажимает START → бот сохраняет chat_id.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
 
+    @extend_schema(request=None, responses=_TELEGRAM_CONNECT_RESPONSE)
     def post(self, request):
         """Генерирует токен и возвращает bot_url для привязки Telegram."""
         bot_username = settings.TELEGRAM_BOT_USERNAME
@@ -108,8 +165,9 @@ class TelegramConnectView(APIView):
 class TelegramDisconnectView(APIView):
     """DELETE /api/v1/notifications/settings/telegram/ — отвязать Telegram."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
 
+    @extend_schema(request=None, responses=_NOTIFICATION_SETTINGS_RESPONSE)
     def delete(self, request):
         """Сбрасывает telegram_chat_id и username."""
         ns = _get_or_create_settings(request.tenant, default_email=request.user.email)
@@ -128,8 +186,9 @@ class TelegramDisconnectView(APIView):
 class NotificationTestView(APIView):
     """POST /api/v1/notifications/settings/test/ — отправить тестовое Telegram-сообщение."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
 
+    @extend_schema(request=None, responses=_NOTIFICATION_TEST_RESPONSE)
     def post(self, request):
         """Отправляет тестовое сообщение в подключённый Telegram чат тенанта."""
         ns = _get_or_create_settings(request.tenant, default_email=request.user.email)
