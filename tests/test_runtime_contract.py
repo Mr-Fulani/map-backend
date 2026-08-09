@@ -24,6 +24,24 @@ TRIVY_TARBALL_SHA256 = (
 BACKUP_LIFECYCLE = json.loads(
     (ROOT / 'ops/s3/backup-lifecycle.json').read_text()
 )
+TRIVY_EXCEPTIONS = yaml.safe_load((ROOT / '.trivyignore.yaml').read_text())
+EXPECTED_GOSU_EXCEPTIONS = {
+    'CVE-2025-68121',
+    'CVE-2025-61726',
+    'CVE-2025-61729',
+    'CVE-2026-25679',
+    'CVE-2026-27145',
+    'CVE-2026-32280',
+    'CVE-2026-32281',
+    'CVE-2026-32283',
+    'CVE-2026-33811',
+    'CVE-2026-33814',
+    'CVE-2026-39820',
+    'CVE-2026-39822',
+    'CVE-2026-39836',
+    'CVE-2026-42499',
+    'CVE-2026-42504',
+}
 
 
 def test_every_long_running_service_has_restart_and_log_rotation():
@@ -274,6 +292,7 @@ def test_ci_actions_are_commit_pinned_and_job_is_bounded():
     assert '--pkg-types os,library' in CI_WORKFLOW
     assert '--severity HIGH,CRITICAL' in CI_WORKFLOW
     assert '--ignore-unfixed' in CI_WORKFLOW
+    assert '--ignorefile .trivyignore.yaml' in CI_WORKFLOW
     assert '--exit-code 1' in CI_WORKFLOW
     assert 'config --images "${scan_services[@]}"' in CI_WORKFLOW
     assert 'docker image inspect' in CI_WORKFLOW
@@ -308,6 +327,21 @@ def test_ci_actions_are_commit_pinned_and_job_is_bounded():
         CI_WORKFLOW
     )
     assert 'version: v11.3.1' in CI_WORKFLOW
+
+
+def test_trivy_exceptions_are_exact_path_scoped_and_expiring():
+    exceptions = TRIVY_EXCEPTIONS['vulnerabilities']
+
+    assert {item['id'] for item in exceptions} == EXPECTED_GOSU_EXCEPTIONS
+    assert len(exceptions) == len(EXPECTED_GOSU_EXCEPTIONS)
+    for item in exceptions:
+        assert item['paths'] == ['usr/local/bin/gosu']
+        assert str(item['expired_at']) == '2026-09-30'
+        statement = item['statement'].lower()
+        assert 'official postgresql' in statement
+        assert 'uid/gid exec' in statement
+        assert 'unreachable' in statement
+        assert 'upstream rebuild' in statement
 
 
 def test_ci_scans_every_unique_production_image_and_its_service_images_match_ci():
