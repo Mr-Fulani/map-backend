@@ -1,7 +1,9 @@
 from datetime import timedelta
+from decimal import Decimal
 
 from django.conf import settings
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema_field, inline_serializer
 from rest_framework import serializers
 
 from apps.marketplaces.models import (
@@ -42,7 +44,7 @@ class AvitoAccountStatusSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = fields
 
-    def get_days_left(self, obj):
+    def get_days_left(self, obj) -> int | None:
         """Возвращает дни по API-тарифу или по ручной дате Autoload."""
         if obj.tariff_ends_at:
             seconds_left = (obj.tariff_ends_at - timezone.now()).total_seconds()
@@ -54,14 +56,15 @@ class AvitoAccountStatusSerializer(serializers.ModelSerializer):
             return None
         return max((manual_end - timezone.localdate()).days, 0)
 
-    def get_subscription_ends_at(self, obj):
+    @extend_schema_field(serializers.DateField(allow_null=True, read_only=True))
+    def get_subscription_ends_at(self, obj) -> str | None:
         """Единая дата окончания для интерфейса."""
         if obj.tariff_ends_at:
             return timezone.localtime(obj.tariff_ends_at).date().isoformat()
         manual_end = obj.account.autoload_subscription_ends_at
         return manual_end.isoformat() if manual_end else None
 
-    def get_subscription_source(self, obj):
+    def get_subscription_source(self, obj) -> str:
         """Показывает, подтверждена дата API или указана пользователем."""
         if obj.tariff_ends_at:
             return 'avito_tariff'
@@ -69,7 +72,7 @@ class AvitoAccountStatusSerializer(serializers.ModelSerializer):
             return 'manual'
         return 'unavailable'
 
-    def get_placements_remaining(self, obj):
+    def get_placements_remaining(self, obj) -> int | None:
         """Суммирует известные остатки по пакетам размещений."""
         values: list[int] = []
         for package in obj.placement_packages:
@@ -80,7 +83,7 @@ class AvitoAccountStatusSerializer(serializers.ModelSerializer):
                 values.append(value)
         return sum(values) if values else None
 
-    def get_placements_total(self, obj):
+    def get_placements_total(self, obj) -> int | None:
         """Суммирует размеры известных пакетов размещений."""
         values: list[int] = []
         for package in obj.placement_packages:
@@ -97,11 +100,11 @@ class AvitoAccountStatusSerializer(serializers.ModelSerializer):
             return True
         return checked_at < timezone.now() - timedelta(hours=12)
 
-    def get_profile_stale(self, obj):
+    def get_profile_stale(self, obj) -> bool:
         """Показывает, что профиль не подтверждался более 12 часов."""
         return self._is_stale(obj.profile_checked_at)
 
-    def get_tariff_stale(self, obj):
+    def get_tariff_stale(self, obj) -> bool:
         """Показывает, что тариф не подтверждался более 12 часов."""
         return self._is_stale(obj.tariff_checked_at)
 
@@ -144,6 +147,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_at', 'autoload_active', 'autoload_checked_at']
 
+    @extend_schema_field(AvitoAccountStatusSerializer)
     def get_avito_status(self, obj):
         """Возвращает последний снимок Avito без внешнего запроса."""
         try:
@@ -236,6 +240,9 @@ class ListingDetailSerializer(ListingSerializer):
         ]
         read_only_fields = fields
 
+    @extend_schema_field(serializers.ListField(
+        child=serializers.CharField(), read_only=True,
+    ))
     def get_avito_field_warnings(self, obj) -> list:
         """Предупреждения о незаполненных обязательных полях Avito — видны тенанту до публикации."""
         from apps.marketplaces.adapters.avito.feed_builder import avito_field_warnings
@@ -248,11 +255,32 @@ class ListingDetailSerializer(ListingSerializer):
         from apps.marketplaces.adapters.avito.feed_builder import unknown_brand_details
         return unknown_brand_details(obj) is None
 
-    def get_avito_brand_catalog_synced_at(self, obj):
+    @extend_schema_field(serializers.DateTimeField(allow_null=True, read_only=True))
+    def get_avito_brand_catalog_synced_at(self, obj) -> str | None:
         from apps.marketplaces.adapters.avito.brand_catalog import catalog_status
         synced_at = catalog_status()['synced_at']
         return synced_at.isoformat() if synced_at else None
 
+    @extend_schema_field(inline_serializer(
+        name='ListingCatalogCategory',
+        allow_null=True,
+        fields={
+            'id': serializers.IntegerField(read_only=True),
+            'name': serializers.CharField(read_only=True),
+            'parent_id': serializers.IntegerField(
+                allow_null=True, read_only=True,
+            ),
+            'parent_name': serializers.CharField(
+                allow_null=True, read_only=True,
+            ),
+            'default_margin_pct': serializers.DecimalField(
+                max_digits=5,
+                decimal_places=2,
+                allow_null=True,
+                read_only=True,
+            ),
+        },
+    ))
     def get_catalog_category(self, obj):
         """Текущая категория каталога товара (для перепроверки/смены в дровере)."""
         category = getattr(obj.product, 'catalog_category', None)
@@ -263,7 +291,11 @@ class ListingDetailSerializer(ListingSerializer):
             'name': category.name,
             'parent_id': category.parent_id,
             'parent_name': category.parent.name if category.parent_id else None,
-            'default_margin_pct': str(category.default_margin_pct),
+            'default_margin_pct': (
+                str(category.default_margin_pct)
+                if category.default_margin_pct is not None
+                else None
+            ),
         }
 
     def get_ai_confidence_display(self, obj) -> str:
@@ -279,6 +311,18 @@ class ListingDetailSerializer(ListingSerializer):
             label = 'Низкая'
         return f'{label} ({pct}%)'
 
+    @extend_schema_field(inline_serializer(
+        name='ListingImage',
+        many=True,
+        fields={
+            'id': serializers.IntegerField(allow_null=True),
+            'url': serializers.URLField(),
+            'thumb_url': serializers.URLField(),
+            'position': serializers.IntegerField(),
+            'is_primary': serializers.BooleanField(),
+            'source': serializers.CharField(required=False),
+        },
+    ))
     def get_images(self, obj) -> list:
         """Возвращает список изображений товара с CDN-ссылками."""
         request = self.context.get('request')
@@ -341,14 +385,28 @@ class ListingPlacementSerializer(serializers.Serializer):
 
 class ListingFieldsSerializer(serializers.Serializer):
     account_id = serializers.IntegerField(required=False)
-    price_on_listing = serializers.DecimalField(max_digits=12, decimal_places=2, required=False, min_value=0)
-    margin_pct = serializers.DecimalField(max_digits=5, decimal_places=2, required=False, allow_null=True, min_value=0)
+    price_on_listing = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        required=False,
+        min_value=Decimal('0'),
+    )
+    margin_pct = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        required=False,
+        allow_null=True,
+        min_value=Decimal('0'),
+    )
     ad_type = serializers.ChoiceField(choices=Listing.AD_TYPE_CHOICES, required=False)
 
 
 class ListingBulkPlacementSerializer(ListingPlacementSerializer):
     listing_ids = serializers.ListField(
-        child=serializers.IntegerField(min_value=1), required=False, allow_empty=False,
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=False,
+        max_length=settings.API_BULK_MAX_ITEMS,
     )
     account_id = serializers.IntegerField(required=False)
     status = serializers.CharField(max_length=20, required=False, allow_blank=True)
@@ -379,7 +437,10 @@ class ListingBulkActionSerializer(ListingPlacementSerializer):
 
     action = serializers.ChoiceField(choices=ACTION_CHOICES)
     listing_ids = serializers.ListField(
-        child=serializers.IntegerField(min_value=1), required=False, allow_empty=False,
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=False,
+        max_length=settings.API_BULK_MAX_ITEMS,
     )
     account_id = serializers.IntegerField(required=False)
     status = serializers.CharField(max_length=20, required=False, allow_blank=True)

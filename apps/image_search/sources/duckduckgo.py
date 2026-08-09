@@ -1,6 +1,6 @@
 """Источник изображений: DuckDuckGo (Tier 4, бесплатный).
 
-Использует пакет duckduckgo-search, который обрабатывает VQD-токены
+Использует пакет ddgs, который обрабатывает VQD-токены
 и изменения API автоматически.
 
 Глобальный кулдаун (Redis):
@@ -22,7 +22,7 @@ from apps.image_search.sources.registry import register
 logger = logging.getLogger(__name__)
 
 try:
-    from duckduckgo_search import DDGS
+    from ddgs import DDGS
 except ImportError:
     DDGS = None  # type: ignore[assignment,misc]
 
@@ -63,7 +63,7 @@ class DuckDuckGoSource(BaseImageSource):
             Список ImageCandidate с width/height из API и confidence в raw_meta.
         """
         if DDGS is None:
-            logger.error('[ddg] пакет duckduckgo-search не установлен')
+            logger.error('[ddg] пакет ddgs не установлен')
             return []
 
         # Глобальный бан после 403 — ждать пока TTL не истечёт
@@ -112,7 +112,8 @@ class DuckDuckGoSource(BaseImageSource):
             try:
                 with DDGS() as ddgs:
                     return list(ddgs.images(
-                        keywords=query,
+                        query,
+                        backend='duckduckgo',
                         region='ru-ru',
                         max_results=_MAX_RESULTS_PER_QUERY,
                     ))

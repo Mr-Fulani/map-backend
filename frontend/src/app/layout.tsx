@@ -1,12 +1,14 @@
 import type { Metadata } from 'next';
-import { Inter } from 'next/font/google';
+import localFont from 'next/font/local';
 import './globals.css';
 import { cn } from '@/lib/utils';
 import { Providers } from './providers';
 
-const inter = Inter({
-  subsets: ['latin', 'cyrillic'],
+const geist = localFont({
+  src: './fonts/GeistVF.woff',
+  weight: '100 900',
   variable: '--font-sans',
+  display: 'swap',
 });
 
 export const metadata: Metadata = {
@@ -21,7 +23,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" suppressHydrationWarning>
-      <body className={cn('min-h-screen bg-background font-sans antialiased', inter.variable)}>
+      <body className={cn('min-h-screen bg-background font-sans antialiased', geist.variable)}>
         <Providers>{children}</Providers>
       </body>
     </html>

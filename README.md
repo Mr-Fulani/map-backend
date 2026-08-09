@@ -50,7 +50,7 @@
 - **Shadow ban detector:** мониторинг CTR, предупреждение при аномально низких показателях
 
 ### AI-агент
-- Генерация продающих описаний по характеристикам товара (Claude API)
+- Генерация описаний через настраиваемые OpenAI, Anthropic и OpenAI-compatible модели
 - Валидация готовых описаний перед отправкой на Avito
 - Подсчёт использованных AI-кредитов по тарифному плану
 - Промпты адаптированы для ниши автозапчастей
@@ -89,12 +89,12 @@
 
 ## Тарифные планы
 
-| План | Активных объявлений | SKU в каталоге | AI-генераций/мес | Цена |
+| План | Активных объявлений | SKU в каталоге | AI-кредитов/мес | Цена |
 |------|-------------------|----------------|-----------------|------|
 | **Starter** | до 1 000 | до 5 000 | 1 000 | 4 900 ₽/мес |
 | **Business** | до 10 000 | до 30 000 | 5 000 | 14 900 ₽/мес |
 | **Pro** | до 50 000 | до 150 000 | 20 000 | 34 900 ₽/мес |
-| **Enterprise** | без лимита | без лимита | без лимита | от 79 900 ₽/мес |
+| **Enterprise** | без лимита | без лимита | 50 000 | от 79 900 ₽/мес |
 
 Trial: 14 дней бесплатно на плане Business. Скидка 20% при оплате за год.
 
@@ -109,20 +109,22 @@ Trial: 14 дней бесплатно на плане Business. Скидка 20%
 - **django-celery-beat** — расписание: синхронизация каждые 5 мин, обновление статистики каждый час
 - **django-unfold** — кастомизированная Django Admin с тёмной темой
 - **drf-spectacular** — автогенерация OpenAPI/Swagger
-- **Yandex Cloud S3** — хранение изображений товаров и PDF-счетов
+- **Yandex Cloud S3** — хранение изображений товаров
 - **Sentry** — мониторинг ошибок
-- **Claude API (Anthropic)** — AI-генерация описаний
+- **OpenAI / Anthropic / Gemini / DeepSeek / Kimi** — маршрутизируемая AI-генерация
 
 ### Frontend
-- **Next.js 14** (App Router, TypeScript)
+- **Next.js 16.3** + **React 19.2** (App Router, TypeScript)
 - **Tailwind CSS** + **shadcn/ui** — компонентная библиотека
 - **Axios** — HTTP-клиент с интерсепторами для JWT refresh
 - **Sonner** — toast-уведомления
 
 ### Инфраструктура
-- **Docker** + **docker-compose** (django, postgres, redis, celery_worker, celery_beat)
+- **Docker Compose**: Django, PostgreSQL, отдельные cache/broker Redis,
+  Celery workers/Beat, Next.js, Nginx, ограничивающий egress proxy и backup job
 - **Nginx** — reverse proxy, rate limiting
-- **GitHub Actions** — CI (pytest, flake8) + CD (деплой при пуше в main)
+- **GitHub Actions** — CI (backend/frontend тесты, OpenAPI, dependency/OCI
+  vulnerability gates, SBOM) + deploy точного commit SHA только после успешного CI
 - **Timeweb Cloud** — хостинг
 
 ---
@@ -130,86 +132,69 @@ Trial: 14 дней бесплатно на плане Business. Скидка 20%
 ## Быстрый старт
 
 ### Требования
-- Docker + docker-compose
-- Python 3.12+ (для локальной разработки без Docker)
-- Node.js 20+ (для фронтенда)
+- Docker + Docker Compose plugin
+- Python 3.12.13 (версия CI/runtime; 3.12.x для локальных no-Docker проверок)
+- Node.js 24.18.0 и npm 12.0.2 (версии CI/runtime)
 
-### Запуск через Docker
+### Режим A: весь runtime в Docker Compose
 
 ```bash
 # 1. Клонировать репозиторий
-git clone <repo-url>
+git clone https://github.com/OWNER/REPOSITORY.git
 cd saas_poster
 
 # 2. Создать .env из примера
 cp .env.example .env
 # Заполнить переменные (см. раздел "Переменные окружения")
 
-# 3. Поднять все сервисы
-docker compose up -d
+# 3. Первый bootstrap: поднять только зависимости, выполнить миграции/seed/Beat
+#    one-shot командами и лишь затем запустить все сервисы, включая frontend
+make bootstrap
 
-# 4. Выполнить миграции и загрузить тарифные планы
-docker compose exec django python manage.py migrate
-docker compose exec django python manage.py loaddata billing_plans
-
-# 5. Создать суперпользователя для Django Admin
-docker compose exec django python manage.py createsuperuser
+# 4. Создать суперпользователя для Django Admin
+make superuser
 ```
+
+Замените `OWNER/REPOSITORY` на фактический путь репозитория перед клонированием.
 
 После запуска:
 - Django Admin: `http://localhost:8000/admin/`
 - API Swagger: `http://localhost:8000/api/docs/`
 - Frontend: `http://localhost:3000/`
 
-### Запуск фронтенда
+### Режим B: backend в Compose, Next.js на хосте
+
+Это взаимоисключающий с режимом A вариант: не запускайте одновременно
+containerized frontend через `make up` и локальный Next.js на том же порту.
+`dev.sh` фиксирует Compose file/project, проверяет все публикуемые порты, применяет
+миграции до старта Django и при `Ctrl+C` останавливает только этот проект.
 
 ```bash
 cd frontend
-npm install
-npm run dev
+npm ci --strict-allow-scripts
+cd ..
+./dev.sh
 ```
 
 ---
 
 ## Переменные окружения
 
-```env
-# Django
-SECRET_KEY=your-secret-key
-DEBUG=True
-ALLOWED_HOSTS=localhost,127.0.0.1
+Полный актуальный перечень находится в [`.env.example`](.env.example). Ключевые
+имена: `DJANGO_SECRET_KEY`, `DATABASE_URL`, `CACHE_REDIS_URL`,
+`CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `COORDINATION_REDIS_URL`,
+`FIELD_ENCRYPTION_KEYS`, `YC_S3_*`, ключи AI-провайдеров, `AVITO_*`,
+`YOOKASSA_*`, `SENDPULSE_SMTP_*`, `EMAIL_HTTP_PROXY_URL` и `SENTRY_DSN`.
+`REDIS_URL` используется только как fallback локальной разработки.
 
-# База данных
-DATABASE_URL=postgres://user:password@postgres:5432/map_db
+Для production обязательны отдельные случайные PostgreSQL/cache-Redis/
+broker-Redis/Fernet secrets.
+Порядок ротации, webhook delivery, retention и egress policy описаны в
+[`docs/PRODUCTION_SECURITY.md`](docs/PRODUCTION_SECURITY.md).
 
-# Redis
-REDIS_URL=redis://redis:6379/0
-
-# Yandex Cloud S3
-YC_BUCKET_NAME=your-bucket
-YC_ACCESS_KEY_ID=your-key
-YC_SECRET_ACCESS_KEY=your-secret
-YC_ENDPOINT_URL=https://storage.yandexcloud.net
-
-# Claude API (AI-генерация описаний)
-ANTHROPIC_API_KEY=sk-ant-...
-
-# ЮKassa (биллинг)
-YOOKASSA_SHOP_ID=your-shop-id
-YOOKASSA_SECRET_KEY=your-secret-key
-
-# Telegram-уведомления
-TELEGRAM_BOT_TOKEN=your-bot-token
-
-# Email (SendPulse SMTP)
-EMAIL_HOST=smtp.sendpulse.com
-EMAIL_PORT=587
-EMAIL_HOST_USER=your-email
-EMAIL_HOST_PASSWORD=your-password
-
-# Sentry
-SENTRY_DSN=https://...@sentry.io/...
-```
+Для локального frontend используйте `NEXT_PUBLIC_API_URL=http://localhost:8000`.
+В production оставьте `NEXT_PUBLIC_API_URL` пустым: браузер будет обращаться к
+same-origin `/api`, который Nginx проксирует в Django.
 
 ---
 
@@ -228,7 +213,7 @@ SENTRY_DSN=https://...@sentry.io/...
               │   ├── OneCXMLAdapter         │
               │   └── CSVAdapter             │
               │                              │
-              │   AI Agent (Claude API)      │
+              │   AI Agent (multi-provider)  │
               │   Anti-ban System            │
               │   Billing (ЮKassa)           │
               │   Notifications              │
@@ -244,7 +229,7 @@ SENTRY_DSN=https://...@sentry.io/...
 ```
 
 **Поток синхронизации:**
-1. Celery Beat каждые 5 минут запускает `sync_all_tenants_task`
+1. Celery Beat каждые 5 минут запускает `sync_all_tenants`
 2. Для каждого активного тенанта: DataSource Adapter тянет изменения из источника
 3. Изменения сохраняются в `Product` (цена, остаток, описание)
 4. Если товар новый → AI-агент генерирует описание
@@ -258,14 +243,15 @@ SENTRY_DSN=https://...@sentry.io/...
 
 Базовый URL: `/api/v1/`
 
-Аутентификация: Bearer JWT или API Key в заголовке `Authorization: Api-Key <key>`
+Аутентификация: JWT или API Key в заголовке `Authorization: Bearer <token>`.
+API-ключ имеет префикс `map_sk_`.
 
 ### Основные эндпоинты
 
 | Метод | Путь | Описание |
 |-------|------|----------|
 | `POST` | `/auth/register/` | Регистрация тенанта |
-| `POST` | `/auth/jwt/create/` | Получить JWT-токен |
+| `POST` | `/auth/token/` | Получить JWT-токен |
 | `GET` | `/products/` | Каталог товаров (поиск, фильтры, пагинация) |
 | `GET/PATCH` | `/products/{id}/` | Карточка товара, включение/выключение выгрузки |
 | `GET` | `/listings/` | Листинги (фильтр по статусу) |
@@ -274,9 +260,10 @@ SENTRY_DSN=https://...@sentry.io/...
 | `GET` | `/billing/subscription/` | Текущая подписка тенанта |
 | `POST` | `/billing/checkout/` | Создать платёж (ЮKassa) |
 | `GET` | `/billing/invoices/` | История платежей |
-| `GET` | `/analytics/summary/` | KPI: CTR, просмотры, конверсия |
-| `GET/POST` | `/tenants/api-keys/` | Управление API-ключами |
-| `GET/POST` | `/tenants/webhooks/` | Настройка вебхуков |
+| `GET` | `/analytics/` | KPI: CTR, просмотры, конверсия |
+| `GET/POST` | `/tenant/api-keys/` | Управление API-ключами |
+| `GET/POST` | `/webhooks/` | Настройка webhook endpoint-ов |
+| `GET` | `/webhooks/deliveries/` | Аудит и статусы webhook-доставок |
 
 Полная документация: `/api/docs/` (Swagger UI)
 
@@ -294,6 +281,9 @@ saas_poster/
 │   ├── core/            — TimestampedModel, middleware, утилиты
 │   ├── datasources/     — адаптеры 1С/CSV, шифрование
 │   ├── marketplaces/    — Avito-аккаунты, листинги, адаптер Avito
+│   ├── image_search/    — поиск и оценка изображений
+│   ├── media_processing/— обработка изображений
+│   ├── web_research/    — товарные и ценовые интернет-исследования
 │   ├── notifications/   — Telegram + Email уведомления
 │   ├── products/        — каталог товаров и изображений
 │   ├── sync/            — SyncLog, задачи синхронизации
@@ -303,12 +293,16 @@ saas_poster/
 │   ├── settings/        — base, development, production
 │   ├── celery.py
 │   └── urls.py
-├── frontend/            — Next.js 14 Dashboard
+├── frontend/            — Next.js 16.3 / React 19 Dashboard
 ├── requirements/
-│   ├── base.txt
-│   ├── dev.txt
-│   └── prod.txt
-├── docker-compose.yml
+│   ├── base.in          — общие прямые Python-зависимости
+│   ├── dev.in           — инструменты разработки и тестов
+│   ├── prod.in          — production WSGI/runtime слой
+│   ├── ci-tools.in      — изолированные инструменты supply-chain CI
+│   └── *.txt            — воспроизводимые hash-locked lock-файлы
+├── docker-compose.yml   — локальная разработка
+├── docker-compose.prod.yml
+├── docker-compose.restore.yml
 ├── Makefile
 └── ROADMAP_MAP.md
 ```
@@ -325,7 +319,7 @@ saas_poster/
 - [x] Источники данных: 1С HTTP, 1С XML, CSV (с шифрованием credentials)
 - [x] Каталог товаров: импорт, хранение, фильтрация, изображения на S3
 - [x] Avito-адаптер: публикация, обновление, архивирование, retry
-- [x] AI-агент: генерация описаний через Claude, подсчёт кредитов
+- [x] AI-агент: multi-provider routing, генерация описаний, кошелёк и кредиты
 - [x] Anti-ban: gradual ramp-up, velocity control, shadow ban detector
 - [x] Уведомления: Telegram + Email, настройки per-tenant
 - [x] Логи синхронизаций: SyncLog, фильтрация, автоочистка > 90 дней
@@ -333,8 +327,12 @@ saas_poster/
 - [x] Celery Beat: расписание всех фоновых задач
 - [x] Next.js Dashboard: KPI, каталог, листинги, логи, аналитика, биллинг, настройки
 - [x] REST API + OpenAPI/Swagger документация
-- [x] Вебхуки на события синхронизации
-- [x] CI/CD: GitHub Actions (lint + тесты + деплой)
+- [x] Управление webhook endpoint-ами и безопасная тестовая отправка
+- [x] Transactional webhook outbox, HMAC-подпись, retry и аудит доставок
+- [x] Soft-delete и автоматическая retention-очистка критичных сущностей
+- [x] CI/CD: GitHub Actions (lint + тесты + OpenAPI без предупреждений + gated deploy проверенного commit SHA)
+- [x] Зашифрованные backup PostgreSQL: pre-migration gate, S3 retention,
+      freshness-monitor и проверяемый restore drill
 
 ### 🚧 В планах (Phase 3)
 
@@ -343,7 +341,6 @@ saas_poster/
 - [ ] Расширенная аналитика: A/B тест заголовков, тепловые карты
 - [ ] White-label: кастомный домен и брендинг для Enterprise
 - [ ] Производственная нагрузка: нагрузочное тестирование 50К SKU
-- [ ] Backup/restore: автоматические бэкапы PostgreSQL в S3
 
 ---
 
@@ -352,31 +349,44 @@ saas_poster/
 ```bash
 # Запустить тесты
 make test
-# или
-docker compose exec django pytest --cov=apps
 
 # Линтер
 make lint
 # или
-flake8 apps/
+flake8 .
 
 # Создать миграции
-docker compose exec django python manage.py makemigrations
+make migrations
 
 # Django shell
 make shell
+
+# Проверки без обращения к Docker daemon
+make runtime-check
+make frontend-test
+cd frontend && npm run typecheck && npm run lint && npm run build
 ```
 
 ### Команды Makefile
 
 | Команда | Описание |
 |---------|----------|
+| `make bootstrap` | Безопасно подготовить пустую БД и запустить первый dev runtime |
 | `make up` | Поднять все сервисы |
 | `make down` | Остановить все сервисы |
 | `make shell` | Django shell |
 | `make migrate` | Применить миграции |
 | `make test` | Запустить тесты с coverage |
-| `make lint` | Проверить код (flake8) |
+| `make lint` | Проверить весь Python-код через flake8 |
+| `make typecheck-backend` | Проверить расширяемый type-clean baseline из `mypy.ini` |
+| `make runtime-check` | Проверить Compose/deploy/health contracts без Docker daemon |
+| `make frontend-test` | Запустить критичные frontend unit/contract тесты без Docker |
+| `make backup` | Создать зашифрованный production backup (ops profile) |
+| `make backup-check` | Проверить свежесть последнего production backup |
+
+Production runbooks: [deployment](docs/DEPLOYMENT.md),
+[security](docs/PRODUCTION_SECURITY.md), [backup/restore](docs/BACKUP_RESTORE.md)
+и [release checklist](docs/RELEASE_CHECKLIST.md).
 
 ---
 

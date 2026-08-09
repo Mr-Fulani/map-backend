@@ -467,11 +467,10 @@ class AIWalletService:
         wallet.notification_state = {'sent_thresholds': sorted(sent)}
         wallet.save(update_fields=['notification_state', 'updated_at'])
 
-        from apps.notifications.services import LEVEL_BILLING, LEVEL_CRITICAL
-        from apps.notifications.tasks import send_notification_task
+        from apps.billing.outbox import enqueue_notification
 
         if threshold >= 100:
-            level = LEVEL_CRITICAL
+            level = 'critical'
             if wallet.purchased_balance > 0:
                 message = (
                     'Включённый месячный пакет AI-кредитов исчерпан. '
@@ -483,13 +482,18 @@ class AIWalletService:
                     'или следующего расчётного периода.'
                 )
         else:
-            level = LEVEL_BILLING
+            level = 'billing'
             message = (
                 f'Использовано {threshold}% месячного пакета AI-кредитов. '
                 f'Осталось {wallet.included_balance.normalize()} кредитов.'
             )
 
-        tenant_id = wallet.tenant_id
-        transaction.on_commit(
-            lambda: send_notification_task.delay(tenant_id, level, message),
+        enqueue_notification(
+            tenant=wallet.tenant,
+            level=level,
+            message=message,
+            idempotency_key=(
+                f'ai-wallet:{wallet.pk}:threshold:{threshold}:state:'
+                f'{wallet.updated_at.isoformat()}:v1'
+            ),
         )

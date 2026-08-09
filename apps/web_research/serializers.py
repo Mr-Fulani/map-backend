@@ -128,6 +128,101 @@ class WebResearchRunSerializer(serializers.ModelSerializer):
         ]
 
 
+class MarketPriceDifferenceSerializer(serializers.Serializer):
+    amount = serializers.DecimalField(max_digits=16, decimal_places=2)
+    percent = serializers.DecimalField(max_digits=12, decimal_places=1)
+    direction = serializers.ChoiceField(choices=['above', 'below', 'equal'])
+
+
+class CatalogMarketOfferSerializer(serializers.Serializer):
+    source_id = serializers.CharField()
+    source_label = serializers.CharField()
+    status = serializers.CharField()
+    status_label = serializers.CharField()
+    price = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        allow_null=True,
+    )
+    currency = serializers.CharField(max_length=3)
+    price_is_from = serializers.BooleanField()
+    availability = serializers.CharField()
+    availability_label = serializers.CharField()
+    availability_text = serializers.CharField(allow_blank=True)
+    quantity = serializers.IntegerField(min_value=0, allow_null=True)
+    checked_at = serializers.DateTimeField(allow_null=True)
+    url = serializers.URLField(allow_blank=True)
+    difference_from_listing = MarketPriceDifferenceSerializer(allow_null=True)
+    difference_from_base = MarketPriceDifferenceSerializer(allow_null=True)
+    message = serializers.CharField(allow_blank=True)
+
+
+class MarketCompetitorOfferSerializer(CompetitorOfferSerializer):
+    # Explicit strings avoid generating a second set of model-choice enums for
+    # this response-only extension of CompetitorOfferSerializer.
+    condition = serializers.CharField()
+    review_status = serializers.CharField()
+    difference_from_base = MarketPriceDifferenceSerializer(allow_null=True)
+    difference_from_listing = MarketPriceDifferenceSerializer(allow_null=True)
+
+    class Meta(CompetitorOfferSerializer.Meta):
+        fields = CompetitorOfferSerializer.Meta.fields + [
+            'difference_from_base',
+            'difference_from_listing',
+        ]
+
+
+class MarketStatisticsSerializer(serializers.Serializer):
+    minimum = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        allow_null=True,
+    )
+    median = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        allow_null=True,
+    )
+    maximum = serializers.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        allow_null=True,
+    )
+    verified_offer_count = serializers.IntegerField(min_value=0)
+    available_seller_count = serializers.IntegerField(min_value=0)
+    listing_vs_median = MarketPriceDifferenceSerializer(allow_null=True)
+    listing_vs_base = MarketPriceDifferenceSerializer(allow_null=True)
+    median_vs_base = MarketPriceDifferenceSerializer(allow_null=True)
+
+
+class MarketRegionSerializer(serializers.Serializer):
+    preset = serializers.CharField()
+    label = serializers.CharField()
+    country_codes = serializers.ListField(child=serializers.CharField(max_length=2))
+
+
+class MarketFreshnessSerializer(serializers.Serializer):
+    last_checked_at = serializers.DateTimeField(allow_null=True)
+    ttl_hours = serializers.IntegerField(min_value=1)
+    fresh_offer_count = serializers.IntegerField(min_value=0)
+    stale_offer_count = serializers.IntegerField(min_value=0)
+
+
+class ListingMarketComparisonSerializer(serializers.Serializer):
+    listing_id = serializers.IntegerField(min_value=1)
+    product_id = serializers.IntegerField(min_value=1)
+    base_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    listing_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    catalog_offers = CatalogMarketOfferSerializer(many=True)
+    internet_offers = MarketCompetitorOfferSerializer(many=True)
+    statistics = MarketStatisticsSerializer()
+    region = MarketRegionSerializer()
+    freshness = MarketFreshnessSerializer()
+    active_run = WebResearchRunSerializer(allow_null=True)
+    latest_run = WebResearchRunSerializer(allow_null=True)
+    warnings = serializers.ListField(child=serializers.CharField())
+
+
 class WebResearchRunListSerializer(serializers.ModelSerializer):
     product_article = serializers.CharField(source='product.article', read_only=True)
     product_name = serializers.CharField(source='product.name', read_only=True)

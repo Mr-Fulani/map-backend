@@ -14,20 +14,21 @@ import { Header } from '@/components/layout/header';
 import { DashboardNavigationHistory } from '@/components/layout/navigation-history';
 import { NavigationProgress } from '@/components/layout/navigation-progress';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { AuthRecovery } from '@/components/auth-recovery';
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, hasAuthError } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!isLoading && !isAuthenticated) {
+    if (!isLoading && !isAuthenticated && !hasAuthError) {
       router.push('/login');
     }
-  }, [isLoading, isAuthenticated, router]);
+  }, [hasAuthError, isLoading, isAuthenticated, router]);
 
   if (isLoading) {
     return (
@@ -38,6 +39,10 @@ export default function DashboardLayout({
         </div>
       </div>
     );
+  }
+
+  if (hasAuthError) {
+    return <AuthRecovery />;
   }
 
   if (!isAuthenticated) {

@@ -1,0 +1,92 @@
+x-egress-environment: &egress-environment
+  HTTP_PROXY: http://egress_proxy:3128
+  HTTPS_PROXY: http://egress_proxy:3128
+  http_proxy: http://egress_proxy:3128
+  https_proxy: http://egress_proxy:3128
+  NO_PROXY: localhost,127.0.0.1,egress_proxy
+  no_proxy: localhost,127.0.0.1,egress_proxy
+  HOME: /tmp
+  XDG_CACHE_HOME: /tmp/.cache
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  restore:
+    image: saas-poster-backup:${BACKUP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+    command: python3 -m backup.restore
+    init: true
+    restart: "no"
+    user: "0:0"
+    read_only: true
+    cap_drop: [ALL]
+    # Root otherwise cannot read an operator-owned mode-0600 identity after
+    # dropping every capability. This read-only capability is the minimum
+    # needed for that bind-mounted recovery secret.
+    cap_add: [DAC_READ_SEARCH]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      RESTORE_PRODUCTION_DATABASE_NAME: ${RESTORE_PRODUCTION_DATABASE_NAME:?RESTORE_PRODUCTION_DATABASE_NAME is required}
+      RESTORE_DATABASE_URL: ${RESTORE_DATABASE_URL:?RESTORE_DATABASE_URL is required}
+      RESTORE_CONFIRM_DATABASE: ${RESTORE_CONFIRM_DATABASE:?RESTORE_CONFIRM_DATABASE is required}
+      RESTORE_OBJECT_KEY: ${RESTORE_OBJECT_KEY:?RESTORE_OBJECT_KEY is required}
+      RESTORE_AGE_IDENTITY_FILE: /run/secrets/backup-age-identity.txt
+      RESTORE_SIGNING_PUBLIC_KEY: ${RESTORE_SIGNING_PUBLIC_KEY:?RESTORE_SIGNING_PUBLIC_KEY is required}
+      RESTORE_S3_BUCKET: ${RESTORE_S3_BUCKET:?RESTORE_S3_BUCKET is required}
+      RESTORE_S3_PREFIX: ${RESTORE_S3_PREFIX:-postgres}
+      RESTORE_S3_ENDPOINT: ${RESTORE_S3_ENDPOINT:?RESTORE_S3_ENDPOINT is required}
+      RESTORE_S3_REGION: ${RESTORE_S3_REGION:-ru-central1}
+      RESTORE_S3_ACCESS_KEY: ${RESTORE_S3_ACCESS_KEY:?RESTORE_S3_ACCESS_KEY is required}
+      RESTORE_S3_SECRET_KEY: ${RESTORE_S3_SECRET_KEY:?RESTORE_S3_SECRET_KEY is required}
+      RESTORE_S3_SESSION_TOKEN: ${RESTORE_S3_SESSION_TOKEN:-}
+      RESTORE_COMMAND_TIMEOUT_SECONDS: ${RESTORE_COMMAND_TIMEOUT_SECONDS:-7200}
+      <<: *egress-environment
+    depends_on:
+      egress_proxy:
+        condition: service_healthy
+    networks: [recovery]
+    volumes:
+      - restore_workspace:/tmp
+      - type: bind
+        source: ${RESTORE_AGE_IDENTITY_HOST_FILE:?RESTORE_AGE_IDENTITY_HOST_FILE is required}
+        target: /run/secrets/backup-age-identity.txt
+        read_only: true
+    logging: *default-logging
+    stop_grace_period: 5m
+
+  egress_proxy:
+    build:
+      context: .
+      dockerfile: egress-proxy/Dockerfile
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - ./egress-proxy.conf:/etc/squid/squid.conf:ro
+    networks:
+      - recovery
+      - egress_public
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    logging: *default-logging
+    stop_grace_period: 30s
+
+volumes:
+  restore_workspace:
+
+networks:
+  # The temporary restore process needs a direct route to the target PostgreSQL
+  # endpoint. HTTP(S) clients still use egress_proxy through the proxy variables.
+  recovery:
+  egress_public:

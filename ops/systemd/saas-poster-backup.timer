@@ -1,0 +1,11 @@
+[Unit]
+Description=Run SaaS Poster PostgreSQL backup every day
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=15m
+Persistent=true
+Unit=saas-poster-backup.service
+
+[Install]
+WantedBy=timers.target

@@ -48,26 +48,46 @@ function toISODate(d: Date) {
   return d.toISOString().slice(0, 10);
 }
 
-export default function AnalyticsPage() {
+function defaultDateRange() {
   const today = new Date();
-  const [dateFrom, setDateFrom] = useState(toISODate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29)));
-  const [dateTo, setDateTo] = useState(toISODate(today));
+  return {
+    from: toISODate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 29)),
+    to: toISODate(today),
+  };
+}
+
+export default function AnalyticsPage() {
+  const [initialRange] = useState(defaultDateRange);
+  const [dateFrom, setDateFrom] = useState(initialRange.from);
+  const [dateTo, setDateTo] = useState(initialRange.to);
+  const [request, setRequest] = useState({ ...initialRange, revision: 0 });
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  function load(from: string, to: string) {
-    setLoading(true);
-    analyticsApi
-      .get({ date_from: from, date_to: to })
-      .then((r) => setData(r.data.data))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
-  }
-
   useEffect(() => {
-    load(dateFrom, dateTo);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    let active = true;
+    analyticsApi
+      .get({ date_from: request.from, date_to: request.to })
+      .then((response) => {
+        if (active) setData(response.data.data);
+      })
+      .catch(() => {
+        if (active) setData(null);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
+  }, [request]);
+
+  function applyDateRange() {
+    setLoading(true);
+    setRequest((current) => ({
+      from: dateFrom,
+      to: dateTo,
+      revision: current.revision + 1,
+    }));
+  }
 
   const summary = data?.summary;
   const daily = data?.daily ?? [];
@@ -91,7 +111,7 @@ export default function AnalyticsPage() {
           <label className="text-xs text-muted-foreground">По</label>
           <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="w-full sm:w-40" />
         </div>
-        <Button onClick={() => load(dateFrom, dateTo)} disabled={loading} className="w-full sm:w-auto">
+        <Button onClick={applyDateRange} disabled={loading} className="w-full sm:w-auto">
           Применить
         </Button>
       </div>

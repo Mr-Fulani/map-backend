@@ -3,6 +3,7 @@ import json
 import re
 from decimal import Decimal
 
+from django.conf import settings
 from django.utils.timezone import now
 
 from apps.products.attribute_presentation import normalize_attribute_text
@@ -25,6 +26,10 @@ from apps.products.source_policy import (
     should_mark_needs_review,
 )
 from apps.tenants.models import CatalogDomain, TenantCatalogDomain
+
+
+MAX_BULK_ACTION_PAUSE_SECONDS = 3600
+MAX_BULK_ACTION_PRODUCT_IDS = settings.API_BULK_MAX_ITEMS
 
 
 # Латинские буквы-двойники → кириллица. В источниках (1С/CSV) названия часто
@@ -52,6 +57,7 @@ def _compute_hash(data: dict) -> str:
         'stock_qty': data.get('stock_qty', 0),
         'category': data.get('category', ''),
         'condition': data.get('condition', 'new'),
+        'description': data.get('description', ''),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
@@ -189,6 +195,23 @@ class ProductBrandService:
         return normalize_part_code(brand)
 
     @classmethod
+    def resolve_existing_brand(cls, brand_name: str) -> ProductBrand | None:
+        """Resolve platform reference data without letting a tenant mutate it."""
+        normalized = cls.normalize_brand((brand_name or '').strip())
+        if not normalized:
+            return None
+        alias = ProductBrandAlias.objects.select_related('brand').filter(
+            normalized_alias=normalized,
+            brand__is_active=True,
+        ).first()
+        if alias is not None:
+            return alias.brand
+        return ProductBrand.objects.filter(
+            normalized_name=normalized,
+            is_active=True,
+        ).first()
+
+    @classmethod
     def resolve_or_create_brand(
         cls, brand_name: str, source_id: str = '', confidence: float = 0.8,
         needs_review: bool = False,
@@ -301,11 +324,26 @@ class ProductService:
 
         # Читаем старый хэш ДО update_or_create — иначе всегда будет 'unchanged'
         try:
-            existing = Product.objects.get(**lookup)
+            existing = Product.all_objects.get(**lookup)
             old_hash = existing.hash_1c
+            old_data = {
+                'price': existing.price,
+                'stock_qty': existing.stock_qty,
+                'name': existing.name,
+                'brand': existing.brand,
+                'condition': existing.condition,
+                'category': existing.category_1c,
+                'description': existing.description_1c,
+            }
         except Product.DoesNotExist:
             existing = None
             old_hash = None
+            old_data = None
+
+        if existing and existing.deleted_at is not None:
+            existing.restore()
+            existing.sync_excluded = False
+            existing.save(update_fields=['sync_excluded', 'updated_at'])
 
         if existing and existing.sync_excluded:
             return existing, 'unchanged', None
@@ -320,18 +358,18 @@ class ProductService:
             defaults['brand_source_id'] = existing.brand_source_id
             defaults['brand_needs_review'] = existing.brand_needs_review
 
-        product, created = Product.objects.update_or_create(**lookup, defaults=defaults)
+        if existing is None:
+            product = Product.objects.create(**lookup, **defaults)
+            created = True
+        else:
+            for field, value in defaults.items():
+                setattr(existing, field, value)
+            existing.save(update_fields=[*defaults.keys(), 'updated_at'])
+            product = existing
+            created = False
         if created:
             return product, 'created', None
         if old_hash != hash_new:
-            old_data = {
-                'price': str(existing.price),
-                'stock_qty': existing.stock_qty,
-                'name': existing.name,
-                'brand': existing.brand,
-                'condition': existing.condition,
-                'category': existing.category_1c,
-            }
             new_data = {
                 'price': data.get('price', '0'),
                 'stock_qty': data.get('stock_qty', 0),
@@ -339,8 +377,11 @@ class ProductService:
                 'brand': defaults['brand'],
                 'condition': data.get('condition', 'new'),
                 'category': data.get('category', ''),
+                'description': data.get('description', ''),
             }
             change_type = ProductService.detect_change_type(old_data, new_data)
+            if change_type is None:
+                return product, 'unchanged', None
             return product, 'updated', change_type
         return product, 'unchanged', None
 
@@ -386,20 +427,32 @@ class ProductService:
         }
 
     @staticmethod
-    def detect_change_type(old_data: dict, new_data: dict) -> str:
+    def detect_change_type(old_data: dict, new_data: dict) -> str | None:
         """
         Определяет тип изменения товара.
 
         Нужно для решения: надо ли перегенерировать описание и как обновить листинг.
         Возвращает: 'price_only' | 'stock_only' | 'content' | 'category'
         """
-        price_changed = str(old_data.get('price')) != str(new_data.get('price'))
-        stock_changed = old_data.get('stock_qty') != new_data.get('stock_qty')
+        try:
+            price_changed = Decimal(str(old_data.get('price') or 0)) != Decimal(
+                str(new_data.get('price') or 0)
+            )
+        except (ValueError, TypeError):
+            price_changed = str(old_data.get('price')) != str(new_data.get('price'))
+        try:
+            stock_changed = int(old_data.get('stock_qty') or 0) != int(
+                new_data.get('stock_qty') or 0
+            )
+        except (ValueError, TypeError):
+            stock_changed = old_data.get('stock_qty') != new_data.get('stock_qty')
         category_changed = old_data.get('category') != new_data.get('category')
 
         content_fields = {'name', 'brand', 'condition', 'description'}
         content_changed = any(old_data.get(f) != new_data.get(f) for f in content_fields)
 
+        if not any((price_changed, stock_changed, category_changed, content_changed)):
+            return None
         if category_changed:
             return 'category'
         if content_changed:
@@ -1344,6 +1397,10 @@ class ProductBulkActionService:
     ) -> ProductBulkActionJob:
         if action not in ProductBulkActionService.ALLOWED_ACTIONS:
             raise ValueError('Unknown bulk action')
+        if len(set(product_ids)) > MAX_BULK_ACTION_PRODUCT_IDS:
+            raise ValueError(
+                f'Bulk action accepts at most {MAX_BULK_ACTION_PRODUCT_IDS} product IDs.'
+            )
         if action in [
             ProductBulkActionJob.Action.ENRICH_SELECTED,
             ProductBulkActionJob.Action.ENRICH_MISSING_DATA,
@@ -1371,9 +1428,16 @@ class ProductBulkActionService:
             total_count=len(valid_ids),
             skipped_count=skipped_count,
             batch_size=max(1, min(batch_size or source_config['batch_size'], source_config['batch_size'])),
-            pause_seconds=max(
-                source_config['min_pause_seconds'],
-                pause_seconds or source_config['default_pause_seconds'],
+            pause_seconds=min(
+                MAX_BULK_ACTION_PAUSE_SECONDS,
+                max(
+                    source_config['min_pause_seconds'],
+                    (
+                        source_config['default_pause_seconds']
+                        if pause_seconds is None
+                        else pause_seconds
+                    ),
+                ),
             ),
         )
 
@@ -1391,8 +1455,20 @@ class ProductBulkActionService:
             ]:
                 return {'job_id': job_id, 'status': job.status}
 
+            current_time = now()
+            if (
+                job.status == ProductBulkActionJob.Status.COOLING_DOWN
+                and job.next_batch_at is not None
+                and job.next_batch_at > current_time
+            ):
+                return {
+                    'job_id': job_id,
+                    'status': job.status,
+                    'next_batch_at': job.next_batch_at.isoformat(),
+                }
+
             if job.started_at is None:
-                job.started_at = now()
+                job.started_at = current_time
             job.status = ProductBulkActionJob.Status.RUNNING
             remaining_ids = job.product_ids[job.processed_count:]
             batch_ids = remaining_ids[:job.batch_size]
@@ -1401,7 +1477,11 @@ class ProductBulkActionService:
                 job.status = ProductBulkActionJob.Status.SUCCESS
                 job.finished_at = now()
                 job.next_batch_at = None
-                job.save(update_fields=['status', 'finished_at', 'next_batch_at', 'updated_at'])
+                job.last_dispatched_at = None
+                job.save(update_fields=[
+                    'status', 'finished_at', 'next_batch_at',
+                    'last_dispatched_at', 'updated_at',
+                ])
                 return {'job_id': job_id, 'status': job.status}
 
             products = Product.objects.filter(
@@ -1473,15 +1553,11 @@ class ProductBulkActionService:
                 from datetime import timedelta
                 job.status = ProductBulkActionJob.Status.COOLING_DOWN
                 job.next_batch_at = now() + timedelta(seconds=job.pause_seconds)
-                from apps.products.tasks import process_bulk_product_action
-                transaction.on_commit(
-                    lambda: process_bulk_product_action.apply_async(
-                        args=[job.pk], countdown=job.pause_seconds,
-                    )
-                )
+            job.last_dispatched_at = None
             job.save(update_fields=[
                 'status', 'started_at', 'processed_count', 'queued_count',
                 'success_count', 'skipped_count', 'finished_at', 'next_batch_at', 'updated_at',
+                'last_dispatched_at',
             ])
             return {
                 'job_id': job_id,

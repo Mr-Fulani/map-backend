@@ -271,15 +271,14 @@ export default function ProductsPage() {
   const [excludeLoading, setExcludeLoading] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [loadingOverride, setLoading] = useState(true);
+  const [loadedScope, setLoadedScope] = useState<string | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [bulkRefreshing, setBulkRefreshing] = useState(false);
   const [bulkJob, setBulkJob] = useState<BulkActionJob | null>(null);
   const [bulkError, setBulkError] = useState('');
   const [bulkUpdatedAt, setBulkUpdatedAt] = useState<string | null>(null);
   const lastBulkStatusRef = useRef<string | null>(null);
-  const didMountFiltersRef = useRef(false);
   const supportsAutoPartsEnrichment = tenant?.catalog_domain
     ? ['auto_parts', 'mixed'].includes(tenant.catalog_domain)
     : true;
@@ -287,6 +286,33 @@ export default function ProductsPage() {
   const debouncedSearch = useDebounce(search, 300);
   const page = pageFromSearchParams(searchParams);
   const currentListHref = `/dashboard/products${searchParams.toString() ? `?${searchParams.toString()}` : ''}`;
+  const selectionScope = JSON.stringify([
+    page,
+    debouncedSearch,
+    ordering,
+    listingFilter,
+    needsReviewFilter,
+    excludedFilter,
+    catalogDomainFilter,
+    catalogCategoryFilter,
+  ]);
+  const loading = loadingOverride || loadedScope !== selectionScope;
+  const [selection, setSelection] = useState<{ scope: string; ids: number[] }>({
+    scope: selectionScope,
+    ids: [],
+  });
+  const selectedIds = selection.scope === selectionScope ? selection.ids : [];
+  const setSelectedIds = useCallback((
+    next: number[] | ((current: number[]) => number[]),
+  ) => {
+    setSelection((current) => {
+      const currentIds = current.scope === selectionScope ? current.ids : [];
+      return {
+        scope: selectionScope,
+        ids: typeof next === 'function' ? next(currentIds) : next,
+      };
+    });
+  }, [selectionScope]);
 
   const updatePage = useCallback((nextPage: number) => {
     const safePage = Math.max(1, nextPage);
@@ -302,6 +328,10 @@ export default function ProductsPage() {
     const href = `/dashboard/products${query ? `?${query}` : ''}`;
     router.replace(href, { scroll: false });
   }, [router, searchParams]);
+
+  const resetPage = useCallback(() => {
+    if (page !== 1) updatePage(1);
+  }, [page, updatePage]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -325,50 +355,71 @@ export default function ProductsPage() {
     }
   }, [page, debouncedSearch, ordering, listingFilter, needsReviewFilter, excludedFilter, catalogDomainFilter, catalogCategoryFilter]);
 
-  const loadCatalogCategories = useCallback(async () => {
-    try {
-      const res = await productApi.catalogCategories();
-      const categories = (res.data.data ?? []) as CatalogCategoryOption[];
-      const active = categories.filter((category) => category.is_active);
-      active.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-      setCatalogCategories(active);
-    } catch {
-      setCatalogCategories([]);
-    }
+  useEffect(() => {
+    let active = true;
+    const params: Record<string, unknown> = { page };
+    if (debouncedSearch) params.search = debouncedSearch;
+    if (ordering) params.ordering = ordering;
+    if (listingFilter) params.listing_filter = listingFilter;
+    if (needsReviewFilter) params.needs_review = 'true';
+    if (excludedFilter) params.sync_excluded = 'true';
+    if (catalogDomainFilter) params.catalog_domain = catalogDomainFilter;
+    if (catalogCategoryFilter) params.catalog_category = catalogCategoryFilter;
+
+    productApi.list(params)
+      .then((response) => {
+        if (!active) return;
+        setProducts(response.data.data);
+        setMeta(response.data.meta);
+      })
+      .catch(() => {
+        if (active) setProducts([]);
+      })
+      .finally(() => {
+        if (!active) return;
+        setLoadedScope(selectionScope);
+        setLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [
+    page,
+    debouncedSearch,
+    ordering,
+    listingFilter,
+    needsReviewFilter,
+    excludedFilter,
+    catalogDomainFilter,
+    catalogCategoryFilter,
+    selectionScope,
+  ]);
+
+  useEffect(() => {
+    let active = true;
+    productApi.catalogCategories()
+      .then((response) => {
+        if (!active) return;
+        const categories = (response.data.data ?? []) as CatalogCategoryOption[];
+        const enabled = categories.filter((category) => category.is_active);
+        enabled.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+        setCatalogCategories(enabled);
+      })
+      .catch(() => {
+        if (active) setCatalogCategories([]);
+      });
+
+    tenantApi.catalogDomains()
+      .then((response) => {
+        if (!active) return;
+        const domains = (response.data.data ?? []) as CatalogDomain[];
+        setCatalogDomains(domains.filter((domain) => domain.is_active));
+      })
+      .catch(() => {
+        if (active) setCatalogDomains([]);
+      });
+
+    return () => { active = false; };
   }, []);
-
-  const loadCatalogDomains = useCallback(async () => {
-    try {
-      const res = await tenantApi.catalogDomains();
-      const domains = (res.data.data ?? []) as CatalogDomain[];
-      setCatalogDomains(domains.filter((domain) => domain.is_active));
-    } catch {
-      setCatalogDomains([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!didMountFiltersRef.current) {
-      didMountFiltersRef.current = true;
-      return;
-    }
-
-    updatePage(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedSearch, ordering, listingFilter, needsReviewFilter, excludedFilter, catalogDomainFilter, catalogCategoryFilter]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  useEffect(() => {
-    loadCatalogCategories();
-    loadCatalogDomains();
-  }, [loadCatalogCategories, loadCatalogDomains]);
-
-  useEffect(() => {
-    setSelectedIds([]);
-  }, [page, debouncedSearch, ordering, listingFilter, needsReviewFilter, excludedFilter, catalogDomainFilter, catalogCategoryFilter]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -578,7 +629,11 @@ export default function ProductsPage() {
           <Input
             placeholder="Артикул, название, бренд..."
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setSelectedIds([]);
+              resetPage();
+            }}
             className="pl-9"
           />
         </div>
@@ -593,7 +648,13 @@ export default function ProductsPage() {
               key={f.value}
               size="sm"
               variant={listingFilter === f.value ? 'default' : 'outline'}
-              onClick={() => setListingFilter(listingFilter === f.value && f.value !== '' ? '' : f.value)}
+              onClick={() => {
+                const nextFilter = listingFilter === f.value && f.value !== '' ? '' : f.value;
+                if (nextFilter === listingFilter) return;
+                setListingFilter(nextFilter);
+                setSelectedIds([]);
+                resetPage();
+              }}
             >
               {f.label}
             </Button>
@@ -601,14 +662,22 @@ export default function ProductsPage() {
           <Button
             size="sm"
             variant={needsReviewFilter ? 'default' : 'outline'}
-            onClick={() => setNeedsReviewFilter((value) => !value)}
+            onClick={() => {
+              setNeedsReviewFilter((value) => !value);
+              setSelectedIds([]);
+              resetPage();
+            }}
           >
             На проверке
           </Button>
           <Button
             size="sm"
             variant={excludedFilter ? 'default' : 'outline'}
-            onClick={() => setExcludedFilter((value) => !value)}
+            onClick={() => {
+              setExcludedFilter((value) => !value);
+              setSelectedIds([]);
+              resetPage();
+            }}
           >
             Исключён
           </Button>
@@ -621,7 +690,12 @@ export default function ProductsPage() {
             key={f.value}
             size="sm"
             variant={catalogDomainFilter === f.value ? 'default' : 'outline'}
-            onClick={() => setCatalogDomainFilter(f.value)}
+            onClick={() => {
+              if (catalogDomainFilter === f.value) return;
+              setCatalogDomainFilter(f.value);
+              setSelectedIds([]);
+              resetPage();
+            }}
           >
             {f.label}
             {meta?.domain_counts && (
@@ -662,7 +736,11 @@ export default function ProductsPage() {
               onChange={(e) => {
                 setCategorySearch(e.target.value);
                 setCategoryDropdownOpen(true);
-                if (!e.target.value.trim()) setCatalogCategoryFilter('');
+                if (!e.target.value.trim() && catalogCategoryFilter) {
+                  setCatalogCategoryFilter('');
+                  setSelectedIds([]);
+                  resetPage();
+                }
               }}
               onFocus={() => categorySearch && setCategoryDropdownOpen(true)}
             />
@@ -675,9 +753,14 @@ export default function ProductsPage() {
                     className="w-full px-3 py-2 text-left text-sm hover:bg-accent"
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => {
-                      setCatalogCategoryFilter(String(c.id));
+                      const nextCategory = String(c.id);
                       setCategorySearch(categoryPath(c));
                       setCategoryDropdownOpen(false);
+                      if (nextCategory !== catalogCategoryFilter) {
+                        setCatalogCategoryFilter(nextCategory);
+                        setSelectedIds([]);
+                        resetPage();
+                      }
                     }}
                   >
                     {categoryPath(c)}
@@ -691,6 +774,8 @@ export default function ProductsPage() {
             onChange={(event) => {
               setCatalogCategoryFilter(event.target.value);
               setCategorySearch('');
+              setSelectedIds([]);
+              resetPage();
             }}
             className="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm"
           >
@@ -981,10 +1066,46 @@ export default function ProductsPage() {
               <th className="px-4 py-3 font-medium">Название</th>
               <th className="hidden px-4 py-3 font-medium md:table-cell">Бренд</th>
               <th className="hidden px-4 py-3 font-medium lg:table-cell">Категория</th>
-              <SortHeader field="ai_status" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-center">Готовность</SortHeader>
-              <SortHeader field="price" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-right">Цена</SortHeader>
-              <SortHeader field="stock_qty" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-right">Остаток</SortHeader>
-              <SortHeader field="listing_status" ordering={ordering} onSort={setOrdering} className="px-4 py-3 font-medium text-center">Листинг</SortHeader>
+              <SortHeader
+                field="ai_status"
+                ordering={ordering}
+                onSort={(value) => {
+                  setOrdering(value);
+                  setSelectedIds([]);
+                  resetPage();
+                }}
+                className="px-4 py-3 font-medium text-center"
+              >Готовность</SortHeader>
+              <SortHeader
+                field="price"
+                ordering={ordering}
+                onSort={(value) => {
+                  setOrdering(value);
+                  setSelectedIds([]);
+                  resetPage();
+                }}
+                className="px-4 py-3 font-medium text-right"
+              >Цена</SortHeader>
+              <SortHeader
+                field="stock_qty"
+                ordering={ordering}
+                onSort={(value) => {
+                  setOrdering(value);
+                  setSelectedIds([]);
+                  resetPage();
+                }}
+                className="px-4 py-3 font-medium text-right"
+              >Остаток</SortHeader>
+              <SortHeader
+                field="listing_status"
+                ordering={ordering}
+                onSort={(value) => {
+                  setOrdering(value);
+                  setSelectedIds([]);
+                  resetPage();
+                }}
+                className="px-4 py-3 font-medium text-center"
+              >Листинг</SortHeader>
             </tr>
           </thead>
           <tbody>
@@ -1135,7 +1256,11 @@ export default function ProductsPage() {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => updatePage(meta.page - 1)}
+              onClick={() => {
+                setLoading(true);
+                setSelectedIds([]);
+                updatePage(meta.page - 1);
+              }}
               disabled={!meta.prev}
             >
               <ChevronLeft className="h-4 w-4" />
@@ -1144,7 +1269,11 @@ export default function ProductsPage() {
             <Button
               size="sm"
               variant="outline"
-              onClick={() => updatePage(meta.page + 1)}
+              onClick={() => {
+                setLoading(true);
+                setSelectedIds([]);
+                updatePage(meta.page + 1);
+              }}
               disabled={!meta.next}
             >
               Вперёд

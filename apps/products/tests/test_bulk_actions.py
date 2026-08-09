@@ -2,6 +2,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
+from django.utils.timezone import now
 
 from apps.products.models import Product, ProductBulkActionJob, ProductCatalogClassification
 from apps.products.services import AutoPartsEnrichmentDisabled, ProductBulkActionService
@@ -30,7 +31,9 @@ def make_product(tenant, article, brand='BREMBO', name=None, category_1c=''):
 
 
 @pytest.mark.django_db
-def test_bulk_action_processes_first_batch_and_schedules_next(django_capture_on_commit_callbacks):
+def test_bulk_action_processes_first_batch_without_redis_countdown(
+    django_capture_on_commit_callbacks,
+):
     tenant = make_tenant('bulk-process')
     products = [make_product(tenant, f'P{i}') for i in range(3)]
     job = ProductBulkActionService.create_job(
@@ -52,7 +55,98 @@ def test_bulk_action_processes_first_batch_and_schedules_next(django_capture_on_
     assert job.queued_count == 2
     assert job.next_batch_at is not None
     assert parse_delay.call_count == 2
-    bulk_delay.assert_called_once()
+    bulk_delay.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_bulk_action_does_not_run_before_cooldown_deadline(
+    django_capture_on_commit_callbacks,
+):
+    from datetime import timedelta
+
+    tenant = make_tenant('bulk-cooldown-guard')
+    product = make_product(tenant, 'P1')
+    job = ProductBulkActionService.create_job(
+        tenant=tenant,
+        action=ProductBulkActionJob.Action.ENRICH_SELECTED,
+        product_ids=[product.pk],
+    )
+    job.status = ProductBulkActionJob.Status.COOLING_DOWN
+    job.next_batch_at = now() + timedelta(minutes=5)
+    job.save(update_fields=['status', 'next_batch_at', 'updated_at'])
+
+    with patch('apps.products.tasks.parse_single_part.delay') as parse_delay:
+        with django_capture_on_commit_callbacks(execute=True):
+            result = ProductBulkActionService.process_next_batch(job.pk)
+
+    job.refresh_from_db()
+    assert result['status'] == ProductBulkActionJob.Status.COOLING_DOWN
+    assert job.processed_count == 0
+    parse_delay.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_dispatcher_publishes_pending_and_due_jobs_only(
+    django_capture_on_commit_callbacks,
+):
+    from datetime import timedelta
+
+    from apps.products.tasks import dispatch_due_product_bulk_jobs
+
+    tenant = make_tenant('bulk-dispatch-due')
+    pending = ProductBulkActionJob.objects.create(
+        tenant=tenant,
+        action=ProductBulkActionJob.Action.CLASSIFY_CATALOG_DOMAIN,
+    )
+    due = ProductBulkActionJob.objects.create(
+        tenant=tenant,
+        action=ProductBulkActionJob.Action.CLASSIFY_CATALOG_DOMAIN,
+        status=ProductBulkActionJob.Status.COOLING_DOWN,
+        next_batch_at=now() - timedelta(seconds=1),
+    )
+    future = ProductBulkActionJob.objects.create(
+        tenant=tenant,
+        action=ProductBulkActionJob.Action.CLASSIFY_CATALOG_DOMAIN,
+        status=ProductBulkActionJob.Status.COOLING_DOWN,
+        next_batch_at=now() + timedelta(minutes=5),
+    )
+
+    with patch('apps.products.tasks.process_bulk_product_action.delay') as delay:
+        with django_capture_on_commit_callbacks(execute=True):
+            result = dispatch_due_product_bulk_jobs()
+
+    pending.refresh_from_db()
+    due.refresh_from_db()
+    future.refresh_from_db()
+    assert result == {'selected': 2}
+    assert {call.args[0] for call in delay.call_args_list} == {pending.pk, due.pk}
+    assert pending.last_dispatched_at is not None
+    assert due.last_dispatched_at is not None
+    assert future.last_dispatched_at is None
+
+
+@pytest.mark.django_db
+def test_dispatcher_resets_lease_after_publish_failure(
+    django_capture_on_commit_callbacks,
+):
+    from apps.products.tasks import dispatch_due_product_bulk_jobs
+
+    tenant = make_tenant('bulk-dispatch-recovery')
+    job = ProductBulkActionJob.objects.create(
+        tenant=tenant,
+        action=ProductBulkActionJob.Action.CLASSIFY_CATALOG_DOMAIN,
+    )
+
+    with patch(
+        'apps.products.tasks.process_bulk_product_action.delay',
+        side_effect=RuntimeError('broker unavailable'),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            result = dispatch_due_product_bulk_jobs()
+
+    job.refresh_from_db()
+    assert result == {'selected': 1}
+    assert job.last_dispatched_at is None
 
 
 @pytest.mark.django_db

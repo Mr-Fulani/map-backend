@@ -101,28 +101,28 @@ class Migration(migrations.Migration):
         migrations.AddConstraint(
             model_name='aiproviderprice',
             constraint=models.CheckConstraint(
-                check=models.Q(('input_per_million__gte', 0)),
+                condition=models.Q(('input_per_million__gte', 0)),
                 name='ai_price_input_nonnegative',
             ),
         ),
         migrations.AddConstraint(
             model_name='aiproviderprice',
             constraint=models.CheckConstraint(
-                check=models.Q(('cached_read_per_million__gte', 0)),
+                condition=models.Q(('cached_read_per_million__gte', 0)),
                 name='ai_price_cached_read_nonnegative',
             ),
         ),
         migrations.AddConstraint(
             model_name='aiproviderprice',
             constraint=models.CheckConstraint(
-                check=models.Q(('cached_write_per_million__gte', 0)),
+                condition=models.Q(('cached_write_per_million__gte', 0)),
                 name='ai_price_cached_write_nonnegative',
             ),
         ),
         migrations.AddConstraint(
             model_name='aiproviderprice',
             constraint=models.CheckConstraint(
-                check=models.Q(('output_per_million__gte', 0)),
+                condition=models.Q(('output_per_million__gte', 0)),
                 name='ai_price_output_nonnegative',
             ),
         ),

@@ -6,7 +6,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { datasourceApi } from '@/lib/api';
 import {
@@ -35,14 +35,8 @@ export function StepTest({ data, onNext, onBack }: StepTestProps) {
   const datasourceType = data.datasource_type as string;
   const datasourceId = data.datasource_id as number | undefined;
   const isCSV = datasourceType === 'csv';
-
-  // CSV не требует тест подключения — файл уже загружен и распарсен
-  useEffect(() => {
-    if (isCSV) {
-      setTestStatus('success');
-      setTestMessage('CSV-файл успешно загружен и проверен');
-    }
-  }, [isCSV]);
+  const status: TestStatus = isCSV ? 'success' : testStatus;
+  const message = isCSV ? 'CSV-файл успешно загружен и проверен' : testMessage;
 
   async function runTest() {
     if (!datasourceId) {
@@ -74,29 +68,29 @@ export function StepTest({ data, onNext, onBack }: StepTestProps) {
     }
   }
 
-  const canProceed = testStatus === 'success';
+  const canProceed = status === 'success';
 
   return (
     <div className="space-y-6">
       <div className="space-y-4">
         <div className="flex items-center justify-between rounded-lg border p-4">
           <div className="flex items-center gap-3">
-            {testStatus === 'idle' && (
+            {status === 'idle' && (
               <div className="flex h-10 w-10 items-center justify-center rounded-full border-2 border-dashed">
                 <RefreshCw className="h-5 w-5 text-muted-foreground" />
               </div>
             )}
-            {testStatus === 'testing' && (
+            {status === 'testing' && (
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
                 <Loader2 className="h-5 w-5 animate-spin text-primary" />
               </div>
             )}
-            {testStatus === 'success' && (
+            {status === 'success' && (
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-green-500/10">
                 <CheckCircle2 className="h-5 w-5 text-green-500" />
               </div>
             )}
-            {testStatus === 'error' && (
+            {status === 'error' && (
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
                 <XCircle className="h-5 w-5 text-destructive" />
               </div>
@@ -106,32 +100,32 @@ export function StepTest({ data, onNext, onBack }: StepTestProps) {
                 {isCSV ? 'Проверка файла' : 'Тест подключения'}
               </p>
               <p className="text-xs text-muted-foreground">
-                {testStatus === 'idle' && `Проверяем доступность ${data.datasource_name || 'источника'}`}
-                {testStatus === 'testing' && 'Подключаемся...'}
-                {testStatus === 'success' && testMessage}
-                {testStatus === 'error' && testMessage}
+                {status === 'idle' && `Проверяем доступность ${data.datasource_name || 'источника'}`}
+                {status === 'testing' && 'Подключаемся...'}
+                {status === 'success' && message}
+                {status === 'error' && message}
               </p>
             </div>
           </div>
           {!isCSV && (
             <Button
-              variant={testStatus === 'error' ? 'destructive' : 'outline'}
+              variant={status === 'error' ? 'destructive' : 'outline'}
               size="sm"
               onClick={runTest}
-              disabled={testStatus === 'testing'}
+              disabled={status === 'testing'}
             >
-              {testStatus === 'testing' ? (
+              {status === 'testing' ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
-              ) : testStatus === 'error' ? (
+              ) : status === 'error' ? (
                 'Повторить'
-              ) : testStatus === 'success' ? (
+              ) : status === 'success' ? (
                 'Повторить'
               ) : (
                 'Запустить тест'
               )}
             </Button>
           )}
-          {isCSV && testStatus === 'success' && (
+          {isCSV && status === 'success' && (
             <FileCheck className="h-5 w-5 text-green-500" />
           )}
         </div>

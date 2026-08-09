@@ -1,4 +1,8 @@
+import re
+import uuid
 from decimal import Decimal, ROUND_HALF_UP
+
+from django.core.exceptions import ValidationError
 
 from django.db import models
 from django.utils import timezone
@@ -99,6 +103,10 @@ class Subscription(TimestampedModel):
         max_length=200, blank=True, verbose_name='ID подписки ЮKassa',
     )
     cancelled_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата отмены')
+    billing_version = models.PositiveBigIntegerField(
+        default=0,
+        verbose_name='Версия биллингового состояния',
+    )
 
     class Meta:
         verbose_name = 'Подписка'
@@ -153,6 +161,19 @@ class Invoice(TimestampedModel):
         (TYPE_AI_TOPUP, 'Пополнение AI-баланса'),
     ]
 
+    CHECKOUT_LEGACY = 'legacy'
+    CHECKOUT_INTENT_CREATED = 'intent_created'
+    CHECKOUT_PROVIDER_PENDING = 'provider_pending'
+    CHECKOUT_PROVIDER_CREATED = 'provider_created'
+    CHECKOUT_MANUAL_REVIEW = 'manual_review'
+    CHECKOUT_STATE_CHOICES = [
+        (CHECKOUT_LEGACY, 'Legacy счёт'),
+        (CHECKOUT_INTENT_CREATED, 'Намерение создано'),
+        (CHECKOUT_PROVIDER_PENDING, 'Результат провайдера неизвестен'),
+        (CHECKOUT_PROVIDER_CREATED, 'Платёж у провайдера создан'),
+        (CHECKOUT_MANUAL_REVIEW, 'Требует ручной проверки'),
+    ]
+
     tenant = models.ForeignKey(
         Tenant, on_delete=models.CASCADE, related_name='invoices', verbose_name='Тенант',
     )
@@ -179,14 +200,344 @@ class Invoice(TimestampedModel):
         default=False,
         verbose_name='Возврат требует ручной проверки',
     )
+    checkout_client_key = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Ключ идемпотентности клиента',
+    )
+    provider_idempotency_key = models.CharField(
+        max_length=64,
+        blank=True,
+        editable=False,
+        verbose_name='Ключ идемпотентности YooKassa',
+    )
+    checkout_payload_hash = models.CharField(
+        max_length=64,
+        blank=True,
+        editable=False,
+        verbose_name='Хеш checkout payload',
+    )
+    checkout_return_url = models.URLField(
+        max_length=2048,
+        blank=True,
+        editable=False,
+        verbose_name='Return URL checkout',
+    )
+    checkout_confirmation_url = models.URLField(
+        max_length=2048,
+        blank=True,
+        editable=False,
+        verbose_name='Confirmation URL YooKassa',
+    )
+    checkout_state = models.CharField(
+        max_length=24,
+        choices=CHECKOUT_STATE_CHOICES,
+        default=CHECKOUT_LEGACY,
+        verbose_name='Состояние checkout intent',
+    )
+    checkout_attempt_count = models.PositiveSmallIntegerField(default=0)
+    checkout_first_attempt_at = models.DateTimeField(null=True, blank=True)
+    checkout_last_attempt_at = models.DateTimeField(null=True, blank=True)
+    checkout_last_error = models.CharField(max_length=500, blank=True)
+    entitlement_snapshot = models.JSONField(
+        default=dict,
+        blank=True,
+        editable=False,
+        verbose_name='Неизменяемый снимок покупки',
+    )
+    entitlement_plan = models.ForeignKey(
+        Plan,
+        null=True,
+        blank=True,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='purchase_invoices',
+        verbose_name='Купленный тариф',
+    )
+    expected_subscription_version = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Ожидаемая версия подписки',
+    )
+    reconciliation_attempts = models.PositiveSmallIntegerField(default=0)
+    next_reconciliation_at = models.DateTimeField(null=True, blank=True)
+    last_reconciliation_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = 'Счёт'
         verbose_name_plural = 'Счета'
-        indexes = [models.Index(fields=['tenant', '-created_at'])]
+        indexes = [
+            models.Index(fields=['tenant', '-created_at']),
+            models.Index(
+                fields=['checkout_state', 'next_reconciliation_at'],
+                name='billing_inv_reconcile_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['yookassa_payment_id'],
+                condition=~models.Q(yookassa_payment_id=''),
+                name='unique_nonempty_yookassa_payment_id',
+            ),
+            models.UniqueConstraint(
+                fields=['tenant', 'checkout_client_key'],
+                condition=models.Q(checkout_client_key__isnull=False),
+                name='unique_tenant_checkout_client_key',
+            ),
+            models.UniqueConstraint(
+                fields=['provider_idempotency_key'],
+                condition=~models.Q(provider_idempotency_key=''),
+                name='unique_provider_idempotency_key',
+            ),
+            models.UniqueConstraint(
+                fields=['tenant', 'checkout_payload_hash'],
+                condition=(
+                    models.Q(
+                        status='pending',
+                        checkout_state__in=(
+                            'intent_created',
+                            'provider_pending',
+                            'provider_created',
+                        ),
+                    )
+                    & ~models.Q(checkout_payload_hash='')
+                ),
+                name='uniq_active_checkout_payload',
+            ),
+            models.UniqueConstraint(
+                fields=['tenant'],
+                condition=models.Q(
+                    purchase_type='subscription',
+                    status='pending',
+                    checkout_state__in=(
+                        'intent_created',
+                        'provider_pending',
+                        'provider_created',
+                    ),
+                ),
+                name='uniq_active_subscription_checkout',
+            ),
+        ]
+
+    _IMMUTABLE_INTENT_FIELDS = (
+        'tenant_id',
+        'amount',
+        'currency',
+        'purchase_type',
+        'metadata',
+        'checkout_client_key',
+        'provider_idempotency_key',
+        'checkout_payload_hash',
+        'checkout_return_url',
+        'entitlement_snapshot',
+        'entitlement_plan_id',
+        'expected_subscription_version',
+    )
+    _PROVIDER_PAYMENT_ID_RE = re.compile(r'^[A-Za-z0-9_-]{1,200}$')
+
+    def save(self, *args, **kwargs):
+        """Financial intent fields become immutable once a snapshot exists."""
+        original = None
+        if self.pk:
+            original = type(self).objects.filter(pk=self.pk).values(
+                *self._IMMUTABLE_INTENT_FIELDS, 'yookassa_payment_id',
+            ).first()
+            if (
+                original is not None
+                and original['yookassa_payment_id']
+                and self.yookassa_payment_id != original['yookassa_payment_id']
+            ):
+                raise ValidationError(
+                    'Идентификатор платежа YooKassa нельзя изменить после фиксации.',
+                )
+            if original is not None and original['entitlement_snapshot']:
+                changed = [
+                    field
+                    for field in self._IMMUTABLE_INTENT_FIELDS
+                    if getattr(self, field) != original[field]
+                ]
+                if changed:
+                    raise ValidationError(
+                        'Нельзя изменять финансовый snapshot Invoice: '
+                        + ', '.join(changed),
+                    )
+        if (
+            self.yookassa_payment_id
+            and (original is None or not original['yookassa_payment_id'])
+            and not self._PROVIDER_PAYMENT_ID_RE.fullmatch(self.yookassa_payment_id)
+        ):
+            raise ValidationError('Некорректный идентификатор платежа YooKassa.')
+        return super().save(*args, **kwargs)
 
     def __str__(self):
         return f'{self.tenant.slug} — {self.amount}₽ ({self.status})'
+
+
+class CheckoutIntentKey(TimestampedModel):
+    """Immutable mapping of every accepted client UUID to its checkout intent."""
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='checkout_intent_keys',
+    )
+    invoice = models.ForeignKey(
+        Invoice,
+        on_delete=models.CASCADE,
+        related_name='client_keys',
+    )
+    client_key = models.UUIDField(editable=False)
+    checkout_payload_hash = models.CharField(max_length=64, editable=False)
+
+    _IMMUTABLE_FIELDS = (
+        'tenant_id',
+        'invoice_id',
+        'client_key',
+        'checkout_payload_hash',
+    )
+
+    class Meta:
+        verbose_name = 'Ключ checkout intent'
+        verbose_name_plural = 'Ключи checkout intent'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'client_key'],
+                name='unique_tenant_checkout_intent_key',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.tenant_id}: {self.client_key} -> {self.invoice_id}'
+
+    def save(self, *args, **kwargs):
+        if self.pk is not None:
+            original = type(self).objects.filter(pk=self.pk).values(
+                *self._IMMUTABLE_FIELDS,
+            ).first()
+            if original is not None:
+                changed = [
+                    field
+                    for field in self._IMMUTABLE_FIELDS
+                    if getattr(self, field) != original[field]
+                ]
+                if changed:
+                    raise ValidationError(
+                        'Нельзя изменять связь client key с checkout intent: '
+                        + ', '.join(changed),
+                    )
+        return super().save(*args, **kwargs)
+
+
+class BillingOutboxEvent(TimestampedModel):
+    """Durable broker-bound side effect created with a billing transaction."""
+
+    EVENT_NOTIFICATION = 'notification'
+    EVENT_REQUEUE_LIMIT_REACHED = 'requeue_limit_reached'
+    EVENT_TYPE_CHOICES = [
+        (EVENT_NOTIFICATION, 'Уведомление'),
+        (EVENT_REQUEUE_LIMIT_REACHED, 'Повтор публикации после снятия лимита'),
+    ]
+
+    STATUS_PENDING = 'pending'
+    STATUS_PROCESSING = 'processing'
+    STATUS_DISPATCHED = 'dispatched'
+    STATUS_DEAD = 'dead'
+    STATUS_CHOICES = [
+        (STATUS_PENDING, 'Ожидает отправки'),
+        (STATUS_PROCESSING, 'Отправляется'),
+        (STATUS_DISPATCHED, 'Отправлено брокеру'),
+        (STATUS_DEAD, 'Требует ручного разбора'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='billing_outbox_events',
+    )
+    invoice = models.ForeignKey(
+        Invoice,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='outbox_events',
+    )
+    event_type = models.CharField(
+        max_length=40,
+        choices=EVENT_TYPE_CHOICES,
+        editable=False,
+    )
+    idempotency_key = models.CharField(max_length=200, editable=False)
+    payload = models.JSONField(default=dict, editable=False)
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default=STATUS_PENDING,
+    )
+    attempts = models.PositiveIntegerField(default=0)
+    next_attempt_at = models.DateTimeField(null=True, blank=True)
+    processing_token = models.UUIDField(null=True, blank=True, editable=False)
+    processing_started_at = models.DateTimeField(null=True, blank=True)
+    dispatched_at = models.DateTimeField(null=True, blank=True)
+    dead_lettered_at = models.DateTimeField(null=True, blank=True)
+    last_error = models.CharField(max_length=500, blank=True)
+
+    _IMMUTABLE_FIELDS = (
+        'tenant_id',
+        'invoice_id',
+        'event_type',
+        'idempotency_key',
+        'payload',
+    )
+
+    class Meta:
+        verbose_name = 'Событие billing outbox'
+        verbose_name_plural = 'События billing outbox'
+        ordering = ['-created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'idempotency_key'],
+                name='unique_tenant_billing_outbox_key',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['status', 'next_attempt_at'],
+                name='billing_outbox_due_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.tenant_id}: {self.event_type} ({self.status})'
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get('update_fields')
+        validate_immutable = (
+            self.pk is not None
+            and (
+                update_fields is None
+                or bool(set(update_fields) & set(self._IMMUTABLE_FIELDS))
+            )
+        )
+        if validate_immutable:
+            original = type(self).objects.filter(pk=self.pk).values(
+                *self._IMMUTABLE_FIELDS,
+            ).first()
+            if original is not None:
+                changed = [
+                    field
+                    for field in self._IMMUTABLE_FIELDS
+                    if getattr(self, field) != original[field]
+                ]
+                if changed:
+                    raise ValidationError(
+                        'Нельзя изменять payload billing outbox: '
+                        + ', '.join(changed),
+                    )
+        return super().save(*args, **kwargs)
 
 
 class AIUsageLog(TimestampedModel):
@@ -435,7 +786,12 @@ class BillingWebhookEvent(TimestampedModel):
     payload = models.JSONField(default=dict, blank=True)
     source_ip = models.GenericIPAddressField(null=True, blank=True)
     delivery_count = models.PositiveIntegerField(default=1)
+    processing_token = models.UUIDField(null=True, blank=True, editable=False)
+    processing_started_at = models.DateTimeField(null=True, blank=True)
     processed_at = models.DateTimeField(null=True, blank=True)
+    reconciliation_attempts = models.PositiveSmallIntegerField(default=0)
+    next_reconciliation_at = models.DateTimeField(null=True, blank=True)
+    last_reconciliation_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = 'Webhook биллинга'
@@ -445,6 +801,10 @@ class BillingWebhookEvent(TimestampedModel):
             models.Index(fields=['provider', 'event_type', '-created_at']),
             models.Index(fields=['payment_id', '-created_at']),
             models.Index(fields=['decision', '-created_at']),
+            models.Index(
+                fields=['decision', 'next_reconciliation_at'],
+                name='billing_wh_reconcile_idx',
+            ),
         ]
         constraints = [
             models.UniqueConstraint(

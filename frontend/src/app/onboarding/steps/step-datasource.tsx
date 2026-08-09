@@ -86,9 +86,11 @@ export function StepDatasource({ data, onNext, onBack }: StepDatasourceProps) {
         const { data: result } = await datasourceApi.create({
           name: connectionData.name,
           type: selectedType,
-          url: connectionData.url,
-          user: connectionData.user,
-          password: connectionData.password,
+          credentials: {
+            url: connectionData.url,
+            user: connectionData.user,
+            password: connectionData.password,
+          },
         });
         toast.success('Источник данных создан!');
         onNext({

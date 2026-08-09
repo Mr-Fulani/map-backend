@@ -1,12 +1,20 @@
-.PHONY: up down dev frontend rebuild restart restart-django logs logs-django logs-celery shell migrate migrations test lint seed backup telegram-poll
+.PHONY: bootstrap up down dev frontend frontend-test rebuild restart restart-django logs logs-django logs-celery shell migrate migrations test lint typecheck-backend runtime-check seed setup-periodic superuser backup backup-check telegram-poll
+
+PYTHON ?= python3
+COMPOSE := docker compose --project-name saas_poster --project-directory "$(CURDIR)" -f "$(CURDIR)/docker-compose.yml"
+
+bootstrap:
+	$(COMPOSE) up -d --wait --wait-timeout 120 db redis
+	$(COMPOSE) run --rm --no-deps --build django python manage.py migrate --noinput
+	$(COMPOSE) run --rm --no-deps django python manage.py seed_plans
+	$(COMPOSE) run --rm --no-deps django python manage.py setup_periodic_tasks
+	$(COMPOSE) up -d --build
 
 up:
-	docker image prune -f > /dev/null 2>&1 || true
-	docker builder prune -f --filter "until=168h" > /dev/null 2>&1 || true
-	docker compose up -d
+	$(COMPOSE) up -d
 
 down:
-	docker compose down
+	$(COMPOSE) down
 
 # Запустить бэкенд + фронтенд одной командой
 dev:
@@ -14,56 +22,76 @@ dev:
 
 # Только Next.js dev server
 frontend:
-	cd frontend && npm run dev
+	cd frontend && NEXT_PUBLIC_API_URL="$${NEXT_PUBLIC_API_URL:-http://localhost:8000}" npm run dev
+
+# Критичные frontend auth/session/billing тесты без Docker daemon.
+frontend-test:
+	cd frontend && npm run test:unit
 
 # Пересобрать Docker-образы и перезапустить
 rebuild:
-	docker compose down
-	docker compose build --no-cache
-	docker compose up -d
+	$(COMPOSE) down
+	$(COMPOSE) build --no-cache
+	$(COMPOSE) up -d
 
 # Перезапуск всех Docker-сервисов (без пересборки)
 restart:
-	docker compose restart
+	$(COMPOSE) restart
 
-# Перезапуск только Django (например, после изменения .env)
+# Перезапуск только Django без перечитывания .env.
 restart-django:
-	docker compose restart django
+	$(COMPOSE) restart django
 
 # Логи всех сервисов (live)
 logs:
-	docker compose logs -f
+	$(COMPOSE) logs -f
 
 # Логи только Django
 logs-django:
-	docker compose logs -f django
+	$(COMPOSE) logs -f django
 
-# Логи Celery (worker + beat)
+# Логи обоих Celery workers и Beat.
 logs-celery:
-	docker compose logs -f celery_worker celery_beat
+	$(COMPOSE) logs -f celery_worker celery_worker_images celery_beat
 
 shell:
-	docker compose exec django bash
+	$(COMPOSE) exec django bash
 
 migrate:
-	docker compose exec django python manage.py migrate
+	$(COMPOSE) exec django python manage.py migrate
 
 migrations:
-	docker compose exec django python manage.py makemigrations
+	$(COMPOSE) exec django python manage.py makemigrations
 
 test:
-	docker compose exec django pytest --cov=apps --cov-report=term-missing
+	$(COMPOSE) exec django pytest --cov=apps --cov-report=term-missing
 
 lint:
-	docker compose exec django flake8 apps/
-	docker compose exec django mypy apps/
+	$(COMPOSE) exec django flake8 .
+
+# Инкрементальный честный mypy-baseline; scope перечислен в mypy.ini.
+typecheck-backend:
+	$(COMPOSE) exec django mypy
+
+# Статические runtime-контракты без обращения к Docker daemon.
+runtime-check:
+	$(PYTHON) -m pytest tests/test_runtime_contract.py tests/test_healthchecks.py tests/test_deploy_contract.py
 
 seed:
-	docker compose exec django python manage.py seed_plans
+	$(COMPOSE) exec django python manage.py seed_plans
+
+setup-periodic:
+	$(COMPOSE) exec django python manage.py setup_periodic_tasks
+
+superuser:
+	$(COMPOSE) exec django python manage.py createsuperuser
 
 # Telegram long polling для локальной разработки (вместо webhook)
 telegram-poll:
-	docker compose exec django python manage.py telegram_poll
+	$(COMPOSE) exec django python manage.py telegram_poll
 
 backup:
-	docker compose exec db pg_dump -U map_user map_db | gzip > backup_$$(date +%Y%m%d_%H%M%S).sql.gz
+	./scripts/production_backup.sh
+
+backup-check:
+	./scripts/production_backup_check.sh

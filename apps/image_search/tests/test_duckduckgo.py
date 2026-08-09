@@ -1,6 +1,10 @@
 """Тесты DuckDuckGoSource — все вызовы DDGS замоканы."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, create_autospec, patch
+
+import pytest
+from ddgs import DDGS
+from django.core.cache.backends.locmem import LocMemCache
 
 from apps.image_search.sources.duckduckgo import DuckDuckGoSource
 
@@ -19,21 +23,27 @@ def _make_source():
 
 def _patch_ddgs(results: list[dict]):
     """Патчит DDGS так, чтобы images() возвращал заданный список."""
-    mock_ddgs = MagicMock()
+    mock_ddgs = create_autospec(DDGS, instance=True)
     mock_ddgs.__enter__ = MagicMock(return_value=mock_ddgs)
     mock_ddgs.__exit__ = MagicMock(return_value=False)
     mock_ddgs.images.return_value = results
     return patch('apps.image_search.sources.duckduckgo.DDGS', return_value=mock_ddgs), mock_ddgs
 
 
+@pytest.fixture(autouse=True)
+def isolated_duckduckgo_cache(monkeypatch, request):
+    """Unit tests must not depend on a shared Redis cooldown."""
+    local_cache = LocMemCache(f'duckduckgo-{request.node.nodeid}', {})
+    monkeypatch.setattr('apps.image_search.sources.duckduckgo.cache', local_cache)
+
+
+@pytest.fixture(autouse=True)
+def seed_billing_plans():
+    """Override the apps-wide DB seed: these source tests never use models."""
+
+
 class TestDuckDuckGoSource:
     """Тесты DuckDuckGoSource."""
-
-    def setup_method(self):
-        from django.core.cache import cache
-        from apps.image_search.sources.duckduckgo import _RATELIMIT_KEY, _SESSION_KEY
-        cache.delete(_SESSION_KEY)
-        cache.delete(_RATELIMIT_KEY)
 
     def test_search_возвращает_кандидатов(self):
         ddg_results = [
@@ -81,7 +91,7 @@ class TestDuckDuckGoSource:
         assert results[0].url == 'https://valid.example.com/img.jpg'
 
     def test_search_не_падает_при_ошибке_ddgs(self):
-        mock_ddgs = MagicMock()
+        mock_ddgs = create_autospec(DDGS, instance=True)
         mock_ddgs.__enter__ = MagicMock(return_value=mock_ddgs)
         mock_ddgs.__exit__ = MagicMock(return_value=False)
         mock_ddgs.images.side_effect = Exception('rate limit')
@@ -98,6 +108,20 @@ class TestDuckDuckGoSource:
             results = _make_source().search()
 
         assert results == []
+
+    def test_ddgs_получает_query_по_актуальной_сигнатуре(self):
+        patcher, mock_ddgs = _patch_ddgs([])
+
+        with patcher:
+            results = _make_source()._search_with_retry('HYUNDAI 25327H5010')
+
+        assert results == []
+        mock_ddgs.images.assert_called_once_with(
+            'HYUNDAI 25327H5010',
+            backend='duckduckgo',
+            region='ru-ru',
+            max_results=15,
+        )
 
     def test_source_зарегистрирован_в_реестре(self):
         import apps.image_search.sources.duckduckgo  # noqa: F401

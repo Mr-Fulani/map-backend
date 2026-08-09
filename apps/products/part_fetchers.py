@@ -3,8 +3,14 @@ import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
 
-import httpx
+import requests
+from django.conf import settings
 
+from apps.core.url_security import (
+    REDIRECT_NONE,
+    UnsafePublicURL,
+    request_public_http_url,
+)
 from apps.products.source_policy import get_part_source_policy
 
 
@@ -13,32 +19,36 @@ class FetchedPage:
     html: str
     url: str
     status_code: int
-    response: httpx.Response | None = None
+    response: requests.Response | None = None
 
     def raise_for_status(self) -> None:
         if self.response is not None:
             self.response.raise_for_status()
             return
         if self.status_code >= 400:
-            request = httpx.Request('GET', self.url)
-            response = httpx.Response(self.status_code, request=request)
+            response = requests.Response()
+            response.status_code = self.status_code
+            response.url = self.url
             response.raise_for_status()
 
 
 class HttpxPartFetcher:
-    """Default HTTP transport for platform parser sources."""
+    """Compatibility name for the DNS-pinned catalogue HTTP transport."""
 
     user_agent = 'MAP enrichment bot (+https://map.local)'
 
     def fetch(self, url: str) -> FetchedPage:
-        response = httpx.get(
+        response = request_public_http_url(
             url,
-            timeout=20,
-            follow_redirects=True,
+            timeout=(5, 20),
             headers={'User-Agent': self.user_agent},
+            max_response_bytes=settings.PART_PAGE_MAX_BYTES,
         )
+        encoding = response.encoding
+        if not encoding or encoding.lower() == 'iso-8859-1':
+            encoding = response.apparent_encoding or 'utf-8'
         return FetchedPage(
-            html=response.text,
+            html=response.content.decode(encoding, errors='replace'),
             url=str(response.url),
             status_code=response.status_code,
             response=response,
@@ -157,22 +167,24 @@ class EuroautoSearchFetcher:
         )
         prefix = first_url.rsplit('/', 1)[0]
         discovered = []
-        with httpx.Client(
-            timeout=8,
-            follow_redirects=True,
-            headers={'User-Agent': HttpxPartFetcher.user_agent},
-        ) as client:
-            for number in range(1, 11):
-                candidate = f'{prefix}/{number}.jpg'
-                try:
-                    response = client.head(candidate)
-                except httpx.HTTPError:
-                    break
-                if response.status_code == 200:
-                    discovered.append(candidate)
-                    continue
-                if number > 1:
-                    break
+        for number in range(1, 11):
+            candidate = f'{prefix}/{number}.jpg'
+            try:
+                response = request_public_http_url(
+                    candidate,
+                    method='HEAD',
+                    timeout=(3, 8),
+                    headers={'User-Agent': HttpxPartFetcher.user_agent},
+                    status_only=True,
+                    redirect_policy=REDIRECT_NONE,
+                )
+            except (requests.RequestException, UnsafePublicURL):
+                break
+            if response.status_code == 200:
+                discovered.append(candidate)
+                continue
+            if number > 1:
+                break
         return discovered or [first_url]
 
     @staticmethod

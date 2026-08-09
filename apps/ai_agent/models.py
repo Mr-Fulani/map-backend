@@ -262,19 +262,19 @@ class AIProviderPrice(models.Model):
                 name='unique_ai_model_price_effective_from',
             ),
             models.CheckConstraint(
-                check=models.Q(input_per_million__gte=0),
+                condition=models.Q(input_per_million__gte=0),
                 name='ai_price_input_nonnegative',
             ),
             models.CheckConstraint(
-                check=models.Q(cached_read_per_million__gte=0),
+                condition=models.Q(cached_read_per_million__gte=0),
                 name='ai_price_cached_read_nonnegative',
             ),
             models.CheckConstraint(
-                check=models.Q(cached_write_per_million__gte=0),
+                condition=models.Q(cached_write_per_million__gte=0),
                 name='ai_price_cached_write_nonnegative',
             ),
             models.CheckConstraint(
-                check=models.Q(output_per_million__gte=0),
+                condition=models.Q(output_per_million__gte=0),
                 name='ai_price_output_nonnegative',
             ),
         ]

@@ -2,16 +2,29 @@
 
 import hashlib
 import io
+import re
+from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
-import requests
+from django.conf import settings
+from django.core.cache import caches
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.files.storage import default_storage
 from django.db import transaction
 from django.utils.timezone import now
 
-from apps.core.url_security import is_safe_public_http_url
+from apps.billing.ai_wallet import (
+    AIReservation,
+    AIWalletService,
+    InsufficientAICredits,
+)
+from apps.core.image_security import validate_image_pixel_budget
+from apps.core.url_security import (
+    REDIRECT_SAME_ORIGIN,
+    request_public_http_url,
+)
 from apps.media_processing.models import (
     MediaProcessingJob,
     MediaProcessingPreset,
@@ -37,14 +50,103 @@ GENERATIVE_OPERATIONS = {
     MediaOperation.REPLACE_BACKGROUND,
     MediaOperation.GENERATIVE_FILL,
 }
-MAX_PROVIDER_OUTPUT_BYTES = 25 * 1024 * 1024
+_URL_IN_ERROR_RE = re.compile(r'https?://[^\s<>"\']+', re.IGNORECASE)
+_GENERIC_PROVIDER_FAILURE = 'Медиа-провайдер не смог обработать изображение.'
+_GENERIC_PROVIDER_OUTPUT_FAILURE = (
+    'Результат медиа-провайдера не прошёл проверку безопасности.'
+)
+
+
+class MediaProviderRateLimitExceeded(MediaProviderUnavailable):
+    """The configured provider quota has been exhausted for the current minute."""
+
+
+@dataclass(frozen=True)
+class ResolvedMediaProvider:
+    provider: object
+    policy: MediaProviderPolicy
+    estimated_credits: Decimal
 
 
 def _tenant_plan_slug(tenant) -> str:
     try:
-        return tenant.subscription.plan.slug
+        subscription = tenant.subscription
     except (AttributeError, ObjectDoesNotExist):
         return ''
+    return subscription.plan.slug if subscription.is_active else ''
+
+
+def _policy_credit_cost(
+    policy: MediaProviderPolicy,
+    operations: tuple[MediaOperation, ...],
+) -> Decimal:
+    """Return the tenant tariff cost; even free operations require an explicit zero."""
+    total = Decimal('0')
+    for operation in operations:
+        costs = policy.operation_credit_costs or {}
+        if operation.value not in costs:
+            raise MediaProviderUnavailable(
+                f'Provider {policy.provider_id} has no credit cost for {operation.value}',
+            )
+        raw_cost = costs[operation.value]
+        try:
+            cost = Decimal(str(raw_cost))
+        except (InvalidOperation, TypeError, ValueError) as exc:
+            raise MediaProviderUnavailable(
+                f'Provider {policy.provider_id} has an invalid credit policy',
+            ) from exc
+        if not cost.is_finite() or cost < 0:
+            raise MediaProviderUnavailable(
+                f'Provider {policy.provider_id} has an invalid credit policy',
+            )
+        total += cost
+    return total
+
+
+def _policy_denial_reason(
+    policy: MediaProviderPolicy | None,
+    tenant,
+    operations: tuple[MediaOperation, ...],
+) -> str:
+    if policy is None:
+        return 'provider has no allow policy'
+    if not policy.is_active:
+        return 'provider policy is disabled'
+    plan_slug = _tenant_plan_slug(tenant)
+    if not plan_slug:
+        return 'tenant has no active subscription plan'
+    if policy.allowed_plan_slugs and plan_slug not in policy.allowed_plan_slugs:
+        return 'provider is unavailable for the tenant plan'
+    required = {operation.value for operation in operations}
+    if not required.issubset(set(policy.capabilities or [])):
+        return 'provider policy does not allow the requested operations'
+    return ''
+
+
+def _resolve_provider_candidate(
+    tenant,
+    operations: tuple[MediaOperation, ...],
+    provider_id: str,
+    policies: dict[str, MediaProviderPolicy],
+) -> ResolvedMediaProvider:
+    normalized_id = (provider_id or '').strip().lower()
+    policy = policies.get(normalized_id)
+    denial_reason = _policy_denial_reason(policy, tenant, operations)
+    if denial_reason:
+        raise MediaProviderUnavailable(f'Provider {normalized_id}: {denial_reason}')
+    try:
+        provider = get_media_provider(normalized_id)
+    except LookupError as exc:
+        raise MediaProviderUnavailable(f'Unknown media provider: {normalized_id}') from exc
+    if not provider.is_configured() or not provider.supports(set(operations)):
+        raise MediaProviderUnavailable(
+            f'Provider {normalized_id} is unavailable for requested operations',
+        )
+    return ResolvedMediaProvider(
+        provider=provider,
+        policy=policy,
+        estimated_credits=_policy_credit_cost(policy, operations),
+    )
 
 
 def provider_preferences_for_tenant(
@@ -63,39 +165,76 @@ def provider_preferences_for_tenant(
         result.extend(preferences.get(operation.value, []))
     result.extend(preferences.get('*', []))
 
-    plan_slug = _tenant_plan_slug(tenant)
-    policies = MediaProviderPolicy.objects.filter(is_active=True).order_by('priority', 'pk')
-    for policy in policies:
-        if policy.allowed_plan_slugs and plan_slug not in policy.allowed_plan_slugs:
-            continue
-        if policy.capabilities and not {
-            operation.value for operation in operations
-        }.issubset(set(policy.capabilities)):
-            continue
-        result.append(policy.provider_id)
+    result.extend(
+        MediaProviderPolicy.objects.order_by('priority', 'pk').values_list(
+            'provider_id', flat=True,
+        ),
+    )
 
     result.extend(provider.provider_id for provider in list_media_providers())
     return list(dict.fromkeys(provider_id for provider_id in result if provider_id))
 
 
+def resolve_provider_for_request(
+    tenant,
+    operations: tuple[MediaOperation, ...],
+    *,
+    preset: MediaProcessingPreset | None = None,
+    provider_id: str = '',
+) -> ResolvedMediaProvider:
+    """Resolve one provider through the same fail-closed tenant allow policy."""
+    policies = {
+        policy.provider_id: policy
+        for policy in MediaProviderPolicy.objects.all()
+    }
+    if provider_id:
+        return _resolve_provider_candidate(
+            tenant, operations, provider_id, policies,
+        )
+
+    for candidate_id in provider_preferences_for_tenant(tenant, operations, preset):
+        try:
+            return _resolve_provider_candidate(
+                tenant, operations, candidate_id, policies,
+            )
+        except MediaProviderUnavailable:
+            continue
+    raise MediaProviderUnavailable('Нет доступного провайдера для выбранных операций.')
+
+
 def resolve_provider_for_job(job: MediaProcessingJob):
     operations = tuple(MediaOperation(operation) for operation in job.operations)
-    if job.provider_id:
-        provider = get_media_provider(job.provider_id)
-        if not provider.is_configured() or not provider.supports(set(operations)):
-            raise MediaProviderUnavailable(
-                f'Provider {job.provider_id} is unavailable for requested operations',
-            )
-        return provider
+    return resolve_provider_for_request(
+        job.tenant,
+        operations,
+        preset=job.preset,
+        provider_id=job.provider_id,
+    ).provider
 
-    for provider_id in provider_preferences_for_tenant(job.tenant, operations, job.preset):
-        try:
-            provider = get_media_provider(provider_id)
-        except LookupError:
-            continue
-        if provider.is_configured() and provider.supports(set(operations)):
-            return provider
-    raise MediaProviderUnavailable('Нет доступного провайдера для выбранных операций.')
+
+def _preflight_provider_request(
+    tenant,
+    operations: tuple[MediaOperation, ...],
+    *,
+    preset: MediaProcessingPreset | None,
+    provider_id: str,
+) -> None:
+    try:
+        resolution = resolve_provider_for_request(
+            tenant,
+            operations,
+            preset=preset,
+            provider_id=provider_id,
+        )
+    except MediaProviderUnavailable as exc:
+        raise ValueError(str(exc)) from exc
+    if (
+        resolution.estimated_credits > 0
+        and AIWalletService.summary(tenant)['available'] < resolution.estimated_credits
+    ):
+        raise ValueError(
+            'Недостаточно AI-кредитов для выбранного медиа-провайдера.',
+        )
 
 
 def create_processing_job(
@@ -116,6 +255,8 @@ def create_processing_job(
     normalized_operations = [MediaOperation(operation).value for operation in effective_operations]
     if not normalized_operations:
         raise ValueError('Не выбраны операции обработки.')
+    if len(normalized_operations) != len(set(normalized_operations)):
+        raise ValueError('Операции обработки не должны повторяться.')
 
     tenant_settings = TenantMediaSettings.objects.filter(tenant=tenant).first()
     if (
@@ -124,8 +265,16 @@ def create_processing_job(
     ):
         raise ValueError('Генеративные операции отключены в настройках тенанта.')
 
+    normalized_operation_values = tuple(map(MediaOperation, normalized_operations))
+    _preflight_provider_request(
+        tenant,
+        normalized_operation_values,
+        preset=preset,
+        provider_id=provider_id,
+    )
+
     effective_parameters = {**(preset.parameters if preset else {}), **(parameters or {})}
-    if set(map(MediaOperation, normalized_operations)) & GENERATIVE_OPERATIONS:
+    if set(normalized_operation_values) & GENERATIVE_OPERATIONS:
         effective_parameters.pop('generation_prompt', None)
         effective_parameters.pop('negative_prompt', None)
         effective_parameters.update(build_product_media_prompt(
@@ -141,39 +290,186 @@ def create_processing_job(
         'requested_by': requested_by,
     }
     if idempotency_key:
-        job, _ = MediaProcessingJob.objects.get_or_create(
+        job, created = MediaProcessingJob.objects.get_or_create(
             tenant=tenant,
             idempotency_key=idempotency_key,
             defaults=defaults,
         )
+        job._created_for_request = created
         return job
-    return MediaProcessingJob.objects.create(tenant=tenant, **defaults)
+    job = MediaProcessingJob.objects.create(tenant=tenant, **defaults)
+    job._created_for_request = True
+    return job
+
+
+def _consume_provider_rate_limit(policy: MediaProviderPolicy) -> None:
+    limit = policy.requests_per_minute
+    if not limit:
+        return
+    minute = now().strftime('%Y%m%d%H%M')
+    key = f'media-provider-rate:{policy.provider_id}:{minute}'
+    coordination_cache = caches['coordination']
+    coordination_cache.add(key, 0, timeout=120)
+    current = coordination_cache.incr(key)
+    if current > limit:
+        raise MediaProviderRateLimitExceeded(
+            f'Provider {policy.provider_id} rate limit exceeded',
+        )
+
+
+def _credit_state(job: MediaProcessingJob) -> dict:
+    metadata = job.provider_metadata if isinstance(job.provider_metadata, dict) else {}
+    state = metadata.get('credit_reservation', {})
+    return state if isinstance(state, dict) else {}
+
+
+def _reservation_from_state(state: dict) -> AIReservation | None:
+    key = state.get('key')
+    amount = state.get('amount')
+    if not key or amount is None:
+        return None
+    try:
+        return AIReservation(str(key), Decimal(str(amount)))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+
+
+def _reserve_job_credits(
+    job: MediaProcessingJob,
+    amount: Decimal,
+) -> AIReservation | None:
+    if amount <= 0:
+        return None
+    with transaction.atomic():
+        locked = MediaProcessingJob.objects.select_for_update().get(pk=job.pk)
+        state = _credit_state(locked)
+        existing = _reservation_from_state(state)
+        if existing and state.get('status') in {'reserved', 'settled'}:
+            job.provider_metadata = locked.provider_metadata
+            job.charged_credits = locked.charged_credits
+            return existing
+
+        attempt = int(state.get('attempt') or 0) + 1
+        key = f'media-job:{job.pk}:credits:{attempt}'
+        try:
+            reservation = AIWalletService.reserve(
+                locked.tenant,
+                amount,
+                key=key,
+                details={
+                    'kind': 'media_processing',
+                    'job_id': job.pk,
+                    'provider_id': job.provider_id,
+                },
+            )
+        except InsufficientAICredits as exc:
+            raise MediaProviderUnavailable(str(exc)) from exc
+        metadata = dict(locked.provider_metadata or {})
+        metadata['credit_reservation'] = {
+            'key': reservation.key,
+            'amount': str(reservation.amount),
+            'attempt': attempt,
+            'status': 'reserved',
+        }
+        locked.provider_metadata = metadata
+        locked.save(update_fields=['provider_metadata', 'updated_at'])
+        job.provider_metadata = metadata
+        return reservation
+
+
+def _release_job_credits(job: MediaProcessingJob, *, reason: str) -> None:
+    with transaction.atomic():
+        locked = MediaProcessingJob.objects.select_for_update().get(pk=job.pk)
+        state = _credit_state(locked)
+        reservation = _reservation_from_state(state)
+        if not reservation or state.get('status') != 'reserved':
+            job.provider_metadata = locked.provider_metadata
+            return
+        AIWalletService.release(locked.tenant, reservation, reason=reason)
+        metadata = {
+            **(locked.provider_metadata or {}),
+            **(job.provider_metadata or {}),
+        }
+        metadata['credit_reservation'] = {**state, 'status': 'released'}
+        locked.provider_metadata = metadata
+        locked.save(update_fields=['provider_metadata', 'updated_at'])
+        job.provider_metadata = metadata
+
+
+def _settle_job_credits(job: MediaProcessingJob) -> None:
+    with transaction.atomic():
+        locked = MediaProcessingJob.objects.select_for_update().get(pk=job.pk)
+        state = _credit_state(locked)
+        reservation = _reservation_from_state(state)
+        metadata = {
+            **(locked.provider_metadata or {}),
+            **(job.provider_metadata or {}),
+        }
+        if not reservation:
+            locked.charged_credits = Decimal('0')
+            locked.provider_metadata = metadata
+        elif state.get('status') == 'settled':
+            locked.provider_metadata = metadata
+            locked.save(update_fields=['provider_metadata', 'updated_at'])
+            job.provider_metadata = metadata
+            job.charged_credits = locked.charged_credits
+            return
+        elif state.get('status') != 'reserved':
+            return
+        else:
+            locked.charged_credits = AIWalletService.settle(
+                locked.tenant,
+                reservation,
+                reservation.amount,
+                details={
+                    'kind': 'media_processing',
+                    'job_id': job.pk,
+                    'provider_id': job.provider_id,
+                },
+            )
+            metadata['credit_reservation'] = {**state, 'status': 'settled'}
+            locked.provider_metadata = metadata
+        locked.save(update_fields=[
+            'charged_credits', 'provider_metadata', 'updated_at',
+        ])
+        job.provider_metadata = locked.provider_metadata
+        job.charged_credits = locked.charged_credits
 
 
 def submit_job(job: MediaProcessingJob, callback_url: str = '') -> MediaProcessingJob:
-    provider = resolve_provider_for_job(job)
     operations = tuple(MediaOperation(operation) for operation in job.operations)
+    resolution = resolve_provider_for_request(
+        job.tenant,
+        operations,
+        preset=job.preset,
+        provider_id=job.provider_id,
+    )
+    provider = resolution.provider
     job.provider_id = provider.provider_id
-    estimate = provider.estimate_cost(operations, job.parameters)
-    if estimate is not None:
-        job.estimated_credits = estimate
-    job.status = MediaProcessingJob.Status.PROCESSING
-    job.started_at = job.started_at or now()
-    job.error_code = ''
-    job.error_message = ''
-    job.save(update_fields=[
-        'provider_id', 'estimated_credits', 'status', 'started_at',
-        'error_code', 'error_message', 'updated_at',
-    ])
+    job.estimated_credits = resolution.estimated_credits
+    _reserve_job_credits(job, resolution.estimated_credits)
+    try:
+        _consume_provider_rate_limit(resolution.policy)
+        job.status = MediaProcessingJob.Status.PROCESSING
+        job.started_at = job.started_at or now()
+        job.error_code = ''
+        job.error_message = ''
+        job.save(update_fields=[
+            'provider_id', 'estimated_credits', 'status', 'started_at',
+            'error_code', 'error_message', 'updated_at',
+        ])
 
-    input_url = default_storage.url(job.product_image.s3_key)
-    result = provider.process(MediaProviderRequest(
-        input_url=input_url,
-        operations=operations,
-        parameters=job.parameters,
-        callback_url=callback_url,
-        idempotency_key=job.idempotency_key,
-    ))
+        input_url = default_storage.url(job.product_image.s3_key)
+        result = provider.process(MediaProviderRequest(
+            input_url=input_url,
+            operations=operations,
+            parameters=job.parameters,
+            callback_url=callback_url,
+            idempotency_key=job.idempotency_key,
+        ))
+    except Exception:
+        _release_job_credits(job, reason='provider_submission_failed')
+        raise
     return apply_provider_result(job, result)
 
 
@@ -182,11 +478,12 @@ def apply_provider_result(
     result: MediaProviderResult,
 ) -> MediaProcessingJob:
     job.provider_job_id = result.provider_job_id or job.provider_job_id
-    job.provider_metadata = result.metadata
+    job.provider_metadata = {**(job.provider_metadata or {}), **result.metadata}
     if result.actual_cost is not None:
-        job.charged_credits = result.actual_cost
+        job.provider_metadata['provider_actual_cost'] = str(result.actual_cost)
 
     if result.status == MediaProviderResultStatus.PENDING:
+        _settle_job_credits(job)
         job.status = MediaProcessingJob.Status.SUBMITTED
         job.save(update_fields=[
             'provider_job_id', 'provider_metadata', 'charged_credits',
@@ -195,14 +492,25 @@ def apply_provider_result(
         return job
 
     if result.status == MediaProviderResultStatus.FAILED:
-        return fail_job(job, result.error_code or 'provider_error', result.error_message)
+        _release_job_credits(job, reason=result.error_code or 'provider_error')
+        return fail_job(
+            job,
+            result.error_code or 'provider_error',
+            _GENERIC_PROVIDER_FAILURE,
+        )
 
     try:
         raw_bytes, content_type = _provider_result_bytes(result)
         variant = _store_variant(job, raw_bytes, content_type)
-    except Exception as exc:
-        return fail_job(job, 'invalid_provider_output', str(exc))
+    except Exception:
+        _release_job_credits(job, reason='invalid_provider_output')
+        return fail_job(
+            job,
+            'invalid_provider_output',
+            _GENERIC_PROVIDER_OUTPUT_FAILURE,
+        )
 
+    _settle_job_credits(job)
     job.status = MediaProcessingJob.Status.SUCCEEDED
     job.finished_at = now()
     job.provider_metadata = {**job.provider_metadata, 'variant_id': variant.pk}
@@ -216,7 +524,13 @@ def apply_provider_result(
 def fail_job(job: MediaProcessingJob, error_code: str, error_message: str) -> MediaProcessingJob:
     job.status = MediaProcessingJob.Status.FAILED
     job.error_code = error_code[:100]
-    job.error_message = error_message
+    # Never persist signed provider URLs from transport exceptions. Provider
+    # messages are user-visible through the job serializer, so keep them short
+    # and strip controls even for internal callers.
+    safe_message = _URL_IN_ERROR_RE.sub('[redacted-url]', str(error_message or ''))
+    job.error_message = ''.join(
+        char for char in safe_message if char in {'\n', '\t'} or ord(char) >= 32
+    )[:1000]
     job.finished_at = now()
     job.save(update_fields=[
         'status', 'error_code', 'error_message', 'finished_at', 'updated_at',
@@ -251,25 +565,30 @@ def _provider_result_bytes(result: MediaProviderResult) -> tuple[bytes, str]:
         raw_bytes = result.output_bytes
         content_type = result.output_content_type or 'image/jpeg'
     elif result.output_url:
-        if not is_safe_public_http_url(result.output_url):
-            raise ValueError('Провайдер вернул небезопасный URL результата.')
-        response = requests.get(result.output_url, timeout=30, stream=True)
-        response.raise_for_status()
+        parsed_output_url = urlparse(str(result.output_url))
+        if (
+            parsed_output_url.scheme.lower() != 'https'
+            or not parsed_output_url.hostname
+            or parsed_output_url.username is not None
+            or parsed_output_url.password is not None
+        ):
+            raise ValueError('Результат провайдера должен использовать HTTPS URL.')
+        try:
+            response = request_public_http_url(
+                result.output_url,
+                timeout=30,
+                max_response_bytes=settings.MEDIA_PROVIDER_OUTPUT_MAX_BYTES,
+                redirect_policy=REDIRECT_SAME_ORIGIN,
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            raise ValueError(_GENERIC_PROVIDER_OUTPUT_FAILURE) from exc
         content_type = response.headers.get('Content-Type', '').split(';', 1)[0]
-        chunks = []
-        size = 0
-        for chunk in response.iter_content(chunk_size=64 * 1024):
-            if not chunk:
-                continue
-            size += len(chunk)
-            if size > MAX_PROVIDER_OUTPUT_BYTES:
-                raise ValueError('Некорректный размер результата провайдера.')
-            chunks.append(chunk)
-        raw_bytes = b''.join(chunks)
+        raw_bytes = response.content
     else:
         raise ValueError('Провайдер не вернул изображение.')
 
-    if not raw_bytes or len(raw_bytes) > MAX_PROVIDER_OUTPUT_BYTES:
+    if not raw_bytes or len(raw_bytes) > settings.MEDIA_PROVIDER_OUTPUT_MAX_BYTES:
         raise ValueError('Некорректный размер результата провайдера.')
     if content_type and not content_type.startswith('image/'):
         raise ValueError('Провайдер вернул не изображение.')
@@ -285,6 +604,7 @@ def _store_variant(
 
     try:
         image = Image.open(io.BytesIO(raw_bytes))
+        validate_image_pixel_budget(image)
         image.load()
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError('Результат провайдера не удалось открыть как изображение.') from exc

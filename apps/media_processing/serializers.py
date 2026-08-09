@@ -9,6 +9,8 @@ from apps.media_processing.models import (
     TenantMediaSettings,
 )
 from apps.media_processing.providers.base import MediaOperation
+from apps.media_processing.providers.registry import MediaProviderUnavailable
+from apps.media_processing.services import resolve_provider_for_request
 
 
 class MediaProcessingPresetSerializer(serializers.ModelSerializer):
@@ -27,9 +29,48 @@ class MediaProcessingPresetSerializer(serializers.ModelSerializer):
 
     def validate_operations(self, value):
         try:
-            return [MediaOperation(operation).value for operation in value]
+            normalized = [MediaOperation(operation).value for operation in value]
         except (TypeError, ValueError) as exc:
             raise serializers.ValidationError(str(exc)) from exc
+        if len(normalized) != len(set(normalized)):
+            raise serializers.ValidationError('Операции не должны повторяться.')
+        return normalized
+
+    def validate_provider_preferences(self, value):
+        if not isinstance(value, list):
+            raise serializers.ValidationError('Ожидается список провайдеров.')
+        normalized = []
+        for provider_id in value:
+            if not isinstance(provider_id, str) or not provider_id.strip():
+                raise serializers.ValidationError('provider_id должен быть непустой строкой.')
+            normalized.append(provider_id.strip().lower())
+        if len(normalized) != len(set(normalized)):
+            raise serializers.ValidationError('Провайдеры не должны повторяться.')
+        return normalized
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        request = self.context.get('request')
+        operations = attrs.get('operations', getattr(self.instance, 'operations', []))
+        preferences = attrs.get(
+            'provider_preferences',
+            getattr(self.instance, 'provider_preferences', []),
+        )
+        if not request or not preferences or not operations:
+            return attrs
+        normalized_operations = tuple(MediaOperation(value) for value in operations)
+        for provider_id in preferences:
+            try:
+                resolve_provider_for_request(
+                    request.tenant,
+                    normalized_operations,
+                    provider_id=provider_id,
+                )
+            except MediaProviderUnavailable as exc:
+                raise serializers.ValidationError({
+                    'provider_preferences': [str(exc)],
+                }) from exc
+        return attrs
 
 
 class ProductImageVariantSerializer(serializers.ModelSerializer):
@@ -69,10 +110,16 @@ class MediaJobCreateSerializer(serializers.Serializer):
     operations = serializers.ListField(
         child=serializers.ChoiceField(choices=[operation.value for operation in MediaOperation]),
         required=False,
+        max_length=len(MediaOperation),
     )
     parameters = serializers.DictField(required=False)
     provider_id = serializers.SlugField(required=False, allow_blank=True)
     idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=64)
+
+    def validate_operations(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError('Операции не должны повторяться.')
+        return value
 
     def validate(self, attrs):
         if not attrs.get('preset_id') and not attrs.get('operations'):

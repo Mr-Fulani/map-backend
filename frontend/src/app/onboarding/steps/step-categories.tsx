@@ -46,27 +46,25 @@ export function StepCategories({ onNext, onBack }: StepCategoriesProps) {
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
-    loadUnmapped();
-  }, []);
-
-  async function loadUnmapped() {
-    try {
-      const { data: result } = await categoryApi.getUnmapped();
-      const items = result.unmapped || [];
-      setUnmapped(items);
-      // Pre-fill default mapping (all as "Запчасти" for auto parts)
-      const defaults: Record<string, string> = {};
-      items.forEach((cat: UnmappedCategory) => {
-        defaults[cat.category_source] = '1'; // Default: Запчасти
+    let active = true;
+    categoryApi.getUnmapped()
+      .then(({ data: result }) => {
+        if (!active) return;
+        const items: UnmappedCategory[] = result.unmapped || [];
+        setUnmapped(items);
+        setMappings(Object.fromEntries(
+          items.map((category) => [category.category_source, '1']),
+        ));
+      })
+      .catch(() => {
+        if (active) setUnmapped([]);
+      })
+      .finally(() => {
+        if (active) setIsLoading(false);
       });
-      setMappings(defaults);
-    } catch {
-      // If no unmapped categories, just show empty state
-      setUnmapped([]);
-    } finally {
-      setIsLoading(false);
-    }
-  }
+
+    return () => { active = false; };
+  }, []);
 
   async function handleSave() {
     setIsSaving(true);

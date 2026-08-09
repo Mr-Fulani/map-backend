@@ -13,14 +13,15 @@ from apps.marketplaces.models import AvitoAccountStatus, MarketplaceAccount
 from apps.marketplaces.serializers import AvitoAccountStatusSerializer
 from apps.marketplaces.services import AvitoAccountStatusService
 from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import owner_access_token
 
 
 def make_tenant(slug):
     """Создаёт тенанта с владельцем для тестов состояния Avito."""
-    tenant, key = TenantService.create_tenant(
+    tenant, _ = TenantService.create_tenant(
         slug, slug, f'{slug}@test.com', 'pass12345',
     )
-    return tenant, key
+    return tenant, owner_access_token(tenant)
 
 
 def make_account(tenant):

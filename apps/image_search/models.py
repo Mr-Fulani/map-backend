@@ -47,6 +47,37 @@ class ImageSearchLog(TimestampedModel):
         return f'[{self.source_id}] {self.product_id} — {self.results_count} results'
 
 
+class ImageSearchTask(TimestampedModel):
+    """Tenant/product ownership record for a Celery image-search result."""
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='image_search_tasks',
+    )
+    product = models.ForeignKey(
+        'products.Product',
+        on_delete=models.CASCADE,
+        related_name='image_search_tasks',
+    )
+    task_id = models.CharField(max_length=255, unique=True)
+
+    class Meta:
+        indexes = [
+            models.Index(
+                fields=['tenant', '-created_at'],
+                name='img_task_tenant_created_idx',
+            ),
+            models.Index(
+                fields=['product', '-created_at'],
+                name='img_task_product_created_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.tenant_id}:{self.product_id}:{self.task_id}'
+
+
 class ImageSearchCache(TimestampedModel):
     """Кеш результатов поиска по артикулу + бренду.
 

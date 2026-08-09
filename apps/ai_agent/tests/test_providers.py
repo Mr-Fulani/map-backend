@@ -102,3 +102,72 @@ def test_openai_responses_uses_json_schema_when_provided():
             call_model(model, 'system', 'user', output_schema=schema)
 
     assert post.call_args.kwargs['json']['text']['format']['schema'] == schema
+
+
+@override_settings(OPENAI_API_KEY='key', TRUSTED_API_RESPONSE_MAX_BYTES=5)
+def test_ai_provider_rejects_oversized_response_without_retrying():
+    model = AIModel(
+        provider=AIModel.PROVIDER_OPENAI,
+        external_id='gpt-test',
+        display_name='GPT test',
+    )
+    response = Mock(status_code=200, headers={})
+    response.iter_content.return_value = iter([b'1234', b'56'])
+
+    with patch('apps.ai_agent.providers.requests.post', return_value=response):
+        with pytest.raises(AIProviderError) as error:
+            call_model(model, 'system', 'user')
+
+    assert error.value.code == 'invalid_provider_response'
+    assert error.value.retryable is False
+    response.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    'payload',
+    [
+        [],
+        {'choices': {}},
+        {'choices': [{'message': []}]},
+        {'choices': [{'message': {'content': [42]}}]},
+        {'choices': [{'message': {'content': 'ok'}}], 'usage': []},
+    ],
+)
+def test_openai_compatible_provider_rejects_malformed_json_shapes(payload):
+    model = AIModel(
+        provider=AIModel.PROVIDER_GEMINI,
+        external_id='gemini-test',
+        display_name='Gemini test',
+    )
+    response = Mock(status_code=200)
+    response.json.return_value = payload
+
+    with override_settings(GEMINI_API_KEY='key'):
+        with patch('apps.ai_agent.providers.requests.post', return_value=response):
+            with pytest.raises(AIProviderError) as error:
+                call_model(model, 'system', 'user')
+
+    assert error.value.code == 'invalid_provider_response'
+    assert error.value.retryable is False
+
+
+@override_settings(OPENAI_API_KEY='key')
+def test_openai_provider_rejects_excessive_nested_collections():
+    model = AIModel(
+        provider=AIModel.PROVIDER_OPENAI,
+        external_id='gpt-test',
+        display_name='GPT test',
+    )
+    response = Mock(status_code=200)
+    response.json.return_value = {
+        'output': [
+            {'type': 'reasoning'}
+            for _ in range(257)
+        ],
+    }
+
+    with patch('apps.ai_agent.providers.requests.post', return_value=response):
+        with pytest.raises(AIProviderError) as error:
+            call_model(model, 'system', 'user')
+
+    assert error.value.code == 'invalid_provider_response'

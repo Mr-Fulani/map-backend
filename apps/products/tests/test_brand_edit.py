@@ -7,14 +7,15 @@ from unittest.mock import patch
 
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
-from apps.products.models import Product
+from apps.products.models import Product, ProductBrand, ProductBrandAlias
 from apps.products.services import ProductService
-from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import create_tenant_with_operator_key
 
 
 def _tenant(slug):
-    tenant, api_key = TenantService.create_tenant(slug, slug, f'{slug}@test.com', 'pass12345')
-    return tenant, api_key
+    return create_tenant_with_operator_key(
+        slug, slug, f'{slug}@test.com', 'pass12345',
+    )
 
 
 def _datasource(tenant):
@@ -41,7 +42,10 @@ def _source_item(brand='', price='100.00'):
 
 @pytest.mark.django_db
 class TestProductBrandPatch:
-    def test_patch_updates_brand_and_brand_ref(self, django_capture_on_commit_callbacks):
+    def test_api_key_patch_keeps_unknown_brand_tenant_local(
+        self,
+        django_capture_on_commit_callbacks,
+    ):
         tenant, api_key = _tenant('brand-edit-co')
         product = Product.objects.create(
             tenant=tenant, article='A1', name='Фонарь', brand='',
@@ -53,20 +57,62 @@ class TestProductBrandPatch:
             with django_capture_on_commit_callbacks(execute=True):
                 response = client.patch(
                     f'/api/v1/products/{product.pk}/',
-                    {'brand': '  Hyundai-KIA  '},
+                    {'brand': '  Tenant-Only Brand 9  '},
                     content_type='application/json',
                     HTTP_AUTHORIZATION=f'Bearer {api_key}',
                 )
 
         assert response.status_code == 200
         product.refresh_from_db()
-        assert product.brand == 'Hyundai-KIA'
-        assert product.brand_ref is not None
-        assert product.brand_resolution_status == Product.BrandResolutionStatus.MANUAL
-        assert product.brand_confidence == 1.0
-        assert product.brand_source_id == 'manual'
-        assert product.brand_needs_review is False
+        assert product.brand == 'Tenant-Only Brand 9'
+        assert product.brand_ref is None
+        assert product.brand_resolution_status == Product.BrandResolutionStatus.SOURCE
+        assert product.brand_confidence == 0.5
+        assert product.brand_source_id == 'api_key'
+        assert product.brand_needs_review is True
+        assert not ProductBrand.objects.filter(
+            normalized_name='TENANTONLYBRAND9',
+        ).exists()
+        assert not ProductBrandAlias.objects.filter(
+            normalized_alias='TENANTONLYBRAND9',
+        ).exists()
         sync_delay.assert_called_once_with(product.pk, 'content')
+
+    def test_api_key_patch_can_link_existing_catalog_brand(
+        self,
+        django_capture_on_commit_callbacks,
+    ):
+        tenant, api_key = _tenant('brand-existing-co')
+        brand_ref = ProductBrand.objects.create(
+            name='Existing Catalog Brand',
+            source_id='platform_seed',
+            confidence=0.95,
+        )
+        product = Product.objects.create(
+            tenant=tenant, article='A1B', name='Фонарь', brand='',
+            price=Decimal('0'), stock_qty=0,
+        )
+
+        with patch('apps.products.views.sync_product_listings_task.delay'):
+            with django_capture_on_commit_callbacks(execute=True):
+                response = Client().patch(
+                    f'/api/v1/products/{product.pk}/',
+                    {'brand': 'Existing Catalog Brand'},
+                    content_type='application/json',
+                    HTTP_AUTHORIZATION=f'Bearer {api_key}',
+                )
+
+        assert response.status_code == 200
+        product.refresh_from_db()
+        assert product.brand_ref == brand_ref
+        assert product.brand_resolution_status == Product.BrandResolutionStatus.CATALOG
+        assert product.brand_source_id == 'catalog'
+        assert product.brand_confidence == 0.95
+        assert product.brand_needs_review is False
+        assert ProductBrand.objects.filter(pk=brand_ref.pk).count() == 1
+        assert not ProductBrandAlias.objects.filter(
+            normalized_alias='EXISTINGCATALOGBRAND',
+        ).exists()
 
     def test_patch_requires_brand_field(self):
         tenant, api_key = _tenant('brand-edit-400-co')

@@ -1,6 +1,15 @@
 # RULEBOOK — Marketplace Automation Platform (MAP)
 ## Правила проекта для разработчика и AI-агента
 
+> [!WARNING]
+> **Статус: исторический артефакт, не runbook.** Документ содержит правила и
+> инфраструктурные примеры мая 2026 года, включая устаревшие service names, env,
+> backup и security-команды. Не используйте их для текущего окружения. Current
+> truth: [README](README.md), [DEV](DEV.md),
+> [production deployment](docs/DEPLOYMENT.md),
+> [security runbook](docs/PRODUCTION_SECURITY.md) и
+> [backup/restore runbook](docs/BACKUP_RESTORE.md).
+
 > **Версия:** 1.0 | **Дата:** Май 2026
 > **Разработчик:** 1 fullstack (бэкенд Python/Django)
 > **AI-агент:** Claude — пишет код, ревьюит, отлаживает

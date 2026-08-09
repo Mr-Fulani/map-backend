@@ -1,8 +1,15 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.tenants.models import (
-    APIKey, CatalogDomain, Tenant, TenantUser, WEBHOOK_EVENTS, WebhookEndpoint,
+    APIKey, API_KEY_SCOPE_CHOICES, API_KEY_SCOPES, API_KEY_WRITE_SCOPES,
+    CatalogDomain, Tenant, TenantUser, WEBHOOK_EVENTS,
+    WebhookDelivery, WebhookEndpoint,
 )
 
 User = get_user_model()
@@ -20,7 +27,7 @@ class RegisterSerializer(serializers.Serializer):
         },
     )
     email = serializers.EmailField()
-    password = serializers.CharField(min_length=8, write_only=True)
+    password = serializers.CharField(max_length=256, write_only=True, trim_whitespace=False)
 
     def validate_slug(self, value):
         if Tenant.objects.filter(slug=value).exists():
@@ -29,9 +36,18 @@ class RegisterSerializer(serializers.Serializer):
 
     def validate_email(self, value):
         if User.objects.filter(email=value).exists():
-            # Пользователь уже существует — это допустимо (можно создать новый тенант)
-            pass
+            raise serializers.ValidationError(
+                'Пользователь с таким email уже существует. Войдите в аккаунт.',
+            )
         return value
+
+    def validate(self, attrs):
+        candidate = User(email=attrs.get('email', ''))
+        try:
+            validate_password(attrs.get('password', ''), user=candidate)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'password': list(exc.messages)}) from exc
+        return attrs
 
 
 class TenantSerializer(serializers.ModelSerializer):
@@ -82,12 +98,60 @@ class TenantUserSerializer(serializers.ModelSerializer):
 class APIKeySerializer(serializers.ModelSerializer):
     class Meta:
         model = APIKey
-        fields = ['id', 'name', 'key_prefix', 'is_active', 'last_used_at', 'created_at']
-        read_only_fields = ['id', 'key_prefix', 'last_used_at', 'created_at']
+        fields = [
+            'id', 'name', 'key_prefix', 'role', 'scopes', 'is_active',
+            'expires_at', 'revoked_at', 'last_used_at', 'created_at',
+        ]
+        read_only_fields = fields
 
 
 class APIKeyCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100)
+    role = serializers.ChoiceField(
+        choices=APIKey.ROLE_CHOICES,
+        default=APIKey.ROLE_VIEWER,
+    )
+    scopes = serializers.ListField(
+        child=serializers.ChoiceField(choices=API_KEY_SCOPE_CHOICES),
+        required=False,
+    )
+    expires_in_days = serializers.IntegerField(
+        min_value=1,
+        max_value=365,
+        default=90,
+    )
+
+    def validate(self, attrs):
+        scopes = attrs.get('scopes')
+        if scopes is None:
+            from apps.tenants.models import default_api_key_scopes
+            scopes = default_api_key_scopes()
+        if len(scopes) != len(set(scopes)):
+            raise serializers.ValidationError({'scopes': 'Scopes must be unique.'})
+        if set(scopes) - API_KEY_SCOPES:
+            raise serializers.ValidationError({'scopes': 'Unknown scope.'})
+        if (
+            attrs['role'] == APIKey.ROLE_VIEWER
+            and API_KEY_WRITE_SCOPES.intersection(scopes)
+        ):
+            raise serializers.ValidationError({
+                'scopes': 'Viewer API key cannot receive write scopes.',
+            })
+        attrs['scopes'] = sorted(scopes)
+        attrs['expires_at'] = timezone.now() + timedelta(
+            days=attrs.pop('expires_in_days')
+        )
+        return attrs
+
+
+class APIKeyCreatedSerializer(APIKeySerializer):
+    """API key response shown once immediately after creation."""
+
+    key = serializers.CharField(read_only=True)
+    warning = serializers.CharField(read_only=True)
+
+    class Meta(APIKeySerializer.Meta):
+        fields = [*APIKeySerializer.Meta.fields, 'key', 'warning']
 
 
 class WebhookEndpointSerializer(serializers.ModelSerializer):
@@ -95,8 +159,8 @@ class WebhookEndpointSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = WebhookEndpoint
-        fields = ['id', 'url', 'secret', 'events', 'is_active', 'created_at']
-        read_only_fields = ['id', 'secret', 'is_active', 'created_at']
+        fields = ['id', 'url', 'events', 'is_active', 'created_at']
+        read_only_fields = ['id', 'is_active', 'created_at']
 
 
 class WebhookEndpointWriteSerializer(serializers.Serializer):
@@ -108,3 +172,45 @@ class WebhookEndpointWriteSerializer(serializers.Serializer):
         min_length=1,
         max_length=len(WEBHOOK_EVENTS),
     )
+
+    def validate_url(self, value):
+        from urllib.parse import urlsplit
+
+        from apps.core.url_security import UnsafePublicURL, resolve_public_http_url
+
+        if urlsplit(value).scheme.lower() != 'https':
+            raise serializers.ValidationError(
+                'Webhook URL должен использовать HTTPS.',
+            )
+        try:
+            target = resolve_public_http_url(value)
+        except UnsafePublicURL as exc:
+            raise serializers.ValidationError(
+                'Webhook URL должен вести на публичный HTTPS-адрес.',
+            ) from exc
+        # Store one canonical representation so default ports, host case and
+        # fragments cannot bypass the per-tenant duplicate constraint.
+        return target.url
+
+
+class WebhookEndpointCreatedSerializer(WebhookEndpointSerializer):
+    """Webhook response containing its one-time plaintext signing secret."""
+
+    secret = serializers.CharField(read_only=True)
+    warning = serializers.CharField(read_only=True)
+
+    class Meta(WebhookEndpointSerializer.Meta):
+        fields = [*WebhookEndpointSerializer.Meta.fields, 'secret', 'warning']
+
+
+class WebhookDeliverySerializer(serializers.ModelSerializer):
+    event_id = serializers.UUIDField(source='event.id', read_only=True)
+    event_type = serializers.CharField(source='event.event_type', read_only=True)
+
+    class Meta:
+        model = WebhookDelivery
+        fields = [
+            'id', 'event_id', 'event_type', 'endpoint_url', 'status', 'attempts',
+            'max_attempts', 'next_attempt_at', 'last_attempt_at', 'delivered_at',
+            'response_status', 'last_error', 'created_at',
+        ]

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState } from 'react';
 import { logApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -45,31 +45,34 @@ export default function LogsPage() {
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try {
-      const params: Record<string, unknown> = { page };
-      if (statusFilter) params.status = statusFilter;
-      if (date) params.date = date;
-      const res = await logApi.list(params);
-      // SyncLogListView использует ListAPIView — формат может быть пагинированным
-      const body = res.data;
-      if (body.data) {
-        setLogs(body.data);
-        setMeta(body.meta);
-      } else if (Array.isArray(body)) {
-        setLogs(body);
-        setMeta(null);
-      }
-    } catch {
-      setLogs([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [page, statusFilter, date]);
+  useEffect(() => {
+    let active = true;
+    const params: Record<string, unknown> = { page };
+    if (statusFilter) params.status = statusFilter;
+    if (date) params.date = date;
 
-  useEffect(() => { setPage(1); }, [statusFilter, date]);
-  useEffect(() => { load(); }, [load]);
+    logApi.list(params)
+      .then((response) => {
+        if (!active) return;
+        // SyncLogListView использует ListAPIView — формат может быть пагинированным.
+        const body = response.data;
+        if (body.data) {
+          setLogs(body.data);
+          setMeta(body.meta);
+        } else if (Array.isArray(body)) {
+          setLogs(body);
+          setMeta(null);
+        }
+      })
+      .catch(() => {
+        if (active) setLogs([]);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [date, page, statusFilter]);
 
   return (
     <div className="space-y-4">
@@ -88,7 +91,12 @@ export default function LogsPage() {
               key={f.value}
               size="sm"
               variant={statusFilter === f.value ? 'default' : 'outline'}
-              onClick={() => setStatusFilter(f.value)}
+              onClick={() => {
+                if (f.value === statusFilter) return;
+                setLoading(true);
+                setPage(1);
+                setStatusFilter(f.value);
+              }}
             >
               {f.label}
             </Button>
@@ -97,7 +105,11 @@ export default function LogsPage() {
         <Input
           type="date"
           value={date}
-          onChange={(e) => setDate(e.target.value)}
+          onChange={(e) => {
+            setLoading(true);
+            setPage(1);
+            setDate(e.target.value);
+          }}
           className="w-full sm:w-auto"
         />
       </div>
@@ -199,10 +211,26 @@ export default function LogsPage() {
             Страница {meta.page} из {Math.ceil(meta.total / meta.page_size)}
           </p>
           <div className="flex gap-2">
-            <Button size="sm" variant="outline" onClick={() => setPage((p) => p - 1)} disabled={!meta.prev}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setLoading(true);
+                setPage((current) => current - 1);
+              }}
+              disabled={!meta.prev}
+            >
               <ChevronLeft className="h-4 w-4" /> Назад
             </Button>
-            <Button size="sm" variant="outline" onClick={() => setPage((p) => p + 1)} disabled={!meta.next}>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                setLoading(true);
+                setPage((current) => current + 1);
+              }}
+              disabled={!meta.next}
+            >
               Вперёд <ChevronRight className="h-4 w-4" />
             </Button>
           </div>

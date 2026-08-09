@@ -1,9 +1,9 @@
 from django.db import transaction
-from drf_spectacular.utils import extend_schema
-from rest_framework import status
+from drf_spectacular.utils import extend_schema, inline_serializer
+from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from apps.tenants.api_views import AIAPIView as APIView
 
 from apps.ai_agent.models import (
     AIModel, AIRequestLog, AITaskType, TenantAITaskModel,
@@ -14,7 +14,64 @@ from apps.billing.ai_wallet import AIWalletService
 from apps.tenants.models import TenantUser
 
 
+_AI_MODEL_LIST_RESPONSE = inline_serializer(
+    name='AIModelListResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': AIModelSerializer(many=True),
+    },
+)
+_AI_SETTINGS_REQUEST = inline_serializer(
+    name='AISettingsUpdateRequest',
+    fields={
+        'default_model': serializers.IntegerField(),
+        'use_task_overrides': serializers.BooleanField(required=False),
+        'task_models': serializers.DictField(
+            child=serializers.IntegerField(), required=False,
+        ),
+    },
+)
+_AI_SETTINGS_RESPONSE = inline_serializer(
+    name='AISettingsResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': inline_serializer(
+            name='AISettingsData',
+            fields={
+                'default_model': serializers.IntegerField(allow_null=True),
+                'use_task_overrides': serializers.BooleanField(),
+                'task_models': serializers.DictField(
+                    child=serializers.IntegerField(),
+                ),
+                'tasks': inline_serializer(
+                    name='AITaskAvailability',
+                    fields={
+                        'value': serializers.CharField(),
+                        'label': serializers.CharField(),
+                        'implemented': serializers.BooleanField(),
+                    },
+                    many=True,
+                ),
+                'wallet': serializers.DictField(
+                    child=serializers.JSONField(),
+                    help_text='Баланс, резервы и лимиты AI-кредитов.',
+                ),
+            },
+        ),
+    },
+)
+_AI_USAGE_LIST_RESPONSE = inline_serializer(
+    name='AIUsageListResponse',
+    fields={
+        'status': serializers.CharField(),
+        'data': AIRequestLogSerializer(many=True),
+    },
+)
+
+
 def _can_manage_ai(request) -> bool:
+    if getattr(request.user, 'is_api_key', False):
+        return False
     return TenantUser.objects.filter(
         tenant=request.tenant,
         user=request.user,
@@ -25,7 +82,12 @@ def _can_manage_ai(request) -> bool:
 @extend_schema(tags=['AI'])
 class AIModelListView(APIView):
     permission_classes = [IsAuthenticated]
+    api_key_enabled = True
 
+    @extend_schema(
+        summary='Список доступных AI-моделей',
+        responses=_AI_MODEL_LIST_RESPONSE,
+    )
     def get(self, request):
         models = AIModel.objects.all().order_by('sort_order', 'display_name')
         return Response({
@@ -37,10 +99,20 @@ class AIModelListView(APIView):
 @extend_schema(tags=['AI'])
 class AISettingsView(APIView):
     permission_classes = [IsAuthenticated]
+    api_key_scopes = {}
 
+    @extend_schema(
+        summary='Получить настройки AI-моделей',
+        responses=_AI_SETTINGS_RESPONSE,
+    )
     def get(self, request):
         return Response({'status': 'ok', 'data': self._data(request.tenant)})
 
+    @extend_schema(
+        summary='Обновить настройки AI-моделей',
+        request=_AI_SETTINGS_REQUEST,
+        responses=_AI_SETTINGS_RESPONSE,
+    )
     def patch(self, request):
         if not _can_manage_ai(request):
             return Response(
@@ -173,7 +245,12 @@ class AISettingsView(APIView):
 @extend_schema(tags=['AI'])
 class AIUsageListView(APIView):
     permission_classes = [IsAuthenticated]
+    api_key_enabled = True
 
+    @extend_schema(
+        summary='История использования AI',
+        responses=_AI_USAGE_LIST_RESPONSE,
+    )
     def get(self, request):
         logs = AIRequestLog.objects.filter(
             tenant=request.tenant,

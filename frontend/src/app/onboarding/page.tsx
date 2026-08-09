@@ -3,15 +3,18 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { AuthRecovery } from '@/components/auth-recovery';
 
 export default function OnboardingPage() {
   const router = useRouter();
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, hasAuthError } = useAuth();
 
   useEffect(() => {
-    if (isLoading) return;
+    if (isLoading || hasAuthError) return;
     router.replace(isAuthenticated ? '/dashboard/settings' : '/login');
-  }, [isAuthenticated, isLoading, router]);
+  }, [hasAuthError, isAuthenticated, isLoading, router]);
+
+  if (hasAuthError) return <AuthRecovery />;
 
   return (
     <div className="flex min-h-screen items-center justify-center">

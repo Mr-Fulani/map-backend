@@ -1,6 +1,15 @@
 # ROADMAP — Marketplace Automation Platform (MAP)
 ## Пошаговый план разработки | Phase 1: MVP (45 дней)
 
+> [!WARNING]
+> **Статус: исторический артефакт, не runbook.** Незакрытые checkbox-ы, старые
+> service names, dependency paths, deploy и backup-команды сохранены как снимок
+> первоначального плана и не отражают текущий runtime. Действующие инструкции:
+> [README](README.md), [DEV](DEV.md),
+> [production deployment](docs/DEPLOYMENT.md),
+> [security runbook](docs/PRODUCTION_SECURITY.md) и
+> [backup/restore runbook](docs/BACKUP_RESTORE.md).
+
 > Актуальный специализированный план по AI-моделям, кредитам и маржинальности:
 > [ROADMAP_AI_MODELS_AND_BILLING.md](ROADMAP_AI_MODELS_AND_BILLING.md)
 

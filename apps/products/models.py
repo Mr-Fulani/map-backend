@@ -1,7 +1,7 @@
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
-from apps.core.models import TimestampedModel
+from apps.core.models import SoftDeleteModel, TimestampedModel
 from apps.datasources.models import DataSourceConnection
 from apps.tenants.models import CatalogDomain, Tenant
 
@@ -183,7 +183,7 @@ class ProductBrandAlias(TimestampedModel):
         super().save(*args, **kwargs)
 
 
-class Product(TimestampedModel):
+class Product(SoftDeleteModel):
     """Товар из источника данных (1С, CSV и т.д.)."""
 
     class BrandResolutionStatus(models.TextChoices):
@@ -289,6 +289,12 @@ class Product(TimestampedModel):
     def __str__(self):
         return f'{self.article} — {self.name}'
 
+    def soft_delete(self):
+        self.listings.all().delete()
+        self.sync_excluded = True
+        self.save(update_fields=['sync_excluded', 'updated_at'])
+        super().soft_delete()
+
 
 class ProductCatalogClassification(TimestampedModel):
     """Классификация домена товара для безопасного запуска domain-specific фич."""
@@ -303,6 +309,7 @@ class ProductCatalogClassification(TimestampedModel):
     class Source(models.TextChoices):
         RULES = 'rules', 'Правила'
         MANUAL = 'manual', 'Вручную'
+        API_KEY = 'api_key', 'API Key'
         AI = 'ai', 'AI'
 
     tenant = models.ForeignKey(
@@ -1042,6 +1049,9 @@ class ProductBulkActionJob(TimestampedModel):
     batch_size = models.PositiveIntegerField(default=20, verbose_name='Размер batch')
     pause_seconds = models.PositiveIntegerField(default=60, verbose_name='Пауза между batch, сек')
     next_batch_at = models.DateTimeField(null=True, blank=True, verbose_name='Следующий batch')
+    last_dispatched_at = models.DateTimeField(
+        null=True, blank=True, verbose_name='Последняя постановка batch в очередь',
+    )
     error_message = models.TextField(blank=True, verbose_name='Ошибка')
     started_at = models.DateTimeField(null=True, blank=True, verbose_name='Начато')
     finished_at = models.DateTimeField(null=True, blank=True, verbose_name='Завершено')
@@ -1053,6 +1063,12 @@ class ProductBulkActionJob(TimestampedModel):
             models.Index(fields=['tenant', '-created_at']),
             models.Index(fields=['status', '-created_at']),
             models.Index(fields=['tenant', 'status']),
+            models.Index(
+                fields=['status', 'next_batch_at'], name='prod_bulk_status_due_idx',
+            ),
+            models.Index(
+                fields=['status', 'last_dispatched_at'], name='prod_bulk_dispatch_idx',
+            ),
         ]
 
     def __str__(self):

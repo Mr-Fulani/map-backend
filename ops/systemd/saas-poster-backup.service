@@ -1,0 +1,22 @@
+[Unit]
+Description=SaaS Poster encrypted PostgreSQL backup
+RequiresMountsFor=/opt/saas_poster
+Requires=docker.service
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=saas-poster
+Group=docker
+WorkingDirectory=/opt/saas_poster
+ExecStart=/opt/saas_poster/scripts/production_backup.sh
+TimeoutStartSec=3h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+Restart=on-failure
+RestartSec=30m
+
+[Install]
+WantedBy=multi-user.target

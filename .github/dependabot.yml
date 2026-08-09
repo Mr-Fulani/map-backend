@@ -1,0 +1,74 @@
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:15"
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:30"
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker
+    directory: /backup
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:45"
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:55"
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: pip
+    directory: /requirements
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: pip
+    directory: /backup
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:15"
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:30"
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5

@@ -14,9 +14,13 @@ from unittest.mock import patch
 import pytest
 from django.utils.timezone import now
 
-from apps.notifications.models import TenantNotificationSettings
-from apps.tenants.models import APIKey
+from apps.notifications.models import (
+    CONNECT_TOKEN_CONSUMED,
+    CONNECT_TOKEN_INVALID,
+    TenantNotificationSettings,
+)
 from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import owner_access_token
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +100,31 @@ class TestConnectTokenModel:
         assert ns.connect_token == ''
         assert ns.connect_token_expires_at is None
 
+    def test_consume_connect_token_is_one_time(self):
+        tenant = make_tenant('mdl-consume-once')
+        ns = make_ns(tenant)
+        token = ns.generate_connect_token()
+
+        consumed, consume_status = TenantNotificationSettings.consume_connect_token(
+            token,
+            chat_id='12345',
+            username='one-time-user',
+        )
+        replayed, replay_status = TenantNotificationSettings.consume_connect_token(
+            token,
+            chat_id='67890',
+            username='replay-user',
+        )
+
+        assert consumed is not None
+        assert consumed.pk == ns.pk
+        assert consume_status == CONNECT_TOKEN_CONSUMED
+        assert replayed is None
+        assert replay_status == CONNECT_TOKEN_INVALID
+        ns.refresh_from_db()
+        assert ns.telegram_chat_id == '12345'
+        assert ns.telegram_username == 'one-time-user'
+
 
 # ---------------------------------------------------------------------------
 # GET/PUT /api/v1/notifications/settings/
@@ -106,7 +135,7 @@ class TestNotificationSettingsAPI:
     def test_get_returns_defaults_for_new_tenant(self, client):
         """GET создаёт настройки если их нет и возвращает telegram_connected=False."""
         tenant = make_tenant('ns-get')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         resp = client.get('/api/v1/notifications/settings/', **auth(raw_key))
 
@@ -120,7 +149,7 @@ class TestNotificationSettingsAPI:
         """GET возвращает telegram_connected=True если chat_id уже привязан."""
         tenant = make_tenant('ns-connected')
         make_ns(tenant, telegram_chat_id='123456', telegram_username='myuser')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         resp = client.get('/api/v1/notifications/settings/', **auth(raw_key))
 
@@ -132,7 +161,7 @@ class TestNotificationSettingsAPI:
         """PUT обновляет email и флаги, не затрагивая telegram_chat_id."""
         tenant = make_tenant('ns-put')
         make_ns(tenant, telegram_chat_id='555')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         resp = client.put(
             '/api/v1/notifications/settings/',
@@ -166,10 +195,11 @@ class TestTelegramConnectAPI:
     def test_returns_bot_url_with_token(self, client):
         """POST возвращает bot_url содержащий токен подключения."""
         tenant = make_tenant('tg-conn')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         with patch('apps.notifications.views.settings') as mock_settings:
             mock_settings.TELEGRAM_BOT_USERNAME = 'TestMapBot'
+            mock_settings.TELEGRAM_BOT_TOKEN = '123:test-token'
             resp = client.post(
                 '/api/v1/notifications/settings/telegram/connect/',
                 **auth(raw_key),
@@ -184,10 +214,11 @@ class TestTelegramConnectAPI:
     def test_token_is_saved_in_db(self, client):
         """После POST токен сохранён в TenantNotificationSettings."""
         tenant = make_tenant('tg-token-db')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         with patch('apps.notifications.views.settings') as mock_settings:
             mock_settings.TELEGRAM_BOT_USERNAME = 'TestMapBot'
+            mock_settings.TELEGRAM_BOT_TOKEN = '123:test-token'
             resp = client.post(
                 '/api/v1/notifications/settings/telegram/connect/',
                 **auth(raw_key),
@@ -202,10 +233,11 @@ class TestTelegramConnectAPI:
     def test_returns_503_when_bot_not_configured(self, client):
         """503 если TELEGRAM_BOT_USERNAME не задан."""
         tenant = make_tenant('tg-no-bot')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         with patch('apps.notifications.views.settings') as mock_settings:
             mock_settings.TELEGRAM_BOT_USERNAME = ''
+            mock_settings.TELEGRAM_BOT_TOKEN = '123:test-token'
             resp = client.post(
                 '/api/v1/notifications/settings/telegram/connect/',
                 **auth(raw_key),
@@ -224,7 +256,7 @@ class TestTelegramDisconnectAPI:
         """DELETE сбрасывает telegram_chat_id и username."""
         tenant = make_tenant('tg-disc')
         make_ns(tenant, telegram_chat_id='777', telegram_username='user7')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         resp = client.delete(
             '/api/v1/notifications/settings/telegram/',
@@ -247,7 +279,7 @@ class TestNotificationTestAPI:
         """POST /test/ отправляет сообщение если Telegram подключён."""
         tenant = make_tenant('tg-test-ok')
         make_ns(tenant, telegram_chat_id='123')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         with patch('apps.notifications.views.TelegramNotifier') as mock_tg:
             mock_tg.return_value.send.return_value = True
@@ -265,7 +297,7 @@ class TestNotificationTestAPI:
         """400 если Telegram не подключён."""
         tenant = make_tenant('tg-test-no')
         make_ns(tenant, telegram_chat_id='')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         resp = client.post(
             '/api/v1/notifications/settings/test/',
@@ -278,7 +310,7 @@ class TestNotificationTestAPI:
         """502 если TelegramNotifier.send вернул False."""
         tenant = make_tenant('tg-test-fail')
         make_ns(tenant, telegram_chat_id='999')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         with patch('apps.notifications.views.TelegramNotifier') as mock_tg:
             mock_tg.return_value.send.return_value = False
@@ -294,7 +326,7 @@ class TestNotificationTestAPI:
 # POST /api/v1/notifications/webhook/telegram/ (bot webhook)
 # ---------------------------------------------------------------------------
 
-def tg_update(text, chat_id='11111', username='tguser', update_id=1):
+def tg_update(text, chat_id=11111, username='tguser', update_id=1):
     """Формирует минимальный Telegram update payload."""
     return {
         'update_id': update_id,
@@ -309,6 +341,10 @@ def tg_update(text, chat_id='11111', username='tguser', update_id=1):
 @pytest.mark.django_db
 class TestTelegramBotWebhook:
     WEBHOOK_URL = '/api/v1/notifications/webhook/telegram/'
+
+    @pytest.fixture(autouse=True)
+    def configured_bot(self, settings):
+        settings.TELEGRAM_BOT_TOKEN = '123:test-token'
 
     def _post(self, client, payload, secret_header=''):
         return client.post(
@@ -334,7 +370,7 @@ class TestTelegramBotWebhook:
             mock_tg.return_value.send.return_value = True
             resp = self._post(
                 client,
-                tg_update(f'/start {token}', chat_id='42424242', username='happyuser'),
+                tg_update(f'/start {token}', chat_id=42424242, username='happyuser'),
                 secret_header=self._valid_secret(),
             )
 
@@ -415,6 +451,93 @@ class TestTelegramBotWebhook:
         )
         assert resp.status_code == 200
 
+    def test_missing_server_token_fails_closed(self, client, settings):
+        settings.TELEGRAM_BOT_TOKEN = ''
+
+        with patch('apps.notifications.views.TelegramNotifier') as notifier:
+            resp = self._post(client, tg_update('/start any-token'))
+
+        assert resp.status_code == 503
+        notifier.assert_not_called()
+
+    @pytest.mark.parametrize('secret_header', ['', 'wrong-secret'])
+    def test_missing_or_wrong_webhook_secret_is_rejected(
+        self,
+        client,
+        secret_header,
+    ):
+        with patch('apps.notifications.views.TelegramNotifier') as notifier:
+            resp = self._post(
+                client,
+                tg_update('/start any-token'),
+                secret_header=secret_header,
+            )
+
+        assert resp.status_code == 403
+        notifier.assert_not_called()
+
+    @pytest.mark.parametrize(
+        'payload',
+        [
+            [],
+            {},
+            {'update_id': True},
+            {'update_id': -1},
+            {'update_id': 1, 'message': 'not-an-object'},
+            {
+                'update_id': 1,
+                'message': {'text': 123, 'chat': {'id': 1}},
+            },
+            {
+                'update_id': 1,
+                'message': {'text': '/start token', 'chat': 'not-an-object'},
+            },
+            {
+                'update_id': 1,
+                'message': {'text': '/start token', 'chat': {'id': '1'}},
+            },
+            {
+                'update_id': 1,
+                'message': {
+                    'text': '/start token',
+                    'chat': {'id': 1, 'username': {'bad': 'shape'}},
+                },
+            },
+        ],
+    )
+    def test_malformed_authenticated_update_is_rejected(self, client, payload):
+        with patch('apps.notifications.views.TelegramNotifier') as notifier:
+            resp = self._post(
+                client,
+                payload,
+                secret_header=self._valid_secret(),
+            )
+
+        assert resp.status_code == 400
+        assert resp.json()['error'] == 'invalid_update'
+        notifier.assert_not_called()
+
+    def test_authenticated_non_text_update_is_ignored(self, client):
+        payload = {
+            'update_id': 100,
+            'message': {
+                'message_id': 2,
+                'chat': {'id': 11111, 'type': 'private'},
+                'photo': [{'file_id': 'photo-id'}],
+            },
+        }
+
+        with patch('apps.notifications.views.TelegramNotifier') as notifier:
+            resp = self._post(
+                client,
+                payload,
+                secret_header=self._valid_secret(),
+            )
+
+        assert resp.status_code == 200
+        assert resp.json() == {'ok': True}
+        notifier.assert_not_called()
+
     def test_token_used_only_once(self, client):
         """Повторный /start с тем же токеном не привязывает второй chat_id."""
         tenant = make_tenant('wh-once')
@@ -426,13 +549,13 @@ class TestTelegramBotWebhook:
             # Первый — успешный
             self._post(
                 client,
-                tg_update(f'/start {token}', chat_id='111'),
+                tg_update(f'/start {token}', chat_id=111),
                 secret_header=self._valid_secret(),
             )
             # Второй — токен уже сброшен
             self._post(
                 client,
-                tg_update(f'/start {token}', chat_id='222'),
+                tg_update(f'/start {token}', chat_id=222),
                 secret_header=self._valid_secret(),
             )
 

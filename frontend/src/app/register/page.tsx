@@ -8,7 +8,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { authApi, setAccessToken, setRefreshToken } from '@/lib/api';
+import { authApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -54,7 +54,7 @@ export default function RegisterPage() {
     password: '',
   });
   const [isLoading, setIsLoading] = useState(false);
-  const { refreshMe } = useAuth();
+  const { login, isLoading: isAuthLoading } = useAuth();
   const router = useRouter();
 
   function handleChange(field: string, value: string) {
@@ -68,17 +68,15 @@ export default function RegisterPage() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isAuthLoading) return;
     setIsLoading(true);
 
     try {
       // 1. Регистрируем тенант
       await authApi.register(form);
 
-      // 2. Сразу логинимся для получения JWT
-      const { data: loginData } = await authApi.login(form.email, form.password);
-      setAccessToken(loginData.access);
-      setRefreshToken(loginData.refresh);
-      await refreshMe();
+      // 2. Создаём browser-сессию: refresh остаётся только в HttpOnly cookie.
+      await login(form.email, form.password, form.slug);
 
       toast.success('Регистрация успешна! Давайте настроим вашу платформу.');
       router.push('/dashboard/settings');
@@ -119,6 +117,7 @@ export default function RegisterPage() {
                 placeholder="ООО Автозапчасти"
                 value={form.name}
                 onChange={(e) => handleChange('name', e.target.value)}
+                maxLength={200}
                 required
                 autoFocus
               />
@@ -131,6 +130,7 @@ export default function RegisterPage() {
                   placeholder="avtozapchasti"
                   value={form.slug}
                   onChange={(e) => handleChange('slug', makeAsciiSlug(e.target.value))}
+                  maxLength={50}
                   required
                   className="font-mono text-sm"
                 />
@@ -147,6 +147,7 @@ export default function RegisterPage() {
                 placeholder="user@company.ru"
                 value={form.email}
                 onChange={(e) => handleChange('email', e.target.value)}
+                maxLength={254}
                 required
                 autoComplete="email"
               />
@@ -155,15 +156,16 @@ export default function RegisterPage() {
               <Label htmlFor="reg-password">Пароль</Label>
               <PasswordInput
                 id="reg-password"
-                placeholder="Минимум 8 символов"
+                placeholder="Минимум 12 символов"
                 value={form.password}
                 onChange={(e) => handleChange('password', e.target.value)}
+                maxLength={256}
                 required
-                minLength={8}
+                minLength={12}
                 autoComplete="new-password"
               />
             </div>
-            <Button type="submit" className="w-full" disabled={isLoading}>
+            <Button type="submit" className="w-full" disabled={isLoading || isAuthLoading}>
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

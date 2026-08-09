@@ -25,6 +25,12 @@ function isDashboardNavigation(href: string) {
 export function NavigationProgress() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const routeKey = `${pathname}?${searchParams.toString()}`;
+
+  return <NavigationProgressForRoute key={routeKey} />;
+}
+
+function NavigationProgressForRoute() {
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
@@ -44,10 +50,6 @@ export function NavigationProgress() {
     document.addEventListener('click', handleClick, true);
     return () => document.removeEventListener('click', handleClick, true);
   }, []);
-
-  useEffect(() => {
-    setPending(false);
-  }, [pathname, searchParams]);
 
   useEffect(() => {
     if (!pending) return undefined;

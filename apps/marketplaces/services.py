@@ -1,6 +1,7 @@
 import datetime
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -78,6 +79,10 @@ class InvalidListingStatus(Exception):
 
 class ListingAccountConflict(Exception):
     """Для товара уже есть листинг на выбранном аккаунте."""
+
+
+class ListingBulkLimitExceeded(ValueError):
+    """A direct bulk listing operation selected more rows than the API cap."""
 
 
 class NoActiveAccounts(Exception):
@@ -396,7 +401,14 @@ class ListingService:
                 updates['bulk_placement_address'] = None
         if not updates:
             return 0
-        return qs.update(**updates)
+        target_ids = list(
+            qs.order_by('pk').values_list('pk', flat=True)[:settings.API_BULK_MAX_ITEMS + 1],
+        )
+        if len(target_ids) > settings.API_BULK_MAX_ITEMS:
+            raise ListingBulkLimitExceeded(
+                f'Массовая операция допускает не более {settings.API_BULK_MAX_ITEMS} листингов.',
+            )
+        return qs.filter(pk__in=target_ids).update(**updates)
 
     @staticmethod
     def bulk_action(tenant, data: dict) -> dict:
@@ -405,8 +417,12 @@ class ListingService:
         listings = list(
             ListingService._bulk_queryset(tenant, data)
             .select_related('tenant', 'product', 'account')
-            .order_by('pk')
+            .order_by('pk')[:settings.API_BULK_MAX_ITEMS + 1]
         )
+        if len(listings) > settings.API_BULK_MAX_ITEMS:
+            raise ListingBulkLimitExceeded(
+                f'Массовая операция допускает не более {settings.API_BULK_MAX_ITEMS} листингов.',
+            )
         result = {
             'total': len(listings),
             'success': 0,
@@ -574,17 +590,24 @@ class ListingService:
         cat_margin = effective_category_margin(cat) if cat else Decimal('0')
         default_price = compute_price(product.price, cat_margin)
 
-        listing, created = Listing.objects.get_or_create(
-            tenant=product.tenant,
-            product=product,
-            account=account,
-            defaults={
-                'price_on_listing': default_price,
-                'title': (product.title_ai or product.name)[:300],
-                'description_ai': product.description_ai,
-                'status': Listing.STATUS_DRAFT,
-            },
-        )
+        listing = Listing.all_objects.filter(
+            tenant=product.tenant, product=product, account=account,
+        ).first()
+        created = listing is None
+        if listing is None:
+            listing = Listing.objects.create(
+                tenant=product.tenant,
+                product=product,
+                account=account,
+                price_on_listing=default_price,
+                title=(product.title_ai or product.name)[:300],
+                description_ai=product.description_ai,
+                status=Listing.STATUS_DRAFT,
+            )
+        elif listing.deleted_at is not None:
+            listing.restore()
+            listing.status = Listing.STATUS_DRAFT
+            listing.save(update_fields=['status', 'updated_at'])
 
         if not created:
             new_price = compute_price(product.price, effective_margin(listing))
@@ -610,6 +633,7 @@ class MarketplaceAccountService:
     def _fetch_avito_user_id(credentials_enc: str) -> str:
         """Получает числовой user_id из Avito API по credentials."""
         import requests as req
+        from apps.core.http_responses import bounded_http_request
         from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 
         class _Tmp:
@@ -619,10 +643,12 @@ class MarketplaceAccountService:
         tmp.credentials_enc = credentials_enc
         try:
             token = AvitoAuthManager()._refresh(tmp)
-            resp = req.get(
+            resp = bounded_http_request(
+                req.get,
                 'https://api.avito.ru/core/v1/accounts/self',
                 headers={'Authorization': f'Bearer {token}'},
                 timeout=10,
+                max_bytes=settings.AVITO_API_RESPONSE_MAX_BYTES,
             )
             resp.raise_for_status()
             user_id = resp.json().get('id')
@@ -648,16 +674,30 @@ class MarketplaceAccountService:
             'client_secret': data['client_secret'],
         })
         external_id = MarketplaceAccountService._fetch_avito_user_id(credentials_enc)
-        try:
-            account = MarketplaceAccount.objects.create(
-                tenant=tenant,
-                name=data['name'],
-                marketplace=data['marketplace'],
-                external_id=external_id,
-                credentials_enc=credentials_enc,
-            )
-        except IntegrityError:
-            raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
+        deleted_account = MarketplaceAccount.all_objects.filter(
+            tenant=tenant,
+            marketplace=data['marketplace'],
+            external_id=external_id,
+            deleted_at__isnull=False,
+        ).first()
+        if deleted_account is not None:
+            account = deleted_account
+            account.name = data['name']
+            account.credentials_enc = credentials_enc
+            account.is_active = True
+            account.restore()
+            account.save(update_fields=['name', 'credentials_enc', 'is_active', 'updated_at'])
+        else:
+            try:
+                account = MarketplaceAccount.objects.create(
+                    tenant=tenant,
+                    name=data['name'],
+                    marketplace=data['marketplace'],
+                    external_id=external_id,
+                    credentials_enc=credentials_enc,
+                )
+            except IntegrityError:
+                raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
 
         # Регистрируем feed URL в Avito Autoload после коммита транзакции
         if account.marketplace == MarketplaceAccount.MARKETPLACE_AVITO:

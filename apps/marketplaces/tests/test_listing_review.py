@@ -4,9 +4,11 @@
 Покрывает: ListingService.approve, request_regenerate, update_content,
 а также API-эндпоинты detail / approve / regenerate / patch.
 """
-import pytest
-from unittest.mock import patch
 from decimal import Decimal
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
 
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
@@ -14,6 +16,7 @@ from apps.marketplaces.models import Listing, MarketplaceAccount, MarketplacePla
 from apps.marketplaces.services import InvalidListingStatus, ListingNotFound, ListingService
 from apps.products.models import Product, ProductImage
 from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import create_operator_key
 
 
 # ── Фикстуры ───────────────────────────────────────────────────────────────────
@@ -202,6 +205,7 @@ class TestListingDetailAPI:
             'listing-patch-placement-co@test.com',
             'pass12345',
         )
+        key = create_operator_key(tenant)
         old_account = make_account(tenant)
         new_account = MarketplaceAccount.objects.create(
             tenant=tenant,
@@ -254,6 +258,7 @@ class TestListingDetailAPI:
             'listing-actions-co@test.com',
             'pass12345',
         )
+        key = create_operator_key(tenant)
         listing = make_listing(tenant, status=Listing.STATUS_ACTIVE)
 
         with patch('apps.marketplaces.services._enqueue_unpublish') as unpublish, \
@@ -283,6 +288,7 @@ class TestListingDetailAPI:
             'listing-check-status-co@test.com',
             'pass12345',
         )
+        key = create_operator_key(tenant)
         listing = make_listing(tenant, status=Listing.STATUS_PENDING)
 
         with patch('apps.marketplaces.services._enqueue_poll_feed_results') as poll, \
@@ -304,6 +310,7 @@ class TestListingDetailAPI:
             'listing-bulk-api-co@test.com',
             'pass12345',
         )
+        key = create_operator_key(tenant)
         other_tenant = make_tenant('listing-bulk-api-other-co')
         listing = make_listing(tenant, status=Listing.STATUS_DRAFT)
         other_listing = make_listing(other_tenant, status=Listing.STATUS_DRAFT)
@@ -327,6 +334,29 @@ class TestListingDetailAPI:
         assert resp.json()['data']['total'] == 1
         assert listing.status == Listing.STATUS_QUEUED
         assert other_listing.status == Listing.STATUS_DRAFT
+
+
+def test_listing_catalog_category_preserves_null_default_margin():
+    """Унаследованная маржа остаётся null, а не строкой ``"None"``."""
+    from apps.marketplaces.serializers import ListingDetailSerializer
+
+    category = SimpleNamespace(
+        id=7,
+        name='Головка блока цилиндров',
+        parent_id=None,
+        parent=None,
+        default_margin_pct=None,
+    )
+    listing = SimpleNamespace(
+        product=SimpleNamespace(catalog_category=category),
+    )
+
+    data = ListingDetailSerializer().get_catalog_category(listing)
+
+    assert data['default_margin_pct'] is None
+    category.default_margin_pct = Decimal('12.50')
+    data = ListingDetailSerializer().get_catalog_category(listing)
+    assert data['default_margin_pct'] == '12.50'
 
 
 @pytest.mark.django_db

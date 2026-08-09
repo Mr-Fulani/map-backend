@@ -1,9 +1,11 @@
+from drf_spectacular.utils import extend_schema
 from rest_framework.generics import ListAPIView
 
 from apps.sync.models import SyncLog
 from apps.sync.serializers import SyncLogSerializer
 
 
+@extend_schema(tags=['Logs'], summary='Журнал синхронизации')
 class SyncLogListView(ListAPIView):
     """
     GET /api/v1/logs/ — список SyncLog тенанта с фильтрацией и пагинацией.
@@ -13,6 +15,12 @@ class SyncLogListView(ListAPIView):
     """
 
     serializer_class = SyncLogSerializer
+    api_key_enabled = True
+    api_key_scopes = {
+        'GET': {'sync:read'},
+        'HEAD': {'sync:read'},
+        'OPTIONS': {'sync:read'},
+    }
 
     def get_queryset(self):
         qs = SyncLog.objects.filter(tenant=self.request.tenant).order_by('-created_at')

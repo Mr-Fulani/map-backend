@@ -117,6 +117,29 @@ class TestProductService:
         _, status, _ = ProductService.upsert_from_source(tenant, ds, updated_data)
         assert status == 'updated'
 
+    @pytest.mark.parametrize(('changes', 'expected_type'), [
+        ({'price': '2000.00'}, 'price_only'),
+        ({'stock_qty': 0}, 'stock_only'),
+        ({'category': 'Электрика'}, 'category'),
+        ({'name': 'Новое название'}, 'content'),
+        ({'description': 'Новое описание'}, 'content'),
+    ])
+    def test_upsert_detects_change_type_before_mutating_product(
+        self, changes, expected_type,
+    ):
+        tenant = make_tenant(f'change-{expected_type}-{len(changes)}')
+        ds = make_datasource(tenant)
+        ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+
+        _, status, change_type = ProductService.upsert_from_source(
+            tenant,
+            ds,
+            {**SAMPLE_DATA, **changes},
+        )
+
+        assert status == 'updated'
+        assert change_type == expected_type
+
     def test_detect_change_type_price_only(self):
         old = {**SAMPLE_DATA}
         new = {**SAMPLE_DATA, 'price': '9999.00'}
@@ -132,6 +155,11 @@ class TestProductService:
         new = {**SAMPLE_DATA, 'name': 'Новое название'}
         assert ProductService.detect_change_type(old, new) == 'content'
 
+    def test_detect_change_type_ignores_equivalent_values(self):
+        old = {**SAMPLE_DATA, 'price': Decimal('1500.00')}
+        new = {**SAMPLE_DATA, 'price': '1500'}
+        assert ProductService.detect_change_type(old, new) is None
+
     def test_upsert_100_products_performance(self):
         """100 товаров создаются без ошибок."""
         tenant = make_tenant('bulk-co')
@@ -144,6 +172,13 @@ class TestProductService:
 
 @pytest.mark.django_db
 class TestPhotoUploadPipeline:
+    @pytest.fixture(autouse=True)
+    def public_image_dns(self, monkeypatch):
+        monkeypatch.setattr(
+            'apps.core.url_security.socket.getaddrinfo',
+            lambda *args, **kwargs: [(2, 1, 6, '', ('93.184.216.34', 443))],
+        )
+
     def _make_jpeg_bytes(self, size=(100, 100)) -> bytes:
         from PIL import Image
         img = Image.new('RGB', size, color=(128, 64, 32))
@@ -162,9 +197,8 @@ class TestPhotoUploadPipeline:
         mock_storage = MagicMock()
         mock_storage.save = MagicMock(return_value='products/test/1.jpg')
 
-        with patch('apps.products.storage.requests.get') as mock_get:
-            mock_get.return_value.content = jpeg
-            mock_get.return_value.raise_for_status = MagicMock()
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
+            mock_get.return_value = self._mock_response(jpeg)
             pipeline = PhotoUploadPipeline(storage=mock_storage)
 
             img1 = pipeline.process('http://example.com/photo.jpg', product)
@@ -188,7 +222,9 @@ class TestPhotoUploadPipeline:
     def _mock_response(self, content):
         resp = MagicMock()
         resp.content = content
+        resp.status_code = 200
         resp.headers = {'Content-Type': 'image/jpeg'}
+        resp.iter_content.return_value = [content]
         resp.raise_for_status = MagicMock()
         return resp
 
@@ -200,7 +236,7 @@ class TestPhotoUploadPipeline:
         product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
         mock_storage = MagicMock()
 
-        with patch('apps.products.storage.requests.get') as mock_get:
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
             mock_get.return_value = self._mock_response(self._make_jpeg_bytes(size=(120, 120)))
             result = PhotoUploadPipeline(storage=mock_storage).process(
                 'http://example.com/tiny.jpg', product, validate_quality=True,
@@ -218,7 +254,7 @@ class TestPhotoUploadPipeline:
         mock_storage = MagicMock()
         mock_storage.save = MagicMock(side_effect=lambda key, _: key)
 
-        with patch('apps.products.storage.requests.get') as mock_get:
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
             mock_get.return_value = self._mock_response(
                 self._make_jpeg_bytes(size=(208, 208)),
             )
@@ -241,7 +277,7 @@ class TestPhotoUploadPipeline:
         mock_storage = MagicMock()
         mock_storage.save = MagicMock(side_effect=lambda key, _: key)
 
-        with patch('apps.products.storage.requests.get') as mock_get:
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
             mock_get.return_value = self._mock_response(self._make_jpeg_bytes(size=(640, 480)))
             result = PhotoUploadPipeline(storage=mock_storage).process(
                 'http://example.com/valid.jpg', product, validate_quality=True,
@@ -264,7 +300,7 @@ class TestPhotoUploadPipeline:
         mock_storage = MagicMock()
         mock_storage.save = MagicMock(return_value='products/test/1.jpg')
 
-        with patch('apps.products.storage.requests.get') as mock_get:
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
             mock_get.side_effect = [self._mock_response(from_tachka), self._mock_response(from_brave)]
             pipeline = PhotoUploadPipeline(storage=mock_storage)
             first = pipeline.process(
@@ -293,7 +329,7 @@ class TestPhotoUploadPipeline:
         mock_storage = MagicMock()
         mock_storage.save = MagicMock(return_value='products/test/1.jpg')
 
-        with patch('apps.products.storage.requests.get') as mock_get:
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
             mock_get.side_effect = [self._mock_response(solid), self._mock_response(two_tone)]
             pipeline = PhotoUploadPipeline(storage=mock_storage)
             first = pipeline.process('http://e/a.jpg', product, status=ProductImage.Status.NEEDS_REVIEW)
@@ -313,9 +349,8 @@ class TestPhotoUploadPipeline:
         mock_storage = MagicMock()
         mock_storage.save = MagicMock(return_value='products/test/1.jpg')
 
-        with patch('apps.products.storage.requests.get') as mock_get:
-            mock_get.return_value.content = jpeg
-            mock_get.return_value.raise_for_status = MagicMock()
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
+            mock_get.return_value = self._mock_response(jpeg)
             pipeline = PhotoUploadPipeline(storage=mock_storage)
 
             image = pipeline.process(
@@ -329,16 +364,17 @@ class TestPhotoUploadPipeline:
         assert image.source_id == 'tachka'
         assert image.status == ProductImage.Status.NEEDS_REVIEW
 
-    def test_photo_pipeline_uses_browser_headers_for_rossko_cdn(self):
+    def test_photo_pipeline_uses_bounded_transport_and_rossko_headers(self, settings):
         from apps.products.storage import PhotoUploadPipeline
 
+        settings.MAX_IMAGE_UPLOAD_BYTES = 12345
         tenant = make_tenant('photo-rossko-headers')
         ds = make_datasource(tenant)
         product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
         mock_storage = MagicMock()
         mock_storage.save = MagicMock(side_effect=lambda key, _: key)
 
-        with patch('apps.products.storage.requests.get') as mock_get:
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
             mock_get.return_value = self._mock_response(
                 self._make_jpeg_bytes(size=(640, 480)),
             )
@@ -355,6 +391,7 @@ class TestPhotoUploadPipeline:
         assert kwargs['headers']['Referer'] == 'https://rossko.ru/'
         assert kwargs['headers']['Accept'].startswith('image/')
         assert 'Mozilla/5.0' in kwargs['headers']['User-Agent']
+        assert kwargs['max_response_bytes'] == 12345
 
     def test_photo_pipeline_uses_tenant_domain_category_s3_key(self):
         from apps.products.storage import PhotoUploadPipeline
@@ -381,9 +418,8 @@ class TestPhotoUploadPipeline:
         mock_storage = MagicMock()
         mock_storage.save = MagicMock(side_effect=lambda key, _: key)
 
-        with patch('apps.products.storage.requests.get') as mock_get:
-            mock_get.return_value.content = jpeg
-            mock_get.return_value.raise_for_status = MagicMock()
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
+            mock_get.return_value = self._mock_response(jpeg)
             pipeline = PhotoUploadPipeline(storage=mock_storage)
 
             image = pipeline.process('http://example.com/photo.jpg', product, source_id='tachka')
@@ -431,9 +467,8 @@ class TestPhotoUploadPipeline:
         mock_storage = MagicMock()
         mock_storage.save = MagicMock(side_effect=lambda key, _: key)
 
-        with patch('apps.products.storage.requests.get') as mock_get:
-            mock_get.return_value.content = jpeg
-            mock_get.return_value.raise_for_status = MagicMock()
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
+            mock_get.return_value = self._mock_response(jpeg)
             pipeline = PhotoUploadPipeline(storage=mock_storage)
 
             result = pipeline.process('http://example.com/photo.jpg', product, source_id='tachka')
@@ -461,9 +496,8 @@ class TestPhotoUploadPipeline:
                 product=product, s3_key=f'key{i}', sha256=f'{i:064d}', position=i
             )
 
-        with patch('apps.products.storage.requests.get') as mock_get:
-            mock_get.return_value.content = self._make_jpeg_bytes()
-            mock_get.return_value.raise_for_status = MagicMock()
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
+            mock_get.return_value = self._mock_response(self._make_jpeg_bytes())
             result = pipeline.process('http://example.com/extra.jpg', product, check_limit=True)
 
         assert result is None
@@ -487,9 +521,8 @@ class TestPhotoUploadPipeline:
 
         mock_storage = MagicMock()
         mock_storage.save = MagicMock(return_value='products/test/new.jpg')
-        with patch('apps.products.storage.requests.get') as mock_get:
-            mock_get.return_value.content = self._make_jpeg_bytes()
-            mock_get.return_value.raise_for_status = MagicMock()
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
+            mock_get.return_value = self._mock_response(self._make_jpeg_bytes())
             pipeline = PhotoUploadPipeline(storage=mock_storage)
             result = pipeline.process('http://example.com/new.jpg', product)
 

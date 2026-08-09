@@ -5,11 +5,14 @@ from django.test import Client, override_settings
 
 from apps.ai_agent.models import AIModel, AITaskType, TenantAITaskModel
 from apps.billing.ai_wallet import AIWalletService
-from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import (
+    create_tenant_with_operator_key,
+    owner_access_token,
+)
 
 
 def make_tenant(slug: str):
-    return TenantService.create_tenant(
+    return create_tenant_with_operator_key(
         name=slug,
         slug=slug,
         owner_email=f'{slug}@test.com',
@@ -83,7 +86,8 @@ def test_settlement_does_not_consume_another_requests_reservation():
 @pytest.mark.django_db
 @override_settings(OPENAI_API_KEY='test-openai-key')
 def test_owner_can_select_default_and_task_models_via_api():
-    tenant, api_key = make_tenant('model-picker-co')
+    tenant, _ = make_tenant('model-picker-co')
+    access_token = owner_access_token(tenant)
     models = list(AIModel.objects.filter(
         provider=AIModel.PROVIDER_OPENAI,
         is_active=True,
@@ -101,7 +105,7 @@ def test_owner_can_select_default_and_task_models_via_api():
             },
         },
         content_type='application/json',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+        HTTP_AUTHORIZATION=f'Bearer {access_token}',
     )
 
     assert response.status_code == 200
@@ -144,7 +148,8 @@ def test_model_catalog_exposes_unavailable_models_with_reason():
 
 @pytest.mark.django_db
 def test_owner_cannot_select_model_without_provider_key():
-    _tenant, api_key = make_tenant('model-unavailable-co')
+    tenant, _ = make_tenant('model-unavailable-co')
+    access_token = owner_access_token(tenant)
     model = AIModel.objects.create(
         provider=AIModel.PROVIDER_DEEPSEEK,
         external_id='deepseek-unconfigured-test',
@@ -163,7 +168,7 @@ def test_owner_cannot_select_model_without_provider_key():
                 'task_models': {},
             },
             content_type='application/json',
-            HTTP_AUTHORIZATION=f'Bearer {api_key}',
+            HTTP_AUTHORIZATION=f'Bearer {access_token}',
         )
 
     assert response.status_code == 400

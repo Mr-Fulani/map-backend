@@ -1,0 +1,66 @@
+# Temporary, path-scoped exceptions for the gosu binary embedded in the
+# official postgres:16.14 images. The affected Go packages are not reachable
+# from gosu's UID/GID switch-and-exec code path. Remove these entries as soon
+# as the official PostgreSQL image publishes a gosu rebuild with a fixed Go
+# toolchain; the expiry deliberately makes that review fail closed.
+vulnerabilities:
+  - id: CVE-2025-68121
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2025-61726
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2025-61729
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-25679
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-27145
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-32280
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-32281
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-32283
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-33811
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-33814
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-39820
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-39822
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-39836
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-42499
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.
+  - id: CVE-2026-42504
+    paths: ["usr/local/bin/gosu"]
+    expired_at: 2026-09-30
+    statement: Official PostgreSQL gosu is only used for UID/GID exec; affected Go networking code is unreachable pending an upstream rebuild.

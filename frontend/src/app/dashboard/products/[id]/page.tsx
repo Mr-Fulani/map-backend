@@ -450,7 +450,7 @@ export default function ProductDetailPage() {
   const [pricingListingId, setPricingListingId] = useState<number | null>(null);
 
   const [images, setImages] = useState<ProductImage[]>([]);
-  const [imagesLoading, setImagesLoading] = useState(false);
+  const [imagesLoading, setImagesLoading] = useState(true);
   const [imageActionId, setImageActionId] = useState<number | null>(null);
 
   const [editingBrand, setEditingBrand] = useState(false);
@@ -463,14 +463,13 @@ export default function ProductDetailPage() {
 
   useEffect(() => {
     const previousHref = getPreviousDashboardHref();
-    if (isProductsListHref(previousHref)) {
-      setCatalogHref(previousHref);
-      return;
-    }
+    const nextHref = isProductsListHref(previousHref)
+      ? previousHref
+      : isProductsListHref(returnTo) ? returnTo : null;
+    if (!nextHref) return;
 
-    if (isProductsListHref(returnTo)) {
-      setCatalogHref(returnTo);
-    }
+    const frame = window.requestAnimationFrame(() => setCatalogHref(nextHref));
+    return () => window.cancelAnimationFrame(frame);
   }, [returnTo]);
   const searching = searchTaskId !== null;
   const [generatingDescription, setGeneratingDescription] = useState(false);
@@ -488,7 +487,7 @@ export default function ProductDetailPage() {
   const descriptionPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [previewImg, setPreviewImg] = useState<string | null>(null);
 
-  const scrollToSection = useCallback((sectionRef: RefObject<HTMLDivElement>) => {
+  const scrollToSection = useCallback((sectionRef: RefObject<HTMLDivElement | null>) => {
     window.requestAnimationFrame(() => {
       sectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
@@ -570,11 +569,42 @@ export default function ProductDetailPage() {
   }
 
   useEffect(() => {
-    loadProduct()
-      .catch(() => toast.error('Товар не найден'))
-      .finally(() => setLoading(false));
-    loadWebResearch().catch(() => undefined);
-  }, [loadProduct, loadWebResearch]);
+    let active = true;
+
+    productApi.get(Number(id))
+      .then((response) => {
+        if (!active) return;
+        const nextProduct = response.data.data as ProductDetail;
+        setProduct(nextProduct);
+        setPricingListingId((current) => (
+          nextProduct.listing_options.some((listing) => listing.id === current)
+            ? current
+            : nextProduct.listing_options[0]?.id ?? null
+        ));
+        setCategoryAssignValue(
+          nextProduct.catalog_category?.id ? String(nextProduct.catalog_category.id) : '',
+        );
+      })
+      .catch(() => {
+        if (active) toast.error('Товар не найден');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    productApi.latestWebResearch(Number(id))
+      .then((response) => {
+        if (!active) return;
+        const run = (response.data.data ?? null) as WebResearchRun | null;
+        setWebResearch(run);
+        if (run && ['queued', 'running'].includes(run.status)) {
+          setWebResearchRunId(run.id);
+        }
+      })
+      .catch(() => undefined);
+
+    return () => { active = false; };
+  }, [id]);
 
   useEffect(() => {
     if (!webResearchRunId) return;
@@ -632,8 +662,18 @@ export default function ProductDetailPage() {
   }, [id]);
 
   useEffect(() => {
-    loadImages();
-  }, [loadImages]);
+    let active = true;
+    imageApi.list(Number(id))
+      .then((response) => {
+        if (active) setImages(response.data.data);
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        if (active) setImagesLoading(false);
+      });
+
+    return () => { active = false; };
+  }, [id]);
 
   // Polling статуса поиска каждые 2с
   useEffect(() => {

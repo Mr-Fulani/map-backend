@@ -1,9 +1,17 @@
 import logging
 
-import requests
 from django.conf import settings
 
+import requests
+
+from apps.core.http_responses import trusted_api_max_bytes
+from apps.notifications.telegram_api import (
+    TelegramAPIError,
+    request_telegram_json,
+)
+
 logger = logging.getLogger(__name__)
+_SEND_RESPONSE_MAX_BYTES = 64 * 1024
 
 
 class TelegramNotifier:
@@ -28,15 +36,22 @@ class TelegramNotifier:
 
         url = self._BASE_URL.format(token=token)
         try:
-            resp = requests.post(
+            payload = request_telegram_json(
+                requests.post,
                 url,
                 json={'chat_id': chat_id, 'text': message, 'parse_mode': 'HTML'},
-                timeout=10,
+                timeout=(5.0, 10.0),
+                max_elapsed_seconds=15.0,
+                max_bytes=min(
+                    trusted_api_max_bytes(settings),
+                    _SEND_RESPONSE_MAX_BYTES,
+                ),
             )
-            if resp.status_code != 200:
-                logger.warning('Telegram API error %s: %s', resp.status_code, resp.text[:200])
-                return False
+            if not isinstance(payload.get('result'), dict):
+                raise TelegramAPIError(
+                    'Telegram sendMessage returned an invalid result.',
+                )
             return True
-        except requests.RequestException as exc:
-            logger.warning('Telegram send failed: %s', exc)
+        except TelegramAPIError as exc:
+            logger.warning('Telegram send failed (%s).', type(exc).__name__)
             return False

@@ -1,11 +1,20 @@
 import datetime
+import logging
+from decimal import Decimal
 
 from django.db import transaction
 from django.db.models import Sum
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import (
+    OpenApiParameter,
+    OpenApiTypes,
+    extend_schema,
+    inline_serializer,
+)
+from rest_framework import serializers
 from rest_framework import status
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from apps.tenants.api_views import ListingsAPIView as APIView
 
 from apps.marketplaces.models import (
     CategoryMapping,
@@ -35,11 +44,68 @@ from apps.marketplaces.services import (
     AvitoAccountStatusService,
     CategoryMappingService,
     InvalidMarketplaceCredentials,
+    ListingBulkLimitExceeded,
     ListingAccountConflict,
     InvalidListingStatus,
     ListingNotFound,
     ListingService,
     MarketplaceAccountService,
+)
+from apps.tenants.permissions import TenantAdminPermission, TenantAdminWritePermission
+
+
+logger = logging.getLogger(__name__)
+
+
+def _ok_response(name, data):
+    """Build the common MAP response envelope for OpenAPI only."""
+    return inline_serializer(
+        name=name,
+        fields={
+            'status': serializers.CharField(read_only=True),
+            'data': data,
+        },
+    )
+
+
+LISTING_UPDATE_REQUEST = inline_serializer(
+    name='ListingUpdateRequest',
+    fields={
+        'title': serializers.CharField(required=False, allow_null=True),
+        'description_ai': serializers.CharField(required=False, allow_null=True),
+        'account_id': serializers.IntegerField(required=False),
+        'price_on_listing': serializers.DecimalField(
+            max_digits=12,
+            decimal_places=2,
+            required=False,
+            min_value=Decimal('0'),
+        ),
+        'margin_pct': serializers.DecimalField(
+            max_digits=5,
+            decimal_places=2,
+            required=False,
+            allow_null=True,
+            min_value=Decimal('0'),
+        ),
+        'ad_type': serializers.ChoiceField(
+            choices=Listing.AD_TYPE_CHOICES, required=False,
+        ),
+        'placement_address': serializers.IntegerField(
+            required=False, allow_null=True,
+        ),
+        'address_override': serializers.CharField(
+            max_length=500, required=False, allow_blank=True,
+        ),
+        'seller_address_id_override': serializers.CharField(
+            max_length=100, required=False, allow_blank=True,
+        ),
+        'manager_name_override': serializers.CharField(
+            max_length=100, required=False, allow_blank=True,
+        ),
+        'contact_phone_override': serializers.CharField(
+            max_length=50, required=False, allow_blank=True,
+        ),
+    },
 )
 
 
@@ -47,6 +113,12 @@ from apps.marketplaces.services import (
 class MarketplaceAccountListView(APIView):
     """GET /api/v1/accounts/ — список аккаунтов. POST — создать."""
 
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
+    @extend_schema(
+        operation_id='marketplace_account_list',
+        responses=MarketplaceAccountSerializer(many=True),
+    )
     def get(self, request):
         """Возвращает аккаунты маркетплейсов текущего тенанта."""
         qs = MarketplaceAccount.objects.filter(
@@ -54,6 +126,11 @@ class MarketplaceAccountListView(APIView):
         ).select_related('avito_status')
         return Response(MarketplaceAccountSerializer(qs, many=True).data)
 
+    @extend_schema(
+        operation_id='marketplace_account_create',
+        request=MarketplaceAccountWriteSerializer,
+        responses={201: MarketplaceAccountSerializer},
+    )
     def post(self, request):
         """Создаёт аккаунт Avito, делегируя логику MarketplaceAccountService.create."""
         serializer = MarketplaceAccountWriteSerializer(data=request.data)
@@ -75,6 +152,8 @@ class MarketplaceAccountListView(APIView):
 class MarketplaceAccountDetailView(APIView):
     """GET/PUT/DELETE /api/v1/accounts/{id}/"""
 
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
     def _get_account(self, pk, tenant):
         """Возвращает аккаунт тенанта или 404."""
         try:
@@ -84,6 +163,10 @@ class MarketplaceAccountDetailView(APIView):
         except MarketplaceAccount.DoesNotExist:
             return None
 
+    @extend_schema(
+        operation_id='marketplace_account_retrieve',
+        responses=MarketplaceAccountSerializer,
+    )
     def get(self, request, pk):
         """Детали аккаунта."""
         account = self._get_account(pk, request.tenant)
@@ -91,6 +174,11 @@ class MarketplaceAccountDetailView(APIView):
             return Response(status=status.HTTP_404_NOT_FOUND)
         return Response(MarketplaceAccountSerializer(account).data)
 
+    @extend_schema(
+        operation_id='marketplace_account_update',
+        request=MarketplaceAccountWriteSerializer,
+        responses=MarketplaceAccountSerializer,
+    )
     def put(self, request, pk):
         """Обновляет аккаунт, делегируя логику MarketplaceAccountService.update_credentials."""
         account = self._get_account(pk, request.tenant)
@@ -110,6 +198,32 @@ class MarketplaceAccountDetailView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
         return Response(MarketplaceAccountSerializer(account).data)
 
+    @extend_schema(
+        operation_id='marketplace_account_partial_update',
+        request=inline_serializer(
+            name='MarketplaceAccountPatchRequest',
+            fields={
+                'name': serializers.CharField(max_length=200, required=False),
+                'is_active': serializers.BooleanField(required=False),
+                'default_address': serializers.CharField(
+                    max_length=500, required=False, allow_blank=True,
+                ),
+                'default_seller_address_id': serializers.CharField(
+                    max_length=100, required=False, allow_blank=True,
+                ),
+                'default_manager_name': serializers.CharField(
+                    max_length=100, required=False, allow_blank=True,
+                ),
+                'default_contact_phone': serializers.CharField(
+                    max_length=50, required=False, allow_blank=True,
+                ),
+                'autoload_subscription_ends_at': serializers.DateField(
+                    required=False, allow_null=True,
+                ),
+            },
+        ),
+        responses=MarketplaceAccountSerializer,
+    )
     def patch(self, request, pk):
         """Частичное обновление аккаунта, делегируя логику MarketplaceAccountService.update_partial."""
         account = self._get_account(pk, request.tenant)
@@ -132,12 +246,19 @@ class MarketplaceAccountDetailView(APIView):
         account = MarketplaceAccountService.update_partial(account, data)
         return Response(MarketplaceAccountSerializer(account).data)
 
+    @extend_schema(
+        operation_id='marketplace_account_delete',
+        request=None,
+        responses={204: None},
+    )
     def delete(self, request, pk):
-        """Удаляет аккаунт вместе со всеми его листингами."""
+        """Мягко удаляет аккаунт и его листинги до retention purge."""
         account = self._get_account(pk, request.tenant)
         if account is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
-        account.delete()
+        with transaction.atomic():
+            Listing.objects.filter(account=account, tenant=request.tenant).delete()
+            account.soft_delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -145,6 +266,23 @@ class MarketplaceAccountDetailView(APIView):
 class AutoloadStatusView(APIView):
     """GET /api/v1/accounts/{id}/autoload-status/ — проверить активирована ли Автозагрузка Avito."""
 
+    permission_classes = [IsAuthenticated, TenantAdminPermission]
+
+    @extend_schema(
+        operation_id='marketplace_account_autoload_status',
+        responses=inline_serializer(
+            name='MarketplaceAccountAutoloadStatusResponse',
+            fields={
+                'activated': serializers.BooleanField(read_only=True),
+                'feed_url': serializers.URLField(read_only=True),
+                'stale': serializers.BooleanField(read_only=True),
+                'status': AvitoAccountStatusSerializer(read_only=True),
+                'activate_url': serializers.URLField(
+                    required=False,
+                ),
+            },
+        ),
+    )
     def get(self, request, pk):
         """
         Проверяет активирован ли Avito Autoload для аккаунта.
@@ -178,6 +316,18 @@ class AutoloadStatusView(APIView):
 class MarketplacePlacementAddressListView(APIView):
     """GET/POST /api/v1/accounts/placement-addresses/ — справочник адресов размещения."""
 
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
+    @extend_schema(
+        operation_id='marketplace_placement_address_list',
+        parameters=[
+            OpenApiParameter(
+                'account', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                description='Фильтр по ID аккаунта маркетплейса.',
+            ),
+        ],
+        responses=MarketplacePlacementAddressSerializer(many=True),
+    )
     def get(self, request):
         # Только активные адреса: удалённые (soft-delete, is_active=False) не должны
         # попадать в выпадающий список, иначе их можно выбрать, но сохранение листинга
@@ -190,6 +340,11 @@ class MarketplacePlacementAddressListView(APIView):
             qs = qs.filter(account_id=account_id)
         return Response(MarketplacePlacementAddressSerializer(qs, many=True).data)
 
+    @extend_schema(
+        operation_id='marketplace_placement_address_create',
+        request=MarketplacePlacementAddressSerializer,
+        responses={201: MarketplacePlacementAddressSerializer},
+    )
     def post(self, request):
         serializer = MarketplacePlacementAddressSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -216,12 +371,19 @@ class MarketplacePlacementAddressListView(APIView):
 class MarketplacePlacementAddressDetailView(APIView):
     """PATCH/DELETE /api/v1/accounts/placement-addresses/{id}/."""
 
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
     def _get_address(self, pk, tenant):
         try:
             return MarketplacePlacementAddress.objects.get(pk=pk, tenant=tenant)
         except MarketplacePlacementAddress.DoesNotExist:
             return None
 
+    @extend_schema(
+        operation_id='marketplace_placement_address_partial_update',
+        request=MarketplacePlacementAddressSerializer,
+        responses=MarketplacePlacementAddressSerializer,
+    )
     def patch(self, request, pk):
         address = self._get_address(pk, request.tenant)
         if address is None:
@@ -243,6 +405,11 @@ class MarketplacePlacementAddressDetailView(APIView):
         address.save()
         return Response(MarketplacePlacementAddressSerializer(address).data)
 
+    @extend_schema(
+        operation_id='marketplace_placement_address_delete',
+        request=None,
+        responses={204: None},
+    )
     def delete(self, request, pk):
         address = self._get_address(pk, request.tenant)
         if address is None:
@@ -252,17 +419,45 @@ class MarketplacePlacementAddressDetailView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@extend_schema(tags=['Category mappings'])
 class UnmappedCategoriesView(APIView):
+    @extend_schema(
+        operation_id='marketplace_unmapped_category_list',
+        summary='Получить категории без маппинга',
+        responses=inline_serializer(
+            name='UnmappedCategoryListResponse',
+            fields={
+                'unmapped': serializers.ListField(
+                    child=serializers.CharField(), read_only=True,
+                ),
+                'count': serializers.IntegerField(read_only=True),
+            },
+        ),
+    )
     def get(self, request):
         categories = CategoryMappingService.get_unmapped_categories(request.tenant)
         return Response({'unmapped': categories, 'count': len(categories)})
 
 
+@extend_schema(tags=['Category mappings'])
 class CategoryMappingListView(APIView):
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
+    @extend_schema(
+        operation_id='marketplace_category_mapping_list',
+        summary='Получить маппинги категорий',
+        responses=CategoryMappingSerializer(many=True),
+    )
     def get(self, request):
         qs = CategoryMapping.objects.filter(tenant=request.tenant)
         return Response(CategoryMappingSerializer(qs, many=True).data)
 
+    @extend_schema(
+        operation_id='marketplace_category_mapping_create',
+        summary='Создать маппинг категории',
+        request=CategoryMappingWriteSerializer,
+        responses={201: CategoryMappingSerializer},
+    )
     def post(self, request):
         serializer = CategoryMappingWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -280,11 +475,25 @@ class CategoryMappingListView(APIView):
         return Response(CategoryMappingSerializer(mapping).data, status=status.HTTP_201_CREATED)
 
 
+@extend_schema(tags=['Category mappings'])
 class CategoryMappingDetailView(APIView):
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
+    @extend_schema(
+        operation_id='marketplace_category_mapping_retrieve',
+        summary='Получить маппинг категории',
+        responses=CategoryMappingSerializer,
+    )
     def get(self, request, pk):
         mapping = CategoryMapping.objects.get(pk=pk, tenant=request.tenant)
         return Response(CategoryMappingSerializer(mapping).data)
 
+    @extend_schema(
+        operation_id='marketplace_category_mapping_update',
+        summary='Обновить маппинг категории',
+        request=CategoryMappingWriteSerializer,
+        responses=CategoryMappingSerializer,
+    )
     def put(self, request, pk):
         mapping = CategoryMapping.objects.get(pk=pk, tenant=request.tenant)
         serializer = CategoryMappingWriteSerializer(data=request.data)
@@ -296,6 +505,12 @@ class CategoryMappingDetailView(APIView):
         mapping.save()
         return Response(CategoryMappingSerializer(mapping).data)
 
+    @extend_schema(
+        operation_id='marketplace_category_mapping_delete',
+        summary='Удалить маппинг категории',
+        request=None,
+        responses={204: None},
+    )
     def delete(self, request, pk):
         CategoryMapping.objects.filter(pk=pk, tenant=request.tenant).delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -311,6 +526,50 @@ class ListingListView(APIView):
         account  — id аккаунта MarketplaceAccount
     """
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='marketplace_listing_list',
+        parameters=[
+            OpenApiParameter(
+                'status', OpenApiTypes.STR, OpenApiParameter.QUERY,
+                description='Фильтр по статусу листинга.',
+            ),
+            OpenApiParameter(
+                'account', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                description='Фильтр по ID аккаунта маркетплейса.',
+            ),
+            OpenApiParameter(
+                'page', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                description='Номер страницы.',
+            ),
+            OpenApiParameter(
+                'page_size', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                description='Размер страницы, максимум 500.',
+            ),
+        ],
+        responses=inline_serializer(
+            name='MarketplaceListingListResponse',
+            fields={
+                'status': serializers.CharField(read_only=True),
+                'data': ListingSerializer(many=True, read_only=True),
+                'meta': inline_serializer(
+                    name='MarketplaceListingPaginationMeta',
+                    fields={
+                        'total': serializers.IntegerField(read_only=True),
+                        'page': serializers.IntegerField(read_only=True),
+                        'page_size': serializers.IntegerField(read_only=True),
+                        'next': serializers.URLField(
+                            allow_null=True, read_only=True,
+                        ),
+                        'prev': serializers.URLField(
+                            allow_null=True, read_only=True,
+                        ),
+                    },
+                ),
+            },
+        ),
+    )
     def get(self, request):
         """Возвращает страницу листингов текущего тенанта."""
         qs = (
@@ -340,6 +599,15 @@ class ListingDetailView(APIView):
     PATCH /api/v1/listings/{id}/ — обновить title / description_ai.
     """
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='marketplace_listing_retrieve',
+        responses=_ok_response(
+            'MarketplaceListingDetailResponse',
+            ListingDetailSerializer(read_only=True),
+        ),
+    )
     def get(self, request, pk):
         """Возвращает полные данные листинга включая AI-описание и изображения товара."""
         try:
@@ -348,6 +616,14 @@ class ListingDetailView(APIView):
             return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
         return Response({'status': 'ok', 'data': ListingDetailSerializer(listing, context={'request': request}).data})
 
+    @extend_schema(
+        operation_id='marketplace_listing_partial_update',
+        request=LISTING_UPDATE_REQUEST,
+        responses=_ok_response(
+            'MarketplaceListingUpdateResponse',
+            ListingDetailSerializer(read_only=True),
+        ),
+    )
     def patch(self, request, pk):
         """
         Обновляет редактируемые поля листинга.
@@ -398,6 +674,21 @@ class ListingDetailView(APIView):
 class ListingBulkPlacementView(APIView):
     """POST /api/v1/listings/bulk-placement/ — массово назначить адресные поля."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='marketplace_listing_bulk_placement',
+        request=ListingBulkPlacementSerializer,
+        responses=_ok_response(
+            'MarketplaceListingBulkPlacementResponse',
+            inline_serializer(
+                name='MarketplaceListingBulkPlacementResult',
+                fields={
+                    'updated': serializers.IntegerField(read_only=True),
+                },
+            ),
+        ),
+    )
     def post(self, request):
         serializer = ListingBulkPlacementSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -406,7 +697,13 @@ class ListingBulkPlacementView(APIView):
             field: data.get(field)
             for field in ('listing_ids', 'account_id', 'status', 'category_source', 'catalog_category_id')
         }
-        updated = ListingService.bulk_update_placement(request.tenant, filters, data)
+        try:
+            updated = ListingService.bulk_update_placement(request.tenant, filters, data)
+        except ListingBulkLimitExceeded as exc:
+            return Response(
+                {'status': 'error', 'code': 'bulk_limit_exceeded', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response({'status': 'ok', 'data': {'updated': updated}})
 
 
@@ -414,10 +711,43 @@ class ListingBulkPlacementView(APIView):
 class ListingBulkActionView(APIView):
     """POST /api/v1/listings/bulk-actions/ — массовые действия с листингами."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='marketplace_listing_bulk_action',
+        request=ListingBulkActionSerializer,
+        responses=_ok_response(
+            'MarketplaceListingBulkActionResponse',
+            inline_serializer(
+                name='MarketplaceListingBulkActionResult',
+                fields={
+                    'total': serializers.IntegerField(read_only=True),
+                    'success': serializers.IntegerField(read_only=True),
+                    'skipped': serializers.IntegerField(read_only=True),
+                    'errors': serializers.IntegerField(read_only=True),
+                    'items': inline_serializer(
+                        name='MarketplaceListingBulkActionItem',
+                        many=True,
+                        fields={
+                            'id': serializers.IntegerField(read_only=True),
+                            'status': serializers.CharField(read_only=True),
+                            'message': serializers.CharField(read_only=True),
+                        },
+                    ),
+                },
+            ),
+        ),
+    )
     def post(self, request):
         serializer = ListingBulkActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        result = ListingService.bulk_action(request.tenant, serializer.validated_data)
+        try:
+            result = ListingService.bulk_action(request.tenant, serializer.validated_data)
+        except ListingBulkLimitExceeded as exc:
+            return Response(
+                {'status': 'error', 'code': 'bulk_limit_exceeded', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response({'status': 'ok', 'data': result})
 
 
@@ -425,6 +755,16 @@ class ListingBulkActionView(APIView):
 class ListingApproveView(APIView):
     """POST /api/v1/listings/{id}/approve/ — одобрить листинг requires_review и опубликовать."""
 
+    api_key_scopes = {}
+
+    @extend_schema(
+        operation_id='marketplace_listing_approve',
+        request=None,
+        responses=_ok_response(
+            'MarketplaceListingApproveResponse',
+            ListingDetailSerializer(read_only=True),
+        ),
+    )
     def post(self, request, pk):
         """Одобряет листинг и ставит задачу публикации в Celery."""
         try:
@@ -441,6 +781,16 @@ class ListingApproveView(APIView):
 class ListingRefreshBrandCatalogView(APIView):
     """POST — внепланово обновить справочник Avito и повторно проверить бренд."""
 
+    api_key_scopes = {}
+
+    @extend_schema(
+        operation_id='marketplace_listing_refresh_brand_catalog',
+        request=None,
+        responses=_ok_response(
+            'MarketplaceListingRefreshBrandCatalogResponse',
+            ListingDetailSerializer(read_only=True),
+        ),
+    )
     def post(self, request, pk):
         try:
             listing = ListingService.get_for_tenant(pk, request.tenant)
@@ -450,10 +800,17 @@ class ListingRefreshBrandCatalogView(APIView):
             from apps.marketplaces.adapters.avito.brand_sync import sync_brand_catalog
             sync_brand_catalog(listing.account)
         except Exception as exc:
+            # Provider exceptions may embed request URLs or other integration
+            # details. Keep the client response and logs structural.
+            logger.warning(
+                'Avito brand catalog refresh failed for listing=%s (%s).',
+                listing.pk,
+                type(exc).__name__,
+            )
             return Response({
                 'status': 'error',
                 'code': 'catalog_sync_failed',
-                'message': f'Не удалось обновить справочник Avito: {exc}',
+                'message': 'Не удалось обновить справочник Avito.',
             }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
         listing = ListingService.get_for_tenant(pk, request.tenant)
         return Response({
@@ -466,6 +823,16 @@ class ListingRefreshBrandCatalogView(APIView):
 class ListingPublishView(APIView):
     """POST /api/v1/listings/{id}/publish/ — опубликовать черновик/отклонённый/архивный листинг."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='marketplace_listing_publish',
+        request=None,
+        responses=_ok_response(
+            'MarketplaceListingPublishResponse',
+            ListingDetailSerializer(read_only=True),
+        ),
+    )
     def post(self, request, pk):
         """Ставит задачу публикации листинга в Celery."""
         try:
@@ -482,6 +849,16 @@ class ListingPublishView(APIView):
 class ListingArchiveView(APIView):
     """POST /api/v1/listings/{id}/archive/ — снять объявление с публикации."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='marketplace_listing_archive',
+        request=None,
+        responses=_ok_response(
+            'MarketplaceListingArchiveResponse',
+            ListingDetailSerializer(read_only=True),
+        ),
+    )
     def post(self, request, pk):
         try:
             listing = ListingService.archive(pk, request.tenant)
@@ -497,6 +874,16 @@ class ListingArchiveView(APIView):
 class ListingDeleteView(APIView):
     """POST /api/v1/listings/{id}/delete/ — удалить объявление через feed Remove."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='marketplace_listing_delete',
+        request=None,
+        responses=_ok_response(
+            'MarketplaceListingDeleteResponse',
+            ListingDetailSerializer(read_only=True),
+        ),
+    )
     def post(self, request, pk):
         try:
             listing = ListingService.delete(pk, request.tenant)
@@ -512,6 +899,20 @@ class ListingDeleteView(APIView):
 class ListingCheckStatusView(APIView):
     """POST /api/v1/listings/{id}/check-status/ — вручную проверить статус Avito feed."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='marketplace_listing_check_status',
+        request=None,
+        responses=inline_serializer(
+            name='MarketplaceListingCheckStatusResponse',
+            fields={
+                'status': serializers.CharField(read_only=True),
+                'message': serializers.CharField(read_only=True),
+                'data': ListingDetailSerializer(read_only=True),
+            },
+        ),
+    )
     def post(self, request, pk):
         try:
             listing = ListingService.check_avito_status(pk, request.tenant)
@@ -531,6 +932,23 @@ class ListingCheckStatusView(APIView):
 class ListingRegenerateView(APIView):
     """POST /api/v1/listings/{id}/regenerate/ — перегенерировать AI-описание."""
 
+    api_key_enabled = True
+    api_key_scopes = {'POST': {
+        'catalog:write', 'listings:write', 'ai:run',
+        'research:run', 'media:write',
+    }}
+
+    @extend_schema(
+        operation_id='marketplace_listing_regenerate',
+        request=None,
+        responses=inline_serializer(
+            name='MarketplaceListingRegenerateResponse',
+            fields={
+                'status': serializers.CharField(read_only=True),
+                'message': serializers.CharField(read_only=True),
+            },
+        ),
+    )
     def post(self, request, pk):
         """Ставит задачу генерации AI-описания для товара в очередь Celery."""
         from apps.billing.services import LimitChecker
@@ -560,6 +978,55 @@ class AnalyticsView(APIView):
         date_to   — YYYY-MM-DD (по умолчанию сегодня)
     """
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='marketplace_analytics_retrieve',
+        parameters=[
+            OpenApiParameter(
+                'date_from', OpenApiTypes.DATE, OpenApiParameter.QUERY,
+                description='Начало периода; по умолчанию 29 дней назад.',
+            ),
+            OpenApiParameter(
+                'date_to', OpenApiTypes.DATE, OpenApiParameter.QUERY,
+                description='Конец периода; по умолчанию сегодня.',
+            ),
+        ],
+        responses=_ok_response(
+            'MarketplaceAnalyticsResponse',
+            inline_serializer(
+                name='MarketplaceAnalyticsData',
+                fields={
+                    'summary': inline_serializer(
+                        name='MarketplaceAnalyticsSummary',
+                        fields={
+                            'views': serializers.IntegerField(read_only=True),
+                            'contacts': serializers.IntegerField(read_only=True),
+                            'impressions': serializers.IntegerField(read_only=True),
+                            'avg_ctr': serializers.FloatField(read_only=True),
+                            'active_listings': serializers.IntegerField(
+                                read_only=True,
+                            ),
+                        },
+                    ),
+                    'daily': inline_serializer(
+                        name='MarketplaceAnalyticsDailyPoint',
+                        many=True,
+                        fields={
+                            'date': serializers.DateField(read_only=True),
+                            'views': serializers.IntegerField(read_only=True),
+                            'contacts': serializers.IntegerField(read_only=True),
+                            'impressions': serializers.IntegerField(
+                                read_only=True,
+                            ),
+                        },
+                    ),
+                    'date_from': serializers.DateField(read_only=True),
+                    'date_to': serializers.DateField(read_only=True),
+                },
+            ),
+        ),
+    )
     def get(self, request):
         """Возвращает сводку и помесячную/ежедневную статистику просмотров."""
         today = datetime.date.today()

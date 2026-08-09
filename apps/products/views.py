@@ -1,18 +1,62 @@
 import uuid
 
+from PIL import Image, UnidentifiedImageError
+from django.conf import settings
 from django.core.files.storage import default_storage
 from django.db.models import Case, Count, F, IntegerField, Prefetch, Q, Subquery, OuterRef, Value, When
 from django.db import transaction
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema
 from django.shortcuts import get_object_or_404
 from django.utils.timezone import now
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from apps.tenants.api_views import CatalogAPIView as APIView
+from apps.tenants.principals import human_user_or_none
 
 from apps.core.pagination import MapPagination
+from apps.core.image_security import validate_image_pixel_budget
 from apps.products.enrichment import normalize_part_code
+from apps.core.throttling import PrincipalScopedRateThrottle, TenantScopedRateThrottle
+from apps.products.api_schema import (
+    CatalogCategoryBranchToggleRequestSerializer,
+    CatalogCategoryBranchToggleResponseSerializer,
+    CatalogCategoryImageRequestSerializer,
+    CatalogCategoryListResponseSerializer,
+    CatalogCategoryResponseSerializer,
+    CategoryMappingListResponseSerializer,
+    CategoryMappingResponseSerializer,
+    CrossCodeListResponseSerializer,
+    DeletedCountResponseSerializer,
+    EnrichmentFactListResponseSerializer,
+    EnrichmentFactResponseSerializer,
+    FitmentListResponseSerializer,
+    FitmentResponseSerializer,
+    ProductArchiveResponseSerializer,
+    ProductBrandOptionsResponseSerializer,
+    ProductBrandUpdateRequestSerializer,
+    ProductBulkActionRequestSerializer,
+    ProductBulkActionResponseSerializer,
+    ProductBulkDeleteRequestSerializer,
+    ProductCategoryAssignRequestSerializer,
+    ProductCategoryAssignResponseSerializer,
+    ProductDetailResponseSerializer,
+    ProductExcludeRequestSerializer,
+    ProductListResponseSerializer,
+    ProductParseJobResponseSerializer,
+    ProductParseRequestSerializer,
+    ProductParseResponseSerializer,
+    ProductPublishResponseSerializer,
+    ProductRegenerateRequestSerializer,
+    ProductRegenerateResponseSerializer,
+    ProductResponseSerializer,
+    ReviewQueueActionResponseSerializer,
+    ReviewQueueResponseSerializer,
+    TaskResponseSerializer,
+    TenantSourceCategoryListResponseSerializer,
+    UpdatedCountResponseSerializer,
+)
 from apps.products.models import (
     Product, ProductBulkActionJob, ProductCatalogClassification, ProductEnrichmentFact,
     ProductBrand, ProductParseJob, ReviewStatus,
@@ -27,6 +71,7 @@ from apps.products.serializers import (
     VehicleFitmentSerializer,
 )
 from apps.products.services import (
+    MAX_BULK_ACTION_PAUSE_SECONDS, MAX_BULK_ACTION_PRODUCT_IDS,
     AutoPartsEnrichmentDisabled, ProductBrandService, ProductBulkActionService,
     ProductCategorySeedService, ProductEnrichmentService, ProductIsNotAutoPart,
     ProductKnowledgeGraphService, ProductService,
@@ -118,6 +163,39 @@ class ProductListView(APIView):
         page_size       — размер страницы (default: 50, max: 500)
     """
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='products_list',
+        parameters=[
+            OpenApiParameter('search', OpenApiTypes.STR, description='Search by article, name or brand.'),
+            OpenApiParameter(
+                'listing_filter',
+                OpenApiTypes.STR,
+                enum=[
+                    'listed', 'not_listed', 'active', 'pending', 'queued',
+                    'requires_review', 'limit_reached', 'rejected', 'draft',
+                    'archived', 'deleted',
+                ],
+            ),
+            OpenApiParameter('category_1c', OpenApiTypes.STR),
+            OpenApiParameter('catalog_category', OpenApiTypes.INT),
+            OpenApiParameter('catalog_domain', OpenApiTypes.STR),
+            OpenApiParameter('needs_review', OpenApiTypes.BOOL),
+            OpenApiParameter('sync_excluded', OpenApiTypes.BOOL),
+            OpenApiParameter(
+                'ordering',
+                OpenApiTypes.STR,
+                enum=[
+                    'price', '-price', 'stock_qty', '-stock_qty',
+                    'ai_status', '-ai_status', 'listing_status', '-listing_status',
+                ],
+            ),
+            OpenApiParameter('page', OpenApiTypes.INT),
+            OpenApiParameter('page_size', OpenApiTypes.INT),
+        ],
+        responses=ProductListResponseSerializer,
+    )
     def get(self, request):
         latest_jobs = ProductParseJob.objects.order_by('-created_at')
         qs = (
@@ -241,6 +319,18 @@ class ProductListView(APIView):
 class ProductDetailView(APIView):
     """GET /api/v1/products/{pk}/ — карточка товара."""
 
+    api_key_enabled = True
+    api_key_scopes = {
+        'GET': {'catalog:read'},
+        'HEAD': {'catalog:read'},
+        'OPTIONS': {'catalog:read'},
+        'PATCH': {'catalog:write', 'listings:write'},
+    }
+
+    @extend_schema(
+        operation_id='products_retrieve',
+        responses=ProductDetailResponseSerializer,
+    )
     def get(self, request, pk):
         try:
             product = Product.objects.select_related('catalog_category', 'catalog_classification').prefetch_related(
@@ -256,6 +346,10 @@ class ProductDetailView(APIView):
             )
         return Response({'status': 'ok', 'data': ProductDetailSerializer(product, context={'request': request}).data})
 
+    @extend_schema(
+        request=ProductBrandUpdateRequestSerializer,
+        responses=ProductDetailResponseSerializer,
+    )
     def patch(self, request, pk):
         """Точечное редактирование товара тенантом. Пока поддерживается только brand.
 
@@ -277,17 +371,29 @@ class ProductDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         brand = str(request.data.get('brand') or '').strip()[:200]
+        is_machine = getattr(request.user, 'is_api_key', False)
         product.brand = brand
-        product.brand_ref = ProductBrandService.resolve_or_create_brand(
-            brand, source_id='manual', confidence=1.0,
-        ) if brand else None
-        product.brand_resolution_status = (
-            Product.BrandResolutionStatus.MANUAL
-            if brand else Product.BrandResolutionStatus.UNKNOWN
-        )
-        product.brand_confidence = 1.0 if brand else 0.0
-        product.brand_source_id = 'manual' if brand else ''
-        product.brand_needs_review = False
+        product.brand_ref = ProductBrandService.resolve_existing_brand(brand)
+        if not brand:
+            product.brand_resolution_status = Product.BrandResolutionStatus.UNKNOWN
+            product.brand_confidence = 0.0
+            product.brand_source_id = ''
+            product.brand_needs_review = False
+        elif product.brand_ref is not None:
+            product.brand_resolution_status = Product.BrandResolutionStatus.CATALOG
+            product.brand_confidence = product.brand_ref.confidence
+            product.brand_source_id = 'catalog'
+            product.brand_needs_review = product.brand_ref.needs_review
+        elif is_machine:
+            product.brand_resolution_status = Product.BrandResolutionStatus.SOURCE
+            product.brand_confidence = 0.5
+            product.brand_source_id = 'api_key'
+            product.brand_needs_review = True
+        else:
+            product.brand_resolution_status = Product.BrandResolutionStatus.MANUAL
+            product.brand_confidence = 1.0
+            product.brand_source_id = 'manual'
+            product.brand_needs_review = False
         product.save(update_fields=[
             'brand', 'brand_ref', 'brand_resolution_status', 'brand_confidence',
             'brand_source_id', 'brand_needs_review', 'updated_at',
@@ -302,6 +408,15 @@ class ProductDetailView(APIView):
 class ProductBrandOptionsView(APIView):
     """Подсказки брендов для товара: сначала по включённой корневой категории."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('product_id', OpenApiTypes.INT, required=True),
+            OpenApiParameter('q', OpenApiTypes.STR, description='Case-insensitive brand search.'),
+        ],
+        responses=ProductBrandOptionsResponseSerializer,
+    )
     def get(self, request):
         product_id = request.query_params.get('product_id')
         query = request.query_params.get('q', '').strip()
@@ -381,13 +496,25 @@ class ProductBrandOptionsView(APIView):
         })
 
 
+@extend_schema(tags=['Products'])
 class ProductSyncView(APIView):
     """POST /api/v1/products/sync/{connection_id}/ — запустить импорт товаров."""
 
+    api_key_enabled = True
+    api_key_scopes = {
+        'POST': {'sync:run', 'catalog:write', 'listings:write'},
+    }
+
+    @extend_schema(request=None, responses=TaskResponseSerializer)
     def post(self, request, connection_id):
         from apps.datasources.models import DataSourceConnection
         from django.shortcuts import get_object_or_404
-        conn = get_object_or_404(DataSourceConnection, pk=connection_id, tenant=request.tenant)
+        conn = get_object_or_404(
+            DataSourceConnection,
+            pk=connection_id,
+            tenant=request.tenant,
+            is_active=True,
+        )
         task = import_from_datasource.delay(conn.pk)
         return Response({'status': 'ok', 'data': {'task_id': task.id}})
 
@@ -396,6 +523,19 @@ class ProductSyncView(APIView):
 class TenantCatalogCategoryListView(APIView):
     """GET/POST /api/v1/products/catalog-categories/."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='catalog_categories_list',
+        parameters=[
+            OpenApiParameter(
+                'assignable',
+                OpenApiTypes.BOOL,
+                description='Return active categories only.',
+            ),
+        ],
+        responses=CatalogCategoryListResponseSerializer,
+    )
     def get(self, request):
         enabled_domain_ids = TenantCatalogDomain.objects.filter(
             tenant=request.tenant,
@@ -464,6 +604,10 @@ class TenantCatalogCategoryListView(APIView):
             ).data,
         })
 
+    @extend_schema(
+        request=TenantCatalogCategorySerializer,
+        responses={201: CatalogCategoryResponseSerializer},
+    )
     def post(self, request):
         serializer = TenantCatalogCategorySerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -481,11 +625,21 @@ class TenantCatalogCategoryListView(APIView):
 class TenantCatalogCategoryDetailView(APIView):
     """GET/PUT/DELETE /api/v1/products/catalog-categories/{id}/."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        operation_id='catalog_categories_retrieve',
+        responses=CatalogCategoryResponseSerializer,
+    )
     def get(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
 
+    @extend_schema(
+        request=TenantCatalogCategorySerializer,
+        responses=CatalogCategoryResponseSerializer,
+    )
     def put(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         serializer = TenantCatalogCategorySerializer(category, data=request.data)
@@ -499,6 +653,10 @@ class TenantCatalogCategoryDetailView(APIView):
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
 
+    @extend_schema(
+        request=TenantCatalogCategorySerializer,
+        responses=CatalogCategoryResponseSerializer,
+    )
     def patch(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         serializer = TenantCatalogCategorySerializer(category, data=request.data, partial=True)
@@ -512,6 +670,17 @@ class TenantCatalogCategoryDetailView(APIView):
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                'hard',
+                OpenApiTypes.BOOL,
+                description='Physically delete an unused category instead of disabling it.',
+            ),
+        ],
+        request=None,
+        responses={204: None},
+    )
     def delete(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         # ?hard=true — полное удаление; иначе мягкое отключение (is_active=False).
@@ -546,6 +715,12 @@ class TenantCatalogCategoryBranchToggleView(APIView):
     ставятся в очередь на переклассификацию.
     """
 
+    api_key_enabled = True
+
+    @extend_schema(
+        request=CatalogCategoryBranchToggleRequestSerializer,
+        responses=CatalogCategoryBranchToggleResponseSerializer,
+    )
     def post(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         is_active = request.data.get('is_active')
@@ -600,8 +775,20 @@ class TenantCatalogCategoryBranchToggleView(APIView):
 class TenantCatalogCategoryDefaultImageView(APIView):
     """POST /api/v1/products/catalog-categories/{id}/default-image/ — загрузить fallback-картинку."""
 
+    api_key_enabled = True
+    api_key_scopes = {
+        'POST': {'catalog:write', 'media:write'},
+        'DELETE': {'catalog:write', 'media:write'},
+    }
     parser_classes = [MultiPartParser, FormParser]
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'image_upload_principal'
+    tenant_throttle_scope = 'image_upload_tenant'
 
+    @extend_schema(
+        request=CatalogCategoryImageRequestSerializer,
+        responses=CatalogCategoryResponseSerializer,
+    )
     def post(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         image = request.FILES.get('image')
@@ -610,33 +797,68 @@ class TenantCatalogCategoryDefaultImageView(APIView):
                 {'status': 'error', 'code': 'validation_error', 'message': 'Передайте файл image'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if image.size > 5 * 1024 * 1024:
+        if image.size > settings.MAX_IMAGE_UPLOAD_BYTES:
             return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Размер файла не должен превышать 5 МБ'},
+                {
+                    'status': 'error',
+                    'code': 'validation_error',
+                    'message': (
+                        'Размер файла превышает допустимый лимит '
+                        f'{settings.MAX_IMAGE_UPLOAD_BYTES} байт.'
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        content_type = getattr(image, 'content_type', '')
-        if content_type and not content_type.startswith('image/'):
+        supported_formats = {
+            'JPEG': ('jpg', 'image/jpeg'),
+            'PNG': ('png', 'image/png'),
+            'WEBP': ('webp', 'image/webp'),
+        }
+        try:
+            decoded = Image.open(image)
+            validate_image_pixel_budget(decoded)
+            image_format = str(decoded.format or '').upper()
+            if image_format not in supported_formats:
+                raise ValueError('unsupported image format')
+            decoded.verify()
+            image.seek(0)
+        except (UnidentifiedImageError, OSError, ValueError):
             return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Можно загрузить только изображение'},
+                {
+                    'status': 'error',
+                    'code': 'validation_error',
+                    'message': 'Можно загрузить только корректный JPEG, PNG или WebP.',
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        extension = (image.name.rsplit('.', 1)[-1] if '.' in image.name else 'jpg').lower()
-        if extension not in ['jpg', 'jpeg', 'png', 'webp']:
-            extension = 'jpg'
+        extension, canonical_content_type = supported_formats[image_format]
+        image.content_type = canonical_content_type
         s3_key = f'catalog-categories/{request.tenant.slug}/{category.pk}/{uuid.uuid4().hex}.{extension}'
-        if category.default_image_s3_key:
-            default_storage.delete(category.default_image_s3_key)
         saved_key = default_storage.save(s3_key, image)
-        category.default_image_s3_key = saved_key
-        category.default_image_source_name = image.name[:255]
-        category.save(update_fields=[
-            'default_image_s3_key', 'default_image_source_name', 'updated_at',
-        ])
+        try:
+            with transaction.atomic():
+                category = TenantCatalogCategory.objects.select_for_update().get(
+                    pk=category.pk,
+                    tenant=request.tenant,
+                )
+                previous_key = category.default_image_s3_key
+                category.default_image_s3_key = saved_key
+                category.default_image_source_name = image.name[:255]
+                category.save(update_fields=[
+                    'default_image_s3_key', 'default_image_source_name', 'updated_at',
+                ])
+                if previous_key:
+                    transaction.on_commit(
+                        lambda key=previous_key: default_storage.delete(key),
+                    )
+        except Exception:
+            default_storage.delete(saved_key)
+            raise
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
 
+    @extend_schema(request=None, responses=CatalogCategoryResponseSerializer)
     def delete(self, request, pk):
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         if category.default_image_s3_key:
@@ -654,6 +876,9 @@ class TenantCatalogCategoryDefaultImageView(APIView):
 class TenantCategoryMappingListView(APIView):
     """GET/POST /api/v1/products/catalog-category-mappings/."""
 
+    api_key_enabled = True
+
+    @extend_schema(responses=CategoryMappingListResponseSerializer)
     def get(self, request):
         qs = (
             TenantCategoryMapping.objects
@@ -663,6 +888,10 @@ class TenantCategoryMappingListView(APIView):
         )
         return Response({'status': 'ok', 'data': TenantCategoryMappingSerializer(qs, many=True).data})
 
+    @extend_schema(
+        request=TenantCategoryMappingSerializer,
+        responses={201: CategoryMappingResponseSerializer},
+    )
     def post(self, request):
         serializer = TenantCategoryMappingSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -688,6 +917,9 @@ class TenantCategoryMappingListView(APIView):
 class TenantCategoryMappingDetailView(APIView):
     """DELETE /api/v1/products/catalog-category-mappings/{id}/."""
 
+    api_key_enabled = True
+
+    @extend_schema(request=None, responses={204: None})
     def delete(self, request, pk):
         mapping = get_object_or_404(TenantCategoryMapping, pk=pk, tenant=request.tenant)
         mapping.delete()
@@ -698,6 +930,9 @@ class TenantCategoryMappingDetailView(APIView):
 class TenantSourceCategoryListView(APIView):
     """GET /api/v1/products/catalog-source-categories/."""
 
+    api_key_enabled = True
+
+    @extend_schema(responses=TenantSourceCategoryListResponseSerializer)
     def get(self, request):
         mappings = {
             mapping.source_category: mapping.category_id
@@ -724,14 +959,17 @@ class TenantSourceCategoryListView(APIView):
 class ProductCatalogCategoryAssignView(APIView):
     """POST /api/v1/products/catalog-categories/assign/ — назначить категорию товарам."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        request=ProductCategoryAssignRequestSerializer,
+        responses=ProductCategoryAssignResponseSerializer,
+    )
     def post(self, request):
-        product_ids = request.data.get('product_ids') or []
-        category_id = request.data.get('catalog_category')
-        if not isinstance(product_ids, list) or not product_ids:
-            return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Выберите товары для назначения категории'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        serializer = ProductCategoryAssignRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product_ids = serializer.validated_data['product_ids']
+        category_id = serializer.validated_data.get('catalog_category')
 
         category = None
         if category_id:
@@ -788,10 +1026,18 @@ class ProductCatalogCategoryAssignView(APIView):
             for product in products:
                 classification = ProductEnrichmentService.classify_product_catalog_domain(product, force=True)
                 if category is not None:
+                    is_machine = getattr(request.user, 'is_api_key', False)
                     classification.domain = category.domain
                     classification.confidence = 0.95
-                    classification.source = ProductCatalogClassification.Source.MANUAL
-                    classification.reason = f'Категория каталога выбрана вручную: {category.name}.'
+                    classification.source = (
+                        ProductCatalogClassification.Source.API_KEY
+                        if is_machine
+                        else ProductCatalogClassification.Source.MANUAL
+                    )
+                    source_label = 'через API Key' if is_machine else 'вручную'
+                    classification.reason = (
+                        f'Категория каталога выбрана {source_label}: {category.name}.'
+                    )
                     classification.needs_review = False
                     classification.review_status = ReviewStatus.APPROVED
                     classification.reviewed_at = now()
@@ -821,15 +1067,18 @@ class ProductCatalogCategoryAssignView(APIView):
 class ProductExcludeView(APIView):
     """POST /api/v1/products/exclude/ — исключить или восстановить товары из синхронизации."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        request=ProductExcludeRequestSerializer,
+        responses=UpdatedCountResponseSerializer,
+    )
     def post(self, request):
         """Исключает товары из синхронизации с источником (1С/CSV)."""
-        product_ids = request.data.get('product_ids') or []
-        exclude = request.data.get('exclude', True)
-        if not isinstance(product_ids, list) or not product_ids:
-            return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Выберите товары'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        serializer = ProductExcludeRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product_ids = serializer.validated_data['product_ids']
+        exclude = serializer.validated_data['exclude']
         updated = Product.objects.filter(
             tenant=request.tenant, pk__in=product_ids,
         ).update(sync_excluded=bool(exclude))
@@ -838,19 +1087,27 @@ class ProductExcludeView(APIView):
 
 @extend_schema(tags=['Products'])
 class ProductBulkDeleteView(APIView):
-    """DELETE /api/v1/products/bulk-delete/ — безвозвратное удаление товаров из БД."""
+    """DELETE /api/v1/products/bulk-delete/ — мягкое удаление товаров."""
 
+    api_key_enabled = True
+    api_key_scopes = {
+        'DELETE': {'catalog:write', 'listings:write'},
+    }
+
+    @extend_schema(
+        request=ProductBulkDeleteRequestSerializer,
+        responses=DeletedCountResponseSerializer,
+    )
     def delete(self, request):
-        """Физически удаляет товары. Если товар есть в источнике — вернётся при синхронизации."""
-        product_ids = request.data.get('product_ids') or []
-        if not isinstance(product_ids, list) or not product_ids:
-            return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Выберите товары'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        deleted_count, _ = Product.objects.filter(
-            tenant=request.tenant, pk__in=product_ids,
-        ).delete()
+        """Скрывает товары и листинги; retention-задача удалит их физически позднее."""
+        serializer = ProductBulkDeleteRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product_ids = serializer.validated_data['product_ids']
+        with transaction.atomic():
+            products = Product.objects.filter(tenant=request.tenant, pk__in=product_ids)
+            valid_ids = list(products.values_list('pk', flat=True))
+            Listing.objects.filter(tenant=request.tenant, product_id__in=valid_ids).delete()
+            deleted_count, _ = products.delete()
         return Response({'status': 'ok', 'data': {'deleted_count': deleted_count}})
 
 
@@ -858,6 +1115,15 @@ class ProductBulkDeleteView(APIView):
 class ProductSearchView(APIView):
     """GET /api/v1/products/search/?brand=&article= — поиск товара tenant-а."""
 
+    api_key_enabled = True
+
+    @extend_schema(
+        parameters=[
+            OpenApiParameter('brand', OpenApiTypes.STR, required=True),
+            OpenApiParameter('article', OpenApiTypes.STR, required=True),
+        ],
+        responses=ProductResponseSerializer,
+    )
     def get(self, request):
         brand = request.query_params.get('brand', '').strip()
         article = request.query_params.get('article', '').strip()
@@ -884,6 +1150,16 @@ class ProductSearchView(APIView):
 class ProductParseView(APIView):
     """POST /api/v1/products/parse/ — поставить enrichment job в очередь."""
 
+    api_key_enabled = True
+    api_key_scopes = {'POST': {
+        'catalog:write', 'listings:write', 'ai:run',
+        'research:run', 'media:write',
+    }}
+
+    @extend_schema(
+        request=ProductParseRequestSerializer,
+        responses={201: ProductParseResponseSerializer},
+    )
     def post(self, request):
         product_id = request.data.get('product_id')
         brand = str(request.data.get('brand') or '').strip()
@@ -984,6 +1260,9 @@ class ProductParseView(APIView):
 class ProductParseJobDetailView(APIView):
     """GET /api/v1/products/parse-jobs/{id}/ — статус enrichment job."""
 
+    api_key_enabled = True
+
+    @extend_schema(responses=ProductParseJobResponseSerializer)
     def get(self, request, pk: int):
         job = get_object_or_404(ProductParseJob, pk=pk, tenant=request.tenant)
         return Response({'status': 'ok', 'data': ProductParseJobSerializer(job).data})
@@ -993,17 +1272,50 @@ class ProductParseJobDetailView(APIView):
 class ProductBulkActionView(APIView):
     """POST /api/v1/products/bulk-actions/ — throttled массовое действие."""
 
+    # Actions span catalog, AI and media domains. Keep machine access denied
+    # until authorization can be selected from the validated action payload.
+    api_key_scopes = {}
+
+    @extend_schema(
+        request=ProductBulkActionRequestSerializer,
+        responses={201: ProductBulkActionResponseSerializer},
+    )
     def post(self, request):
         action = request.data.get('action')
         product_ids = request.data.get('product_ids', [])
         source = str(request.data.get('source') or DEFAULT_PART_SOURCE).strip()
-        batch_size = int(request.data.get('batch_size') or 20)
-        pause_seconds = int(request.data.get('pause_seconds') or 60)
+        raw_batch_size = request.data.get('batch_size', 20)
+        raw_pause_seconds = request.data.get('pause_seconds', 60)
+        try:
+            batch_size = int(20 if raw_batch_size in (None, '') else raw_batch_size)
+            pause_seconds = int(60 if raw_pause_seconds in (None, '') else raw_pause_seconds)
+        except (TypeError, ValueError):
+            return Response(
+                {'status': 'error', 'code': 'validation_error',
+                 'message': 'batch_size и pause_seconds должны быть целыми числами.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         if not isinstance(product_ids, list):
             return Response(
                 {'status': 'error', 'code': 'validation_error',
                  'errors': {'product_ids': ['Ожидается список ID.']}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if len(product_ids) > MAX_BULK_ACTION_PRODUCT_IDS:
+            return Response(
+                {'status': 'error', 'code': 'validation_error',
+                 'errors': {'product_ids': [
+                     f'Допустимо не более {MAX_BULK_ACTION_PRODUCT_IDS} ID.',
+                 ]}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not 0 <= pause_seconds <= MAX_BULK_ACTION_PAUSE_SECONDS:
+            return Response(
+                {'status': 'error', 'code': 'validation_error',
+                 'errors': {'pause_seconds': [
+                     f'Допустимое значение: 0–{MAX_BULK_ACTION_PAUSE_SECONDS}.',
+                 ]}},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         try:
@@ -1027,7 +1339,19 @@ class ProductBulkActionView(APIView):
             )
 
         from apps.products.tasks import process_bulk_product_action
-        transaction.on_commit(lambda: process_bulk_product_action.delay(job.pk))
+        job.last_dispatched_at = now()
+        job.save(update_fields=['last_dispatched_at', 'updated_at'])
+
+        def enqueue_initial_batch():
+            try:
+                process_bulk_product_action.delay(job.pk)
+            except Exception:
+                ProductBulkActionJob.objects.filter(pk=job.pk).update(
+                    last_dispatched_at=None,
+                )
+                raise
+
+        transaction.on_commit(enqueue_initial_batch)
 
         return Response({
             'status': 'ok',
@@ -1039,13 +1363,14 @@ class ProductBulkActionView(APIView):
 class ProductBulkActionDetailView(APIView):
     """GET /api/v1/products/bulk-actions/{id}/ — статус bulk job."""
 
+    @extend_schema(responses=ProductBulkActionResponseSerializer)
     def get(self, request, pk: int):
         job = get_object_or_404(ProductBulkActionJob, pk=pk, tenant=request.tenant)
         return Response({'status': 'ok', 'data': ProductBulkActionJobSerializer(job).data})
 
 
 def _review_actor(request):
-    return request.user if getattr(request.user, 'is_authenticated', False) else None
+    return human_user_or_none(request)
 
 
 def _set_review_state(obj, request, review_status: str) -> None:
@@ -1128,6 +1453,21 @@ class ProductReviewQueueView(APIView):
 
     VALID_TYPES = {'fitment', 'fact', 'classification'}
 
+    @extend_schema(
+        parameters=[
+            OpenApiParameter(
+                'type',
+                OpenApiTypes.STR,
+                enum=['fitment', 'fact', 'classification'],
+            ),
+            OpenApiParameter('product_id', OpenApiTypes.INT),
+            OpenApiParameter('source_id', OpenApiTypes.STR),
+            OpenApiParameter('search', OpenApiTypes.STR),
+            OpenApiParameter('page', OpenApiTypes.INT),
+            OpenApiParameter('page_size', OpenApiTypes.INT),
+        ],
+        responses=ReviewQueueResponseSerializer,
+    )
     def get(self, request):
         item_type = request.query_params.get('type', '').strip()
         if item_type and item_type not in self.VALID_TYPES:
@@ -1193,6 +1533,9 @@ class ProductReviewQueueView(APIView):
 class ProductReviewQueueActionView(APIView):
     """POST /api/v1/products/review-queue/{type}/{id}/{approve|reject}/."""
 
+    api_key_scopes = {}
+
+    @extend_schema(request=None, responses=ReviewQueueActionResponseSerializer)
     def post(self, request, item_type: str, record_id: int, action: str):
         if action not in ['approve', 'reject']:
             return _bad_review_action_response()
@@ -1229,6 +1572,9 @@ class ProductReviewQueueActionView(APIView):
 class ProductFitmentsView(APIView):
     """GET /api/v1/products/{id}/fitments/ — применяемость товара."""
 
+    api_key_enabled = True
+
+    @extend_schema(responses=FitmentListResponseSerializer)
     def get(self, request, pk: int):
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
         fitments = product.fitments.filter(tenant=request.tenant).order_by('make', 'model')
@@ -1239,6 +1585,9 @@ class ProductFitmentsView(APIView):
 class ProductFitmentReviewView(APIView):
     """POST /api/v1/products/{id}/fitments/{fitment_id}/{approve|reject}/."""
 
+    api_key_scopes = {}
+
+    @extend_schema(request=None, responses=FitmentResponseSerializer)
     def post(self, request, pk: int, fitment_id: int, action: str):
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
         fitment = get_object_or_404(VehicleFitment, pk=fitment_id, tenant=request.tenant, product=product)
@@ -1260,6 +1609,9 @@ class ProductFitmentReviewView(APIView):
 class ProductEnrichmentFactsView(APIView):
     """GET /api/v1/products/{id}/enrichment-facts/ — факты обогащения товара."""
 
+    api_key_enabled = True
+
+    @extend_schema(responses=EnrichmentFactListResponseSerializer)
     def get(self, request, pk: int):
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
         facts = product.enrichment_facts.filter(tenant=request.tenant).order_by('fact_type', 'name')
@@ -1270,6 +1622,9 @@ class ProductEnrichmentFactsView(APIView):
 class ProductEnrichmentFactReviewView(APIView):
     """POST /api/v1/products/{id}/enrichment-facts/{fact_id}/{approve|reject}/."""
 
+    api_key_scopes = {}
+
+    @extend_schema(request=None, responses=EnrichmentFactResponseSerializer)
     def post(self, request, pk: int, fact_id: int, action: str):
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
         fact = get_object_or_404(ProductEnrichmentFact, pk=fact_id, tenant=request.tenant, product=product)
@@ -1288,6 +1643,9 @@ class ProductEnrichmentFactReviewView(APIView):
 class ProductCatalogClassificationReviewView(APIView):
     """POST /api/v1/products/{id}/catalog-classification/{approve|reject}/."""
 
+    api_key_scopes = {}
+
+    @extend_schema(request=None, responses=ProductDetailResponseSerializer)
     def post(self, request, pk: int, action: str):
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
         classification = ProductEnrichmentService.get_or_classify_product_catalog_domain(product)
@@ -1331,6 +1689,9 @@ class ProductCatalogClassificationReviewView(APIView):
 class ProductCrossCodesView(APIView):
     """GET /api/v1/products/{id}/cross-codes/ — OEM/cross-коды товара."""
 
+    api_key_enabled = True
+
+    @extend_schema(responses=CrossCodeListResponseSerializer)
     def get(self, request, pk: int):
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
         cross_codes = product.cross_codes.filter(tenant=request.tenant).order_by('manufacturer', 'code')
@@ -1341,6 +1702,10 @@ class ProductCrossCodesView(APIView):
 class ProductPublishView(APIView):
     """POST /api/v1/products/{pk}/publish/ — создать/обновить листинги для всех аккаунтов тенанта."""
 
+    api_key_enabled = True
+    api_key_scopes = {'POST': {'catalog:write', 'listings:write'}}
+
+    @extend_schema(request=None, responses=ProductPublishResponseSerializer)
     def post(self, request, pk):
         """Делегирует публикацию ListingService.publish_product."""
         from apps.marketplaces.services import ListingService, NoActiveAccounts
@@ -1369,6 +1734,10 @@ class ProductPublishView(APIView):
 class ProductArchiveView(APIView):
     """POST /api/v1/products/{pk}/archive/ — снять все активные листинги товара с публикации."""
 
+    api_key_enabled = True
+    api_key_scopes = {'POST': {'catalog:write', 'listings:write'}}
+
+    @extend_schema(request=None, responses=ProductArchiveResponseSerializer)
     def post(self, request, pk):
         """Делегирует архивацию ListingService.archive_product."""
         from apps.marketplaces.services import ListingService
@@ -1396,6 +1765,16 @@ class ProductArchiveView(APIView):
 class ProductRegenerateView(APIView):
     """POST /api/v1/products/{pk}/regenerate/ — enrichment-aware генерация AI-описания."""
 
+    api_key_enabled = True
+    api_key_scopes = {'POST': {
+        'catalog:write', 'listings:write', 'ai:run',
+        'research:run', 'media:write',
+    }}
+
+    @extend_schema(
+        request=ProductRegenerateRequestSerializer,
+        responses={202: ProductRegenerateResponseSerializer},
+    )
     def post(self, request, pk):
         """Сначала обогащает товар, затем запускает генерацию описания."""
         from apps.billing.services import LimitChecker

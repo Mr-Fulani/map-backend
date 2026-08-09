@@ -1,5 +1,8 @@
+from datetime import timedelta
+
 import pytest
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 
 from apps.tenants.models import APIKey, TenantUser
 from apps.tenants.services import APIKeyService, TenantService
@@ -34,6 +37,17 @@ class TestTenantService:
             owner_email='key@test.com', owner_password='pass12345',
         )
         assert plaintext.startswith(APIKey.KEY_PREFIX)
+
+    def test_registration_key_is_short_lived_and_read_only(self):
+        tenant, _ = TenantService.create_tenant(
+            name='Minimal Co', slug='minimal-co',
+            owner_email='minimal@test.com', owner_password='pass12345',
+        )
+
+        api_key = APIKey.objects.get(tenant=tenant)
+        assert api_key.role == APIKey.ROLE_VIEWER
+        assert api_key.scopes == ['tenant:read']
+        assert api_key.expires_at <= timezone.now() + timedelta(hours=25)
 
     def test_api_key_hash_stored_not_plaintext(self):
         """В БД хранится хэш ключа, а не plaintext."""

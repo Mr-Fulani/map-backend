@@ -7,6 +7,7 @@ import pytest
 
 from apps.sync.models import SyncLog
 from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import create_operator_key
 
 
 # ── Вспомогательные функции ────────────────────────────────────────────────────
@@ -14,6 +15,7 @@ from apps.tenants.services import TenantService
 def make_tenant(slug):
     """Создаёт тенанта с владельцем и возвращает (tenant, api_key)."""
     tenant, api_key = TenantService.create_tenant(slug, slug, f'{slug}@test.com', 'pass12345')
+    api_key = create_operator_key(tenant)
     return tenant, api_key
 
 

@@ -1,11 +1,13 @@
 """Сериализаторы для API управления изображениями товаров."""
 
 from django.core.files.storage import default_storage
+from drf_spectacular.utils import extend_schema_serializer
 from rest_framework import serializers
 
 from apps.products.models import ProductImage
 
 
+@extend_schema_serializer(component_name='ImageSearchProductImage')
 class ProductImageSerializer(serializers.ModelSerializer):
     """Полное представление изображения товара для API.
 

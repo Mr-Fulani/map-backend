@@ -5,12 +5,13 @@ from django.test import Client
 
 from apps.products.models import Product, TenantCatalogCategory
 from apps.tenants.models import CatalogDomain, TenantCatalogDomain
-from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import create_tenant_with_operator_key
 
 
 def _make_tenant(slug):
-    tenant, api_key = TenantService.create_tenant(slug, slug, f'{slug}@test.com', 'pass12345')
-    return tenant, api_key
+    return create_tenant_with_operator_key(
+        slug, slug, f'{slug}@test.com', 'pass12345',
+    )
 
 
 def _make_category(tenant, name='Воздуховод'):

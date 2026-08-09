@@ -134,7 +134,7 @@ class TestTenantIsolation:
 
         t1 = make_tenant('iso-log-1')
         t2 = make_tenant('iso-log-2')
-        _, key1 = APIKey.generate(t1, 'k')
+        _, key1 = APIKey.generate(t1, 'k', scopes=['sync:read'])
         SyncLog.objects.create(tenant=t1, event_type='billing_event', status='ok', message='t1')
         SyncLog.objects.create(tenant=t2, event_type='billing_event', status='ok', message='t2')
 

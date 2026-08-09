@@ -1,11 +1,14 @@
 import secrets
 
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 
 from apps.tenants.models import Tenant
 
 CONNECT_TOKEN_TTL_MINUTES = 15
+CONNECT_TOKEN_CONSUMED = 'consumed'
+CONNECT_TOKEN_EXPIRED = 'expired'
+CONNECT_TOKEN_INVALID = 'invalid'
 
 
 class TenantNotificationSettings(models.Model):
@@ -72,6 +75,42 @@ class TenantNotificationSettings(models.Model):
         if not self.connect_token_expires_at:
             return False
         return timezone.now() < self.connect_token_expires_at
+
+    @classmethod
+    def consume_connect_token(
+        cls,
+        token: str,
+        *,
+        chat_id: str,
+        username: str,
+    ) -> tuple['TenantNotificationSettings | None', str]:
+        """Atomically bind exactly one chat and invalidate the one-time token."""
+        if (
+            not isinstance(token, str)
+            or not token
+            or not isinstance(chat_id, str)
+            or not chat_id
+            or len(chat_id) > 50
+            or not isinstance(username, str)
+            or len(username) > 100
+        ):
+            return None, CONNECT_TOKEN_INVALID
+
+        with transaction.atomic():
+            matches = list(
+                cls.objects.select_for_update()
+                .select_related('tenant')
+                .filter(connect_token=token)
+                .order_by('pk')[:2],
+            )
+            # Duplicate live tokens are ambiguous and therefore fail closed.
+            if len(matches) != 1:
+                return None, CONNECT_TOKEN_INVALID
+            settings_row = matches[0]
+            if not settings_row.is_connect_token_valid(token):
+                return None, CONNECT_TOKEN_EXPIRED
+            settings_row.complete_telegram_connect(chat_id, username)
+            return settings_row, CONNECT_TOKEN_CONSUMED
 
     def complete_telegram_connect(self, chat_id: str, username: str) -> None:
         """Сохраняет chat_id после успешной привязки и сбрасывает токен."""

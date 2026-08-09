@@ -112,7 +112,7 @@ export default function ApiPage() {
     setTimeout(() => setCopiedSecret(null), 2000);
   }
 
-  const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const apiBaseUrl = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
 
   return (
     <div className="space-y-6">

@@ -1,5 +1,37 @@
+x-egress-environment: &egress-environment
+  HTTP_PROXY: http://egress_proxy:3128
+  HTTPS_PROXY: http://egress_proxy:3128
+  http_proxy: http://egress_proxy:3128
+  https_proxy: http://egress_proxy:3128
+  EMAIL_HTTP_PROXY_URL: http://egress_proxy:3128
+  PUBLIC_HTTP_PROXY_URL: http://egress_proxy:3128
+  NO_PROXY: localhost,127.0.0.1,db,redis,redis_broker,django,frontend,nginx,egress_proxy
+  no_proxy: localhost,127.0.0.1,db,redis,redis_broker,django,frontend,nginx,egress_proxy
+  HOME: /tmp
+  XDG_CACHE_HOME: /tmp/.cache
+
+x-default-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-runtime-policy: &runtime-policy
+  restart: unless-stopped
+  logging: *default-logging
+  security_opt:
+    - no-new-privileges:true
+
+x-unprivileged-runtime: &unprivileged-runtime
+  read_only: true
+  cap_drop:
+    - ALL
+
 services:
   django:
+    <<: [*runtime-policy, *unprivileged-runtime]
+    init: true
+    user: "1000:1000"
     build:
       context: .
       args:
@@ -8,57 +40,101 @@ services:
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
+      <<: *egress-environment
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redis_broker:
+        condition: service_healthy
+      egress_proxy:
+        condition: service_healthy
+    networks: [backend]
     volumes:
       - static_volume:/app/staticfiles
+    tmpfs:
+      - /tmp:size=128m,mode=1777
     healthcheck:
-      test: ["CMD", "python", "manage.py", "check"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/live/', timeout=5).read()"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 40s
+    stop_grace_period: 45s
 
   celery_worker:
+    <<: [*runtime-policy, *unprivileged-runtime]
+    init: true
+    user: "1000:1000"
     build:
       context: .
       args:
         REQUIREMENTS: requirements/prod.txt
-    command: celery -A config worker -Q sync_import,avito_publish,avito_update,avito_price,avito_delete,ai_generate,notifications,billing,part_parsing,part_parsing_bulk --concurrency=4 -l warning
+    command: celery -A config worker -Q sync_import,avito_publish,avito_update,avito_price,avito_delete,ai_generate,notifications,billing,part_parsing,part_parsing_bulk --concurrency=4 -n worker-main@%h -l warning
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
+      <<: *egress-environment
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redis_broker:
+        condition: service_healthy
+      egress_proxy:
+        condition: service_healthy
+    networks: [backend]
+    tmpfs:
+      - /tmp:size=256m,mode=1777
     healthcheck:
-      test: ["CMD", "celery", "-A", "config", "inspect", "ping"]
+      test: ["CMD-SHELL", "celery -A config inspect ping -d worker-main@$$HOSTNAME"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    stop_grace_period: 150s
 
   celery_beat:
+    <<: [*runtime-policy, *unprivileged-runtime]
+    init: true
+    user: "1000:1000"
     build:
       context: .
       args:
         REQUIREMENTS: requirements/prod.txt
-    command: celery -A config beat -S django_celery_beat.schedulers:DatabaseScheduler -l warning
+    command: celery -A config beat -S apps.core.celery_beat:HeartbeatDatabaseScheduler --pidfile=/tmp/celerybeat.pid -l warning
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
+      CELERY_BEAT_HEARTBEAT_FILE: /tmp/celerybeat-heartbeat
+      CELERY_BEAT_HEARTBEAT_MAX_AGE_SECONDS: "120"
+      <<: *egress-environment
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redis_broker:
+        condition: service_healthy
+      egress_proxy:
+        condition: service_healthy
+    networks: [backend]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-m", "apps.core.healthchecks", "celery-beat"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    stop_grace_period: 45s
 
   celery_worker_images:
+    <<: [*runtime-policy, *unprivileged-runtime]
+    init: true
+    user: "1000:1000"
     build:
       context: .
       args:
@@ -67,66 +143,159 @@ services:
     env_file: .env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
+      <<: *egress-environment
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      redis_broker:
+        condition: service_healthy
+      egress_proxy:
+        condition: service_healthy
+    networks: [backend]
+    tmpfs:
+      - /tmp:size=512m,mode=1777
     healthcheck:
       test: ["CMD-SHELL", "celery -A config inspect ping -d worker-images@$$HOSTNAME"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    stop_grace_period: 150s
 
   frontend:
+    <<: [*runtime-policy, *unprivileged-runtime]
+    init: true
+    user: "1000:1000"
     build:
       context: ./frontend
       dockerfile: Dockerfile
       target: runner
       args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+        NEXT_PUBLIC_API_URL: ""
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL}
+      NEXT_PUBLIC_API_URL: ""
+      HOME: /tmp
+      XDG_CACHE_HOME: /tmp/.cache
     depends_on:
       django:
         condition: service_healthy
+    networks: [backend]
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /app/.next/cache:size=128m,uid=1000,gid=1000,mode=0750
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 30s
+    stop_grace_period: 45s
 
   db:
-    image: postgres:16-alpine
+    <<: *runtime-policy
+    image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
     environment:
-      POSTGRES_DB: map_db
-      POSTGRES_USER: map_user
-      POSTGRES_PASSWORD: map_password
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U map_user -d map_db"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks: [backend]
+    stop_grace_period: 60s
 
   redis:
-    image: redis:7-alpine
-    command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
+    <<: *runtime-policy
+    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$CACHE_REDIS_PASSWORD\" --maxmemory 512mb --maxmemory-policy allkeys-lru"]
+    environment:
+      CACHE_REDIS_PASSWORD: ${CACHE_REDIS_PASSWORD:?CACHE_REDIS_PASSWORD is required}
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$CACHE_REDIS_PASSWORD redis-cli ping"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks: [backend]
+    stop_grace_period: 30s
+
+  redis_broker:
+    <<: *runtime-policy
+    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    command: ["sh", "-c", "exec redis-server --requirepass \"$$CELERY_REDIS_PASSWORD\" --appendonly yes --appendfsync everysec --maxmemory 1gb --maxmemory-policy noeviction"]
+    environment:
+      CELERY_REDIS_PASSWORD: ${CELERY_REDIS_PASSWORD:?CELERY_REDIS_PASSWORD is required}
+    volumes:
+      - redis_broker_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=$$CELERY_REDIS_PASSWORD redis-cli ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [backend]
+    stop_grace_period: 60s
+
+  backup:
+    <<: *unprivileged-runtime
+    profiles: [ops]
+    init: true
+    restart: "no"
+    user: postgres
+    security_opt:
+      - no-new-privileges:true
+    logging: *default-logging
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+    env_file:
+      - .backup.env
+    environment:
+      DEPLOY_GIT_SHA: ${DEPLOY_GIT_SHA:-unknown}
+      BACKUP_STATE_DIR: /state
+      <<: *egress-environment
+    depends_on:
+      db:
+        condition: service_healthy
+      egress_proxy:
+        condition: service_healthy
+    networks: [backend]
+    volumes:
+      - backup_state:/state
+      - /tmp
+    stop_grace_period: 5m
+
+  egress_proxy:
+    <<: *runtime-policy
+    build:
+      context: .
+      dockerfile: egress-proxy/Dockerfile
+    volumes:
+      - ./egress-proxy.conf:/etc/squid/squid.conf:ro
+    networks:
+      - backend
+      - egress_public
+    healthcheck:
+      test: ["CMD", "/bin/bash", "-ec", "exec 3<>/dev/tcp/127.0.0.1/3128"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    stop_grace_period: 30s
 
   nginx:
-    image: nginx:1.27-alpine
+    <<: *runtime-policy
+    image: nginx:1.30.4-alpine@sha256:97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46
     volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf
-      - static_volume:/app/staticfiles
-      - /etc/letsencrypt:/etc/letsencrypt:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - static_volume:/app/staticfiles:ro
+      - /etc/letsencrypt/live/dodugir.com:/etc/letsencrypt/live/dodugir.com:ro
+      - /etc/letsencrypt/archive/dodugir.com:/etc/letsencrypt/archive/dodugir.com:ro
     ports:
       - "80:80"
       - "443:443"
@@ -135,7 +304,22 @@ services:
         condition: service_healthy
       frontend:
         condition: service_healthy
+    networks: [backend]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/nginx-health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    stop_grace_period: 30s
 
 volumes:
   postgres_data:
+  redis_broker_data:
+  backup_state:
   static_volume:
+
+networks:
+  backend:
+    internal: true
+  egress_public:

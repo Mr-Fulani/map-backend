@@ -1,7 +1,15 @@
 import json
 from unittest.mock import Mock, patch
 
-from apps.products.part_fetchers import EuroautoSearchFetcher, get_part_fetcher
+import requests
+import pytest
+
+from apps.core.url_security import ResponseTooLarge, UnsafePublicURL
+from apps.products.part_fetchers import (
+    EuroautoSearchFetcher,
+    HttpxPartFetcher,
+    get_part_fetcher,
+)
 from apps.web_research.providers.base import WebSearchResult
 
 
@@ -27,21 +35,19 @@ def test_euroauto_fetcher_uses_managed_search_and_expands_confirmed_product_imag
         },
     }]
     candidate = Mock(provider=provider)
-    http_client = Mock()
-    http_client.head.side_effect = [
+    head_responses = [
         Mock(status_code=200),
         Mock(status_code=200),
         Mock(status_code=404),
     ]
-    http_client.__enter__ = Mock(return_value=http_client)
-    http_client.__exit__ = Mock(return_value=False)
 
     with patch(
         'apps.web_research.routing.search_provider_candidates',
         return_value=[candidate],
     ) as candidates, patch(
-        'apps.products.part_fetchers.httpx.Client', return_value=http_client,
-    ):
+        'apps.products.part_fetchers.request_public_http_url',
+        side_effect=head_responses,
+    ) as head:
         page = EuroautoSearchFetcher(tenant='tenant').fetch(
             'https://euroauto.ru/search/?q=8940-289&hint=%D0%A4%D0%BE%D0%BD%D0%B0%D1%80%D1%8C'
         )
@@ -56,6 +62,10 @@ def test_euroauto_fetcher_uses_managed_search_and_expands_confirmed_product_imag
         'https://file.euroauto.ru/v2/file/parts/new/6148741/2.jpg',
     ]
     assert page.url.endswith('/firms/metaco/8940289')
+    assert head.call_count == 3
+    assert all(call.kwargs['method'] == 'HEAD' for call in head.call_args_list)
+    assert all(call.kwargs['status_only'] is True for call in head.call_args_list)
+    assert all(call.kwargs['redirect_policy'] == 'none' for call in head.call_args_list)
 
 
 def test_part_fetcher_registry_builds_euroauto_transport_for_tenant():
@@ -63,6 +73,53 @@ def test_part_fetcher_registry_builds_euroauto_transport_for_tenant():
 
     assert isinstance(fetcher, EuroautoSearchFetcher)
     assert fetcher.tenant == 'tenant'
+
+
+def _response(content: bytes, *, url='https://catalog.example/final'):
+    response = requests.Response()
+    response.status_code = 200
+    response.url = url
+    response.headers['Content-Type'] = 'text/html; charset=utf-8'
+    response._content = content
+    response._content_consumed = True
+    response.encoding = 'utf-8'
+    return response
+
+
+def test_catalogue_fetcher_uses_central_bounded_transport(settings):
+    settings.PART_PAGE_MAX_BYTES = 1234
+    response = _response('<h1>Каталог</h1>'.encode())
+
+    with patch(
+        'apps.products.part_fetchers.request_public_http_url',
+        return_value=response,
+    ) as request:
+        page = HttpxPartFetcher().fetch('https://catalog.example/start')
+
+    request.assert_called_once_with(
+        'https://catalog.example/start',
+        timeout=(5, 20),
+        headers={'User-Agent': HttpxPartFetcher.user_agent},
+        max_response_bytes=1234,
+    )
+    assert page.html == '<h1>Каталог</h1>'
+    assert page.url == 'https://catalog.example/final'
+
+
+def test_catalogue_fetcher_propagates_unsafe_url():
+    with patch(
+        'apps.products.part_fetchers.request_public_http_url',
+        side_effect=UnsafePublicURL('private redirect'),
+    ), pytest.raises(UnsafePublicURL):
+        HttpxPartFetcher().fetch('https://catalog.example/start')
+
+
+def test_catalogue_fetcher_propagates_byte_budget_failure():
+    with patch(
+        'apps.products.part_fetchers.request_public_http_url',
+        side_effect=ResponseTooLarge('large response'),
+    ), pytest.raises(ResponseTooLarge):
+        HttpxPartFetcher().fetch('https://catalog.example/product')
 
 
 def test_euroauto_rejects_similar_image_without_exact_article_page_evidence():

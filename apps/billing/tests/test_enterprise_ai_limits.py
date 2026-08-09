@@ -4,7 +4,9 @@ from unittest.mock import patch
 import pytest
 
 from apps.billing.ai_wallet import AIWalletService, InsufficientAICredits
-from apps.billing.models import AICreditTransaction, Plan, Subscription
+from apps.billing.models import (
+    AICreditTransaction, BillingOutboxEvent, Plan, Subscription,
+)
 from apps.billing.services import BillingService, LimitChecker
 from apps.tenants.services import TenantService
 
@@ -142,8 +144,8 @@ def test_purchased_credits_are_used_after_included_package():
         )
 
 
-@pytest.mark.django_db(transaction=True)
-def test_threshold_notifications_are_sent_once_per_period():
+@pytest.mark.django_db
+def test_threshold_notifications_are_saved_once_per_period():
     tenant = make_tenant('enterprise-ai-thresholds')
     AIWalletService.grant_included(
         tenant,
@@ -152,21 +154,24 @@ def test_threshold_notifications_are_sent_once_per_period():
         idempotency_key='enterprise-ai-thresholds:grant',
     )
 
-    with patch('apps.notifications.tasks.send_notification_task.delay') as notify:
-        for amount, key in [
-            (Decimal('85'), 'threshold:80'),
-            (Decimal('7'), 'threshold:90'),
-            (Decimal('1'), 'threshold:dedupe'),
-            (Decimal('7'), 'threshold:100'),
-        ]:
-            reservation = AIWalletService.reserve(tenant, amount, key=key)
-            AIWalletService.settle(tenant, reservation, amount)
+    for amount, key in [
+        (Decimal('85'), 'threshold:80'),
+        (Decimal('7'), 'threshold:90'),
+        (Decimal('1'), 'threshold:dedupe'),
+        (Decimal('7'), 'threshold:100'),
+    ]:
+        reservation = AIWalletService.reserve(tenant, amount, key=key)
+        AIWalletService.settle(tenant, reservation, amount)
 
-    assert notify.call_count == 3
-    messages = [call.args[2] for call in notify.call_args_list]
-    assert '80%' in messages[0]
-    assert '90%' in messages[1]
-    assert 'исчерпаны' in messages[2]
+    events = list(BillingOutboxEvent.objects.filter(
+        tenant=tenant,
+        event_type=BillingOutboxEvent.EVENT_NOTIFICATION,
+    ).order_by('created_at'))
+    assert len(events) == 3
+    messages = [event.payload['message'] for event in events]
+    assert any('80%' in message for message in messages)
+    assert any('90%' in message for message in messages)
+    assert any('исчерпаны' in message for message in messages)
 
     wallet = AIWalletService.ensure_wallet(tenant)
     assert wallet.notification_state == {'sent_thresholds': [80, 90, 100]}

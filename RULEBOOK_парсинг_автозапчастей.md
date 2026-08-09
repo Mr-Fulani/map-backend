@@ -1,5 +1,13 @@
 # RULEBOOK: Разработка модуля умного парсинга автозапчастей
 
+> [!WARNING]
+> **Исторический design artifact периода enrichment MVP, не текущий rulebook.**
+> Ограничения, branch/deploy flow и этапы ниже сохранены как контекст исходного
+> решения и местами уже превзойдены реализацией. Текущие правила и команды:
+> [README](README.md), [DEV](DEV.md),
+> [deployment](docs/DEPLOYMENT.md) и
+> [release checklist](docs/RELEASE_CHECKLIST.md).
+
 > Этот документ фиксирует правила разработки фичи, чтобы не расползтись в лишнюю архитектуру и не сломать существующий MAP.
 
 ---
@@ -771,7 +779,9 @@ makemigrations --check, если менялись модели
 Минимальный backend-check для этой фичи:
 
 ```text
-docker compose exec backend poetry run pytest apps/products apps/ai_agent apps/image_search
+docker compose --project-name saas_poster --project-directory "$PWD" \
+  -f "$PWD/docker-compose.yml" exec django \
+  python -m pytest apps/products apps/ai_agent apps/image_search
 ```
 
 Если тесты не запускались или часть тестов упала, это нужно явно написать в PR.
