@@ -27,6 +27,13 @@ staticfiles/
 .env.*
 !.env.example
 .deploy.env
+.backup.env
+.restore.env
+backup-signing.env
+*identity*.txt
+restore.env
+!.backup.env.example
+!.restore.env.example
 
 # Docker
 .docker/
@@ -50,3 +57,10 @@ ehthumbs.db
 .pytest_cache/
 htmlcov/
 .mypy_cache/
+
+# Local database dumps and restore-drill artifacts
+backup_*.sql
+backup_*.sql.gz
+*.dump
+*.dump.age
+*.manifest.json

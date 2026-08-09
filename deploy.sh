@@ -17,7 +17,7 @@ fi
 
 COMPOSE_FILE="$ROOT_DIR/docker-compose.prod.yml"
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
-BUILD_SERVICES=(django celery_worker celery_beat celery_worker_images frontend)
+BUILD_SERVICES=(django celery_worker celery_beat celery_worker_images frontend backup)
 APPLICATION_SERVICES=(django celery_worker celery_beat celery_worker_images frontend nginx)
 HEALTH_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
 LOG_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
@@ -28,6 +28,7 @@ PROD_LOG_TAIL="${PROD_LOG_TAIL:-200}"
 PROD_MIN_FREE_DISK_MB="${PROD_MIN_FREE_DISK_MB:-2048}"
 PROD_ROLLBACK_ENABLED="${PROD_ROLLBACK_ENABLED:-true}"
 PROD_BROKER_MIGRATION_CONFIRMED="${PROD_BROKER_MIGRATION_CONFIRMED:-false}"
+PROD_BACKUP_TIMEOUT_SECONDS="${PROD_BACKUP_TIMEOUT_SECONDS:-7200}"
 PROD_SMOKE_URL="${PROD_SMOKE_URL:-}"
 PREVIOUS_SHA="${PREVIOUS_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
 
@@ -93,7 +94,7 @@ rollback_deployment() {
   local exit_code="$1"
   local service rollback_failed=false
 
-  trap - ERR INT TERM
+  trap - ERR HUP INT TERM
   set +e
   echo ""
   echo "==> Деплой прерван на этапе '${DEPLOY_PHASE}' (exit=${exit_code})." >&2
@@ -134,6 +135,7 @@ rollback_deployment() {
 }
 
 trap 'rollback_deployment $?' ERR
+trap 'rollback_deployment 129' HUP
 trap 'rollback_deployment 130' INT
 trap 'rollback_deployment 143' TERM
 
@@ -144,10 +146,10 @@ validate_integer_setting() {
 }
 
 preflight() {
-  local command_name available_kb required_kb
+  local command_name available_kb required_kb secret_file secret_mode
 
   DEPLOY_PHASE="preflight"
-  for command_name in git docker curl flock df awk; do
+  for command_name in git docker curl flock df awk stat timeout; do
     command -v "$command_name" >/dev/null 2>&1 || fail "команда ${command_name} не установлена."
   done
 
@@ -155,6 +157,7 @@ preflight() {
   validate_integer_setting PROD_HEALTH_INTERVAL_SECONDS "$PROD_HEALTH_INTERVAL_SECONDS"
   validate_integer_setting PROD_LOG_TAIL "$PROD_LOG_TAIL"
   validate_integer_setting PROD_MIN_FREE_DISK_MB "$PROD_MIN_FREE_DISK_MB"
+  validate_integer_setting PROD_BACKUP_TIMEOUT_SECONDS "$PROD_BACKUP_TIMEOUT_SECONDS"
   [[ "$PROD_ROLLBACK_ENABLED" == "true" || "$PROD_ROLLBACK_ENABLED" == "false" ]] \
     || fail "PROD_ROLLBACK_ENABLED должен быть true или false."
   [[ "$PROD_BROKER_MIGRATION_CONFIRMED" == "true" ]] \
@@ -174,6 +177,13 @@ preflight() {
     || fail "commit ${TARGET_SHA} не принадлежит актуальной ветке origin/main."
 
   [[ -f "$ROOT_DIR/.env" ]] || fail "отсутствует production-файл .env."
+  [[ -f "$ROOT_DIR/.backup.env" ]] || fail "отсутствует production-файл .backup.env."
+  for secret_file in "$ROOT_DIR/.env" "$ROOT_DIR/.backup.env" "$DEPLOY_ENV_FILE"; do
+    [[ -f "$secret_file" ]] || continue
+    secret_mode="$(stat -c '%a' "$secret_file")"
+    [[ "$secret_mode" == "600" || "$secret_mode" == "400" ]] \
+      || fail "${secret_file} должен иметь права 600 или 400 (сейчас ${secret_mode})."
+  done
   [[ "$PROD_SMOKE_URL" =~ ^https://[^[:space:]]+$ ]] \
     || fail "PROD_SMOKE_URL обязателен и должен быть публичным HTTPS URL."
 
@@ -221,13 +231,20 @@ wait_for_service egress_proxy
 
 DEPLOY_PHASE="application build"
 echo "==> Сборка application-образов до изменения работающих сервисов..."
-"${COMPOSE[@]}" build --pull "${BUILD_SERVICES[@]}"
+"${COMPOSE[@]}" --profile ops build --pull "${BUILD_SERVICES[@]}"
 
 DEPLOY_PHASE="Django pre-deploy checks"
 echo "==> Проверка новой Django-сборки..."
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py check --deploy
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py makemigrations --check --dry-run
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py migrate --plan
+
+DEPLOY_PHASE="pre-migration database backup"
+echo "==> Создание зашифрованного backup перед миграциями..."
+timeout --foreground --signal=TERM --kill-after=60s \
+  "${PROD_BACKUP_TIMEOUT_SECONDS}s" \
+  "${COMPOSE[@]}" --profile ops run --rm --no-deps \
+    -e DEPLOY_GIT_SHA="$TARGET_SHA" backup
 
 DEPLOY_PHASE="database migration"
 echo "==> Применение backward-compatible миграций до запуска нового Django..."
@@ -252,7 +269,7 @@ done
 
 smoke_check
 
-trap - ERR INT TERM
+trap - ERR HUP INT TERM
 echo ""
 echo "==> Деплой ${TARGET_SHA} успешно завершён."
 "${COMPOSE[@]}" ps

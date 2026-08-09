@@ -1,0 +1,19 @@
+[Unit]
+Description=Check freshness of SaaS Poster PostgreSQL backup
+RequiresMountsFor=/opt/saas_poster
+Requires=docker.service
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=saas-poster
+Group=docker
+WorkingDirectory=/opt/saas_poster
+ExecStart=/opt/saas_poster/scripts/production_backup_check.sh
+TimeoutStartSec=10m
+Restart=on-failure
+RestartSec=10m
+
+[Install]
+WantedBy=multi-user.target

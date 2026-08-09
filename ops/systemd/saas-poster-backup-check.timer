@@ -1,0 +1,11 @@
+[Unit]
+Description=Check SaaS Poster backup freshness every hour
+
+[Timer]
+OnCalendar=hourly
+RandomizedDelaySec=5m
+Persistent=true
+Unit=saas-poster-backup-check.service
+
+[Install]
+WantedBy=timers.target

@@ -1,4 +1,4 @@
-.PHONY: up down dev frontend rebuild restart restart-django logs logs-django logs-celery shell migrate migrations test lint seed backup telegram-poll
+.PHONY: up down dev frontend rebuild restart restart-django logs logs-django logs-celery shell migrate migrations test lint seed backup backup-check telegram-poll
 
 up:
 	docker image prune -f > /dev/null 2>&1 || true
@@ -66,4 +66,7 @@ telegram-poll:
 	docker compose exec django python manage.py telegram_poll
 
 backup:
-	docker compose exec db pg_dump -U map_user map_db | gzip > backup_$$(date +%Y%m%d_%H%M%S).sql.gz
+	./scripts/production_backup.sh
+
+backup-check:
+	./scripts/production_backup_check.sh

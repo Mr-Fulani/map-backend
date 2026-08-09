@@ -321,6 +321,8 @@ saas_poster/
 - [x] Transactional webhook outbox, HMAC-подпись, retry и аудит доставок
 - [x] Soft-delete и автоматическая retention-очистка критичных сущностей
 - [x] CI/CD: GitHub Actions (lint + тесты + OpenAPI без предупреждений + gated deploy проверенного commit SHA)
+- [x] Зашифрованные backup PostgreSQL: pre-migration gate, S3 retention,
+      freshness-monitor и проверяемый restore drill
 
 ### 🚧 В планах (Phase 3)
 
@@ -329,7 +331,6 @@ saas_poster/
 - [ ] Расширенная аналитика: A/B тест заголовков, тепловые карты
 - [ ] White-label: кастомный домен и брендинг для Enterprise
 - [ ] Производственная нагрузка: нагрузочное тестирование 50К SKU
-- [ ] Backup/restore: автоматические бэкапы PostgreSQL в S3
 
 ---
 
@@ -363,6 +364,11 @@ make shell
 | `make migrate` | Применить миграции |
 | `make test` | Запустить тесты с coverage |
 | `make lint` | Проверить код (flake8) |
+| `make backup` | Создать зашифрованный production backup (ops profile) |
+| `make backup-check` | Проверить свежесть последнего production backup |
+
+Production runbooks: [security](docs/PRODUCTION_SECURITY.md) и
+[backup/restore](docs/BACKUP_RESTORE.md).
 
 ---
 

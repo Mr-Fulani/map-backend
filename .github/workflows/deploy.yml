@@ -15,7 +15,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 150
     environment:
       name: production
     # Автодеплой включается repo-переменной PROD_DEPLOY_ENABLED=true
@@ -54,7 +54,7 @@ jobs:
           username: ${{ secrets.PROD_USER }}
           key: ${{ secrets.PROD_SSH_KEY }}
           fingerprint: ${{ secrets.PROD_HOST_FINGERPRINT }}
-          command_timeout: 30m
+          command_timeout: 140m
           script: |
             set -eu
             cd /opt/saas_poster

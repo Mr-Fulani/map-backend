@@ -1,0 +1,41 @@
+{
+  "Rules": [
+    {
+      "ID": "expire-daily-database-backups",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "postgres/daily/"},
+      "Expiration": {"Days": 35},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 35},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}
+    },
+    {
+      "ID": "expire-weekly-database-backups",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "postgres/weekly/"},
+      "Expiration": {"Days": 100},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 100},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}
+    },
+    {
+      "ID": "expire-monthly-database-backups",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "postgres/monthly/"},
+      "Expiration": {"Days": 400},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 400},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}
+    },
+    {
+      "ID": "expire-old-latest-manifest-versions",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "postgres/latest.json"},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 35}
+    },
+    {
+      "ID": "expire-old-coverage-markers",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "postgres/coverage/"},
+      "Expiration": {"Days": 800},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 800}
+    }
+  ]
+}

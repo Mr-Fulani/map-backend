@@ -41,6 +41,7 @@ jobs:
       REDIS_URL: redis://localhost:6379/0
       DJANGO_SECRET_KEY: ci-secret-key-for-testing-only
       FIELD_ENCRYPTION_KEY: Y2ktb25seS1mZXJuZXQta2V5LTMyLWJ5dGVzISEhISE=
+      BACKUP_INTEGRATION_DATABASE_URL: postgres://map_user:map_password@localhost:5432/map_db
 
     steps:
       - uses: actions/checkout@v4
@@ -55,8 +56,46 @@ jobs:
       - name: Установить зависимости
         run: pip install -r requirements/dev.txt
 
+      - name: Установить PostgreSQL client и ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y postgresql-client-16 shellcheck
+
       - name: Проверить линтером (flake8)
-        run: flake8 apps/ config/
+        run: >-
+          flake8 apps/ config/ backup/
+          tests/test_backup_tools.py
+          tests/test_backup_postgres_integration.py
+          tests/test_runtime_contract.py
+
+      - name: Проверить production shell-скрипты
+        run: >-
+          shellcheck deploy.sh scripts/backup.sh scripts/restore.sh
+          scripts/check_backup_freshness.sh scripts/production_backup.sh
+          scripts/production_backup_check.sh scripts/production_restore.sh
+
+      - name: Проверить production Compose и собрать backup image
+        env:
+          POSTGRES_DB: map_db
+          POSTGRES_USER: map_user
+          POSTGRES_PASSWORD: map_password
+          CACHE_REDIS_PASSWORD: cache-ci-password
+          CELERY_REDIS_PASSWORD: broker-ci-password
+          DEPLOY_GIT_SHA: ${{ github.sha }}
+          RESTORE_SIGNING_PUBLIC_KEY: ci-public-key-placeholder
+          RESTORE_S3_ACCESS_KEY: ci-read-access
+          RESTORE_S3_SECRET_KEY: ci-read-secret
+        run: |
+          cp .env.example .env
+          cp .backup.env.example .backup.env
+          docker compose -f docker-compose.prod.yml --profile ops config --quiet
+          docker compose -f docker-compose.prod.yml --profile ops build backup
+          cp .restore.env.example .restore.env
+          install -m 600 /dev/null /tmp/backup-age-identity.txt
+          sed -i 's|^RESTORE_AGE_IDENTITY_HOST_FILE=.*|RESTORE_AGE_IDENTITY_HOST_FILE=/tmp/backup-age-identity.txt|' .restore.env
+          docker compose --env-file .restore.env -f docker-compose.restore.yml config --quiet
+          docker compose --env-file .restore.env -f docker-compose.restore.yml build restore
+          rm -f .env .backup.env .restore.env /tmp/backup-age-identity.txt
 
       - name: Проверить незаписанные изменения моделей
         run: python manage.py makemigrations --check --dry-run

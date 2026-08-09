@@ -212,6 +212,30 @@ services:
     networks: [backend]
     stop_grace_period: 60s
 
+  backup:
+    profiles: [ops]
+    init: true
+    restart: "no"
+    logging: *default-logging
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+    env_file:
+      - .backup.env
+    environment:
+      DEPLOY_GIT_SHA: ${DEPLOY_GIT_SHA:-unknown}
+      BACKUP_STATE_DIR: /state
+      <<: *egress-environment
+    depends_on:
+      db:
+        condition: service_healthy
+      egress_proxy:
+        condition: service_started
+    networks: [backend]
+    volumes:
+      - backup_state:/state
+    stop_grace_period: 5m
+
   egress_proxy:
     <<: *runtime-policy
     image: ubuntu/squid:6.6-24.04_edge
@@ -249,6 +273,7 @@ services:
 volumes:
   postgres_data:
   redis_broker_data:
+  backup_state:
   static_volume:
 
 networks:

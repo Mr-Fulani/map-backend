@@ -11,6 +11,11 @@ Production settings останавливают запуск при отсутс�
   `CELERY_RESULT_BACKEND` и `COORDINATION_REDIS_URL` для durable Redis;
 - `FIELD_ENCRYPTION_KEYS` либо `FIELD_ENCRYPTION_KEY` с валидным Fernet-ключом;
 - `ALLOWED_HOSTS`, `CSRF_TRUSTED_ORIGINS`, HTTPS `SITE_URL` и `FRONTEND_URL`.
+- отдельный `.backup.env` с read-only DB role, S3 credentials без права удаления,
+  публичными `BACKUP_AGE_RECIPIENTS` и Ed25519 signing key; private age identity
+  на production отсутствует.
+- отдельный recovery-only `restore.env` с временными S3 read-only credentials,
+  trusted Ed25519 public key и age identity; `.backup.env` для restore запрещён.
 
 Генерация значений без сохранения в shell history:
 
@@ -138,8 +143,8 @@ reviewers и определить:
    Compose-конфигурацию, доступность Docker и запас диска;
 2. сохраняет image ID текущего release и собирает новый до переключения web/worker
    процессов;
-3. выполняет `check --deploy`, migration plan и миграции в one-shot контейнере до
-   запуска нового Django;
+3. выполняет `check --deploy`, migration plan и обязательный зашифрованный S3
+   backup; только после его успеха применяет миграции в one-shot контейнере;
 4. ждёт readiness всех сервисов и проверяет публичный HTTPS endpoint;
 5. при ошибке возвращает application-сервисы на предыдущие сохранённые образы.
 
@@ -147,4 +152,5 @@ reviewers и определить:
 ресурсы других Compose-проектов на том же хосте. Миграции БД автоматически не
 откатываются, поэтому production-миграции должны следовать expand/contract-подходу
 и оставаться совместимыми с предыдущей версией приложения. Ошибка pre-deploy
-backup в дальнейшем должна блокировать миграцию.
+backup блокирует миграцию. Полная настройка, retention и ежемесячный restore drill:
+[`BACKUP_RESTORE.md`](BACKUP_RESTORE.md).
