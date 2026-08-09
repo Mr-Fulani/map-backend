@@ -17,6 +17,7 @@ def sync_all_tenants():
 
     connections = DataSourceConnection.objects.filter(
         tenant__is_active=True,
+        is_active=True,
     ).values_list('pk', flat=True)
 
     for conn_id in connections:

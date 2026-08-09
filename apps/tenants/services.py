@@ -1,5 +1,8 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.utils import timezone
 
 from apps.tenants.models import APIKey, Tenant, TenantUser
 
@@ -33,7 +36,14 @@ class TenantService:
             role=TenantUser.ROLE_OWNER,
         )
 
-        _, plaintext = APIKey.generate(tenant=tenant, name='Default Key')
+        _, plaintext = APIKey.generate(
+            tenant=tenant,
+            name='Registration Read-only Key',
+            role=APIKey.ROLE_VIEWER,
+            scopes=['tenant:read'],
+            expires_at=timezone.now() + timedelta(days=1),
+            created_by=user,
+        )
 
         from apps.billing.services import BillingService
         BillingService.start_trial(tenant)
@@ -74,15 +84,40 @@ class APIKeyService:
     """Сервис управления API-ключами тенанта."""
 
     @staticmethod
-    def create_key(tenant: Tenant, name: str) -> tuple[APIKey, str]:
+    def create_key(
+        tenant: Tenant,
+        name: str,
+        *,
+        role: str,
+        scopes: list[str],
+        expires_at,
+        created_by,
+    ) -> tuple[APIKey, str]:
         """
         Создаёт новый API Key.
 
         Возвращает (объект APIKey, plaintext). Plaintext показывается только здесь.
         """
-        return APIKey.generate(tenant=tenant, name=name)
+        return APIKey.generate(
+            tenant=tenant,
+            name=name,
+            role=role,
+            scopes=scopes,
+            expires_at=expires_at,
+            created_by=created_by,
+        )
 
     @staticmethod
-    def revoke_key(key_id: int, tenant: Tenant) -> None:
+    def revoke_key(key_id: int, tenant: Tenant, *, revoked_by=None) -> None:
         """Деактивирует API Key. Проверяет принадлежность тенанту."""
-        APIKey.objects.filter(pk=key_id, tenant=tenant).update(is_active=False)
+        from django.utils import timezone
+
+        APIKey.objects.filter(
+            pk=key_id,
+            tenant=tenant,
+            is_active=True,
+        ).update(
+            is_active=False,
+            revoked_at=timezone.now(),
+            revoked_by=revoked_by,
+        )

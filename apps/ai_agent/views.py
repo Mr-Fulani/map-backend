@@ -3,7 +3,7 @@ from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from apps.tenants.api_views import AIAPIView as APIView
 
 from apps.ai_agent.models import (
     AIModel, AIRequestLog, AITaskType, TenantAITaskModel,
@@ -70,6 +70,8 @@ _AI_USAGE_LIST_RESPONSE = inline_serializer(
 
 
 def _can_manage_ai(request) -> bool:
+    if getattr(request.user, 'is_api_key', False):
+        return False
     return TenantUser.objects.filter(
         tenant=request.tenant,
         user=request.user,
@@ -80,6 +82,7 @@ def _can_manage_ai(request) -> bool:
 @extend_schema(tags=['AI'])
 class AIModelListView(APIView):
     permission_classes = [IsAuthenticated]
+    api_key_enabled = True
 
     @extend_schema(
         summary='Список доступных AI-моделей',
@@ -96,6 +99,7 @@ class AIModelListView(APIView):
 @extend_schema(tags=['AI'])
 class AISettingsView(APIView):
     permission_classes = [IsAuthenticated]
+    api_key_scopes = {}
 
     @extend_schema(
         summary='Получить настройки AI-моделей',
@@ -241,6 +245,7 @@ class AISettingsView(APIView):
 @extend_schema(tags=['AI'])
 class AIUsageListView(APIView):
     permission_classes = [IsAuthenticated]
+    api_key_enabled = True
 
     @extend_schema(
         summary='История использования AI',

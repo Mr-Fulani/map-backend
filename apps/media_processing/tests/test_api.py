@@ -7,11 +7,50 @@ from django.test import Client
 from apps.media_processing.models import (
     MediaProcessingJob,
     MediaProcessingPreset,
+    MediaProviderPolicy,
     ProductImageVariant,
     TenantMediaSettings,
 )
+from apps.media_processing.providers.base import (
+    BaseMediaProvider,
+    MediaOperation,
+    MediaProviderRequest,
+    MediaProviderResult,
+)
+from apps.media_processing.providers.registry import (
+    clear_media_provider_registry,
+    register_media_provider,
+)
 from apps.products.models import Product, ProductImage
 from apps.tenants.services import TenantService
+from apps.tenants.models import TenantUser
+from apps.tenants.tests.auth import (
+    create_operator_key,
+    membership_access_token,
+    owner_client,
+)
+
+
+class APIProvider(BaseMediaProvider):
+    provider_id = 'api-provider'
+    supported_operations = frozenset({MediaOperation.RESIZE})
+
+    def process(self, request: MediaProviderRequest) -> MediaProviderResult:
+        raise AssertionError('API tests must not execute queued media jobs')
+
+
+@pytest.fixture(autouse=True)
+def configured_api_provider(db):
+    clear_media_provider_registry()
+    register_media_provider(APIProvider)
+    policy = MediaProviderPolicy.objects.create(
+        provider_id=APIProvider.provider_id,
+        display_name='API provider',
+        capabilities=['resize'],
+        operation_credit_costs={'resize': 0},
+    )
+    yield policy
+    clear_media_provider_registry()
 
 
 @pytest.fixture
@@ -19,6 +58,7 @@ def media_tenant(db):
     tenant, api_key = TenantService.create_tenant(
         'Media API', 'media-api', 'media-api@test.com', 'pass12345',
     )
+    api_key = create_operator_key(tenant)
     return tenant, Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
 
 
@@ -55,6 +95,102 @@ def test_process_endpoint_creates_provider_neutral_job(media_tenant, media_image
     job = MediaProcessingJob.objects.get(pk=response.json()['data']['id'])
     assert job.provider_id == ''
     assert job.operations == ['resize']
+
+
+@pytest.mark.django_db
+def test_process_endpoint_enqueues_an_idempotent_job_only_once(media_tenant, media_image):
+    _, client = media_tenant
+    payload = json.dumps({
+        'operations': ['resize'],
+        'idempotency_key': 'media-idempotency-501',
+    })
+
+    with patch('apps.media_processing.views.transaction.on_commit') as on_commit:
+        first = client.post(
+            f'/api/v1/products/{media_image.product_id}/images/{media_image.pk}/process/',
+            data=payload,
+            content_type='application/json',
+        )
+        second = client.post(
+            f'/api/v1/products/{media_image.product_id}/images/{media_image.pk}/process/',
+            data=payload,
+            content_type='application/json',
+        )
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert first.json()['data']['id'] == second.json()['data']['id']
+    assert MediaProcessingJob.objects.count() == 1
+    on_commit.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_process_endpoint_rejects_duplicate_operations_before_enqueue(
+    media_tenant,
+    media_image,
+):
+    _, client = media_tenant
+
+    with patch('apps.media_processing.views.transaction.on_commit') as on_commit:
+        response = client.post(
+            f'/api/v1/products/{media_image.product_id}/images/{media_image.pk}/process/',
+            data=json.dumps({'operations': ['resize', 'resize']}),
+            content_type='application/json',
+        )
+
+    assert response.status_code == 400
+    assert MediaProcessingJob.objects.count() == 0
+    on_commit.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_process_endpoint_rejects_explicit_disabled_provider_before_enqueue(
+    media_tenant,
+    media_image,
+    configured_api_provider,
+):
+    _, client = media_tenant
+    configured_api_provider.is_active = False
+    configured_api_provider.save(update_fields=['is_active', 'updated_at'])
+
+    with patch('apps.media_processing.views.transaction.on_commit') as on_commit:
+        response = client.post(
+            f'/api/v1/products/{media_image.product_id}/images/{media_image.pk}/process/',
+            data=json.dumps({
+                'operations': ['resize'],
+                'provider_id': APIProvider.provider_id,
+            }),
+            content_type='application/json',
+        )
+
+    assert response.status_code == 400
+    assert MediaProcessingJob.objects.count() == 0
+    on_commit.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_preset_endpoint_rejects_denied_provider_preference(
+    media_tenant,
+    configured_api_provider,
+):
+    _, client = media_tenant
+    configured_api_provider.capabilities = []
+    configured_api_provider.save(update_fields=['capabilities', 'updated_at'])
+
+    response = client.post(
+        '/api/v1/media/presets/',
+        data=json.dumps({
+            'name': 'Unsafe preference',
+            'slug': 'unsafe-preference',
+            'operations': ['resize'],
+            'provider_preferences': [APIProvider.provider_id],
+        }),
+        content_type='application/json',
+    )
+
+    assert response.status_code == 400
+    assert 'provider_preferences' in json.dumps(response.json())
+    assert not MediaProcessingPreset.objects.filter(slug='unsafe-preference').exists()
 
 
 @pytest.mark.django_db
@@ -98,7 +234,8 @@ def test_process_endpoint_hides_another_tenants_image(media_tenant, db):
 
 @pytest.mark.django_db
 def test_media_settings_reject_another_tenants_preset(media_tenant, db):
-    _, client = media_tenant
+    tenant, _ = media_tenant
+    client = owner_client(tenant)
     other_tenant, _ = TenantService.create_tenant(
         'Preset Owner', 'preset-owner', 'preset-owner@test.com', 'pass12345',
     )
@@ -117,6 +254,33 @@ def test_media_settings_reject_another_tenants_preset(media_tenant, db):
 
     assert response.status_code == 400
     assert TenantMediaSettings.objects.get(tenant=media_tenant[0]).default_preset is None
+
+
+@pytest.mark.django_db
+def test_media_settings_require_human_admin(media_tenant):
+    tenant, _ = media_tenant
+    membership = TenantService.add_user(
+        tenant,
+        'media-operator@test.com',
+        TenantUser.ROLE_OPERATOR,
+    )
+    operator = Client(HTTP_AUTHORIZATION=(
+        f'Bearer {membership_access_token(membership)}'
+    ))
+
+    forbidden = operator.patch(
+        '/api/v1/media/settings/',
+        data=json.dumps({'auto_process_manual_uploads': True}),
+        content_type='application/json',
+    )
+    allowed = owner_client(tenant).patch(
+        '/api/v1/media/settings/',
+        data=json.dumps({'auto_process_manual_uploads': True}),
+        content_type='application/json',
+    )
+
+    assert forbidden.status_code == 403
+    assert allowed.status_code == 200
 
 
 @pytest.mark.django_db

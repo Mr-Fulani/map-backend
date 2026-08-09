@@ -14,6 +14,7 @@ from apps.tenants.models import (
     APIKey, CatalogDomain, TenantCatalogDomain, WEBHOOK_EVENTS, WebhookEndpoint,
 )
 from apps.tenants.permissions import (
+    HumanUserOnly,
     TenantAdminPermission,
     TenantAdminWritePermission,
 )
@@ -115,7 +116,10 @@ class RegisterView(APIView):
                 'tenant': TenantSerializer(tenant).data,
                 # Показываем plaintext ключ только один раз
                 'api_key': plaintext,
-                'warning': 'Сохраните API Key — он больше не будет показан.',
+                'warning': (
+                    'Временный read-only API Key действует 24 часа. '
+                    'Создайте scoped integration key в настройках организации.'
+                ),
             },
         }, status=status.HTTP_201_CREATED)
 
@@ -125,6 +129,12 @@ class TenantDetailView(APIView):
     """GET /api/v1/tenant/ — информация о текущем тенанте."""
 
     permission_classes = [IsAuthenticated]
+    api_key_enabled = True
+    api_key_scopes = {
+        'GET': {'tenant:read'},
+        'HEAD': {'tenant:read'},
+        'OPTIONS': {'tenant:read'},
+    }
 
     @extend_schema(responses={200: _success_response('TenantDetailResponse', TenantSerializer())})
     def get(self, request):
@@ -222,7 +232,7 @@ class CatalogDomainListView(APIView):
 class TenantUserListView(APIView):
     """GET /api/v1/tenant/users/ — список пользователей тенанта."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HumanUserOnly]
 
     @extend_schema(responses={
         200: _success_response('TenantUserListResponse', TenantUserSerializer(many=True)),
@@ -239,7 +249,7 @@ class TenantUserListView(APIView):
 class APIKeyListView(APIView):
     """GET /api/v1/tenant/api-keys/ — список API ключей. POST — создать новый."""
 
-    permission_classes = [IsAuthenticated, TenantAdminPermission]
+    permission_classes = [IsAuthenticated, HumanUserOnly, TenantAdminPermission]
 
     @extend_schema(responses={
         200: _success_response('APIKeyListResponse', APIKeySerializer(many=True)),
@@ -264,6 +274,10 @@ class APIKeyListView(APIView):
         api_key, plaintext = APIKeyService.create_key(
             tenant=request.tenant,
             name=serializer.validated_data['name'],
+            role=serializer.validated_data['role'],
+            scopes=serializer.validated_data['scopes'],
+            expires_at=serializer.validated_data['expires_at'],
+            created_by=request.user,
         )
 
         return Response({
@@ -280,14 +294,18 @@ class APIKeyListView(APIView):
 class APIKeyRevokeView(APIView):
     """DELETE /api/v1/tenant/api-keys/{id}/ — отозвать ключ."""
 
-    permission_classes = [IsAuthenticated, TenantAdminPermission]
+    permission_classes = [IsAuthenticated, HumanUserOnly, TenantAdminPermission]
 
     @extend_schema(
         request=None,
         responses={200: _success_response('APIKeyRevokeResponse')},
     )
     def delete(self, request, key_id):
-        APIKeyService.revoke_key(key_id=key_id, tenant=request.tenant)
+        APIKeyService.revoke_key(
+            key_id=key_id,
+            tenant=request.tenant,
+            revoked_by=request.user,
+        )
         return Response({'status': 'ok'}, status=status.HTTP_200_OK)
 
 
@@ -497,7 +515,7 @@ class MeView(APIView):
     Используется фронтендом для восстановления auth-состояния после refresh.
     """
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HumanUserOnly]
 
     @extend_schema(responses={200: _success_response('MeResponse', _me_data)})
     def get(self, request):

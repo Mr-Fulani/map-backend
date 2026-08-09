@@ -196,7 +196,9 @@ class TestSyncLogAPI:
         from apps.tenants.models import APIKey
 
         tenant = make_tenant('logs-api')
-        api_key, raw_key = APIKey.generate(tenant, 'test')
+        api_key, raw_key = APIKey.generate(
+            tenant, 'test', scopes=['sync:read'],
+        )
         SyncLog.objects.create(
             tenant=tenant, event_type=SyncLog.EVENT_LISTING_PUBLISH,
             status=SyncLog.STATUS_OK, message='ok',
@@ -213,7 +215,9 @@ class TestSyncLogAPI:
         from apps.tenants.models import APIKey
 
         tenant = make_tenant('logs-filter')
-        api_key, raw_key = APIKey.generate(tenant, 'test')
+        api_key, raw_key = APIKey.generate(
+            tenant, 'test', scopes=['sync:read'],
+        )
         SyncLog.objects.create(
             tenant=tenant, event_type=SyncLog.EVENT_LISTING_PUBLISH,
             status=SyncLog.STATUS_OK, message='ok',
@@ -235,7 +239,9 @@ class TestSyncLogAPI:
 
         t1 = make_tenant('iso-logs-1')
         t2 = make_tenant('iso-logs-2')
-        _, raw_key1 = APIKey.generate(t1, 'test')
+        _, raw_key1 = APIKey.generate(
+            t1, 'test', scopes=['sync:read'],
+        )
 
         SyncLog.objects.create(
             tenant=t1, event_type=SyncLog.EVENT_BILLING,

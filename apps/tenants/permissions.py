@@ -11,6 +11,9 @@ def _membership(request):
     tenant = getattr(request, 'tenant', None)
     user = getattr(request, 'user', None)
     membership = None
+    if getattr(user, 'is_api_key', False):
+        request._tenant_membership = None
+        return None
     if tenant is not None and user is not None and user.is_authenticated:
         membership = TenantUser.objects.filter(
             tenant=tenant,
@@ -26,6 +29,14 @@ class TenantRolePermission(BasePermission):
     message = 'Недостаточно прав для выполнения операции.'
 
     def has_permission(self, request, view):
+        principal = getattr(request, 'user', None)
+        if getattr(principal, 'is_api_key', False):
+            tenant = getattr(request, 'tenant', None)
+            if tenant is None or principal.tenant_id != tenant.pk:
+                return False
+            if request.method in SAFE_METHODS:
+                return True
+            return principal.can_write()
         membership = _membership(request)
         if membership is None:
             return False
@@ -66,3 +77,17 @@ class TenantOwnerPermission(BasePermission):
     def has_permission(self, request, view):
         membership = _membership(request)
         return bool(membership and membership.can_manage_billing())
+
+
+class HumanUserOnly(BasePermission):
+    """Credential/profile/admin actions must never accept machine principals."""
+
+    message = 'Операция доступна только пользователю, вошедшему по JWT.'
+
+    def has_permission(self, request, view):
+        user = getattr(request, 'user', None)
+        return bool(
+            user
+            and user.is_authenticated
+            and not getattr(user, 'is_api_key', False)
+        )

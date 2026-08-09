@@ -1,8 +1,12 @@
+from datetime import timedelta
+
 from django.contrib.auth import get_user_model
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.tenants.models import (
-    APIKey, CatalogDomain, Tenant, TenantUser, WEBHOOK_EVENTS,
+    APIKey, API_KEY_SCOPE_CHOICES, API_KEY_SCOPES, API_KEY_WRITE_SCOPES,
+    CatalogDomain, Tenant, TenantUser, WEBHOOK_EVENTS,
     WebhookDelivery, WebhookEndpoint,
 )
 
@@ -84,12 +88,50 @@ class TenantUserSerializer(serializers.ModelSerializer):
 class APIKeySerializer(serializers.ModelSerializer):
     class Meta:
         model = APIKey
-        fields = ['id', 'name', 'key_prefix', 'is_active', 'last_used_at', 'created_at']
-        read_only_fields = ['id', 'key_prefix', 'last_used_at', 'created_at']
+        fields = [
+            'id', 'name', 'key_prefix', 'role', 'scopes', 'is_active',
+            'expires_at', 'revoked_at', 'last_used_at', 'created_at',
+        ]
+        read_only_fields = fields
 
 
 class APIKeyCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=100)
+    role = serializers.ChoiceField(
+        choices=APIKey.ROLE_CHOICES,
+        default=APIKey.ROLE_VIEWER,
+    )
+    scopes = serializers.ListField(
+        child=serializers.ChoiceField(choices=API_KEY_SCOPE_CHOICES),
+        required=False,
+    )
+    expires_in_days = serializers.IntegerField(
+        min_value=1,
+        max_value=365,
+        default=90,
+    )
+
+    def validate(self, attrs):
+        scopes = attrs.get('scopes')
+        if scopes is None:
+            from apps.tenants.models import default_api_key_scopes
+            scopes = default_api_key_scopes()
+        if len(scopes) != len(set(scopes)):
+            raise serializers.ValidationError({'scopes': 'Scopes must be unique.'})
+        if set(scopes) - API_KEY_SCOPES:
+            raise serializers.ValidationError({'scopes': 'Unknown scope.'})
+        if (
+            attrs['role'] == APIKey.ROLE_VIEWER
+            and API_KEY_WRITE_SCOPES.intersection(scopes)
+        ):
+            raise serializers.ValidationError({
+                'scopes': 'Viewer API key cannot receive write scopes.',
+            })
+        attrs['scopes'] = sorted(scopes)
+        attrs['expires_at'] = timezone.now() + timedelta(
+            days=attrs.pop('expires_in_days')
+        )
+        return attrs
 
 
 class APIKeyCreatedSerializer(APIKeySerializer):

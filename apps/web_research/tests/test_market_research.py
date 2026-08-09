@@ -3,6 +3,7 @@ from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
+from django.core.cache.backends.locmem import LocMemCache
 from django.test import Client
 from django.utils.timezone import now
 
@@ -10,6 +11,10 @@ from apps.marketplaces.models import Listing, MarketplaceAccount
 from apps.products.models import Product
 from apps.tenants.models import TenantUser
 from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import (
+    create_tenant_with_operator_key,
+    owner_client as make_owner_client,
+)
 from apps.web_research.market import _difference, listing_market_comparison
 from apps.web_research.models import (
     CompetitorOffer, TenantWebResearchSettings, WebResearchEvidence, WebResearchRun,
@@ -19,8 +24,19 @@ from apps.web_research.prompts import WEB_RESEARCH_OUTPUT_SCHEMA
 from apps.web_research.search_context import build_search_contexts, localize_query
 
 
+@pytest.fixture(autouse=True)
+def local_expensive_start_cache(monkeypatch, request):
+    from apps.core import throttling
+
+    cache = LocMemCache(f'market-research-start-{request.node.nodeid}', {})
+    monkeypatch.setattr(throttling, 'coordination_cache', cache)
+    monkeypatch.setattr(throttling.PrincipalScopedRateThrottle, 'cache', cache)
+    monkeypatch.setattr(throttling.TenantScopedRateThrottle, 'cache', cache)
+    return cache
+
+
 def make_tenant(slug):
-    return TenantService.create_tenant(
+    return create_tenant_with_operator_key(
         slug, slug, f'{slug}@test.com', 'pass12345',
     )
 
@@ -186,12 +202,12 @@ def test_unconfirmed_offer_is_excluded_from_market_statistics():
 
 @pytest.mark.django_db
 def test_settings_are_tenant_scoped_and_operator_cannot_update():
-    tenant_a, api_key_a = make_tenant('settings-a')
+    tenant_a, _ = make_tenant('settings-a')
     tenant_b, _ = make_tenant('settings-b')
     TenantWebResearchSettings.objects.create(
         tenant=tenant_b, region_preset='worldwide', price_ttl_hours=72,
     )
-    owner_client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key_a}')
+    owner_client = make_owner_client(tenant_a)
 
     response = owner_client.put(
         '/api/v1/web-research/settings/',

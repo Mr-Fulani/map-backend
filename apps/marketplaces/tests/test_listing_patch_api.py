@@ -15,12 +15,13 @@ from apps.marketplaces.models import Listing, MarketplaceAccount, MarketplacePla
 from apps.marketplaces.price_utils import compute_price, effective_margin
 from apps.marketplaces.services import ListingService
 from apps.products.models import Product, TenantCatalogCategory
-from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import create_tenant_with_operator_key
 
 
 def make_tenant(slug):
-    tenant, key = TenantService.create_tenant(slug, slug, f'{slug}@test.com', 'pass12345')
-    return tenant, key
+    return create_tenant_with_operator_key(
+        slug, slug, f'{slug}@test.com', 'pass12345',
+    )
 
 
 def make_account(tenant):

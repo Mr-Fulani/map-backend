@@ -13,7 +13,7 @@ from rest_framework import serializers
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from apps.tenants.api_views import ListingsAPIView as APIView
 
 from apps.marketplaces.models import (
     CategoryMapping,
@@ -521,6 +521,8 @@ class ListingListView(APIView):
         account  — id аккаунта MarketplaceAccount
     """
 
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='marketplace_listing_list',
         parameters=[
@@ -591,6 +593,8 @@ class ListingDetailView(APIView):
     GET  /api/v1/listings/{id}/ — детали листинга с AI-полями и фотографиями.
     PATCH /api/v1/listings/{id}/ — обновить title / description_ai.
     """
+
+    api_key_enabled = True
 
     @extend_schema(
         operation_id='marketplace_listing_retrieve',
@@ -665,6 +669,8 @@ class ListingDetailView(APIView):
 class ListingBulkPlacementView(APIView):
     """POST /api/v1/listings/bulk-placement/ — массово назначить адресные поля."""
 
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='marketplace_listing_bulk_placement',
         request=ListingBulkPlacementSerializer,
@@ -693,6 +699,8 @@ class ListingBulkPlacementView(APIView):
 @extend_schema(tags=['Listings'])
 class ListingBulkActionView(APIView):
     """POST /api/v1/listings/bulk-actions/ — массовые действия с листингами."""
+
+    api_key_enabled = True
 
     @extend_schema(
         operation_id='marketplace_listing_bulk_action',
@@ -730,6 +738,8 @@ class ListingBulkActionView(APIView):
 class ListingApproveView(APIView):
     """POST /api/v1/listings/{id}/approve/ — одобрить листинг requires_review и опубликовать."""
 
+    api_key_scopes = {}
+
     @extend_schema(
         operation_id='marketplace_listing_approve',
         request=None,
@@ -753,6 +763,8 @@ class ListingApproveView(APIView):
 @extend_schema(tags=['Listings'])
 class ListingRefreshBrandCatalogView(APIView):
     """POST — внепланово обновить справочник Avito и повторно проверить бренд."""
+
+    api_key_scopes = {}
 
     @extend_schema(
         operation_id='marketplace_listing_refresh_brand_catalog',
@@ -787,6 +799,8 @@ class ListingRefreshBrandCatalogView(APIView):
 class ListingPublishView(APIView):
     """POST /api/v1/listings/{id}/publish/ — опубликовать черновик/отклонённый/архивный листинг."""
 
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='marketplace_listing_publish',
         request=None,
@@ -811,6 +825,8 @@ class ListingPublishView(APIView):
 class ListingArchiveView(APIView):
     """POST /api/v1/listings/{id}/archive/ — снять объявление с публикации."""
 
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='marketplace_listing_archive',
         request=None,
@@ -834,6 +850,8 @@ class ListingArchiveView(APIView):
 class ListingDeleteView(APIView):
     """POST /api/v1/listings/{id}/delete/ — удалить объявление через feed Remove."""
 
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='marketplace_listing_delete',
         request=None,
@@ -856,6 +874,8 @@ class ListingDeleteView(APIView):
 @extend_schema(tags=['Listings'])
 class ListingCheckStatusView(APIView):
     """POST /api/v1/listings/{id}/check-status/ — вручную проверить статус Avito feed."""
+
+    api_key_enabled = True
 
     @extend_schema(
         operation_id='marketplace_listing_check_status',
@@ -887,6 +907,12 @@ class ListingCheckStatusView(APIView):
 @extend_schema(tags=['Listings'])
 class ListingRegenerateView(APIView):
     """POST /api/v1/listings/{id}/regenerate/ — перегенерировать AI-описание."""
+
+    api_key_enabled = True
+    api_key_scopes = {'POST': {
+        'catalog:write', 'listings:write', 'ai:run',
+        'research:run', 'media:write',
+    }}
 
     @extend_schema(
         operation_id='marketplace_listing_regenerate',
@@ -927,6 +953,8 @@ class AnalyticsView(APIView):
         date_from — YYYY-MM-DD (по умолчанию 30 дней назад)
         date_to   — YYYY-MM-DD (по умолчанию сегодня)
     """
+
+    api_key_enabled = True
 
     @extend_schema(
         operation_id='marketplace_analytics_retrieve',

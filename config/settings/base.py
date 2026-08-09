@@ -397,6 +397,12 @@ REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
     ],
+    'DEFAULT_THROTTLE_RATES': {
+        'expensive_image_principal': '6/min',
+        'expensive_image_tenant': '12/min',
+        'expensive_research_principal': '3/min',
+        'expensive_research_tenant': '6/min',
+    },
     'EXCEPTION_HANDLER': 'apps.core.exceptions.map_exception_handler',
 }
 
@@ -529,6 +535,15 @@ MOONSHOT_API_KEY = os.environ.get('MOONSHOT_API_KEY', '')
 # --- Image Search ---
 BRAVE_SEARCH_API_KEY = os.environ.get('BRAVE_SEARCH_API_KEY', '')
 TAVILY_API_KEY = os.environ.get('TAVILY_API_KEY', '')
+IMAGE_SEARCH_BULK_MAX_PRODUCTS = max(
+    1, int(os.environ.get('IMAGE_SEARCH_BULK_MAX_PRODUCTS', '25')),
+)
+IMAGE_SEARCH_TENANT_DAILY_JOBS = max(
+    1, int(os.environ.get('IMAGE_SEARCH_TENANT_DAILY_JOBS', '100')),
+)
+WEB_RESEARCH_TENANT_DAILY_STARTS = max(
+    1, int(os.environ.get('WEB_RESEARCH_TENANT_DAILY_STARTS', '30')),
+)
 WEB_RESEARCH_AUTO_FALLBACK = os.environ.get(
     'WEB_RESEARCH_AUTO_FALLBACK', 'true',
 ).lower() in {'1', 'true', 'yes'}

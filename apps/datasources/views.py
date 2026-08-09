@@ -143,7 +143,11 @@ class DataSourceSyncView(APIView):
         from apps.products.tasks import import_from_datasource
 
         try:
-            conn = DataSourceConnection.objects.get(pk=pk, tenant=request.tenant)
+            conn = DataSourceConnection.objects.get(
+                pk=pk,
+                tenant=request.tenant,
+                is_active=True,
+            )
         except DataSourceConnection.DoesNotExist:
             return Response(
                 {'status': 'error', 'code': 'not_found', 'message': 'Источник данных не найден'},

@@ -10,6 +10,7 @@ from apps.users.serializers import (
     ProfileUpdateSerializer,
 )
 from apps.users.services import ProfileService
+from apps.tenants.permissions import HumanUserOnly
 
 
 _PROFILE_UPDATE_RESPONSE = inline_serializer(
@@ -42,7 +43,7 @@ _PROFILE_MESSAGE_RESPONSE = inline_serializer(
 class UpdateProfileView(APIView):
     """PATCH /api/v1/auth/profile/ — обновить телефон текущего пользователя."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HumanUserOnly]
 
     @extend_schema(
         request=ProfileUpdateSerializer,
@@ -63,7 +64,7 @@ class UpdateProfileView(APIView):
 class ChangePasswordView(APIView):
     """POST /api/v1/auth/change-password/ — сменить пароль."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HumanUserOnly]
 
     @extend_schema(
         request=ChangePasswordSerializer,
@@ -91,7 +92,7 @@ class ChangePasswordView(APIView):
 class ChangeEmailRequestView(APIView):
     """POST /api/v1/auth/change-email/ — запросить смену email (шлёт письмо на новый адрес)."""
 
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, HumanUserOnly]
 
     @extend_schema(
         request=ChangeEmailSerializer,

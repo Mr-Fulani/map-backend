@@ -9,11 +9,13 @@ from apps.products.models import Product, ProductCatalogClassification, TenantCa
 from apps.products.services import ProductEnrichmentService
 from apps.products.tasks import reclassify_products_for_categories
 from apps.tenants.models import CatalogDomain, TenantCatalogDomain
-from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import create_tenant_with_operator_key
 
 
 def _tenant(slug):
-    tenant, api_key = TenantService.create_tenant(slug, slug, f'{slug}@test.com', 'pass12345')
+    tenant, api_key = create_tenant_with_operator_key(
+        slug, slug, f'{slug}@test.com', 'pass12345',
+    )
     domain, _ = CatalogDomain.objects.get_or_create(slug='auto_parts', defaults={'name': 'Автозапчасти'})
     TenantCatalogDomain.objects.get_or_create(tenant=tenant, domain=domain, defaults={'is_enabled': True})
     return tenant, api_key, domain

@@ -15,14 +15,15 @@ from apps.datasources.models import DataSourceConnection
 from apps.marketplaces.models import Listing, ListingStats, MarketplaceAccount
 from apps.marketplaces.services import StatsService
 from apps.products.models import Product
-from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import create_tenant_with_operator_key
 
 
 # ── Фикстуры ────────────────────────────────────────────────────────────────────
 
 def make_tenant(slug):
-    tenant, api_key = TenantService.create_tenant(slug, slug, f'{slug}@test.com', 'pass12345')
-    return tenant, api_key
+    return create_tenant_with_operator_key(
+        slug, slug, f'{slug}@test.com', 'pass12345',
+    )
 
 
 def make_account(tenant, external_id='111222333'):

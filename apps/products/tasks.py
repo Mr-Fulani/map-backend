@@ -31,9 +31,16 @@ def _write_sync_log(tenant, event_type: str, status: str, message: str) -> None:
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='sync_import')
 def import_from_datasource(self, connection_id: int):
     try:
-        connection = DataSourceConnection.objects.select_related('tenant').get(pk=connection_id)
+        connection = DataSourceConnection.objects.select_related('tenant').get(
+            pk=connection_id,
+            is_active=True,
+            tenant__is_active=True,
+        )
     except DataSourceConnection.DoesNotExist:
-        return {'error': f'Connection {connection_id} not found'}
+        return {
+            'skipped': True,
+            'reason': 'connection_not_found_or_inactive',
+        }
 
     tenant = connection.tenant
     from apps.billing.services import LimitChecker

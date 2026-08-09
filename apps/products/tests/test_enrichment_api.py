@@ -13,11 +13,13 @@ from apps.products.models import (
 )
 from apps.products.services import ProductEnrichmentService, ProductKnowledgeGraphService
 from apps.tenants.models import CatalogDomain
-from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import create_tenant_with_operator_key, owner_client
 
 
 def make_tenant(slug, catalog_domain='auto_parts'):
-    tenant, api_key = TenantService.create_tenant(slug, slug, f'{slug}@test.com', 'pass12345')
+    tenant, api_key = create_tenant_with_operator_key(
+        slug, slug, f'{slug}@test.com', 'pass12345',
+    )
     tenant.catalog_domain = catalog_domain
     tenant.save(update_fields=['catalog_domain'])
     from apps.products.services import ProductCategorySeedService
@@ -39,7 +41,7 @@ def make_product(tenant, article='P50136', brand='BREMBO', name=None, category_1
 
 @pytest.mark.django_db
 def test_approved_web_brand_fact_updates_product_identity():
-    tenant, api_key = make_tenant('approve-web-brand')
+    tenant, _ = make_tenant('approve-web-brand')
     product = make_product(tenant, brand='', name='Фонарь Kia Optima')
     fact = ProductEnrichmentFact.objects.create(
         tenant=tenant,
@@ -50,7 +52,7 @@ def test_approved_web_brand_fact_updates_product_identity():
         value='OEM',
         needs_review=True,
     )
-    client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
+    client = owner_client(tenant)
 
     response = client.post(
         f'/api/v1/products/{product.pk}/enrichment-facts/{fact.pk}/approve/',
@@ -65,7 +67,7 @@ def test_approved_web_brand_fact_updates_product_identity():
 
 @pytest.mark.django_db
 def test_approved_web_oem_fact_creates_trusted_cross_code():
-    tenant, api_key = make_tenant('approve-web-oem')
+    tenant, _ = make_tenant('approve-web-oem')
     product = make_product(tenant, article='P50136', brand='BREMBO')
     fact = ProductEnrichmentFact.objects.create(
         tenant=tenant,
@@ -83,7 +85,7 @@ def test_approved_web_oem_fact_creates_trusted_cross_code():
         }),
         needs_review=True,
     )
-    client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
+    client = owner_client(tenant)
 
     response = client.post(
         f'/api/v1/products/{product.pk}/enrichment-facts/{fact.pk}/approve/',
@@ -247,7 +249,7 @@ def test_parse_endpoint_rejects_other_tenant_product():
 
 @pytest.mark.django_db
 def test_fitment_review_rejects_and_refreshes_product_applicability():
-    tenant, api_key = make_tenant('fitment-review-api')
+    tenant, _ = make_tenant('fitment-review-api')
     product = make_product(tenant)
     fitment = VehicleFitment.objects.create(
         tenant=tenant,
@@ -263,10 +265,9 @@ def test_fitment_review_rejects_and_refreshes_product_applicability():
     product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability'])
     assert product.applicability
 
-    response = Client().post(
+    response = owner_client(tenant).post(
         f'/api/v1/products/{product.pk}/fitments/{fitment.pk}/reject/',
         content_type='application/json',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
     )
 
     assert response.status_code == 200
@@ -279,7 +280,7 @@ def test_fitment_review_rejects_and_refreshes_product_applicability():
 
 @pytest.mark.django_db
 def test_fitment_review_rejects_other_tenant_record():
-    tenant_a, api_key = make_tenant('fitment-review-owner')
+    tenant_a, _ = make_tenant('fitment-review-owner')
     tenant_b, _ = make_tenant('fitment-review-other')
     product_a = make_product(tenant_a)
     product_b = make_product(tenant_b)
@@ -293,10 +294,9 @@ def test_fitment_review_rejects_other_tenant_record():
         needs_review=True,
     )
 
-    response = Client().post(
+    response = owner_client(tenant_a).post(
         f'/api/v1/products/{product_a.pk}/fitments/{fitment_b.pk}/approve/',
         content_type='application/json',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
     )
 
     assert response.status_code == 404
@@ -306,7 +306,7 @@ def test_fitment_review_rejects_other_tenant_record():
 
 @pytest.mark.django_db
 def test_review_queue_lists_tenant_scoped_pending_items():
-    tenant, api_key = make_tenant('review-queue-owner')
+    tenant, _ = make_tenant('review-queue-owner')
     other_tenant, _ = make_tenant('review-queue-other')
     product = make_product(tenant, name='Колодки BREMBO P50136')
     other_product = make_product(other_tenant, article='P2', name='Колодки TRW P2')
@@ -339,12 +339,7 @@ def test_review_queue_lists_tenant_scoped_pending_items():
         confidence=0.4,
         needs_review=True,
     )
-    client = Client()
-
-    response = client.get(
-        '/api/v1/products/review-queue/',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
-    )
+    response = owner_client(tenant).get('/api/v1/products/review-queue/')
 
     assert response.status_code == 200
     data = response.json()['data']
@@ -355,7 +350,7 @@ def test_review_queue_lists_tenant_scoped_pending_items():
 
 @pytest.mark.django_db
 def test_review_queue_lists_pending_classifications():
-    tenant, api_key = make_tenant('review-queue-classification-list')
+    tenant, _ = make_tenant('review-queue-classification-list')
     product = make_product(tenant, name='Колодки BREMBO P50136')
     category = TenantCatalogCategory.objects.create(
         tenant=tenant,
@@ -374,12 +369,7 @@ def test_review_queue_lists_pending_classifications():
         reason='Найдены признаки автозапчасти.',
         needs_review=True,
     )
-    client = Client()
-
-    response = client.get(
-        '/api/v1/products/review-queue/',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
-    )
+    response = owner_client(tenant).get('/api/v1/products/review-queue/')
 
     assert response.status_code == 200
     data = response.json()['data']
@@ -391,7 +381,7 @@ def test_review_queue_lists_pending_classifications():
 
 @pytest.mark.django_db
 def test_review_queue_approves_fitment_and_refreshes_applicability():
-    tenant, api_key = make_tenant('review-queue-approve-fitment')
+    tenant, _ = make_tenant('review-queue-approve-fitment')
     product = make_product(tenant)
     fitment = VehicleFitment.objects.create(
         tenant=tenant,
@@ -403,12 +393,11 @@ def test_review_queue_approves_fitment_and_refreshes_applicability():
         confidence=0.4,
         needs_review=True,
     )
-    client = Client()
+    client = owner_client(tenant)
 
     response = client.post(
         f'/api/v1/products/review-queue/fitment/{fitment.pk}/approve/',
         content_type='application/json',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
     )
 
     assert response.status_code == 200
@@ -436,7 +425,7 @@ def test_review_queue_approves_fitment_and_refreshes_applicability():
 
 @pytest.mark.django_db
 def test_review_queue_cannot_approve_unknown_classification():
-    tenant, api_key = make_tenant('review-queue-unknown-classification')
+    tenant, _ = make_tenant('review-queue-unknown-classification')
     product = make_product(tenant, name='Неясный товар')
     classification = ProductCatalogClassification.objects.create(
         tenant=tenant,
@@ -447,12 +436,11 @@ def test_review_queue_cannot_approve_unknown_classification():
         reason='Не найдено достаточно признаков.',
         needs_review=True,
     )
-    client = Client()
+    client = owner_client(tenant)
 
     response = client.post(
         f'/api/v1/products/review-queue/classification/{classification.pk}/approve/',
         content_type='application/json',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
     )
 
     assert response.status_code == 400
@@ -463,16 +451,15 @@ def test_review_queue_cannot_approve_unknown_classification():
 
 @pytest.mark.django_db
 def test_catalog_classification_review_approve_marks_manual():
-    tenant, api_key = make_tenant('classification-review-api')
+    tenant, _ = make_tenant('classification-review-api')
     product = make_product(tenant, name='Колодки тормозные BREMBO')
     classification = ProductEnrichmentService.classify_product_catalog_domain(product)
     classification.needs_review = True
     classification.save(update_fields=['needs_review', 'updated_at'])
 
-    response = Client().post(
+    response = owner_client(tenant).post(
         f'/api/v1/products/{product.pk}/catalog-classification/approve/',
         content_type='application/json',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
     )
 
     assert response.status_code == 200
@@ -484,7 +471,7 @@ def test_catalog_classification_review_approve_marks_manual():
 
 @pytest.mark.django_db
 def test_catalog_classification_review_cannot_approve_unknown_domain():
-    tenant, api_key = make_tenant('classification-review-unknown')
+    tenant, _ = make_tenant('classification-review-unknown')
     product = make_product(
         tenant,
         article='ITEM1',
@@ -493,10 +480,9 @@ def test_catalog_classification_review_cannot_approve_unknown_domain():
     )
     classification = ProductEnrichmentService.classify_product_catalog_domain(product)
 
-    response = Client().post(
+    response = owner_client(tenant).post(
         f'/api/v1/products/{product.pk}/catalog-classification/approve/',
         content_type='application/json',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
     )
 
     assert response.status_code == 400
@@ -507,7 +493,7 @@ def test_catalog_classification_review_cannot_approve_unknown_domain():
 
 @pytest.mark.django_db
 def test_assign_catalog_category_replaces_previous_unknown_with_manual_classification():
-    tenant, api_key = make_tenant('classification-force-after-category')
+    tenant, _ = make_tenant('classification-force-after-category')
     product = make_product(
         tenant,
         article='ITEM2',
@@ -525,11 +511,10 @@ def test_assign_catalog_category_replaces_previous_unknown_with_manual_classific
         domain=ProductCatalogClassification.Domain.AUTO_PARTS,
     )
 
-    response = Client().post(
+    response = owner_client(tenant).post(
         '/api/v1/products/catalog-categories/assign/',
         {'product_ids': [product.pk], 'catalog_category': category.pk},
         content_type='application/json',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
     )
 
     assert response.status_code == 200
@@ -824,7 +809,7 @@ def test_tenant_catalog_category_api_crud_and_mapping():
 
 @pytest.mark.django_db
 def test_catalog_domains_endpoint_returns_active_platform_domains():
-    tenant, api_key = make_tenant('catalog-domains-api')
+    tenant, _ = make_tenant('catalog-domains-api')
     CatalogDomain.objects.create(
         slug='custom_goods',
         name='Спецтовары',
@@ -835,12 +820,9 @@ def test_catalog_domains_endpoint_returns_active_platform_domains():
         sort_order=5,
     )
     CatalogDomain.objects.create(slug='hidden', name='Скрытый домен', is_active=False)
-    client = Client()
+    client = owner_client(tenant)
 
-    response = client.get(
-        '/api/v1/catalog-domains/',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
-    )
+    response = client.get('/api/v1/catalog-domains/')
 
     assert response.status_code == 200
     data = response.json()['data']
@@ -856,14 +838,13 @@ def test_catalog_domains_endpoint_returns_active_platform_domains():
 
 @pytest.mark.django_db
 def test_enabling_catalog_domain_seeds_tenant_categories():
-    tenant, api_key = make_tenant('catalog-domain-enable')
-    client = Client()
+    tenant, _ = make_tenant('catalog-domain-enable')
+    client = owner_client(tenant)
 
     response = client.post(
         '/api/v1/catalog-domains/',
         {'domain_slug': 'electronics', 'is_enabled': True},
         content_type='application/json',
-        HTTP_AUTHORIZATION=f'Bearer {api_key}',
     )
 
     assert response.status_code == 200
@@ -954,8 +935,10 @@ def test_assign_catalog_category_to_selected_products():
     assert product.category_1c == 'Старые категории'
     assert product.catalog_classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
     assert product.catalog_classification.confidence == 0.95
-    assert product.catalog_classification.source == ProductCatalogClassification.Source.MANUAL
-    assert product.catalog_classification.reason == 'Категория каталога выбрана вручную: Амортизаторы.'
+    assert product.catalog_classification.source == ProductCatalogClassification.Source.API_KEY
+    assert product.catalog_classification.reason == (
+        'Категория каталога выбрана через API Key: Амортизаторы.'
+    )
     assert product.catalog_classification.needs_review is False
     assert product.catalog_classification.review_status == ReviewStatus.APPROVED
     assert product.catalog_classification.reviewed_at is not None
@@ -967,7 +950,7 @@ def test_assign_catalog_category_to_selected_products():
     assert detail_response.status_code == 200
     serialized_classification = detail_response.json()['data']['catalog_classification']
     assert serialized_classification['confidence'] == 0.95
-    assert serialized_classification['source'] == ProductCatalogClassification.Source.MANUAL
+    assert serialized_classification['source'] == ProductCatalogClassification.Source.API_KEY
 
 
 @pytest.mark.django_db
@@ -1073,11 +1056,11 @@ def test_assign_catalog_category_creates_source_mapping():
 
 @pytest.mark.django_db
 def test_bulk_action_endpoint_creates_throttled_tenant_job(django_capture_on_commit_callbacks):
-    tenant, api_key = make_tenant('bulk-api')
+    tenant, _ = make_tenant('bulk-api')
     other_tenant, _ = make_tenant('bulk-other')
     product = make_product(tenant)
     other_product = make_product(other_tenant)
-    client = Client()
+    client = owner_client(tenant)
 
     with patch('apps.products.tasks.process_bulk_product_action.delay') as delay:
         with django_capture_on_commit_callbacks(execute=True):
@@ -1090,7 +1073,6 @@ def test_bulk_action_endpoint_creates_throttled_tenant_job(django_capture_on_com
                     'pause_seconds': 30,
                 },
                 content_type='application/json',
-                HTTP_AUTHORIZATION=f'Bearer {api_key}',
             )
 
     assert response.status_code == 201

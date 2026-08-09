@@ -245,9 +245,22 @@ class TenantAdmin(ModelAdmin):
 class APIKeyAdmin(ModelAdmin):
     """Администрирование API-ключей тенантов."""
 
-    list_display = ['key_prefix', 'tenant', 'name', 'is_active', 'created_at']
-    list_filter = ['tenant', 'is_active']
-    readonly_fields = ['key_prefix', 'key_hash', 'created_at']
+    list_display = [
+        'key_prefix', 'tenant', 'name', 'role', 'is_active',
+        'expires_at', 'revoked_at', 'created_at',
+    ]
+    list_filter = ['tenant', 'role', 'is_active']
+    readonly_fields = [
+        'tenant', 'key_prefix', 'key_hash', 'role', 'scopes', 'is_active', 'expires_at',
+        'created_by', 'revoked_at', 'revoked_by', 'last_used_at',
+        'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(WebhookEndpoint)

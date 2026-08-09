@@ -1,14 +1,23 @@
 """DRF-views для API управления изображениями товаров."""
 
 from celery.result import AsyncResult
+from django.conf import settings
 from django.shortcuts import get_object_or_404
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers
 from rest_framework import status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from apps.tenants.api_views import MediaAPIView as APIView
+from apps.tenants.permissions import TenantAdminPermission
+from apps.tenants.principals import human_user_or_none
 
+from apps.core.throttling import (
+    PrincipalScopedRateThrottle,
+    TenantScopedRateThrottle,
+    consume_tenant_daily_budget,
+)
 from apps.image_search.serializers import ProductImageSerializer
 from apps.image_search.services import moderation
 from apps.products.models import Product, ProductImage
@@ -22,6 +31,18 @@ def _ok_response(name, data):
             'status': serializers.CharField(read_only=True),
             'data': data,
         },
+    )
+
+
+class ImageSearchStartRequestSerializer(serializers.Serializer):
+    force = serializers.BooleanField(required=False, default=False)
+
+
+class BulkImageSearchRequestSerializer(serializers.Serializer):
+    product_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+        max_length=settings.IMAGE_SEARCH_BULK_MAX_PRODUCTS,
     )
 
 
@@ -77,6 +98,8 @@ def _get_image(product: Product, image_pk: int) -> ProductImage:
 class ImageListView(APIView):
     """GET /api/v1/products/{product_pk}/images/ — список изображений товара."""
 
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='product_image_list',
         responses=_ok_response(
@@ -97,6 +120,8 @@ class ImageListView(APIView):
 @extend_schema(tags=['Images'])
 class ImageDetailView(APIView):
     """GET/DELETE /api/v1/products/{product_pk}/images/{image_pk}/."""
+
+    api_key_enabled = True
 
     @extend_schema(
         operation_id='product_image_retrieve',
@@ -129,9 +154,15 @@ class ImageDetailView(APIView):
 class ImageSearchView(APIView):
     """POST /api/v1/products/{product_pk}/images/search/ — запустить поиск изображений."""
 
+    api_key_enabled = True
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'expensive_image_principal'
+    tenant_throttle_scope = 'expensive_image_tenant'
+    expensive_throttle_methods = {'POST'}
+
     @extend_schema(
         operation_id='product_image_search_start',
-        request=None,
+        request=ImageSearchStartRequestSerializer,
         responses=_ok_response(
             'ProductImageSearchStartResponse',
             inline_serializer(
@@ -142,19 +173,40 @@ class ImageSearchView(APIView):
     )
     def post(self, request, product_pk: int):
         """Запускает Celery-задачу поиска изображений. Возвращает task_id для опроса статуса."""
-        from apps.image_search.models import ImageSearchCache
+        from apps.image_search.models import ImageSearchCache, ImageSearchTask
         from apps.image_search.tasks import search_images_for_product
+
+        request_serializer = ImageSearchStartRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        force = request_serializer.validated_data['force']
+        if force and not TenantAdminPermission().has_permission(request, self):
+            raise PermissionDenied(TenantAdminPermission.message)
+
         product = get_object_or_404(Product, pk=product_pk, tenant=request.tenant)
         from apps.image_search.services.pipeline import build_cache_key
         cache_key = build_cache_key(product)
-        ImageSearchCache.objects.filter(cache_key=cache_key).delete()
+        consume_tenant_daily_budget(
+            tenant_id=request.tenant.pk,
+            scope='image-search-jobs',
+            cost=1,
+            limit=settings.IMAGE_SEARCH_TENANT_DAILY_JOBS,
+        )
+        if force:
+            ImageSearchCache.objects.filter(cache_key=cache_key).delete()
         task = search_images_for_product.delay(product.pk)
+        ImageSearchTask.objects.create(
+            tenant=request.tenant,
+            product=product,
+            task_id=task.id,
+        )
         return Response({'status': 'ok', 'data': {'task_id': task.id}})
 
 
 @extend_schema(tags=['Images'])
 class ImageSearchStatusView(APIView):
     """GET /api/v1/products/{product_pk}/images/search/{task_id}/ — статус задачи поиска."""
+
+    api_key_enabled = True
 
     @extend_schema(
         operation_id='product_image_search_status',
@@ -165,7 +217,14 @@ class ImageSearchStatusView(APIView):
     )
     def get(self, request, product_pk: int, task_id: str):
         """Возвращает состояние Celery-задачи и количество сохранённых изображений."""
-        get_object_or_404(Product, pk=product_pk, tenant=request.tenant)
+        from apps.image_search.models import ImageSearchTask
+
+        get_object_or_404(
+            ImageSearchTask,
+            task_id=task_id,
+            tenant=request.tenant,
+            product_id=product_pk,
+        )
         result = AsyncResult(task_id)
 
         state_map = {
@@ -200,6 +259,8 @@ class ImageSearchStatusView(APIView):
 class ImageApproveView(APIView):
     """POST /api/v1/products/{product_pk}/images/{image_pk}/approve/ — одобрить изображение."""
 
+    api_key_scopes = {}
+
     @extend_schema(
         operation_id='product_image_approve',
         request=None,
@@ -212,7 +273,7 @@ class ImageApproveView(APIView):
         """Переводит изображение в статус AUTO_APPROVED."""
         product = _get_product(product_pk, request.tenant)
         image = _get_image(product, image_pk)
-        reviewed_by = request.user if request.user.is_authenticated else None
+        reviewed_by = human_user_or_none(request)
         image = moderation.approve(image, reviewed_by=reviewed_by)
         return Response({'status': 'ok', 'data': ProductImageSerializer(image, context={'request': request}).data})
 
@@ -220,6 +281,8 @@ class ImageApproveView(APIView):
 @extend_schema(tags=['Images'])
 class ImageRejectView(APIView):
     """POST /api/v1/products/{product_pk}/images/{image_pk}/reject/ — отклонить изображение."""
+
+    api_key_scopes = {}
 
     @extend_schema(
         operation_id='product_image_reject',
@@ -233,7 +296,7 @@ class ImageRejectView(APIView):
         """Переводит изображение в статус REJECTED."""
         product = _get_product(product_pk, request.tenant)
         image = _get_image(product, image_pk)
-        reviewed_by = request.user if request.user.is_authenticated else None
+        reviewed_by = human_user_or_none(request)
         image = moderation.reject(image, reviewed_by=reviewed_by)
         return Response({'status': 'ok', 'data': ProductImageSerializer(image, context={'request': request}).data})
 
@@ -241,6 +304,8 @@ class ImageRejectView(APIView):
 @extend_schema(tags=['Images'])
 class ImageSetPrimaryView(APIView):
     """PUT /api/v1/products/{product_pk}/images/{image_pk}/set_primary/ — сделать главным."""
+
+    api_key_enabled = True
 
     @extend_schema(
         operation_id='product_image_set_primary',
@@ -262,6 +327,7 @@ class ImageSetPrimaryView(APIView):
 class ImageUploadView(APIView):
     """POST /api/v1/products/{product_pk}/images/upload/ — загрузить изображение вручную."""
 
+    api_key_enabled = True
     parser_classes = [MultiPartParser]
 
     @extend_schema(
@@ -306,16 +372,15 @@ class ImageUploadView(APIView):
 class BulkSearchView(APIView):
     """POST /api/v1/images/bulk-search/ — запустить поиск для нескольких товаров."""
 
+    api_key_enabled = True
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'expensive_image_principal'
+    tenant_throttle_scope = 'expensive_image_tenant'
+    expensive_throttle_methods = {'POST'}
+
     @extend_schema(
         operation_id='product_image_bulk_search',
-        request=inline_serializer(
-            name='ProductImageBulkSearchRequest',
-            fields={
-                'product_ids': serializers.ListField(
-                    child=serializers.IntegerField(min_value=1),
-                ),
-            },
-        ),
+        request=BulkImageSearchRequestSerializer,
         responses=_ok_response(
             'ProductImageBulkSearchResponse',
             inline_serializer(
@@ -338,27 +403,35 @@ class BulkSearchView(APIView):
         Ответ:
             {"status": "ok", "data": {"task_ids": {1: "abc", 2: "def"}, "count": 2}}
         """
+        from apps.image_search.models import ImageSearchTask
         from apps.image_search.tasks import search_images_for_product
 
-        product_ids = request.data.get('product_ids', [])
-        if not isinstance(product_ids, list):
-            return Response(
-                {'status': 'error', 'code': 'validation_error',
-                 'errors': {'product_ids': ['Ожидается список ID.']}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        request_serializer = BulkImageSearchRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        product_ids = request_serializer.validated_data['product_ids']
 
         # Tenant isolation — принимаем только товары тенанта
-        valid_pks = list(
+        products = list(
             Product.objects.filter(
                 pk__in=product_ids, tenant=request.tenant,
-            ).values_list('pk', flat=True)
+            ).order_by('pk')
+        )
+        consume_tenant_daily_budget(
+            tenant_id=request.tenant.pk,
+            scope='image-search-jobs',
+            cost=len(products),
+            limit=settings.IMAGE_SEARCH_TENANT_DAILY_JOBS,
         )
 
         task_ids = {}
-        for pk in valid_pks:
-            task = search_images_for_product.delay(pk)
-            task_ids[pk] = task.id
+        for product in products:
+            task = search_images_for_product.delay(product.pk)
+            task_ids[product.pk] = task.id
+            ImageSearchTask.objects.create(
+                tenant=request.tenant,
+                product=product,
+                task_id=task.id,
+            )
 
         return Response({
             'status': 'ok',
@@ -369,6 +442,8 @@ class BulkSearchView(APIView):
 @extend_schema(tags=['Images'])
 class ImageQuotaView(APIView):
     """GET /api/v1/images/quota/ — текущая квота Brave Search API."""
+
+    api_key_enabled = True
 
     @extend_schema(
         operation_id='image_search_quota_retrieve',

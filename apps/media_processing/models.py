@@ -62,6 +62,30 @@ class MediaProviderPolicy(TimestampedModel):
                     'Неизвестные операции: ' + ', '.join(sorted(invalid_costs))
                 ),
             })
+        missing_costs = set(self.capabilities or []) - set(self.operation_credit_costs or {})
+        if missing_costs:
+            raise ValidationError({
+                'operation_credit_costs': (
+                    'Явно укажите стоимость, включая 0 для бесплатных операций: '
+                    + ', '.join(sorted(missing_costs))
+                ),
+            })
+        invalid_values = []
+        for operation, raw_cost in (self.operation_credit_costs or {}).items():
+            try:
+                cost = Decimal(str(raw_cost))
+            except (ArithmeticError, TypeError, ValueError):
+                invalid_values.append(operation)
+                continue
+            if not cost.is_finite() or cost < 0:
+                invalid_values.append(operation)
+        if invalid_values:
+            raise ValidationError({
+                'operation_credit_costs': (
+                    'Стоимость должна быть конечным неотрицательным числом: '
+                    + ', '.join(sorted(invalid_values))
+                ),
+            })
 
 
 class MediaProcessingPreset(TimestampedModel):

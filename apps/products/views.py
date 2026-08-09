@@ -10,7 +10,8 @@ from django.utils.timezone import now
 from rest_framework import status
 from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from apps.tenants.api_views import CatalogAPIView as APIView
+from apps.tenants.principals import human_user_or_none
 
 from apps.core.pagination import MapPagination
 from apps.products.enrichment import normalize_part_code
@@ -157,6 +158,8 @@ class ProductListView(APIView):
         page            — номер страницы (default: 1)
         page_size       — размер страницы (default: 50, max: 500)
     """
+
+    api_key_enabled = True
 
     @extend_schema(
         operation_id='products_list',
@@ -312,6 +315,14 @@ class ProductListView(APIView):
 class ProductDetailView(APIView):
     """GET /api/v1/products/{pk}/ — карточка товара."""
 
+    api_key_enabled = True
+    api_key_scopes = {
+        'GET': {'catalog:read'},
+        'HEAD': {'catalog:read'},
+        'OPTIONS': {'catalog:read'},
+        'PATCH': {'catalog:write', 'listings:write'},
+    }
+
     @extend_schema(
         operation_id='products_retrieve',
         responses=ProductDetailResponseSerializer,
@@ -356,17 +367,29 @@ class ProductDetailView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         brand = str(request.data.get('brand') or '').strip()[:200]
+        is_machine = getattr(request.user, 'is_api_key', False)
         product.brand = brand
-        product.brand_ref = ProductBrandService.resolve_or_create_brand(
-            brand, source_id='manual', confidence=1.0,
-        ) if brand else None
-        product.brand_resolution_status = (
-            Product.BrandResolutionStatus.MANUAL
-            if brand else Product.BrandResolutionStatus.UNKNOWN
-        )
-        product.brand_confidence = 1.0 if brand else 0.0
-        product.brand_source_id = 'manual' if brand else ''
-        product.brand_needs_review = False
+        product.brand_ref = ProductBrandService.resolve_existing_brand(brand)
+        if not brand:
+            product.brand_resolution_status = Product.BrandResolutionStatus.UNKNOWN
+            product.brand_confidence = 0.0
+            product.brand_source_id = ''
+            product.brand_needs_review = False
+        elif product.brand_ref is not None:
+            product.brand_resolution_status = Product.BrandResolutionStatus.CATALOG
+            product.brand_confidence = product.brand_ref.confidence
+            product.brand_source_id = 'catalog'
+            product.brand_needs_review = product.brand_ref.needs_review
+        elif is_machine:
+            product.brand_resolution_status = Product.BrandResolutionStatus.SOURCE
+            product.brand_confidence = 0.5
+            product.brand_source_id = 'api_key'
+            product.brand_needs_review = True
+        else:
+            product.brand_resolution_status = Product.BrandResolutionStatus.MANUAL
+            product.brand_confidence = 1.0
+            product.brand_source_id = 'manual'
+            product.brand_needs_review = False
         product.save(update_fields=[
             'brand', 'brand_ref', 'brand_resolution_status', 'brand_confidence',
             'brand_source_id', 'brand_needs_review', 'updated_at',
@@ -380,6 +403,8 @@ class ProductDetailView(APIView):
 @extend_schema(tags=['Products'])
 class ProductBrandOptionsView(APIView):
     """Подсказки брендов для товара: сначала по включённой корневой категории."""
+
+    api_key_enabled = True
 
     @extend_schema(
         parameters=[
@@ -471,11 +496,21 @@ class ProductBrandOptionsView(APIView):
 class ProductSyncView(APIView):
     """POST /api/v1/products/sync/{connection_id}/ — запустить импорт товаров."""
 
+    api_key_enabled = True
+    api_key_scopes = {
+        'POST': {'sync:run', 'catalog:write', 'listings:write'},
+    }
+
     @extend_schema(request=None, responses=TaskResponseSerializer)
     def post(self, request, connection_id):
         from apps.datasources.models import DataSourceConnection
         from django.shortcuts import get_object_or_404
-        conn = get_object_or_404(DataSourceConnection, pk=connection_id, tenant=request.tenant)
+        conn = get_object_or_404(
+            DataSourceConnection,
+            pk=connection_id,
+            tenant=request.tenant,
+            is_active=True,
+        )
         task = import_from_datasource.delay(conn.pk)
         return Response({'status': 'ok', 'data': {'task_id': task.id}})
 
@@ -483,6 +518,8 @@ class ProductSyncView(APIView):
 @extend_schema(tags=['Catalog Categories'])
 class TenantCatalogCategoryListView(APIView):
     """GET/POST /api/v1/products/catalog-categories/."""
+
+    api_key_enabled = True
 
     @extend_schema(
         operation_id='catalog_categories_list',
@@ -584,6 +621,8 @@ class TenantCatalogCategoryListView(APIView):
 class TenantCatalogCategoryDetailView(APIView):
     """GET/PUT/DELETE /api/v1/products/catalog-categories/{id}/."""
 
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='catalog_categories_retrieve',
         responses=CatalogCategoryResponseSerializer,
@@ -672,6 +711,8 @@ class TenantCatalogCategoryBranchToggleView(APIView):
     ставятся в очередь на переклассификацию.
     """
 
+    api_key_enabled = True
+
     @extend_schema(
         request=CatalogCategoryBranchToggleRequestSerializer,
         responses=CatalogCategoryBranchToggleResponseSerializer,
@@ -730,6 +771,11 @@ class TenantCatalogCategoryBranchToggleView(APIView):
 class TenantCatalogCategoryDefaultImageView(APIView):
     """POST /api/v1/products/catalog-categories/{id}/default-image/ — загрузить fallback-картинку."""
 
+    api_key_enabled = True
+    api_key_scopes = {
+        'POST': {'catalog:write', 'media:write'},
+        'DELETE': {'catalog:write', 'media:write'},
+    }
     parser_classes = [MultiPartParser, FormParser]
 
     @extend_schema(
@@ -789,6 +835,8 @@ class TenantCatalogCategoryDefaultImageView(APIView):
 class TenantCategoryMappingListView(APIView):
     """GET/POST /api/v1/products/catalog-category-mappings/."""
 
+    api_key_enabled = True
+
     @extend_schema(responses=CategoryMappingListResponseSerializer)
     def get(self, request):
         qs = (
@@ -828,6 +876,8 @@ class TenantCategoryMappingListView(APIView):
 class TenantCategoryMappingDetailView(APIView):
     """DELETE /api/v1/products/catalog-category-mappings/{id}/."""
 
+    api_key_enabled = True
+
     @extend_schema(request=None, responses={204: None})
     def delete(self, request, pk):
         mapping = get_object_or_404(TenantCategoryMapping, pk=pk, tenant=request.tenant)
@@ -838,6 +888,8 @@ class TenantCategoryMappingDetailView(APIView):
 @extend_schema(tags=['Catalog Categories'])
 class TenantSourceCategoryListView(APIView):
     """GET /api/v1/products/catalog-source-categories/."""
+
+    api_key_enabled = True
 
     @extend_schema(responses=TenantSourceCategoryListResponseSerializer)
     def get(self, request):
@@ -865,6 +917,8 @@ class TenantSourceCategoryListView(APIView):
 @extend_schema(tags=['Catalog Categories'])
 class ProductCatalogCategoryAssignView(APIView):
     """POST /api/v1/products/catalog-categories/assign/ — назначить категорию товарам."""
+
+    api_key_enabled = True
 
     @extend_schema(
         request=ProductCategoryAssignRequestSerializer,
@@ -934,10 +988,18 @@ class ProductCatalogCategoryAssignView(APIView):
             for product in products:
                 classification = ProductEnrichmentService.classify_product_catalog_domain(product, force=True)
                 if category is not None:
+                    is_machine = getattr(request.user, 'is_api_key', False)
                     classification.domain = category.domain
                     classification.confidence = 0.95
-                    classification.source = ProductCatalogClassification.Source.MANUAL
-                    classification.reason = f'Категория каталога выбрана вручную: {category.name}.'
+                    classification.source = (
+                        ProductCatalogClassification.Source.API_KEY
+                        if is_machine
+                        else ProductCatalogClassification.Source.MANUAL
+                    )
+                    source_label = 'через API Key' if is_machine else 'вручную'
+                    classification.reason = (
+                        f'Категория каталога выбрана {source_label}: {category.name}.'
+                    )
                     classification.needs_review = False
                     classification.review_status = ReviewStatus.APPROVED
                     classification.reviewed_at = now()
@@ -967,6 +1029,8 @@ class ProductCatalogCategoryAssignView(APIView):
 class ProductExcludeView(APIView):
     """POST /api/v1/products/exclude/ — исключить или восстановить товары из синхронизации."""
 
+    api_key_enabled = True
+
     @extend_schema(
         request=ProductExcludeRequestSerializer,
         responses=UpdatedCountResponseSerializer,
@@ -989,6 +1053,11 @@ class ProductExcludeView(APIView):
 @extend_schema(tags=['Products'])
 class ProductBulkDeleteView(APIView):
     """DELETE /api/v1/products/bulk-delete/ — мягкое удаление товаров."""
+
+    api_key_enabled = True
+    api_key_scopes = {
+        'DELETE': {'catalog:write', 'listings:write'},
+    }
 
     @extend_schema(
         request=ProductBulkDeleteRequestSerializer,
@@ -1013,6 +1082,8 @@ class ProductBulkDeleteView(APIView):
 @extend_schema(tags=['Products'])
 class ProductSearchView(APIView):
     """GET /api/v1/products/search/?brand=&article= — поиск товара tenant-а."""
+
+    api_key_enabled = True
 
     @extend_schema(
         parameters=[
@@ -1046,6 +1117,12 @@ class ProductSearchView(APIView):
 @extend_schema(tags=['Products'])
 class ProductParseView(APIView):
     """POST /api/v1/products/parse/ — поставить enrichment job в очередь."""
+
+    api_key_enabled = True
+    api_key_scopes = {'POST': {
+        'catalog:write', 'listings:write', 'ai:run',
+        'research:run', 'media:write',
+    }}
 
     @extend_schema(
         request=ProductParseRequestSerializer,
@@ -1151,6 +1228,8 @@ class ProductParseView(APIView):
 class ProductParseJobDetailView(APIView):
     """GET /api/v1/products/parse-jobs/{id}/ — статус enrichment job."""
 
+    api_key_enabled = True
+
     @extend_schema(responses=ProductParseJobResponseSerializer)
     def get(self, request, pk: int):
         job = get_object_or_404(ProductParseJob, pk=pk, tenant=request.tenant)
@@ -1160,6 +1239,10 @@ class ProductParseJobDetailView(APIView):
 @extend_schema(tags=['Products'])
 class ProductBulkActionView(APIView):
     """POST /api/v1/products/bulk-actions/ — throttled массовое действие."""
+
+    # Actions span catalog, AI and media domains. Keep machine access denied
+    # until authorization can be selected from the validated action payload.
+    api_key_scopes = {}
 
     @extend_schema(
         request=ProductBulkActionRequestSerializer,
@@ -1255,7 +1338,7 @@ class ProductBulkActionDetailView(APIView):
 
 
 def _review_actor(request):
-    return request.user if getattr(request.user, 'is_authenticated', False) else None
+    return human_user_or_none(request)
 
 
 def _set_review_state(obj, request, review_status: str) -> None:
@@ -1418,6 +1501,8 @@ class ProductReviewQueueView(APIView):
 class ProductReviewQueueActionView(APIView):
     """POST /api/v1/products/review-queue/{type}/{id}/{approve|reject}/."""
 
+    api_key_scopes = {}
+
     @extend_schema(request=None, responses=ReviewQueueActionResponseSerializer)
     def post(self, request, item_type: str, record_id: int, action: str):
         if action not in ['approve', 'reject']:
@@ -1455,6 +1540,8 @@ class ProductReviewQueueActionView(APIView):
 class ProductFitmentsView(APIView):
     """GET /api/v1/products/{id}/fitments/ — применяемость товара."""
 
+    api_key_enabled = True
+
     @extend_schema(responses=FitmentListResponseSerializer)
     def get(self, request, pk: int):
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
@@ -1465,6 +1552,8 @@ class ProductFitmentsView(APIView):
 @extend_schema(tags=['Products'])
 class ProductFitmentReviewView(APIView):
     """POST /api/v1/products/{id}/fitments/{fitment_id}/{approve|reject}/."""
+
+    api_key_scopes = {}
 
     @extend_schema(request=None, responses=FitmentResponseSerializer)
     def post(self, request, pk: int, fitment_id: int, action: str):
@@ -1488,6 +1577,8 @@ class ProductFitmentReviewView(APIView):
 class ProductEnrichmentFactsView(APIView):
     """GET /api/v1/products/{id}/enrichment-facts/ — факты обогащения товара."""
 
+    api_key_enabled = True
+
     @extend_schema(responses=EnrichmentFactListResponseSerializer)
     def get(self, request, pk: int):
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
@@ -1498,6 +1589,8 @@ class ProductEnrichmentFactsView(APIView):
 @extend_schema(tags=['Products'])
 class ProductEnrichmentFactReviewView(APIView):
     """POST /api/v1/products/{id}/enrichment-facts/{fact_id}/{approve|reject}/."""
+
+    api_key_scopes = {}
 
     @extend_schema(request=None, responses=EnrichmentFactResponseSerializer)
     def post(self, request, pk: int, fact_id: int, action: str):
@@ -1517,6 +1610,8 @@ class ProductEnrichmentFactReviewView(APIView):
 @extend_schema(tags=['Products'])
 class ProductCatalogClassificationReviewView(APIView):
     """POST /api/v1/products/{id}/catalog-classification/{approve|reject}/."""
+
+    api_key_scopes = {}
 
     @extend_schema(request=None, responses=ProductDetailResponseSerializer)
     def post(self, request, pk: int, action: str):
@@ -1562,6 +1657,8 @@ class ProductCatalogClassificationReviewView(APIView):
 class ProductCrossCodesView(APIView):
     """GET /api/v1/products/{id}/cross-codes/ — OEM/cross-коды товара."""
 
+    api_key_enabled = True
+
     @extend_schema(responses=CrossCodeListResponseSerializer)
     def get(self, request, pk: int):
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
@@ -1572,6 +1669,9 @@ class ProductCrossCodesView(APIView):
 @extend_schema(tags=['Products'])
 class ProductPublishView(APIView):
     """POST /api/v1/products/{pk}/publish/ — создать/обновить листинги для всех аккаунтов тенанта."""
+
+    api_key_enabled = True
+    api_key_scopes = {'POST': {'catalog:write', 'listings:write'}}
 
     @extend_schema(request=None, responses=ProductPublishResponseSerializer)
     def post(self, request, pk):
@@ -1602,6 +1702,9 @@ class ProductPublishView(APIView):
 class ProductArchiveView(APIView):
     """POST /api/v1/products/{pk}/archive/ — снять все активные листинги товара с публикации."""
 
+    api_key_enabled = True
+    api_key_scopes = {'POST': {'catalog:write', 'listings:write'}}
+
     @extend_schema(request=None, responses=ProductArchiveResponseSerializer)
     def post(self, request, pk):
         """Делегирует архивацию ListingService.archive_product."""
@@ -1629,6 +1732,12 @@ class ProductArchiveView(APIView):
 @extend_schema(tags=['Products'])
 class ProductRegenerateView(APIView):
     """POST /api/v1/products/{pk}/regenerate/ — enrichment-aware генерация AI-описания."""
+
+    api_key_enabled = True
+    api_key_scopes = {'POST': {
+        'catalog:write', 'listings:write', 'ai:run',
+        'research:run', 'media:write',
+    }}
 
     @extend_schema(
         request=ProductRegenerateRequestSerializer,

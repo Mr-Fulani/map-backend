@@ -13,12 +13,13 @@ from django.utils import timezone
 from apps.datasources.encryption import decrypt
 from apps.marketplaces.services import InvalidMarketplaceCredentials
 from apps.marketplaces.models import MarketplaceAccount
+from apps.tenants.tests.auth import owner_access_token
 
 
 def make_tenant(slug):
     from apps.tenants.services import TenantService
-    tenant, plaintext = TenantService.create_tenant(slug, slug, f'{slug}@t.com', 'pass')
-    return tenant, plaintext
+    tenant, _ = TenantService.create_tenant(slug, slug, f'{slug}@t.com', 'pass')
+    return tenant, owner_access_token(tenant)
 
 
 def mock_avito_user_id(value):

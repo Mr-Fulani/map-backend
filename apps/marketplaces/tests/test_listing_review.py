@@ -16,6 +16,7 @@ from apps.marketplaces.models import Listing, MarketplaceAccount, MarketplacePla
 from apps.marketplaces.services import InvalidListingStatus, ListingNotFound, ListingService
 from apps.products.models import Product, ProductImage
 from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import create_operator_key
 
 
 # ── Фикстуры ───────────────────────────────────────────────────────────────────
@@ -204,6 +205,7 @@ class TestListingDetailAPI:
             'listing-patch-placement-co@test.com',
             'pass12345',
         )
+        key = create_operator_key(tenant)
         old_account = make_account(tenant)
         new_account = MarketplaceAccount.objects.create(
             tenant=tenant,
@@ -256,6 +258,7 @@ class TestListingDetailAPI:
             'listing-actions-co@test.com',
             'pass12345',
         )
+        key = create_operator_key(tenant)
         listing = make_listing(tenant, status=Listing.STATUS_ACTIVE)
 
         with patch('apps.marketplaces.services._enqueue_unpublish') as unpublish, \
@@ -285,6 +288,7 @@ class TestListingDetailAPI:
             'listing-check-status-co@test.com',
             'pass12345',
         )
+        key = create_operator_key(tenant)
         listing = make_listing(tenant, status=Listing.STATUS_PENDING)
 
         with patch('apps.marketplaces.services._enqueue_poll_feed_results') as poll, \
@@ -306,6 +310,7 @@ class TestListingDetailAPI:
             'listing-bulk-api-co@test.com',
             'pass12345',
         )
+        key = create_operator_key(tenant)
         other_tenant = make_tenant('listing-bulk-api-other-co')
         listing = make_listing(tenant, status=Listing.STATUS_DRAFT)
         other_listing = make_listing(other_tenant, status=Listing.STATUS_DRAFT)

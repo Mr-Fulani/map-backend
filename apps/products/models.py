@@ -309,6 +309,7 @@ class ProductCatalogClassification(TimestampedModel):
     class Source(models.TextChoices):
         RULES = 'rules', 'Правила'
         MANUAL = 'manual', 'Вручную'
+        API_KEY = 'api_key', 'API Key'
         AI = 'ai', 'AI'
 
     tenant = models.ForeignKey(

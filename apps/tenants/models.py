@@ -1,9 +1,13 @@
 import hashlib
+import re
 import secrets
 import uuid
+from datetime import timedelta
 
 from django.conf import settings
 from django.db import models
+from django.db.models import Q
+from django.utils import timezone
 
 from apps.core.models import SoftDeleteModel, TimestampedModel
 
@@ -201,10 +205,48 @@ class TenantUser(TimestampedModel):
         return self.role in (self.ROLE_OWNER, self.ROLE_ADMIN, self.ROLE_OPERATOR)
 
 
+API_KEY_SCOPE_CHOICES = (
+    ('tenant:read', 'Tenant: read'),
+    ('catalog:read', 'Catalog: read'),
+    ('catalog:write', 'Catalog: write'),
+    ('listings:read', 'Listings: read'),
+    ('listings:write', 'Listings: write'),
+    ('sync:read', 'Sync: read'),
+    ('sync:run', 'Sync: run'),
+    ('media:read', 'Media: read'),
+    ('media:write', 'Media: write'),
+    ('research:read', 'Research: read'),
+    ('research:run', 'Research: run'),
+    ('ai:read', 'AI: read'),
+    ('ai:run', 'AI: run'),
+)
+API_KEY_SCOPES = frozenset(value for value, _ in API_KEY_SCOPE_CHOICES)
+API_KEY_WRITE_SCOPES = frozenset(
+    value for value in API_KEY_SCOPES
+    if value.endswith((':write', ':run'))
+)
+
+
+def default_api_key_scopes() -> list[str]:
+    return ['tenant:read']
+
+
+def default_api_key_expiry():
+    return timezone.now() + timedelta(days=90)
+
+
 class APIKey(TimestampedModel):
     """API-ключ для доступа к системе от имени тенанта."""
 
     KEY_PREFIX = 'map_sk_'
+    KEY_PAYLOAD_PATTERN = re.compile(r'^[A-Za-z0-9_-]{43}$')
+
+    ROLE_VIEWER = 'viewer'
+    ROLE_OPERATOR = 'operator'
+    ROLE_CHOICES = (
+        (ROLE_VIEWER, 'Viewer'),
+        (ROLE_OPERATOR, 'Operator'),
+    )
 
     tenant = models.ForeignKey(
         Tenant,
@@ -213,29 +255,100 @@ class APIKey(TimestampedModel):
     )
     name = models.CharField(max_length=100, verbose_name='Название')
     key_prefix = models.CharField(max_length=12, verbose_name='Префикс ключа')
-    key_hash = models.CharField(max_length=64, verbose_name='SHA256-хэш ключа')
+    key_hash = models.CharField(
+        max_length=64,
+        unique=True,
+        verbose_name='SHA256-хэш ключа',
+    )
+    role = models.CharField(
+        max_length=16,
+        choices=ROLE_CHOICES,
+        default=ROLE_VIEWER,
+        verbose_name='Роль интеграции',
+    )
+    scopes = models.JSONField(default=default_api_key_scopes, verbose_name='Scopes')
+    expires_at = models.DateTimeField(
+        default=default_api_key_expiry,
+        db_index=True,
+        verbose_name='Действует до',
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='created_api_keys',
+        verbose_name='Создал',
+    )
     is_active = models.BooleanField(default=True, verbose_name='Активен')
+    revoked_at = models.DateTimeField(null=True, blank=True, verbose_name='Отозван')
+    revoked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='revoked_api_keys',
+        verbose_name='Отозвал',
+    )
     last_used_at = models.DateTimeField(null=True, blank=True, verbose_name='Последнее использование')
 
     class Meta:
         verbose_name = 'API-ключ'
         verbose_name_plural = 'API-ключи'
         indexes = [
-            models.Index(fields=['key_hash']),
             models.Index(fields=['tenant', 'is_active']),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                check=Q(role__in=['viewer', 'operator']),
+                name='api_key_limited_role',
+            ),
+            models.CheckConstraint(
+                check=Q(is_active=False) | Q(revoked_at__isnull=True),
+                name='active_api_key_not_revoked',
+            ),
         ]
 
     def __str__(self):
         return f'{self.key_prefix}... ({self.tenant.slug})'
 
     @classmethod
-    def generate(cls, tenant: 'Tenant', name: str) -> tuple['APIKey', str]:
+    def generate(
+        cls,
+        tenant: 'Tenant',
+        name: str,
+        *,
+        role: str = ROLE_VIEWER,
+        scopes: list[str] | tuple[str, ...] | None = None,
+        expires_at=None,
+        created_by=None,
+    ) -> tuple['APIKey', str]:
         """
         Создаёт новый API-ключ.
 
         Возвращает (объект APIKey, plaintext-ключ).
         Plaintext показывается только один раз — потом доступен только хэш.
         """
+        normalized_scopes = sorted(set(
+            default_api_key_scopes() if scopes is None else scopes
+        ))
+        unknown_scopes = set(normalized_scopes) - API_KEY_SCOPES
+        if unknown_scopes:
+            raise ValueError('Unknown API key scopes')
+        if role not in {cls.ROLE_VIEWER, cls.ROLE_OPERATOR}:
+            raise ValueError('API key role must be viewer or operator')
+        if role == cls.ROLE_VIEWER and API_KEY_WRITE_SCOPES.intersection(
+            normalized_scopes
+        ):
+            raise ValueError('Viewer API key cannot receive write scopes')
+
+        expires_at = expires_at or default_api_key_expiry()
+        current_time = timezone.now()
+        if expires_at <= current_time:
+            raise ValueError('API key expiry must be in the future')
+        if expires_at > current_time + timedelta(days=365):
+            raise ValueError('API key expiry cannot exceed 365 days')
+
         plaintext = cls.KEY_PREFIX + secrets.token_urlsafe(32)
         key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
         key_prefix = plaintext[:12]
@@ -245,14 +358,29 @@ class APIKey(TimestampedModel):
             name=name,
             key_prefix=key_prefix,
             key_hash=key_hash,
+            role=role,
+            scopes=normalized_scopes,
+            expires_at=expires_at,
+            created_by=created_by,
         )
         return api_key, plaintext
 
     @classmethod
     def verify(cls, plaintext: str) -> 'APIKey | None':
         """Проверяет ключ по хэшу. Возвращает объект или None."""
+        if not isinstance(plaintext, str) or not plaintext.startswith(cls.KEY_PREFIX):
+            return None
+        payload = plaintext[len(cls.KEY_PREFIX):]
+        if not cls.KEY_PAYLOAD_PATTERN.fullmatch(payload):
+            return None
         key_hash = hashlib.sha256(plaintext.encode()).hexdigest()
-        return cls.objects.filter(key_hash=key_hash, is_active=True).select_related('tenant').first()
+        return cls.objects.filter(
+            key_hash=key_hash,
+            is_active=True,
+            revoked_at__isnull=True,
+            expires_at__gt=timezone.now(),
+            tenant__is_active=True,
+        ).select_related('tenant').first()
 
 
 class WebhookEndpoint(SoftDeleteModel):

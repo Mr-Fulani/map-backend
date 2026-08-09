@@ -65,7 +65,9 @@ class TenantMiddleware:
             if plaintext.startswith(APIKey.KEY_PREFIX):
                 api_key = APIKey.verify(plaintext)
                 if api_key:
+                    request._resolved_api_key_id = api_key.pk
                     return api_key.tenant
+                return None
 
             # 2. По JWT token — декодируем прямо здесь, т.к. DRF ещё не запускался
             else:

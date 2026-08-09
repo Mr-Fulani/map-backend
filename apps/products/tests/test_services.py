@@ -117,6 +117,29 @@ class TestProductService:
         _, status, _ = ProductService.upsert_from_source(tenant, ds, updated_data)
         assert status == 'updated'
 
+    @pytest.mark.parametrize(('changes', 'expected_type'), [
+        ({'price': '2000.00'}, 'price_only'),
+        ({'stock_qty': 0}, 'stock_only'),
+        ({'category': 'Электрика'}, 'category'),
+        ({'name': 'Новое название'}, 'content'),
+        ({'description': 'Новое описание'}, 'content'),
+    ])
+    def test_upsert_detects_change_type_before_mutating_product(
+        self, changes, expected_type,
+    ):
+        tenant = make_tenant(f'change-{expected_type}-{len(changes)}')
+        ds = make_datasource(tenant)
+        ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+
+        _, status, change_type = ProductService.upsert_from_source(
+            tenant,
+            ds,
+            {**SAMPLE_DATA, **changes},
+        )
+
+        assert status == 'updated'
+        assert change_type == expected_type
+
     def test_detect_change_type_price_only(self):
         old = {**SAMPLE_DATA}
         new = {**SAMPLE_DATA, 'price': '9999.00'}
@@ -131,6 +154,11 @@ class TestProductService:
         old = {**SAMPLE_DATA}
         new = {**SAMPLE_DATA, 'name': 'Новое название'}
         assert ProductService.detect_change_type(old, new) == 'content'
+
+    def test_detect_change_type_ignores_equivalent_values(self):
+        old = {**SAMPLE_DATA, 'price': Decimal('1500.00')}
+        new = {**SAMPLE_DATA, 'price': '1500'}
+        assert ProductService.detect_change_type(old, new) is None
 
     def test_upsert_100_products_performance(self):
         """100 товаров создаются без ошибок."""

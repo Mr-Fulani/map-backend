@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
@@ -6,10 +7,16 @@ from drf_spectacular.utils import (
     OpenApiParameter, OpenApiTypes, extend_schema, inline_serializer,
 )
 from rest_framework import serializers, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from apps.tenants.api_views import ResearchAPIView as APIView
 
 from apps.core.pagination import MapPagination
+from apps.core.throttling import (
+    PrincipalScopedRateThrottle,
+    TenantScopedRateThrottle,
+    consume_tenant_daily_budget,
+)
 from apps.products.models import Product
 from apps.marketplaces.models import Listing
 from apps.tenants.models import TenantUser
@@ -29,20 +36,20 @@ from apps.web_research.providers.registry import registered_search_providers
 from apps.web_research.routing import search_provider_candidates
 
 
-_RESEARCH_START_REQUEST = inline_serializer(
-    name='WebResearchStartRequest',
-    fields={
-        'search_provider': serializers.CharField(required=False, allow_blank=True),
-        'generate_after': serializers.BooleanField(required=False, default=False),
-    },
-)
-_MARKET_RESEARCH_START_REQUEST = inline_serializer(
-    name='MarketResearchStartRequest',
-    fields={
-        'search_provider': serializers.CharField(required=False, allow_blank=True),
-        'force': serializers.BooleanField(required=False, default=False),
-    },
-)
+class WebResearchStartRequestSerializer(serializers.Serializer):
+    search_provider = serializers.SlugField(
+        required=False, allow_blank=True, max_length=50,
+    )
+    generate_after = serializers.BooleanField(required=False, default=False)
+
+
+class MarketResearchStartRequestSerializer(serializers.Serializer):
+    search_provider = serializers.SlugField(
+        required=False, allow_blank=True, max_length=50,
+    )
+    force = serializers.BooleanField(required=False, default=False)
+
+
 _COVERAGE_SCHEMA = inline_serializer(
     name='WebResearchCoverage',
     fields={
@@ -156,11 +163,36 @@ _MARKET_COMPARISON_RESPONSE = inline_serializer(
 class ProductWebResearchView(APIView):
     """POST starts a manual grounded web research run for one tenant product."""
 
+    api_key_enabled = True
+    api_key_scopes = {
+        'GET': {'research:read'},
+        'HEAD': {'research:read'},
+        'OPTIONS': {'research:read'},
+        'POST': {'research:run', 'catalog:write', 'ai:run'},
+    }
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'expensive_research_principal'
+    tenant_throttle_scope = 'expensive_research_tenant'
+    expensive_throttle_methods = {'POST'}
+
     @extend_schema(
-        request=_RESEARCH_START_REQUEST,
+        request=WebResearchStartRequestSerializer,
         responses={200: _RUN_RESPONSE, 201: _RUN_RESPONSE},
     )
     def post(self, request, product_pk: int):
+        request_serializer = WebResearchStartRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        generate_after = request_serializer.validated_data['generate_after']
+        generate_scopes = {'listings:write'}
+        if (
+            generate_after
+            and getattr(request.user, 'is_api_key', False)
+            and not request.user.has_scopes(generate_scopes)
+        ):
+            raise PermissionDenied(
+                'API Key требует scope listings:write '
+                'для последующей генерации.',
+            )
         product = get_object_or_404(
             Product.objects.select_related('tenant', 'catalog_category'),
             pk=product_pk,
@@ -173,17 +205,24 @@ class ProductWebResearchView(APIView):
                 {'status': 'error', 'code': 'web_research_unavailable', 'message': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        provider = str(request.data.get('search_provider') or '').strip()
-        run, created = WebResearchService.create_run(
-            product,
-            trigger=WebResearchRun.Trigger.MANUAL,
-            generate_after=bool(request.data.get('generate_after')),
-            search_provider=provider,
-            purpose=WebResearchRun.Purpose.ENRICHMENT,
-        )
-        if created:
-            from apps.web_research.tasks import run_web_research
-            transaction.on_commit(lambda: run_web_research.delay(run.pk))
+        provider = request_serializer.validated_data.get('search_provider', '')
+        with transaction.atomic():
+            run, created = WebResearchService.create_run(
+                product,
+                trigger=WebResearchRun.Trigger.MANUAL,
+                generate_after=generate_after,
+                search_provider=provider,
+                purpose=WebResearchRun.Purpose.ENRICHMENT,
+            )
+            if created:
+                consume_tenant_daily_budget(
+                    tenant_id=request.tenant.pk,
+                    scope='web-research-starts',
+                    cost=1,
+                    limit=settings.WEB_RESEARCH_TENANT_DAILY_STARTS,
+                )
+                from apps.web_research.tasks import run_web_research
+                transaction.on_commit(lambda: run_web_research.delay(run.pk))
         return Response({
             'status': 'ok',
             'data': WebResearchRunSerializer(run).data,
@@ -204,6 +243,8 @@ class ProductWebResearchView(APIView):
 
 @extend_schema(tags=['Web research'])
 class WebResearchRunDetailView(APIView):
+    api_key_enabled = True
+
     @extend_schema(
         summary='Детали запуска интернет-исследования',
         operation_id='web_research_run_retrieve',
@@ -221,6 +262,8 @@ class WebResearchRunDetailView(APIView):
 @extend_schema(tags=['Web research'])
 class WebResearchRunListView(APIView):
     """Tenant-scoped research journal for the customer dashboard."""
+
+    api_key_enabled = True
 
     @extend_schema(
         operation_id='web_research_run_list',
@@ -293,6 +336,8 @@ class WebResearchRunListView(APIView):
 class WebSearchProviderListView(APIView):
     """Tenant-safe provider health; credentials and platform policy are never exposed."""
 
+    api_key_enabled = True
+
     @extend_schema(responses=_PROVIDER_RESPONSE)
     def get(self, request):
         candidates = search_provider_candidates(request.tenant)
@@ -319,6 +364,8 @@ class WebSearchProviderListView(APIView):
 @extend_schema(tags=['Web research'])
 class TenantWebResearchSettingsView(APIView):
     """Tenant-visible search policy; only owner/admin may change it."""
+
+    api_key_scopes = {}
 
     @extend_schema(responses=_SETTINGS_RESPONSE)
     def get(self, request):
@@ -359,11 +406,19 @@ class TenantWebResearchSettingsView(APIView):
 class ProductMarketResearchView(APIView):
     """Start pricing research without coupling it to enrichment coverage."""
 
+    api_key_enabled = True
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'expensive_research_principal'
+    tenant_throttle_scope = 'expensive_research_tenant'
+    expensive_throttle_methods = {'POST'}
+
     @extend_schema(
-        request=_MARKET_RESEARCH_START_REQUEST,
+        request=MarketResearchStartRequestSerializer,
         responses={200: _MARKET_RESEARCH_RESPONSE, 201: _MARKET_RESEARCH_RESPONSE},
     )
     def post(self, request, product_pk: int):
+        request_serializer = MarketResearchStartRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
         product = get_object_or_404(
             Product.objects.select_related('tenant', 'catalog_category'),
             pk=product_pk, tenant=request.tenant,
@@ -375,7 +430,7 @@ class ProductMarketResearchView(APIView):
                  'message': 'Исследование цен отключено в настройках организации.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        force = bool(request.data.get('force'))
+        force = request_serializer.validated_data['force']
         fresh_verified = CompetitorOffer.objects.filter(
             tenant=request.tenant,
             product=product,
@@ -391,15 +446,24 @@ class ProductMarketResearchView(APIView):
                 'message': 'Использованы свежие предложения; платный поиск не запускался.',
                 'data': WebResearchRunSerializer(latest).data if latest else None,
             })
-        run, created = WebResearchService.create_run(
-            product,
-            trigger=WebResearchRun.Trigger.MANUAL,
-            search_provider=str(request.data.get('search_provider') or '').strip(),
-            purpose=WebResearchRun.Purpose.PRICING,
-        )
-        if created:
-            from apps.web_research.tasks import run_web_research
-            transaction.on_commit(lambda: run_web_research.delay(run.pk))
+        with transaction.atomic():
+            run, created = WebResearchService.create_run(
+                product,
+                trigger=WebResearchRun.Trigger.MANUAL,
+                search_provider=request_serializer.validated_data.get(
+                    'search_provider', '',
+                ),
+                purpose=WebResearchRun.Purpose.PRICING,
+            )
+            if created:
+                consume_tenant_daily_budget(
+                    tenant_id=request.tenant.pk,
+                    scope='web-research-starts',
+                    cost=1,
+                    limit=settings.WEB_RESEARCH_TENANT_DAILY_STARTS,
+                )
+                from apps.web_research.tasks import run_web_research
+                transaction.on_commit(lambda: run_web_research.delay(run.pk))
         return Response({
             'status': 'ok', 'reused': not created,
             'data': WebResearchRunSerializer(run).data,
@@ -408,6 +472,8 @@ class ProductMarketResearchView(APIView):
 
 @extend_schema(tags=['Web research'])
 class ProductMarketOfferListView(APIView):
+    api_key_enabled = True
+
     @extend_schema(
         summary='Рыночные предложения для товара',
         parameters=[
@@ -484,6 +550,8 @@ class ProductMarketOfferListView(APIView):
 
 @extend_schema(tags=['Web research'])
 class ListingMarketComparisonView(APIView):
+    api_key_enabled = True
+
     @extend_schema(
         summary='Сравнение цены листинга с рынком',
         responses=_MARKET_COMPARISON_RESPONSE,

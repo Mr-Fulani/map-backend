@@ -5,8 +5,11 @@ from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers
 from rest_framework import status
 from rest_framework.exceptions import ValidationError
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.views import APIView
+from apps.tenants.api_views import MediaAPIView as APIView
+from apps.tenants.permissions import TenantAdminWritePermission
+from apps.tenants.principals import human_user_or_none
 
 from apps.media_processing.models import (
     ImageAssessment,
@@ -63,6 +66,8 @@ MEDIA_PROVIDER_RESPONSE = inline_serializer(
 class MediaProviderListView(APIView):
     """Configured capabilities and tariff visibility without exposing API credentials."""
 
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='media_provider_list',
         responses=_ok_response(
@@ -99,6 +104,8 @@ class MediaProviderListView(APIView):
 
 @extend_schema(tags=['Media processing'])
 class MediaPresetListCreateView(APIView):
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='media_preset_list',
         summary='Получить пресеты обработки медиа',
@@ -129,7 +136,10 @@ class MediaPresetListCreateView(APIView):
         },
     )
     def post(self, request):
-        serializer = MediaProcessingPresetSerializer(data=request.data)
+        serializer = MediaProcessingPresetSerializer(
+            data=request.data,
+            context={'request': request},
+        )
         serializer.is_valid(raise_exception=True)
         preset = serializer.save(tenant=request.tenant)
         return Response(
@@ -140,6 +150,10 @@ class MediaPresetListCreateView(APIView):
 
 @extend_schema(tags=['Media processing'])
 class TenantMediaSettingsView(APIView):
+    # Tenant policy is a human-admin concern, not a machine integration API.
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+    api_key_scopes = {}
+
     def get_object(self, request):
         obj, _ = TenantMediaSettings.objects.get_or_create(tenant=request.tenant)
         return obj
@@ -181,6 +195,8 @@ class TenantMediaSettingsView(APIView):
 
 @extend_schema(tags=['Media processing'])
 class MediaJobListView(APIView):
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='media_job_list',
         summary='Получить задания обработки медиа',
@@ -203,6 +219,8 @@ class MediaJobListView(APIView):
 
 @extend_schema(tags=['Media processing'])
 class MediaJobDetailView(APIView):
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='media_job_retrieve',
         summary='Получить задание обработки медиа',
@@ -225,6 +243,8 @@ class MediaJobDetailView(APIView):
 
 @extend_schema(tags=['Media processing'])
 class ProductImageProcessView(APIView):
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='product_image_process',
         summary='Запустить обработку изображения товара',
@@ -261,13 +281,14 @@ class ProductImageProcessView(APIView):
                 operations=data.get('operations'),
                 parameters=data.get('parameters'),
                 provider_id=data.get('provider_id', ''),
-                requested_by=request.user if request.user.is_authenticated else None,
+                requested_by=human_user_or_none(request),
                 idempotency_key=data.get('idempotency_key', ''),
             )
         except ValueError as exc:
             raise ValidationError({'operations': [str(exc)]}) from exc
         from apps.media_processing.tasks import process_media_job
-        transaction.on_commit(lambda: process_media_job.delay(job.pk))
+        if job._created_for_request:
+            transaction.on_commit(lambda: process_media_job.delay(job.pk))
         return Response(
             {'status': 'ok', 'data': MediaProcessingJobSerializer(job).data},
             status=status.HTTP_202_ACCEPTED,
@@ -276,6 +297,8 @@ class ProductImageProcessView(APIView):
 
 @extend_schema(tags=['Media processing'])
 class ProductImageVariantActivateView(APIView):
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='media_variant_activate',
         summary='Активировать вариант изображения',
@@ -302,6 +325,8 @@ class ProductImageVariantActivateView(APIView):
 
 @extend_schema(tags=['Media processing'])
 class ImageAssessmentListView(APIView):
+    api_key_enabled = True
+
     @extend_schema(
         operation_id='media_assessment_list',
         summary='Получить оценки изображений',

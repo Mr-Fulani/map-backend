@@ -15,8 +15,8 @@ import pytest
 from django.utils.timezone import now
 
 from apps.notifications.models import TenantNotificationSettings
-from apps.tenants.models import APIKey
 from apps.tenants.services import TenantService
+from apps.tenants.tests.auth import owner_access_token
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ class TestNotificationSettingsAPI:
     def test_get_returns_defaults_for_new_tenant(self, client):
         """GET создаёт настройки если их нет и возвращает telegram_connected=False."""
         tenant = make_tenant('ns-get')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         resp = client.get('/api/v1/notifications/settings/', **auth(raw_key))
 
@@ -120,7 +120,7 @@ class TestNotificationSettingsAPI:
         """GET возвращает telegram_connected=True если chat_id уже привязан."""
         tenant = make_tenant('ns-connected')
         make_ns(tenant, telegram_chat_id='123456', telegram_username='myuser')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         resp = client.get('/api/v1/notifications/settings/', **auth(raw_key))
 
@@ -132,7 +132,7 @@ class TestNotificationSettingsAPI:
         """PUT обновляет email и флаги, не затрагивая telegram_chat_id."""
         tenant = make_tenant('ns-put')
         make_ns(tenant, telegram_chat_id='555')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         resp = client.put(
             '/api/v1/notifications/settings/',
@@ -166,7 +166,7 @@ class TestTelegramConnectAPI:
     def test_returns_bot_url_with_token(self, client):
         """POST возвращает bot_url содержащий токен подключения."""
         tenant = make_tenant('tg-conn')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         with patch('apps.notifications.views.settings') as mock_settings:
             mock_settings.TELEGRAM_BOT_USERNAME = 'TestMapBot'
@@ -184,7 +184,7 @@ class TestTelegramConnectAPI:
     def test_token_is_saved_in_db(self, client):
         """После POST токен сохранён в TenantNotificationSettings."""
         tenant = make_tenant('tg-token-db')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         with patch('apps.notifications.views.settings') as mock_settings:
             mock_settings.TELEGRAM_BOT_USERNAME = 'TestMapBot'
@@ -202,7 +202,7 @@ class TestTelegramConnectAPI:
     def test_returns_503_when_bot_not_configured(self, client):
         """503 если TELEGRAM_BOT_USERNAME не задан."""
         tenant = make_tenant('tg-no-bot')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         with patch('apps.notifications.views.settings') as mock_settings:
             mock_settings.TELEGRAM_BOT_USERNAME = ''
@@ -224,7 +224,7 @@ class TestTelegramDisconnectAPI:
         """DELETE сбрасывает telegram_chat_id и username."""
         tenant = make_tenant('tg-disc')
         make_ns(tenant, telegram_chat_id='777', telegram_username='user7')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         resp = client.delete(
             '/api/v1/notifications/settings/telegram/',
@@ -247,7 +247,7 @@ class TestNotificationTestAPI:
         """POST /test/ отправляет сообщение если Telegram подключён."""
         tenant = make_tenant('tg-test-ok')
         make_ns(tenant, telegram_chat_id='123')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         with patch('apps.notifications.views.TelegramNotifier') as mock_tg:
             mock_tg.return_value.send.return_value = True
@@ -265,7 +265,7 @@ class TestNotificationTestAPI:
         """400 если Telegram не подключён."""
         tenant = make_tenant('tg-test-no')
         make_ns(tenant, telegram_chat_id='')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         resp = client.post(
             '/api/v1/notifications/settings/test/',
@@ -278,7 +278,7 @@ class TestNotificationTestAPI:
         """502 если TelegramNotifier.send вернул False."""
         tenant = make_tenant('tg-test-fail')
         make_ns(tenant, telegram_chat_id='999')
-        _, raw_key = APIKey.generate(tenant, 'k')
+        raw_key = owner_access_token(tenant)
 
         with patch('apps.notifications.views.TelegramNotifier') as mock_tg:
             mock_tg.return_value.send.return_value = False

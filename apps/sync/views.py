@@ -15,6 +15,12 @@ class SyncLogListView(ListAPIView):
     """
 
     serializer_class = SyncLogSerializer
+    api_key_enabled = True
+    api_key_scopes = {
+        'GET': {'sync:read'},
+        'HEAD': {'sync:read'},
+        'OPTIONS': {'sync:read'},
+    }
 
     def get_queryset(self):
         qs = SyncLog.objects.filter(tenant=self.request.tenant).order_by('-created_at')
