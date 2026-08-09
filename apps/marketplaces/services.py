@@ -1,6 +1,7 @@
 import datetime
 from decimal import Decimal, InvalidOperation
 
+from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -78,6 +79,10 @@ class InvalidListingStatus(Exception):
 
 class ListingAccountConflict(Exception):
     """Для товара уже есть листинг на выбранном аккаунте."""
+
+
+class ListingBulkLimitExceeded(ValueError):
+    """A direct bulk listing operation selected more rows than the API cap."""
 
 
 class NoActiveAccounts(Exception):
@@ -396,7 +401,14 @@ class ListingService:
                 updates['bulk_placement_address'] = None
         if not updates:
             return 0
-        return qs.update(**updates)
+        target_ids = list(
+            qs.order_by('pk').values_list('pk', flat=True)[:settings.API_BULK_MAX_ITEMS + 1],
+        )
+        if len(target_ids) > settings.API_BULK_MAX_ITEMS:
+            raise ListingBulkLimitExceeded(
+                f'Массовая операция допускает не более {settings.API_BULK_MAX_ITEMS} листингов.',
+            )
+        return qs.filter(pk__in=target_ids).update(**updates)
 
     @staticmethod
     def bulk_action(tenant, data: dict) -> dict:
@@ -405,8 +417,12 @@ class ListingService:
         listings = list(
             ListingService._bulk_queryset(tenant, data)
             .select_related('tenant', 'product', 'account')
-            .order_by('pk')
+            .order_by('pk')[:settings.API_BULK_MAX_ITEMS + 1]
         )
+        if len(listings) > settings.API_BULK_MAX_ITEMS:
+            raise ListingBulkLimitExceeded(
+                f'Массовая операция допускает не более {settings.API_BULK_MAX_ITEMS} листингов.',
+            )
         result = {
             'total': len(listings),
             'success': 0,
@@ -617,6 +633,7 @@ class MarketplaceAccountService:
     def _fetch_avito_user_id(credentials_enc: str) -> str:
         """Получает числовой user_id из Avito API по credentials."""
         import requests as req
+        from apps.core.http_responses import bounded_http_request
         from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 
         class _Tmp:
@@ -626,10 +643,12 @@ class MarketplaceAccountService:
         tmp.credentials_enc = credentials_enc
         try:
             token = AvitoAuthManager()._refresh(tmp)
-            resp = req.get(
+            resp = bounded_http_request(
+                req.get,
                 'https://api.avito.ru/core/v1/accounts/self',
                 headers={'Authorization': f'Bearer {token}'},
                 timeout=10,
+                max_bytes=settings.AVITO_API_RESPONSE_MAX_BYTES,
             )
             resp.raise_for_status()
             user_id = resp.json().get('id')

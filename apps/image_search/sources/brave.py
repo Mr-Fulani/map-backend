@@ -10,6 +10,7 @@ import logging
 import requests
 from django.conf import settings
 
+from apps.core.http_responses import bounded_http_request, trusted_api_max_bytes
 from apps.image_search.models import BraveQuota
 from apps.image_search.sources.base import BaseImageSource, ImageCandidate
 from apps.image_search.sources.connection import image_source_api_key, image_source_connection
@@ -90,12 +91,12 @@ class BraveImageSource(BaseImageSource):
         for query, confidence in queries:
             results = self._fetch(api_key, query)
             for rank, r in enumerate(results, start=1):
-                url = r.get('properties', {}).get('url', '')
+                props = r.get('properties') or {}
+                thumb = r.get('thumbnail') or {}
+                url = props.get('url', '')
                 if not url or url in seen_urls:
                     continue
                 seen_urls.add(url)
-                thumb = r.get('thumbnail', {})
-                props = r.get('properties', {})
                 candidates.append(ImageCandidate(
                     url=url,
                     source_id=self.source_id,
@@ -115,11 +116,11 @@ class BraveImageSource(BaseImageSource):
     def _fetch(self, api_key: str, query: str) -> list[dict]:
         """Выполняет один HTTP-запрос к Brave Image Search API."""
         try:
-            resp = requests.get(
+            resp = bounded_http_request(
+                requests.get,
                 _API_URL,
                 headers={
                     'Accept': 'application/json',
-                    'Accept-Encoding': 'gzip',
                     'X-Subscription-Token': api_key,
                 },
                 params={
@@ -130,6 +131,7 @@ class BraveImageSource(BaseImageSource):
                     'safesearch': 'off',
                 },
                 timeout=_TIMEOUT_SEC,
+                max_bytes=trusted_api_max_bytes(settings),
             )
 
             if resp.status_code == 401:
@@ -150,7 +152,51 @@ class BraveImageSource(BaseImageSource):
             # Инкрементируем персистентный счётчик только при успешном ответе
             self._track_quota(resp)
 
-            return resp.json().get('results', [])
+            payload = resp.json()
+            if not isinstance(payload, dict):
+                raise ValueError('top-level JSON must be an object')
+            results = payload.get('results')
+            if results is None:
+                return []
+            if not isinstance(results, list):
+                raise ValueError('results must be a list')
+
+            selected = results[:_MAX_RESULTS_PER_QUERY]
+            for item in selected:
+                if not isinstance(item, dict):
+                    raise ValueError('results items must be objects')
+                properties = item.get('properties')
+                thumbnail = item.get('thumbnail')
+                if properties is not None and not isinstance(properties, dict):
+                    raise ValueError('properties must be an object')
+                if thumbnail is not None and not isinstance(thumbnail, dict):
+                    raise ValueError('thumbnail must be an object')
+                url = (properties or {}).get('url')
+                if url is not None and not isinstance(url, str):
+                    raise ValueError('properties.url must be a string')
+                title = item.get('title')
+                if title is not None and not isinstance(title, str):
+                    raise ValueError('title must be a string')
+                for dimensions in (properties or {}, thumbnail or {}):
+                    for field_name in ('width', 'height'):
+                        dimension = dimensions.get(field_name)
+                        if (
+                            dimension is not None
+                            and (
+                                isinstance(dimension, bool)
+                                or not isinstance(dimension, int)
+                                or dimension < 0
+                            )
+                        ):
+                            raise ValueError(
+                                f'{field_name} must be a non-negative integer',
+                            )
+            return selected
+        except ValueError as exc:
+            self.last_error = f'Brave вернул некорректный ответ: {exc}'
+            self.last_error_code = 'invalid_response'
+            logger.warning('[brave] некорректный ответ для %r: %s', query, exc)
+            return []
         except Exception as exc:
             self.last_error = f'Brave недоступен: {exc}'
             self.last_error_code = 'source_error'

@@ -1,4 +1,5 @@
 import os
+from urllib.parse import urlsplit
 
 import sentry_sdk
 from cryptography.fernet import Fernet
@@ -7,6 +8,7 @@ from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.django import DjangoIntegration
 
 from config.redis_config import validate_production_redis_layout
+from config.sentry_scrubbing import scrub_sentry_breadcrumb, scrub_sentry_event
 
 from .base import *  # noqa: F401, F403
 
@@ -63,6 +65,59 @@ except (TypeError, ValueError) as exc:
 if not SITE_URL.startswith('https://') or not FRONTEND_URL.startswith('https://'):
     raise ImproperlyConfigured('SITE_URL и FRONTEND_URL должны использовать HTTPS в production.')
 
+
+def _is_https_origin(value: str) -> bool:
+    try:
+        parsed = urlsplit(value)
+        parsed.port
+    except ValueError:
+        return False
+    return bool(
+        parsed.scheme == 'https'
+        and parsed.hostname
+        and parsed.username is None
+        and parsed.password is None
+        and parsed.path in ('', '/')
+        and not parsed.query
+        and not parsed.fragment
+    )
+
+
+if not BILLING_RETURN_URL_ALLOWED_ORIGINS or not all(
+    _is_https_origin(origin)
+    for origin in BILLING_RETURN_URL_ALLOWED_ORIGINS
+):
+    raise ImproperlyConfigured(
+        'BILLING_RETURN_URL_ALLOWED_ORIGINS должен содержать только HTTPS origins.',
+    )
+if YOOKASSA_ALLOW_TEST_PAYMENTS:
+    raise ImproperlyConfigured('YOOKASSA_ALLOW_TEST_PAYMENTS запрещён в production.')
+YOOKASSA_SHOP_ID = _required_env('YOOKASSA_SHOP_ID')
+YOOKASSA_SECRET_KEY = _required_env('YOOKASSA_SECRET_KEY')
+try:
+    _yookassa_api_url = urlsplit(YOOKASSA_API_BASE_URL)
+    _valid_yookassa_api_url = (
+        _yookassa_api_url.scheme == 'https'
+        and _yookassa_api_url.hostname == 'api.yookassa.ru'
+        and _yookassa_api_url.port in (None, 443)
+        and _yookassa_api_url.path.rstrip('/') == '/v3'
+        and _yookassa_api_url.username is None
+        and _yookassa_api_url.password is None
+        and not _yookassa_api_url.query
+        and not _yookassa_api_url.fragment
+    )
+except ValueError:
+    _valid_yookassa_api_url = False
+if not _valid_yookassa_api_url:
+    raise ImproperlyConfigured(
+        'YOOKASSA_API_BASE_URL в production должен указывать на '
+        'https://api.yookassa.ru/v3.',
+    )
+if YOOKASSA_API_MAX_RESPONSE_BYTES > 4 * 1024 * 1024:
+    raise ImproperlyConfigured(
+        'YOOKASSA_API_MAX_RESPONSE_BYTES не должен превышать 4 MiB.',
+    )
+
 # HTTPS / Security headers
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
@@ -90,19 +145,12 @@ if SENTRY_DSN:
         dsn=SENTRY_DSN,
         integrations=[DjangoIntegration(), CeleryIntegration()],
         traces_sample_rate=0.1,
-        before_send=lambda event, hint: _scrub_secrets(event),
+        send_default_pii=False,
+        max_request_body_size='never',
+        include_local_variables=False,
+        before_send=scrub_sentry_event,
+        before_breadcrumb=scrub_sentry_breadcrumb,
     )
-
-
-def _scrub_secrets(event: dict) -> dict:
-    """Очищает API-ключи и токены из Sentry-событий перед отправкой."""
-    sensitive_keys = {'password', 'token', 'secret', 'key', 'authorization'}
-    if 'request' in event and 'headers' in event['request']:
-        headers = event['request']['headers']
-        for key in list(headers):
-            if any(s in key.lower() for s in sensitive_keys):
-                headers[key] = '[Filtered]'
-    return event
 
 
 LOGGING = {

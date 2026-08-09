@@ -1,4 +1,5 @@
 import json
+import io
 from decimal import Decimal
 from unittest.mock import call, patch
 
@@ -37,6 +38,33 @@ def make_product(tenant, article='P50136', brand='BREMBO', name=None, category_1
         price=Decimal('0'),
         stock_qty=0,
     )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ('method', 'path'),
+    [
+        ('post', '/api/v1/products/catalog-categories/assign/'),
+        ('post', '/api/v1/products/exclude/'),
+        ('delete', '/api/v1/products/bulk-delete/'),
+    ],
+)
+def test_direct_product_bulk_endpoints_enforce_hard_cap(method, path, settings):
+    tenant, api_key = make_tenant(f'direct-cap-{method}-{path.split("/")[-2]}')
+    settings.API_BULK_MAX_ITEMS = 500
+    client = Client()
+    payload = {'product_ids': list(range(1, 502))}
+    request = getattr(client, method)
+
+    response = request(
+        path,
+        payload,
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 400
+    assert 'product_ids' in response.json()['errors']
 
 
 @pytest.mark.django_db
@@ -877,7 +905,14 @@ def test_tenant_catalog_category_default_image_is_product_fallback():
     product.save(update_fields=['catalog_category'])
     client = Client()
 
-    image = SimpleUploadedFile('fallback.jpg', b'image-bytes', content_type='image/jpeg')
+    from PIL import Image
+    image_bytes = io.BytesIO()
+    Image.new('RGB', (32, 32), 'white').save(image_bytes, format='JPEG')
+    image = SimpleUploadedFile(
+        'fallback.jpg',
+        image_bytes.getvalue(),
+        content_type='image/jpeg',
+    )
     upload_response = client.post(
         f'/api/v1/products/catalog-categories/{category.pk}/default-image/',
         {'image': image},

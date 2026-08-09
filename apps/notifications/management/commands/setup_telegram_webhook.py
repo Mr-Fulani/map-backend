@@ -12,6 +12,19 @@ import requests
 from django.conf import settings
 from django.core.management.base import BaseCommand
 
+from apps.core.http_responses import trusted_api_max_bytes
+from apps.notifications.telegram_api import (
+    TelegramAPIError,
+    expect_boolean_result,
+    request_telegram_json,
+)
+
+
+CONNECT_TIMEOUT_SECONDS = 5.0
+READ_TIMEOUT_SECONDS = 10.0
+TOTAL_DEADLINE_SECONDS = 15.0
+CONTROL_RESPONSE_MAX_BYTES = 64 * 1024
+
 
 class Command(BaseCommand):
     """Регистрирует webhook в Telegram Bot API для текущего домена."""
@@ -34,12 +47,16 @@ class Command(BaseCommand):
         base = f'https://api.telegram.org/bot{token}'
 
         if options['delete']:
-            resp = requests.post(f'{base}/deleteWebhook', timeout=10)
-            data = resp.json()
-            if data.get('ok'):
-                self.stdout.write(self.style.SUCCESS('Webhook удалён.'))
-            else:
-                self.stderr.write(self.style.ERROR(f'Ошибка: {data}'))
+            try:
+                data = self._request(
+                    requests.post,
+                    f'{base}/deleteWebhook',
+                )
+                expect_boolean_result(data)
+            except TelegramAPIError as exc:
+                self.stderr.write(self.style.ERROR(f'Ошибка deleteWebhook: {exc}'))
+                return
+            self.stdout.write(self.style.SUCCESS('Webhook удалён.'))
             return
 
         site_url = getattr(settings, 'SITE_URL', '').rstrip('/')
@@ -55,29 +72,66 @@ class Command(BaseCommand):
         # То же значение проверяется в TelegramBotWebhookView.
         secret_token = token.split(':')[-1][:32]
 
-        resp = requests.post(
-            f'{base}/setWebhook',
-            json={
-                'url': webhook_url,
-                'secret_token': secret_token,
-                'allowed_updates': ['message'],
-                'drop_pending_updates': True,
-            },
-            timeout=10,
-        )
-        data = resp.json()
-
-        if data.get('ok'):
+        try:
+            data = self._request(
+                requests.post,
+                f'{base}/setWebhook',
+                json={
+                    'url': webhook_url,
+                    'secret_token': secret_token,
+                    'allowed_updates': ['message'],
+                    'drop_pending_updates': True,
+                },
+            )
+            expect_boolean_result(data)
             self.stdout.write(self.style.SUCCESS(
                 f'Webhook зарегистрирован: {webhook_url}'
             ))
             # Проверим что Telegram видит его
-            info = requests.get(f'{base}/getWebhookInfo', timeout=10).json()
-            result = info.get('result', {})
+            info = self._request(requests.get, f'{base}/getWebhookInfo')
+            result = self._validate_webhook_info(info.get('result'))
             self.stdout.write(f'  url              : {result.get("url")}')
             self.stdout.write(f'  pending_updates  : {result.get("pending_update_count", 0)}')
             last_err = result.get('last_error_message')
             if last_err:
                 self.stdout.write(self.style.WARNING(f'  last_error       : {last_err}'))
-        else:
-            self.stderr.write(self.style.ERROR(f'Ошибка setWebhook: {data}'))
+        except TelegramAPIError as exc:
+            self.stderr.write(self.style.ERROR(f'Ошибка Telegram API: {exc}'))
+
+    @staticmethod
+    def _validate_webhook_info(result) -> dict:
+        if not isinstance(result, dict):
+            raise TelegramAPIError('getWebhookInfo returned an invalid result.')
+
+        url = result.get('url')
+        pending = result.get('pending_update_count')
+        last_error = result.get('last_error_message')
+        if not isinstance(url, str):
+            raise TelegramAPIError('getWebhookInfo returned an invalid URL.')
+        if (
+            not isinstance(pending, int)
+            or isinstance(pending, bool)
+            or pending < 0
+        ):
+            raise TelegramAPIError(
+                'getWebhookInfo returned an invalid pending update count.'
+            )
+        if last_error is not None and not isinstance(last_error, str):
+            raise TelegramAPIError(
+                'getWebhookInfo returned an invalid last error message.'
+            )
+        return result
+
+    @staticmethod
+    def _request(requester, url: str, **kwargs) -> dict:
+        return request_telegram_json(
+            requester,
+            url,
+            timeout=(CONNECT_TIMEOUT_SECONDS, READ_TIMEOUT_SECONDS),
+            max_elapsed_seconds=TOTAL_DEADLINE_SECONDS,
+            max_bytes=min(
+                trusted_api_max_bytes(settings),
+                CONTROL_RESPONSE_MAX_BYTES,
+            ),
+            **kwargs,
+        )

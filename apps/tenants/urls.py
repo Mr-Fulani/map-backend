@@ -13,13 +13,34 @@ from apps.tenants.views import (
     WebhookEndpointTestView,
     WebhookEventsView,
 )
-from apps.tenants.jwt_views import TenantTokenObtainPairView, TenantTokenRefreshView
+from apps.tenants.jwt_views import (
+    BrowserCSRFView,
+    BrowserLoginView,
+    BrowserLogoutAllView,
+    BrowserLogoutView,
+    BrowserRefreshView,
+    LogoutAllView,
+    LogoutView,
+    TenantTokenObtainPairView,
+    TenantTokenRefreshView,
+)
 
 urlpatterns = [
     # Auth
     path('auth/register/', RegisterView.as_view(), name='register'),
     path('auth/token/', TenantTokenObtainPairView.as_view(), name='token-obtain'),
     path('auth/token/refresh/', TenantTokenRefreshView.as_view(), name='token-refresh'),
+    path('auth/logout/', LogoutView.as_view(), name='logout'),
+    path('auth/logout-all/', LogoutAllView.as_view(), name='logout-all'),
+    path('auth/browser/csrf/', BrowserCSRFView.as_view(), name='browser-csrf'),
+    path('auth/browser/login/', BrowserLoginView.as_view(), name='browser-login'),
+    path('auth/browser/refresh/', BrowserRefreshView.as_view(), name='browser-refresh'),
+    path('auth/browser/logout/', BrowserLogoutView.as_view(), name='browser-logout'),
+    path(
+        'auth/browser/logout-all/',
+        BrowserLogoutAllView.as_view(),
+        name='browser-logout-all',
+    ),
     path('auth/me/', MeView.as_view(), name='auth-me'),
     # Tenant
     path('catalog-domains/', CatalogDomainListView.as_view(), name='catalog-domain-list'),

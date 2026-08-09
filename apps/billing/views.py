@@ -2,23 +2,36 @@ import ipaddress
 from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
-from django.db.models import F
+from django.db import transaction
 from django.utils import timezone
+from django.utils.decorators import method_decorator
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.billing.models import (
-    AICreditPackage, BillingWebhookEvent, Invoice, PaymentReversal, Plan,
+    AICreditPackage, BillingWebhookEvent, Invoice, Plan,
 )
 from apps.billing.serializers import (
     AICreditPackageSerializer, AITopupCheckoutSerializer, CheckoutSerializer,
     InvoiceSerializer, PlanSerializer, SubscriptionSerializer,
 )
-from apps.billing.services import BillingService, LimitChecker
+from apps.billing.services import (
+    BillingService, CheckoutConflictError, CheckoutKeyLimitError,
+    CheckoutManualReviewError, CheckoutPendingError, CheckoutTerminalError,
+    LimitChecker,
+)
 from apps.billing.webhook import is_yookassa_ip
+from apps.billing.webhook_processing import (  # noqa: F401
+    FINAL_WEBHOOK_DECISIONS as _FINAL_WEBHOOK_DECISIONS,
+    SUPPORTED_YOOKASSA_EVENTS as _SUPPORTED_YOOKASSA_EVENTS,
+    claim_webhook_event as _claim_webhook_event,
+    finalize_webhook_event as _finalize_webhook_event,
+    process_claimed_yookassa_event,
+)
 from apps.tenants.permissions import TenantOwnerPermission
 
 
@@ -72,6 +85,72 @@ _PAYMENT_URL_RESPONSE = inline_serializer(
 )
 
 
+def _checkout_error_response(exc):
+    if isinstance(exc, CheckoutConflictError):
+        return Response(
+            {
+                'status': 'error',
+                'code': 'idempotency_conflict',
+                'message': str(exc),
+                'data': {'invoice_id': exc.invoice_id},
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+    if isinstance(exc, CheckoutKeyLimitError):
+        return Response(
+            {
+                'status': 'error',
+                'code': 'checkout_key_limit',
+                'message': str(exc),
+                'data': {
+                    'invoice_id': exc.invoice_id,
+                    'retryable': False,
+                    'reuse_idempotency_key': True,
+                },
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+    if isinstance(exc, CheckoutManualReviewError):
+        return Response(
+            {
+                'status': 'error',
+                'code': 'checkout_manual_review',
+                'message': str(exc),
+                'data': {'invoice_id': exc.invoice_id},
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+    if isinstance(exc, CheckoutTerminalError):
+        return Response(
+            {
+                'status': 'error',
+                'code': 'checkout_terminal',
+                'message': str(exc),
+                'data': {
+                    'invoice_id': exc.invoice_id,
+                    'invoice_status': exc.invoice_status,
+                    'retryable': False,
+                    'rotate_idempotency_key': True,
+                },
+            },
+            status=status.HTTP_409_CONFLICT,
+        )
+    response = Response(
+        {
+            'status': 'error',
+            'code': 'checkout_pending',
+            'message': str(exc),
+            'data': {
+                'invoice_id': exc.invoice_id,
+                'retryable': True,
+            },
+        },
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+    response['Retry-After'] = str(exc.retry_after)
+    return response
+
+
 def _webhook_source_ip(request) -> str | None:
     forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
     candidate = (
@@ -90,7 +169,7 @@ def _sanitize_webhook_payload(event: str, obj: dict) -> dict:
     allowed = {
         key: obj[key]
         for key in (
-            'id', 'status', 'payment_id', 'amount', 'metadata',
+            'id', 'status', 'payment_id', 'amount',
             'created_at', 'cancellation_details',
         )
         if key in obj
@@ -101,10 +180,34 @@ def _sanitize_webhook_payload(event: str, obj: dict) -> dict:
 def _parse_webhook_amount(obj: dict) -> tuple[Decimal | None, str]:
     amount_obj = obj.get('amount') or {}
     try:
-        amount = Decimal(str(amount_obj.get('value'))).quantize(Decimal('0.01'))
+        raw_amount = Decimal(str(amount_obj.get('value')))
+        amount = raw_amount.quantize(Decimal('0.01'))
     except (InvalidOperation, TypeError, ValueError):
-        amount = None
-    return amount, str(amount_obj.get('currency') or '').upper()
+        return None, ''
+    currency = str(amount_obj.get('currency') or '').upper()
+    if (
+        not raw_amount.is_finite()
+        or raw_amount <= 0
+        or raw_amount != amount
+        or amount > Decimal('99999999.99')
+        or len(currency) != 3
+        or not currency.isalpha()
+    ):
+        return None, ''
+    return amount, currency
+
+
+def _safe_webhook_text(value, max_length: int) -> str:
+    return value[:max_length] if isinstance(value, str) else ''
+
+
+def _retry_webhook_response(code: str):
+    response = Response(
+        {'status': 'error', 'code': code},
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+    response['Retry-After'] = str(settings.YOOKASSA_WEBHOOK_RETRY_AFTER_SECONDS)
+    return response
 
 
 @extend_schema(tags=['Billing'])
@@ -184,9 +287,12 @@ class AICreditPackageListView(APIView):
         })
 
 
+@method_decorator(transaction.non_atomic_requests, name='dispatch')
 @extend_schema(tags=['Billing'])
 class AITopupCheckoutView(APIView):
     permission_classes = [IsAuthenticated, TenantOwnerPermission]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'billing_checkout'
 
     @extend_schema(
         summary='Создать платёж на пополнение AI-кредитов',
@@ -198,22 +304,33 @@ class AITopupCheckoutView(APIView):
         serializer.is_valid(raise_exception=True)
         return_url = serializer.validated_data.get(
             'return_url',
-            f'{settings.SITE_URL}/dashboard/billing?topup=success',
+            f'{settings.BILLING_RETURN_URL_ALLOWED_ORIGINS[0]}'
+            '/dashboard/billing?topup=success',
         )
         try:
             confirmation_url = BillingService.create_ai_topup_payment(
                 tenant=request.tenant,
                 package_id=serializer.validated_data['package_id'],
                 return_url=return_url,
+                idempotency_key=serializer.validated_data['idempotency_key'],
             )
         except AICreditPackage.DoesNotExist:
             return Response(
                 {'status': 'error', 'code': 'package_not_found'},
                 status=status.HTTP_404_NOT_FOUND,
             )
+        except (
+            CheckoutConflictError,
+            CheckoutKeyLimitError,
+            CheckoutManualReviewError,
+            CheckoutPendingError,
+            CheckoutTerminalError,
+        ) as exc:
+            return _checkout_error_response(exc)
         return Response({'status': 'ok', 'data': {'payment_url': confirmation_url}})
 
 
+@method_decorator(transaction.non_atomic_requests, name='dispatch')
 @extend_schema(tags=['Billing'])
 class CheckoutView(APIView):
     """
@@ -223,6 +340,8 @@ class CheckoutView(APIView):
     """
 
     permission_classes = [IsAuthenticated, TenantOwnerPermission]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'billing_checkout'
 
     @extend_schema(
         request=CheckoutSerializer,
@@ -236,18 +355,30 @@ class CheckoutView(APIView):
         period = serializer.validated_data['period']
         return_url = serializer.validated_data.get(
             'return_url',
-            f'{settings.SITE_URL}/billing/success/',
+            f'{settings.BILLING_RETURN_URL_ALLOWED_ORIGINS[0]}'
+            '/dashboard/billing?payment=success',
         )
 
-        confirmation_url = BillingService.create_payment(
-            tenant=request.tenant,
-            plan_slug=plan_slug,
-            period=period,
-            return_url=return_url,
-        )
+        try:
+            confirmation_url = BillingService.create_payment(
+                tenant=request.tenant,
+                plan_slug=plan_slug,
+                period=period,
+                return_url=return_url,
+                idempotency_key=serializer.validated_data['idempotency_key'],
+            )
+        except (
+            CheckoutConflictError,
+            CheckoutKeyLimitError,
+            CheckoutManualReviewError,
+            CheckoutPendingError,
+            CheckoutTerminalError,
+        ) as exc:
+            return _checkout_error_response(exc)
         return Response({'status': 'ok', 'data': {'payment_url': confirmation_url}})
 
 
+@method_decorator(transaction.non_atomic_requests, name='dispatch')
 @extend_schema(tags=['Billing'], exclude=True)
 class YooKassaWebhookView(APIView):
     """
@@ -261,16 +392,12 @@ class YooKassaWebhookView(APIView):
 
     def post(self, request):
         request_data = request.data if isinstance(request.data, dict) else {}
-        event = str(request_data.get('event') or '')
+        event = _safe_webhook_text(request_data.get('event'), 80)
         raw_payment_obj = request_data.get('object')
         payment_obj = raw_payment_obj if isinstance(raw_payment_obj, dict) else {}
-        object_id = str(payment_obj.get('id') or '')
-        payment_id = (
-            str(payment_obj.get('payment_id') or '')
-            if event.startswith('refund.')
-            else object_id
-        )
-        amount, currency = _parse_webhook_amount(payment_obj)
+        raw_object_id = payment_obj.get('id')
+        object_id = _safe_webhook_text(raw_object_id, 200)
+        untrusted_amount, untrusted_currency = _parse_webhook_amount(payment_obj)
         source_ip = _webhook_source_ip(request)
         safe_payload = _sanitize_webhook_payload(event, payment_obj)
 
@@ -278,9 +405,8 @@ class YooKassaWebhookView(APIView):
             BillingWebhookEvent.objects.create(
                 event_type=event,
                 object_id=object_id,
-                payment_id=payment_id,
-                amount=amount,
-                currency=currency,
+                amount=untrusted_amount,
+                currency=untrusted_currency,
                 decision=BillingWebhookEvent.DECISION_REJECTED,
                 reason='IP-адрес отправителя не принадлежит YooKassa.',
                 payload=safe_payload,
@@ -292,136 +418,20 @@ class YooKassaWebhookView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        idempotency_key = f'{event}:{object_id}' if event and object_id else ''
-        webhook_event = None
-        created = True
-        if idempotency_key:
-            webhook_event, created = BillingWebhookEvent.objects.get_or_create(
-                provider='yookassa',
-                idempotency_key=idempotency_key,
-                defaults={
-                    'event_type': event,
-                    'object_id': object_id,
-                    'payment_id': payment_id,
-                    'amount': amount,
-                    'currency': currency,
-                    'payload': safe_payload,
-                    'source_ip': source_ip,
-                },
-            )
-        else:
-            webhook_event = BillingWebhookEvent.objects.create(
-                event_type=event,
-                object_id=object_id,
-                payment_id=payment_id,
-                amount=amount,
-                currency=currency,
-                payload=safe_payload,
-                source_ip=source_ip,
-            )
-
-        if not created:
-            BillingWebhookEvent.objects.filter(pk=webhook_event.pk).update(
-                delivery_count=F('delivery_count') + 1,
-                updated_at=timezone.now(),
-            )
-            if webhook_event.decision not in (
-                BillingWebhookEvent.DECISION_RECEIVED,
-                BillingWebhookEvent.DECISION_ERROR,
-            ):
-                return Response({'status': 'ok'})
-
-        invoice = Invoice.objects.filter(
-            yookassa_payment_id=payment_id,
-        ).select_related('tenant').first()
-        webhook_event.invoice = invoice
-        webhook_event.tenant = invoice.tenant if invoice else None
-
-        try:
-            expected_status = event.partition('.')[2]
-            object_status = str(payment_obj.get('status') or '')
-            supported_events = {
-                'payment.succeeded',
-                'payment.canceled',
-                'refund.succeeded',
-            }
-            if event in supported_events and (not object_id or not payment_id):
-                webhook_event.decision = BillingWebhookEvent.DECISION_REJECTED
-                webhook_event.reason = 'В webhook отсутствует обязательный идентификатор объекта.'
-            elif event in supported_events and object_status != expected_status:
-                webhook_event.decision = BillingWebhookEvent.DECISION_REJECTED
-                webhook_event.reason = (
-                    f'Статус объекта {object_status} не соответствует событию {event}.'
-                )
-            elif event == 'payment.succeeded':
-                processed = BillingService.handle_payment_success_webhook(
-                    payment_id,
-                    amount,
-                    payment_obj.get('metadata') or {},
-                    currency=currency,
-                )
-                webhook_event.decision = (
-                    BillingWebhookEvent.DECISION_APPLIED
-                    if processed
-                    else BillingWebhookEvent.DECISION_REJECTED
-                )
-                webhook_event.reason = (
-                    '' if processed else 'Платёж не прошёл внутреннюю проверку.'
-                )
-            elif event == 'payment.canceled':
-                was_pending = (
-                    invoice is not None and invoice.status == Invoice.STATUS_PENDING
-                )
-                BillingService.handle_payment_failed_webhook(payment_id)
-                webhook_event.decision = (
-                    BillingWebhookEvent.DECISION_APPLIED
-                    if was_pending
-                    else BillingWebhookEvent.DECISION_IGNORED
-                )
-                webhook_event.reason = (
-                    ''
-                    if was_pending
-                    else (
-                        'Invoice для платежа не найден.'
-                        if invoice is None
-                        else f'Invoice уже находится в статусе {invoice.status}.'
-                    )
-                )
-            elif event == 'refund.succeeded':
-                reversal = BillingService.handle_reversal_success(
-                    provider_reference=object_id,
-                    payment_id=payment_id,
-                    amount=amount,
-                    currency=currency,
-                )
-                if reversal is None:
-                    webhook_event.decision = BillingWebhookEvent.DECISION_REJECTED
-                    webhook_event.reason = 'Возврат не прошёл внутреннюю проверку.'
-                elif reversal.status == PaymentReversal.STATUS_APPLIED:
-                    webhook_event.decision = BillingWebhookEvent.DECISION_APPLIED
-                else:
-                    webhook_event.decision = BillingWebhookEvent.DECISION_MANUAL_REVIEW
-                    webhook_event.reason = reversal.reason
-            else:
-                webhook_event.decision = BillingWebhookEvent.DECISION_IGNORED
-                webhook_event.reason = 'Неподдерживаемый тип события.'
-        except Exception as exc:
-            webhook_event.decision = BillingWebhookEvent.DECISION_ERROR
-            webhook_event.reason = str(exc)[:500]
-            webhook_event.processed_at = timezone.now()
-            webhook_event.save(update_fields=[
-                'invoice', 'tenant', 'decision', 'reason',
-                'processed_at', 'updated_at',
-            ])
-            return Response(
-                {'status': 'error', 'code': 'processing_error'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
-
-        webhook_event.processed_at = timezone.now()
-        webhook_event.save(update_fields=[
-            'invoice', 'tenant', 'decision', 'reason',
-            'processed_at', 'updated_at',
-        ])
-
-        return Response({'status': 'ok'})
+        webhook_event, processing_token, claim_state = _claim_webhook_event(
+            event=event,
+            object_id=object_id,
+            safe_payload=safe_payload,
+            source_ip=source_ip,
+        )
+        if claim_state == 'final':
+            return Response({'status': 'ok'})
+        if claim_state == 'busy':
+            return _retry_webhook_response('already_processing')
+        result = process_claimed_yookassa_event(
+            webhook_event.pk,
+            processing_token,
+        )
+        if result.acknowledged:
+            return Response({'status': 'ok'})
+        return _retry_webhook_response(result.retry_code)

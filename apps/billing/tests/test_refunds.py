@@ -1,6 +1,5 @@
 import json
 from decimal import Decimal
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -11,7 +10,9 @@ from apps.billing.models import (
     Invoice, PaymentReversal,
 )
 from apps.billing.services import BillingService
-from apps.billing.yookassa_client import create_refund
+from apps.billing.yookassa_client import (
+    PaymentSnapshot, RefundSnapshot,
+)
 from apps.tenants.services import TenantService
 
 
@@ -49,6 +50,7 @@ def test_full_topup_refund_reverses_unused_credits():
     tenant, package, invoice = make_paid_topup('refund-full')
 
     reversal = BillingService.handle_reversal_success(
+        invoice_id=invoice.pk,
         provider_reference='refund_full_1',
         payment_id=invoice.yookassa_payment_id,
         amount=invoice.amount,
@@ -72,6 +74,7 @@ def test_two_partial_refunds_reverse_exact_package_total():
     half = invoice.amount / 2
 
     first = BillingService.handle_reversal_success(
+        invoice_id=invoice.pk,
         provider_reference='refund_partial_1',
         payment_id=invoice.yookassa_payment_id,
         amount=half,
@@ -82,6 +85,7 @@ def test_two_partial_refunds_reverse_exact_package_total():
     assert invoice.status == Invoice.STATUS_PARTIALLY_REFUNDED
 
     second = BillingService.handle_reversal_success(
+        invoice_id=invoice.pk,
         provider_reference='refund_partial_2',
         payment_id=invoice.yookassa_payment_id,
         amount=half,
@@ -99,12 +103,14 @@ def test_repeated_refund_reference_is_idempotent():
     tenant, package, invoice = make_paid_topup('refund-idempotent')
 
     first = BillingService.handle_reversal_success(
+        invoice_id=invoice.pk,
         provider_reference='refund_same',
         payment_id=invoice.yookassa_payment_id,
         amount=invoice.amount,
         currency='RUB',
     )
     second = BillingService.handle_reversal_success(
+        invoice_id=invoice.pk,
         provider_reference='refund_same',
         payment_id=invoice.yookassa_payment_id,
         amount=invoice.amount,
@@ -136,6 +142,7 @@ def test_spent_credits_create_manual_review_without_negative_balance():
         AIWalletService.settle(tenant, reservation, Decimal('600'))
 
     reversal = BillingService.handle_reversal_success(
+        invoice_id=invoice.pk,
         provider_reference='refund_spent_1',
         payment_id=invoice.yookassa_payment_id,
         amount=invoice.amount,
@@ -167,6 +174,7 @@ def test_refund_does_not_revoke_credits_reserved_for_running_request():
     )
 
     reversal = BillingService.handle_reversal_success(
+        invoice_id=invoice.pk,
         provider_reference='refund_reserved_1',
         payment_id=invoice.yookassa_payment_id,
         amount=invoice.amount,
@@ -194,6 +202,7 @@ def test_subscription_refund_is_sent_to_manual_review():
     )
 
     reversal = BillingService.handle_reversal_success(
+        invoice_id=invoice.pk,
         provider_reference='refund_subscription_1',
         payment_id=invoice.yookassa_payment_id,
         amount=invoice.amount,
@@ -226,29 +235,6 @@ def test_chargeback_uses_same_auditable_reversal_path():
     ).exists()
 
 
-def test_create_refund_sends_idempotent_yookassa_request():
-    refund_object = SimpleNamespace(id='refund_sdk_1', status='succeeded')
-    with patch(
-        'apps.billing.yookassa_client.YkRefund.create',
-        return_value=refund_object,
-    ) as create:
-        refund_id, refund_status = create_refund(
-            payment_id='pay_sdk_1',
-            amount=Decimal('100.00'),
-            description='Тестовый возврат',
-            idempotency_key='refund-request-key',
-        )
-
-    assert (refund_id, refund_status) == ('refund_sdk_1', 'succeeded')
-    payload, key = create.call_args.args
-    assert key == 'refund-request-key'
-    assert payload == {
-        'payment_id': 'pay_sdk_1',
-        'amount': {'value': '100.00', 'currency': 'RUB'},
-        'description': 'Тестовый возврат',
-    }
-
-
 @pytest.mark.django_db
 def test_refund_webhook_is_logged_and_duplicate_delivery_is_counted(client):
     tenant, package, invoice = make_paid_topup('refund-webhook')
@@ -263,18 +249,36 @@ def test_refund_webhook_is_logged_and_duplicate_delivery_is_counted(client):
         },
     }
 
-    first = client.post(
-        '/api/v1/billing/webhook/yookassa/',
-        data=json.dumps(payload),
-        content_type='application/json',
-        REMOTE_ADDR=YOOKASSA_IP,
-    )
-    second = client.post(
-        '/api/v1/billing/webhook/yookassa/',
-        data=json.dumps(payload),
-        content_type='application/json',
-        REMOTE_ADDR=YOOKASSA_IP,
-    )
+    with patch(
+        'apps.billing.webhook_processing.fetch_refund',
+        return_value=RefundSnapshot(
+            id='refund_webhook_1',
+            status='succeeded',
+            payment_id=invoice.yookassa_payment_id,
+            amount=invoice.amount,
+            currency='RUB',
+        ),
+    ) as fetch_refund, patch(
+        'apps.billing.webhook_processing.fetch_payment',
+        return_value=PaymentSnapshot(
+            id=invoice.yookassa_payment_id,
+            status='succeeded',
+            amount=invoice.amount,
+            currency='RUB',
+        ),
+    ):
+        first = client.post(
+            '/api/v1/billing/webhook/yookassa/',
+            data=json.dumps(payload),
+            content_type='application/json',
+            REMOTE_ADDR=YOOKASSA_IP,
+        )
+        second = client.post(
+            '/api/v1/billing/webhook/yookassa/',
+            data=json.dumps(payload),
+            content_type='application/json',
+            REMOTE_ADDR=YOOKASSA_IP,
+        )
 
     event = BillingWebhookEvent.objects.get(
         idempotency_key='refund.succeeded:refund_webhook_1',
@@ -287,6 +291,7 @@ def test_refund_webhook_is_logged_and_duplicate_delivery_is_counted(client):
     assert event.tenant_id == tenant.pk
     assert PaymentReversal.objects.filter(invoice=invoice).count() == 1
     assert AIWalletService.summary(tenant)['purchased'] == 0
+    fetch_refund.assert_called_once_with('refund_webhook_1')
 
 
 @pytest.mark.django_db
@@ -300,7 +305,16 @@ def test_webhook_processing_error_is_retried_on_next_delivery(client):
         },
     }
 
+    authoritative_payment = PaymentSnapshot(
+        id=invoice.yookassa_payment_id,
+        status='canceled',
+        amount=invoice.amount,
+        currency='RUB',
+    )
     with patch(
+        'apps.billing.webhook_processing.fetch_payment',
+        return_value=authoritative_payment,
+    ), patch(
         'apps.billing.services.BillingService.handle_payment_failed_webhook',
         side_effect=RuntimeError('temporary failure'),
     ):
@@ -314,17 +328,22 @@ def test_webhook_processing_error_is_retried_on_next_delivery(client):
     event = BillingWebhookEvent.objects.get(
         idempotency_key=f'payment.canceled:{invoice.yookassa_payment_id}',
     )
-    assert first.status_code == 500
+    assert first.status_code == 503
+    assert first['Retry-After']
     assert event.decision == BillingWebhookEvent.DECISION_ERROR
 
     invoice.status = Invoice.STATUS_PENDING
     invoice.save(update_fields=['status'])
-    second = client.post(
-        '/api/v1/billing/webhook/yookassa/',
-        data=json.dumps(payload),
-        content_type='application/json',
-        REMOTE_ADDR=YOOKASSA_IP,
-    )
+    with patch(
+        'apps.billing.webhook_processing.fetch_payment',
+        return_value=authoritative_payment,
+    ):
+        second = client.post(
+            '/api/v1/billing/webhook/yookassa/',
+            data=json.dumps(payload),
+            content_type='application/json',
+            REMOTE_ADDR=YOOKASSA_IP,
+        )
 
     event.refresh_from_db()
     invoice.refresh_from_db()
@@ -335,7 +354,7 @@ def test_webhook_processing_error_is_retried_on_next_delivery(client):
 
 
 @pytest.mark.django_db
-def test_webhook_status_mismatch_is_rejected_without_side_effect(client):
+def test_terminal_authoritative_status_mismatch_is_ignored_without_side_effect(client):
     _tenant, _package, invoice = make_paid_topup('webhook-status-mismatch')
     payload = {
         'event': 'refund.succeeded',
@@ -347,17 +366,35 @@ def test_webhook_status_mismatch_is_rejected_without_side_effect(client):
         },
     }
 
-    response = client.post(
-        '/api/v1/billing/webhook/yookassa/',
-        data=json.dumps(payload),
-        content_type='application/json',
-        REMOTE_ADDR=YOOKASSA_IP,
-    )
+    with patch(
+        'apps.billing.webhook_processing.fetch_refund',
+        return_value=RefundSnapshot(
+            id='refund_wrong_status',
+            status='canceled',
+            payment_id=invoice.yookassa_payment_id,
+            amount=invoice.amount,
+            currency='RUB',
+        ),
+    ), patch(
+        'apps.billing.webhook_processing.fetch_payment',
+        return_value=PaymentSnapshot(
+            id=invoice.yookassa_payment_id,
+            status='succeeded',
+            amount=invoice.amount,
+            currency='RUB',
+        ),
+    ):
+        response = client.post(
+            '/api/v1/billing/webhook/yookassa/',
+            data=json.dumps(payload),
+            content_type='application/json',
+            REMOTE_ADDR=YOOKASSA_IP,
+        )
 
     event = BillingWebhookEvent.objects.get(object_id='refund_wrong_status')
     invoice.refresh_from_db()
     assert response.status_code == 200
-    assert event.decision == BillingWebhookEvent.DECISION_REJECTED
+    assert event.decision == BillingWebhookEvent.DECISION_IGNORED
     assert PaymentReversal.objects.filter(invoice=invoice).count() == 0
     assert invoice.status == Invoice.STATUS_PAID
 
@@ -413,7 +450,10 @@ def test_spoofed_leftmost_forwarded_ip_is_rejected(client):
 def test_payment_canceled_does_not_downgrade_paid_invoice():
     _tenant, _package, invoice = make_paid_topup('cancel-after-paid')
 
-    BillingService.handle_payment_failed_webhook(invoice.yookassa_payment_id)
+    BillingService.handle_payment_failed_webhook(
+        invoice.pk,
+        payment_id=invoice.yookassa_payment_id,
+    )
 
     invoice.refresh_from_db()
     assert invoice.status == Invoice.STATUS_PAID

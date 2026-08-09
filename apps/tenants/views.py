@@ -8,8 +8,19 @@ from rest_framework import serializers
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
+from apps.core.url_security import (
+    REDIRECT_NONE,
+    ResponseTooLarge,
+    UnsafePublicURL,
+    request_public_http_url,
+)
+from apps.core.throttling import (
+    PrincipalScopedRateThrottle,
+    TenantScopedRateThrottle,
+)
 from apps.tenants.models import (
     APIKey, CatalogDomain, TenantCatalogDomain, WEBHOOK_EVENTS, WebhookEndpoint,
 )
@@ -31,7 +42,14 @@ from apps.tenants.serializers import (
     WebhookEndpointSerializer,
     WebhookEndpointWriteSerializer,
 )
-from apps.tenants.services import APIKeyService, TenantService
+from apps.tenants.services import (
+    APIKeyService,
+    DuplicateWebhookEndpoint,
+    TenantService,
+    WebhookEndpointQuotaExceeded,
+    WebhookEndpointService,
+)
+from apps.users.throttles import CredentialScopedRateThrottle
 
 
 def _success_response(name, data=None):
@@ -76,12 +94,24 @@ _me_data = inline_serializer(
     },
 )
 
+_webhook_endpoint_conflict = inline_serializer(
+    name='WebhookEndpointConflictResponse',
+    fields={
+        'status': serializers.CharField(),
+        'code': serializers.CharField(),
+        'message': serializers.CharField(),
+    },
+)
+
 
 @extend_schema(tags=['Auth'])
 class RegisterView(APIView):
     """POST /api/v1/auth/register/ — создать тенанта и получить API Key."""
 
     permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [ScopedRateThrottle, CredentialScopedRateThrottle]
+    throttle_scope = 'auth_register'
 
     @extend_schema(
         request=RegisterSerializer,
@@ -314,6 +344,9 @@ class WebhookEndpointListView(APIView):
     """GET /api/v1/webhooks/ — список вебхуков. POST — создать."""
 
     permission_classes = [IsAuthenticated, TenantAdminPermission]
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'webhook_create_principal'
+    tenant_throttle_scope = 'webhook_create_tenant'
 
     @extend_schema(responses={
         200: _success_response(
@@ -333,6 +366,7 @@ class WebhookEndpointListView(APIView):
                 'WebhookEndpointCreateResponse',
                 WebhookEndpointCreatedSerializer(),
             ),
+            409: _webhook_endpoint_conflict,
         },
     )
     def post(self, request):
@@ -341,14 +375,30 @@ class WebhookEndpointListView(APIView):
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
 
-        plaintext_secret = WebhookEndpoint.generate_secret()
-        endpoint = WebhookEndpoint(
-            tenant=request.tenant,
-            url=data['url'],
-            events=data['events'],
-        )
-        endpoint.set_secret(plaintext_secret)
-        endpoint.save()
+        try:
+            endpoint, plaintext_secret = WebhookEndpointService.create_endpoint(
+                tenant=request.tenant,
+                url=data['url'],
+                events=data['events'],
+            )
+        except DuplicateWebhookEndpoint as exc:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'duplicate_webhook_endpoint',
+                    'message': str(exc),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        except WebhookEndpointQuotaExceeded as exc:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'webhook_endpoint_quota_exceeded',
+                    'message': str(exc),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         return Response(
             {
                 'status': 'ok',
@@ -390,6 +440,9 @@ class WebhookEndpointTestView(APIView):
     """POST /api/v1/webhooks/{id}/test/ — отправить тестовый payload на URL вебхука."""
 
     permission_classes = [IsAuthenticated, TenantAdminPermission]
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'webhook_test_principal'
+    tenant_throttle_scope = 'webhook_test_tenant'
 
     @extend_schema(
         request=None,
@@ -409,7 +462,11 @@ class WebhookEndpointTestView(APIView):
     def post(self, request, pk):
         """Отправляет тестовый ping-запрос на зарегистрированный URL вебхука."""
         try:
-            endpoint = WebhookEndpoint.objects.get(pk=pk, tenant=request.tenant)
+            endpoint = WebhookEndpoint.objects.get(
+                pk=pk,
+                tenant=request.tenant,
+                is_active=True,
+            )
         except WebhookEndpoint.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
 
@@ -425,28 +482,28 @@ class WebhookEndpointTestView(APIView):
         ).hexdigest()
 
         try:
-            from apps.core.url_security import is_safe_public_http_url
-
-            if not is_safe_public_http_url(endpoint.url, resolve_hostname=True):
-                return Response(
-                    {'status': 'error', 'detail': 'Webhook URL не является публичным.'},
-                    status=status.HTTP_400_BAD_REQUEST,
-                )
-            resp = requests.post(
+            resp = request_public_http_url(
                 endpoint.url,
+                method='POST',
                 data=payload,
                 headers={
                     'Content-Type': 'application/json',
                     'X-MAP-Signature': f'sha256={signature}',
                     'X-MAP-Event': 'test.ping',
                 },
-                timeout=10,
-                allow_redirects=False,
+                timeout=(5, 10),
+                status_only=True,
+                redirect_policy=REDIRECT_NONE,
             )
             return Response({
                 'status': 'ok',
                 'data': {'http_status': resp.status_code, 'ok': resp.status_code < 400},
             })
+        except (UnsafePublicURL, ResponseTooLarge) as exc:
+            return Response(
+                {'status': 'error', 'detail': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except requests.RequestException as exc:
             return Response(
                 {'status': 'error', 'detail': str(exc)},

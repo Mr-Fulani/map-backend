@@ -403,7 +403,10 @@ class ListingFieldsSerializer(serializers.Serializer):
 
 class ListingBulkPlacementSerializer(ListingPlacementSerializer):
     listing_ids = serializers.ListField(
-        child=serializers.IntegerField(min_value=1), required=False, allow_empty=False,
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=False,
+        max_length=settings.API_BULK_MAX_ITEMS,
     )
     account_id = serializers.IntegerField(required=False)
     status = serializers.CharField(max_length=20, required=False, allow_blank=True)
@@ -434,7 +437,10 @@ class ListingBulkActionSerializer(ListingPlacementSerializer):
 
     action = serializers.ChoiceField(choices=ACTION_CHOICES)
     listing_ids = serializers.ListField(
-        child=serializers.IntegerField(min_value=1), required=False, allow_empty=False,
+        child=serializers.IntegerField(min_value=1),
+        required=False,
+        allow_empty=False,
+        max_length=settings.API_BULK_MAX_ITEMS,
     )
     account_id = serializers.IntegerField(required=False)
     status = serializers.CharField(max_length=20, required=False, allow_blank=True)

@@ -46,3 +46,37 @@ def test_tavily_reports_rate_limit_for_pipeline_diagnostics():
         assert source.search() == []
 
     assert source.last_error_code == 'rate_limited'
+
+
+def test_tavily_rejects_malformed_top_level_json():
+    response = MagicMock(status_code=200)
+    response.json.return_value = []
+    connection = SimpleNamespace(enabled=True, parameters={})
+    source = TavilyImageSource(FakeProduct())
+    with patch(
+        'apps.image_search.sources.tavily.image_source_connection', return_value=connection,
+    ), patch(
+        'apps.image_search.sources.tavily.image_source_api_key', return_value='test-key',
+    ), patch('apps.image_search.sources.tavily.requests.post', return_value=response):
+        assert source.search() == []
+
+    assert source.last_error_code == 'invalid_response'
+
+
+def test_tavily_materializes_at_most_requested_images_per_query():
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        'images': [
+            f'https://img.example.com/{index}.jpg'
+            for index in range(10)
+        ],
+    }
+    connection = SimpleNamespace(enabled=True, parameters={})
+    with patch(
+        'apps.image_search.sources.tavily.image_source_connection', return_value=connection,
+    ), patch(
+        'apps.image_search.sources.tavily.image_source_api_key', return_value='test-key',
+    ), patch('apps.image_search.sources.tavily.requests.post', return_value=response):
+        results = TavilyImageSource(FakeProduct()).search()
+
+    assert len(results) == 5

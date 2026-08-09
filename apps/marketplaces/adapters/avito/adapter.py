@@ -8,6 +8,7 @@ import requests
 from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 
+from apps.core.http_responses import bounded_http_request
 from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 from apps.marketplaces.adapters.avito.error_handler import (
     ForbiddenError,
@@ -24,6 +25,15 @@ AVITO_API_BASE = 'https://api.avito.ru'
 _STATS_CHUNK = 200  # максимум item_ids за один запрос к Stats API
 
 
+def _avito_request(requester, *args, **kwargs):
+    return bounded_http_request(
+        requester,
+        *args,
+        max_bytes=settings.AVITO_API_RESPONSE_MAX_BYTES,
+        **kwargs,
+    )
+
+
 def _strip_html(text: str) -> str:
     """Убирает HTML-теги и спецсимволы из текста сообщения отчёта Avito."""
     no_tags = re.sub(r'<[^>]+>', ' ', text or '')
@@ -32,10 +42,30 @@ def _strip_html(text: str) -> str:
 
 def _format_avito_message(message: dict) -> str:
     """Превращает сообщение отчёта Autoload в одну читаемую строку без HTML."""
-    title = (message.get('title') or '').strip()
-    description = _strip_html(message.get('description') or '')
+    title_value = message.get('title')
+    description_value = message.get('description')
+    if title_value is not None and not isinstance(title_value, str):
+        return ''
+    if description_value is not None and not isinstance(description_value, str):
+        return ''
+    title = (title_value or '').strip()
+    description = _strip_html(description_value or '')
     text = f'{title} {description}'.strip()
-    return f'• {text}'
+    return f'• {text}' if text else ''
+
+
+def _json_object(value, context: str) -> dict:
+    if not isinstance(value, dict):
+        raise ValueError(f'Avito {context}: top-level JSON must be an object')
+    return value
+
+
+def _json_list(value, context: str) -> list:
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f'Avito {context}: expected a list')
+    return value
 
 
 class FeedUploadError(Exception):
@@ -85,11 +115,16 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         """Выполняет REST-запрос с rate limiting и авто-обновлением токена при 401."""
         self._rl.consume(self.account, operation)
         url = f'{AVITO_API_BASE}{path}'
-        resp = getattr(requests, method)(url, headers=self._headers(), timeout=30, **kwargs)
+        requester = getattr(requests, method)
+        resp = _avito_request(
+            requester, url, headers=self._headers(), timeout=30, **kwargs,
+        )
         self._rl.handle_response_headers(dict(resp.headers), self.account)
         if resp.status_code == 401:
             self._auth.invalidate(self.account)
-            resp = getattr(requests, method)(url, headers=self._headers(), timeout=30, **kwargs)
+            resp = _avito_request(
+                requester, url, headers=self._headers(), timeout=30, **kwargs,
+            )
         handle_avito_error(resp)
         return resp
 
@@ -138,7 +173,8 @@ class AvitoAdapter(BaseMarketplaceAdapter):
     def _trigger_autoload(self) -> None:
         """Уведомляет Avito о новом фиде через POST /autoload/v1/upload."""
         token = self._auth.get_token(self.account)
-        resp = requests.post(
+        resp = _avito_request(
+            requests.post,
             f'{AVITO_API_BASE}/autoload/v1/upload',
             headers={'Authorization': f'Bearer {token}'},
             timeout=30,
@@ -187,13 +223,18 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         (см. get_node_fields). Используется командой sync_avito_categories.
         """
         token = self._auth.get_token(self.account)
-        resp = requests.get(
+        resp = _avito_request(
+            requests.get,
             f'{AVITO_API_BASE}/autoload/v1/user-docs/tree',
             headers={'Authorization': f'Bearer {token}'},
             timeout=60,
         )
         resp.raise_for_status()
-        return resp.json().get('categories', [])
+        payload = _json_object(resp.json(), 'category tree')
+        categories = _json_list(payload.get('categories'), 'category tree categories')
+        if not all(isinstance(item, dict) for item in categories):
+            raise ValueError('Avito category tree: category items must be objects')
+        return categories
 
     def get_node_fields(self, node_slug: str) -> dict:
         """
@@ -204,13 +245,14 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         правила заполнения: required, field_type, values, dependencies.
         """
         token = self._auth.get_token(self.account)
-        resp = requests.get(
+        resp = _avito_request(
+            requests.get,
             f'{AVITO_API_BASE}/autoload/v1/user-docs/node/{node_slug}/fields',
             headers={'Authorization': f'Bearer {token}'},
             timeout=60,
         )
         resp.raise_for_status()
-        return resp.json()
+        return _json_object(resp.json(), 'node fields')
 
     # ------------------------------------------------------------------ #
     #  Feed-based операции (publish / update / unpublish / delete)        #
@@ -306,7 +348,8 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         if not ad_ids:
             return []
         token = self._auth.get_token(self.account)
-        resp = requests.get(
+        resp = _avito_request(
+            requests.get,
             f'{AVITO_API_BASE}/autoload/v2/items/avito_ids',
             headers={'Authorization': f'Bearer {token}'},
             params={'query': ','.join(ad_ids)},
@@ -315,7 +358,8 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         if resp.status_code == 401:
             self._auth.invalidate(self.account)
             token = self._auth.get_token(self.account)
-            resp = requests.get(
+            resp = _avito_request(
+                requests.get,
                 f'{AVITO_API_BASE}/autoload/v2/items/avito_ids',
                 headers={'Authorization': f'Bearer {token}'},
                 params={'query': ','.join(ad_ids)},
@@ -339,7 +383,8 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         """
         token = self._auth.get_token(self.account)
         try:
-            resp = requests.get(
+            resp = _avito_request(
+                requests.get,
                 f'{AVITO_API_BASE}/autoload/v4/uploads',
                 headers={'Authorization': f'Bearer {token}'},
                 params={'per_page': 1, 'page': 1}, timeout=30,
@@ -368,37 +413,70 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         headers = {'Authorization': f'Bearer {token}'}
         wanted = set(ad_ids)
         result: dict[str, str] = {}
+        max_pages = min(100, max(1, int(settings.AVITO_API_MAX_PAGES)))
         try:
             page = 1
-            while True:
-                resp = requests.get(
+            while page <= max_pages:
+                resp = _avito_request(
+                    requests.get,
                     f'{AVITO_API_BASE}/autoload/v4/uploads/last_successful/items',
                     headers=headers, params={'per_page': 100, 'page': page}, timeout=30,
                 )
                 if not resp.ok:
                     break
-                body = resp.json()
-                for item in body.get('items') or []:
+                body = _json_object(resp.json(), 'feed item errors')
+                items = _json_list(body.get('items'), 'feed item errors items')
+                for item in items[:100]:
+                    if not isinstance(item, dict):
+                        logger.warning('Avito feed item errors contains a non-object item; stopping pagination.')
+                        return result
                     ad_id = item.get('ad_id')
                     if ad_id not in wanted:
                         continue
-                    item_messages = item.get('messages') or []
+                    item_messages = _json_list(
+                        item.get('messages'), 'feed item error messages',
+                    )
+                    selected_messages = item_messages[:100]
+                    if not all(isinstance(message, dict) for message in selected_messages):
+                        logger.warning('Avito feed item errors contains a malformed message; item skipped.')
+                        continue
                     # Реальной ошибкой считаем только type=error; warning/alarm
                     # (напр. авто-определение SparePartType) — не повод отклонять.
-                    if not any(m.get('type') == 'error' for m in item_messages):
+                    if not any(m.get('type') == 'error' for m in selected_messages):
                         continue
                     messages = [
                         _format_avito_message(m)
-                        for m in item_messages
+                        for m in selected_messages
                         if m.get('type') in ('error', 'alarm')
                     ]
+                    messages = [message for message in messages if message]
                     if messages:
                         result[ad_id] = '\n'.join(messages)
-                meta = body.get('meta') or {}
-                if page >= (meta.get('pages') or 1):
+                meta = body.get('meta')
+                if meta is None:
+                    meta = {}
+                if not isinstance(meta, dict):
+                    logger.warning('Avito feed item errors returned malformed pagination metadata.')
+                    break
+                total_pages = meta.get('pages', 1)
+                if (
+                    isinstance(total_pages, bool)
+                    or not isinstance(total_pages, int)
+                    or total_pages < 1
+                ):
+                    logger.warning('Avito feed item errors returned invalid page count.')
+                    break
+                if page >= total_pages:
+                    break
+                if page == max_pages:
+                    logger.warning(
+                        'Avito feed item errors pagination stopped at hard limit %d/%d.',
+                        max_pages,
+                        total_pages,
+                    )
                     break
                 page += 1
-        except (requests.RequestException, ValueError, KeyError):
+        except (requests.RequestException, ValueError, KeyError, TypeError):
             return result
         return result
 
@@ -432,12 +510,16 @@ class AvitoAdapter(BaseMarketplaceAdapter):
                 'fields': ['uniqViews', 'views', 'uniqContacts', 'contacts'],
                 'periodGrouping': 'day',
             }
-            resp = requests.post(url, headers=headers, json=payload, timeout=30)
+            resp = _avito_request(
+                requests.post, url, headers=headers, json=payload, timeout=30,
+            )
             if resp.status_code == 401:
                 self._auth.invalidate(self.account)
                 token = self._auth.get_token(self.account)
                 headers['Authorization'] = f'Bearer {token}'
-                resp = requests.post(url, headers=headers, json=payload, timeout=30)
+                resp = _avito_request(
+                    requests.post, url, headers=headers, json=payload, timeout=30,
+                )
             resp.raise_for_status()
             result.extend(resp.json().get('result', {}).get('items', []))
 

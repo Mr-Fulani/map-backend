@@ -39,7 +39,7 @@ def test_jwt_login_schema_matches_response_payload(api_schema):
     assert operation['summary'] == 'Войти по email и паролю'
     assert request_ref.endswith('/TenantTokenObtainPair')
     assert set(api_schema['components']['schemas'][response_name]['properties']) == {
-        'access', 'refresh', 'tenant', 'role', 'user',
+        'access', 'refresh', 'browser_session_id', 'tenant', 'role', 'user',
     }
 
     refresh = api_schema['paths']['/api/v1/auth/token/refresh/']['post']

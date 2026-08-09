@@ -12,9 +12,10 @@ from apps.notifications.services import (
     LEVEL_CRITICAL,
     LEVEL_ERROR,
     LEVEL_SUCCESS,
+    NotificationDeliveryError,
     NotificationService,
 )
-from apps.notifications.tasks import cleanup_old_logs
+from apps.notifications.tasks import cleanup_old_logs, send_notification_task
 from apps.sync.models import SyncLog
 from apps.tenants.services import TenantService
 
@@ -132,10 +133,31 @@ class TestNotificationService:
         mock_tg.return_value.send.assert_not_called()
         mock_email.return_value.send.assert_not_called()
 
+    def test_failed_configured_channels_raise_after_all_are_attempted(self):
+        tenant = make_tenant('notif-delivery-failure')
+        make_notification_settings(
+            tenant,
+            telegram_chat_id='123',
+            notify_email='ops@example.com',
+        )
+
+        with patch('apps.notifications.services.TelegramNotifier') as mock_tg, \
+             patch('apps.notifications.services.EmailNotifier') as mock_email, \
+             pytest.raises(NotificationDeliveryError, match='telegram, email'):
+            mock_tg.return_value.send.return_value = False
+            mock_email.return_value.send.return_value = False
+            NotificationService().notify(tenant, LEVEL_CRITICAL, 'Критично')
+
+        mock_tg.return_value.send.assert_called_once()
+        mock_email.return_value.send.assert_called_once()
+
+    def test_notification_task_uses_late_ack_and_unbounded_transport_retries(self):
+        assert send_notification_task.acks_late is True
+        assert send_notification_task.reject_on_worker_lost is True
+        assert send_notification_task.max_retries is None
+
     def test_synclog_error_triggers_notification(self):
         """Запись SyncLog(status=error) инициирует уведомление через send_notification_task."""
-        from apps.notifications.tasks import send_notification_task
-
         tenant = make_tenant('notif-synclog')
         make_notification_settings(tenant, telegram_chat_id='777', notify_on_error=True)
 

@@ -14,9 +14,15 @@ class Command(BaseCommand):
         from apps.datasources.models import DataSourceConnection
         from apps.marketplaces.models import MarketplaceAccount
         from apps.tenants.models import WebhookEndpoint
+        from apps.web_research.models import WebSearchConnection
 
         dry_run = options['dry_run']
-        counts = {'datasources': 0, 'marketplace_accounts': 0, 'webhook_endpoints': 0}
+        counts = {
+            'datasources': 0,
+            'marketplace_accounts': 0,
+            'webhook_endpoints': 0,
+            'web_search_connections': 0,
+        }
         with transaction.atomic():
             for connection in DataSourceConnection.all_objects.iterator():
                 plaintext = decrypt(connection.credentials)
@@ -36,6 +42,14 @@ class Command(BaseCommand):
                     endpoint.secret_encrypted = encrypt_text(plaintext)
                     endpoint.save(update_fields=['secret_encrypted', 'updated_at'])
                 counts['webhook_endpoints'] += 1
+            for connection in WebSearchConnection.objects.exclude(
+                credentials_enc__isnull=True,
+            ).iterator():
+                plaintext = decrypt(connection.credentials_enc)
+                if not dry_run:
+                    connection.credentials_enc = encrypt(plaintext)
+                    connection.save(update_fields=['credentials_enc', 'updated_at'])
+                counts['web_search_connections'] += 1
             if dry_run:
                 transaction.set_rollback(True)
 

@@ -5,7 +5,14 @@ from django.conf import settings
 from django.utils.timezone import now
 
 
-@shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='notifications')
+@shared_task(
+    bind=True,
+    max_retries=None,
+    default_retry_delay=60,
+    queue='notifications',
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
 def send_notification_task(self, tenant_id: int, level: str, message: str, payload: dict = None):
     """
     Асинхронно отправляет уведомление тенанту через NotificationService.
@@ -23,7 +30,11 @@ def send_notification_task(self, tenant_id: int, level: str, message: str, paylo
     try:
         NotificationService().notify(tenant, level, message, payload or {})
     except Exception as exc:
-        raise self.retry(exc=exc)
+        retry_number = min(getattr(self.request, 'retries', 0), 6)
+        raise self.retry(
+            exc=exc,
+            countdown=min(3600, 60 * (2 ** retry_number)),
+        )
 
 
 @shared_task(queue='notifications')

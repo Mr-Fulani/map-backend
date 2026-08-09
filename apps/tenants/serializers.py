@@ -1,6 +1,8 @@
 from datetime import timedelta
 
 from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.utils import timezone
 from rest_framework import serializers
 
@@ -25,7 +27,7 @@ class RegisterSerializer(serializers.Serializer):
         },
     )
     email = serializers.EmailField()
-    password = serializers.CharField(min_length=8, write_only=True)
+    password = serializers.CharField(max_length=256, write_only=True, trim_whitespace=False)
 
     def validate_slug(self, value):
         if Tenant.objects.filter(slug=value).exists():
@@ -38,6 +40,14 @@ class RegisterSerializer(serializers.Serializer):
                 'Пользователь с таким email уже существует. Войдите в аккаунт.',
             )
         return value
+
+    def validate(self, attrs):
+        candidate = User(email=attrs.get('email', ''))
+        try:
+            validate_password(attrs.get('password', ''), user=candidate)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'password': list(exc.messages)}) from exc
+        return attrs
 
 
 class TenantSerializer(serializers.ModelSerializer):
@@ -164,11 +174,23 @@ class WebhookEndpointWriteSerializer(serializers.Serializer):
     )
 
     def validate_url(self, value):
-        from apps.core.url_security import is_safe_public_http_url
+        from urllib.parse import urlsplit
 
-        if not is_safe_public_http_url(value, resolve_hostname=True):
-            raise serializers.ValidationError('Webhook URL должен вести на публичный HTTP(S)-адрес.')
-        return value
+        from apps.core.url_security import UnsafePublicURL, resolve_public_http_url
+
+        if urlsplit(value).scheme.lower() != 'https':
+            raise serializers.ValidationError(
+                'Webhook URL должен использовать HTTPS.',
+            )
+        try:
+            target = resolve_public_http_url(value)
+        except UnsafePublicURL as exc:
+            raise serializers.ValidationError(
+                'Webhook URL должен вести на публичный HTTPS-адрес.',
+            ) from exc
+        # Store one canonical representation so default ports, host case and
+        # fragments cannot bypass the per-tenant duplicate constraint.
+        return target.url
 
 
 class WebhookEndpointCreatedSerializer(WebhookEndpointSerializer):

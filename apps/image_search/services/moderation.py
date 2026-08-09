@@ -6,9 +6,11 @@ Approve, reject, set_primary, upload — операции оператора.
 import hashlib
 import io
 
+from django.conf import settings
 from django.core.files.storage import default_storage
 from django.utils.timezone import now
 
+from apps.core.image_security import validate_image_pixel_budget
 from apps.products.models import ProductImage
 from apps.products.storage import (
     MAX_DIMENSION,
@@ -100,7 +102,11 @@ def upload_image(product, raw_bytes: bytes) -> ProductImage | None:
     """
     from PIL import Image, UnidentifiedImageError
 
-    if product.images.exclude(status=ProductImage.Status.REJECTED).count() >= MAX_PHOTOS:
+    if (
+        not raw_bytes
+        or len(raw_bytes) > settings.MAX_IMAGE_UPLOAD_BYTES
+        or product.images.exclude(status=ProductImage.Status.REJECTED).count() >= MAX_PHOTOS
+    ):
         return None
 
     sha = hashlib.sha256(raw_bytes).hexdigest()
@@ -109,6 +115,7 @@ def upload_image(product, raw_bytes: bytes) -> ProductImage | None:
 
     try:
         img = Image.open(io.BytesIO(raw_bytes))
+        validate_image_pixel_budget(img)
         img.load()
     except (UnidentifiedImageError, Exception):
         return None

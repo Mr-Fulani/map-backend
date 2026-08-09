@@ -1,5 +1,7 @@
 import uuid
 
+from PIL import Image, UnidentifiedImageError
+from django.conf import settings
 from django.core.files.storage import default_storage
 from django.db.models import Case, Count, F, IntegerField, Prefetch, Q, Subquery, OuterRef, Value, When
 from django.db import transaction
@@ -14,7 +16,9 @@ from apps.tenants.api_views import CatalogAPIView as APIView
 from apps.tenants.principals import human_user_or_none
 
 from apps.core.pagination import MapPagination
+from apps.core.image_security import validate_image_pixel_budget
 from apps.products.enrichment import normalize_part_code
+from apps.core.throttling import PrincipalScopedRateThrottle, TenantScopedRateThrottle
 from apps.products.api_schema import (
     CatalogCategoryBranchToggleRequestSerializer,
     CatalogCategoryBranchToggleResponseSerializer,
@@ -777,6 +781,9 @@ class TenantCatalogCategoryDefaultImageView(APIView):
         'DELETE': {'catalog:write', 'media:write'},
     }
     parser_classes = [MultiPartParser, FormParser]
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'image_upload_principal'
+    tenant_throttle_scope = 'image_upload_tenant'
 
     @extend_schema(
         request=CatalogCategoryImageRequestSerializer,
@@ -790,30 +797,64 @@ class TenantCatalogCategoryDefaultImageView(APIView):
                 {'status': 'error', 'code': 'validation_error', 'message': 'Передайте файл image'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        if image.size > 5 * 1024 * 1024:
+        if image.size > settings.MAX_IMAGE_UPLOAD_BYTES:
             return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Размер файла не должен превышать 5 МБ'},
+                {
+                    'status': 'error',
+                    'code': 'validation_error',
+                    'message': (
+                        'Размер файла превышает допустимый лимит '
+                        f'{settings.MAX_IMAGE_UPLOAD_BYTES} байт.'
+                    ),
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        content_type = getattr(image, 'content_type', '')
-        if content_type and not content_type.startswith('image/'):
+        supported_formats = {
+            'JPEG': ('jpg', 'image/jpeg'),
+            'PNG': ('png', 'image/png'),
+            'WEBP': ('webp', 'image/webp'),
+        }
+        try:
+            decoded = Image.open(image)
+            validate_image_pixel_budget(decoded)
+            image_format = str(decoded.format or '').upper()
+            if image_format not in supported_formats:
+                raise ValueError('unsupported image format')
+            decoded.verify()
+            image.seek(0)
+        except (UnidentifiedImageError, OSError, ValueError):
             return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Можно загрузить только изображение'},
+                {
+                    'status': 'error',
+                    'code': 'validation_error',
+                    'message': 'Можно загрузить только корректный JPEG, PNG или WebP.',
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        extension = (image.name.rsplit('.', 1)[-1] if '.' in image.name else 'jpg').lower()
-        if extension not in ['jpg', 'jpeg', 'png', 'webp']:
-            extension = 'jpg'
+        extension, canonical_content_type = supported_formats[image_format]
+        image.content_type = canonical_content_type
         s3_key = f'catalog-categories/{request.tenant.slug}/{category.pk}/{uuid.uuid4().hex}.{extension}'
-        if category.default_image_s3_key:
-            default_storage.delete(category.default_image_s3_key)
         saved_key = default_storage.save(s3_key, image)
-        category.default_image_s3_key = saved_key
-        category.default_image_source_name = image.name[:255]
-        category.save(update_fields=[
-            'default_image_s3_key', 'default_image_source_name', 'updated_at',
-        ])
+        try:
+            with transaction.atomic():
+                category = TenantCatalogCategory.objects.select_for_update().get(
+                    pk=category.pk,
+                    tenant=request.tenant,
+                )
+                previous_key = category.default_image_s3_key
+                category.default_image_s3_key = saved_key
+                category.default_image_source_name = image.name[:255]
+                category.save(update_fields=[
+                    'default_image_s3_key', 'default_image_source_name', 'updated_at',
+                ])
+                if previous_key:
+                    transaction.on_commit(
+                        lambda key=previous_key: default_storage.delete(key),
+                    )
+        except Exception:
+            default_storage.delete(saved_key)
+            raise
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
 
@@ -925,13 +966,10 @@ class ProductCatalogCategoryAssignView(APIView):
         responses=ProductCategoryAssignResponseSerializer,
     )
     def post(self, request):
-        product_ids = request.data.get('product_ids') or []
-        category_id = request.data.get('catalog_category')
-        if not isinstance(product_ids, list) or not product_ids:
-            return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Выберите товары для назначения категории'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        serializer = ProductCategoryAssignRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product_ids = serializer.validated_data['product_ids']
+        category_id = serializer.validated_data.get('catalog_category')
 
         category = None
         if category_id:
@@ -1037,13 +1075,10 @@ class ProductExcludeView(APIView):
     )
     def post(self, request):
         """Исключает товары из синхронизации с источником (1С/CSV)."""
-        product_ids = request.data.get('product_ids') or []
-        exclude = request.data.get('exclude', True)
-        if not isinstance(product_ids, list) or not product_ids:
-            return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Выберите товары'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        serializer = ProductExcludeRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product_ids = serializer.validated_data['product_ids']
+        exclude = serializer.validated_data['exclude']
         updated = Product.objects.filter(
             tenant=request.tenant, pk__in=product_ids,
         ).update(sync_excluded=bool(exclude))
@@ -1065,12 +1100,9 @@ class ProductBulkDeleteView(APIView):
     )
     def delete(self, request):
         """Скрывает товары и листинги; retention-задача удалит их физически позднее."""
-        product_ids = request.data.get('product_ids') or []
-        if not isinstance(product_ids, list) or not product_ids:
-            return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Выберите товары'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        serializer = ProductBulkDeleteRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product_ids = serializer.validated_data['product_ids']
         with transaction.atomic():
             products = Product.objects.filter(tenant=request.tenant, pk__in=product_ids)
             valid_ids = list(products.values_list('pk', flat=True))

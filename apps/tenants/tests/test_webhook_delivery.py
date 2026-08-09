@@ -1,7 +1,8 @@
-from types import SimpleNamespace
-from unittest.mock import patch
+import logging
+from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from apps.tenants.models import (
     Tenant, WebhookDelivery, WebhookEndpoint, WebhookEvent,
@@ -58,23 +59,53 @@ class TestWebhookOutbox:
                 {'listing_id': 7},
             )
         delivery = event.deliveries.get()
-        response = SimpleNamespace(status_code=204, text='')
+        response = MagicMock(status_code=204, headers={}, encoding='utf-8')
 
-        with (
-            patch('apps.tenants.tasks.is_safe_public_http_url', return_value=True),
-            patch('apps.tenants.tasks.requests.post', return_value=response) as post,
-        ):
+        with patch(
+            'apps.tenants.tasks.request_public_http_url',
+            return_value=response,
+        ) as post:
             result = deliver_webhook_task(delivery.pk)
 
         delivery.refresh_from_db()
         assert result['status'] == 'delivered'
         assert delivery.status == WebhookDelivery.STATUS_DELIVERED
-        assert post.call_args.kwargs['allow_redirects'] is False
+        assert post.call_args.kwargs['method'] == 'POST'
+        assert post.call_args.kwargs['status_only'] is True
+        assert post.call_args.kwargs['redirect_policy'] == 'none'
         assert post.call_args.kwargs['headers']['X-MAP-Signature'].startswith('sha256=')
 
-    def test_failed_delivery_is_persisted_for_retry(self):
-        tenant = Tenant.objects.create(name='Retry', slug='retry')
+    def test_success_status_does_not_depend_on_response_body(self):
+        tenant = Tenant.objects.create(name='Delivery body', slug='delivery-body')
         make_endpoint(tenant)
+        with patch('apps.tenants.webhooks._dispatch_event_safely'):
+            event = enqueue_webhook_event(
+                tenant,
+                'listing.published',
+                {'listing_id': 9},
+            )
+        delivery = event.deliveries.get()
+        response = MagicMock(status_code=204, headers={}, encoding='utf-8')
+
+        with patch(
+            'apps.tenants.tasks.request_public_http_url',
+            return_value=response,
+        ) as request:
+            result = deliver_webhook_task(delivery.pk)
+
+        delivery.refresh_from_db()
+        assert result['status'] == 'delivered'
+        assert delivery.status == WebhookDelivery.STATUS_DELIVERED
+        assert delivery.response_body == ''
+        assert request.call_args.kwargs['status_only'] is True
+
+    def test_failed_delivery_is_persisted_as_safe_retry_error(self, caplog):
+        tenant = Tenant.objects.create(name='Retry', slug='retry')
+        secret_query = 'third-party-token-super-secret'
+        make_endpoint(
+            tenant,
+            url=f'https://hooks.example.com/map?token={secret_query}',
+        )
         with patch('apps.tenants.webhooks._dispatch_event_safely'):
             event = enqueue_webhook_event(
                 tenant,
@@ -83,9 +114,12 @@ class TestWebhookOutbox:
             )
         delivery = event.deliveries.get()
 
-        with (
-            patch('apps.tenants.tasks.is_safe_public_http_url', return_value=True),
-            patch('apps.tenants.tasks.requests.post', side_effect=TimeoutError('timeout')),
+        caplog.set_level(logging.WARNING, logger='apps.tenants.tasks')
+        with patch(
+            'apps.tenants.tasks.request_public_http_url',
+            side_effect=requests.ConnectionError(
+                f'connection failed for https://hooks.example.com/map?token={secret_query}',
+            ),
         ):
             deliver_webhook_task(delivery.pk)
 
@@ -93,7 +127,11 @@ class TestWebhookOutbox:
         assert delivery.status == WebhookDelivery.STATUS_RETRY
         assert delivery.attempts == 1
         assert delivery.next_attempt_at is not None
-        assert 'timeout' in delivery.last_error
+        assert delivery.last_error.startswith('transport_error:')
+        assert secret_query not in delivery.last_error
+        assert secret_query not in caplog.text
+        assert '?token=' not in delivery.last_error
+        assert '?token=' not in caplog.text
 
 
 @pytest.mark.django_db

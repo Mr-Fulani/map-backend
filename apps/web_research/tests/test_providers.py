@@ -4,6 +4,7 @@ import pytest
 from django.test import override_settings
 
 from apps.web_research.providers.brave import BraveWebSearchProvider
+from apps.web_research.providers.base import WebSearchProviderError
 from apps.web_research.providers.tavily import TavilyWebSearchProvider
 from apps.web_research.models import WebSearchConnection
 from apps.tenants.services import TenantService
@@ -30,6 +31,59 @@ def test_brave_web_search_parses_grounding_results():
     assert results[0].snippet == 'Фонарь правый для Kia Optima JF'
     assert results[0].rank == 1
     assert get.call_args.kwargs['params']['q'] == 'Kia Optima фонарь'
+
+
+@override_settings(BRAVE_SEARCH_API_KEY='test-key')
+def test_brave_materializes_at_most_requested_results():
+    response = Mock(status_code=200)
+    response.json.return_value = {
+        'web': {
+            'results': [
+                {'title': str(index), 'url': f'https://example.com/{index}'}
+                for index in range(10)
+            ],
+        },
+    }
+    with patch('apps.web_research.providers.brave.requests.get', return_value=response):
+        results = BraveWebSearchProvider().search('query', count=2)
+
+    assert len(results) == 2
+
+
+@pytest.mark.parametrize(
+    'payload',
+    [
+        [],
+        {'web': []},
+        {'web': {'results': {}}},
+        {'web': {'results': [42]}},
+        {'web': {'results': [{'url': 'https://example.com', 'extra_snippets': {}}]}},
+    ],
+)
+@override_settings(BRAVE_SEARCH_API_KEY='test-key')
+def test_brave_rejects_malformed_json_shapes(payload):
+    response = Mock(status_code=200)
+    response.json.return_value = payload
+
+    with patch('apps.web_research.providers.brave.requests.get', return_value=response):
+        with pytest.raises(WebSearchProviderError) as error:
+            BraveWebSearchProvider().search('query')
+
+    assert error.value.code == 'invalid_response'
+
+
+@override_settings(BRAVE_SEARCH_API_KEY='test-key', TRUSTED_API_RESPONSE_MAX_BYTES=5)
+def test_brave_rejects_oversized_response_without_retrying():
+    response = Mock(status_code=200, headers={})
+    response.iter_content.return_value = iter([b'1234', b'56'])
+
+    with patch('apps.web_research.providers.brave.requests.get', return_value=response):
+        with pytest.raises(WebSearchProviderError) as error:
+            BraveWebSearchProvider().search('query')
+
+    assert error.value.code == 'invalid_response'
+    assert error.value.retryable is False
+    response.close.assert_called_once_with()
 
 
 @override_settings(BRAVE_SEARCH_API_KEY='test-key')
@@ -80,6 +134,51 @@ def test_tavily_parses_cleaned_content_and_score():
     assert results[0].content == 'OEM 92402D4000 для Kia Optima JF'
     assert results[0].score == 0.91
     assert post.call_args.kwargs['json']['include_raw_content'] is True
+
+
+@override_settings(TAVILY_API_KEY='test-tavily-key')
+def test_tavily_payload_materializes_results_and_images_to_requested_count():
+    response = Mock(status_code=200)
+    response.json.return_value = {
+        'results': [
+            {'url': f'https://example.com/{index}'}
+            for index in range(5)
+        ],
+        'images': [
+            {'url': f'https://images.example.com/{index}.jpg'}
+            for index in range(5)
+        ],
+    }
+
+    with patch('apps.web_research.providers.tavily.requests.post', return_value=response):
+        payload = TavilyWebSearchProvider().search_payload(
+            'query', count=2, include_images=True,
+        )
+
+    assert len(payload['results']) == 2
+    assert len(payload['images']) == 2
+
+
+@pytest.mark.parametrize(
+    'payload',
+    [
+        [],
+        {'results': {}},
+        {'results': [42]},
+        {'results': [], 'images': {}},
+        {'results': [], 'images': [42]},
+    ],
+)
+@override_settings(TAVILY_API_KEY='test-tavily-key')
+def test_tavily_rejects_malformed_json_shapes(payload):
+    response = Mock(status_code=200)
+    response.json.return_value = payload
+
+    with patch('apps.web_research.providers.tavily.requests.post', return_value=response):
+        with pytest.raises(WebSearchProviderError) as error:
+            TavilyWebSearchProvider().search_payload('query', include_images=True)
+
+    assert error.value.code == 'invalid_response'
 
 
 @override_settings(TAVILY_API_KEY='test-tavily-key')

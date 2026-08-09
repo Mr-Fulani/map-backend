@@ -6,9 +6,12 @@ from unittest.mock import patch
 import pytest
 
 from apps.billing.ai_wallet import AIWalletService
-from apps.billing.models import AICreditPackage, Invoice, Plan, Subscription
+from apps.billing.models import (
+    AICreditPackage, BillingOutboxEvent, Invoice, Plan, Subscription,
+)
 from apps.billing.services import BillingService, GRACE_PERIOD_DAYS
 from apps.billing.tasks import billing_check_expired
+from apps.billing.yookassa_client import PaymentSnapshot
 from apps.tenants.services import TenantService
 
 # Официальный IP YooKassa для тестов
@@ -62,6 +65,7 @@ class TestCheckoutAmounts:
                 plan.slug,
                 Subscription.PERIOD_MONTHLY,
                 'https://app.example/return',
+                idempotency_key='00000000-0000-4000-8000-000000000001',
             )
 
         invoice = Invoice.objects.get(yookassa_payment_id='pay_monthly')
@@ -83,6 +87,7 @@ class TestCheckoutAmounts:
                 plan.slug,
                 Subscription.PERIOD_YEARLY,
                 'https://app.example/return',
+                idempotency_key='00000000-0000-4000-8000-000000000002',
             )
 
         invoice = Invoice.objects.get(yookassa_payment_id='pay_yearly')
@@ -106,64 +111,66 @@ class TestPaymentSucceeded:
             yookassa_payment_id='pay_001',
         )
 
-        with patch('apps.notifications.tasks.send_notification_task') as mock_notify:
-            BillingService.handle_payment_success_webhook(
-                payment_id='pay_001',
-                amount='990.00',
-                metadata={'plan_slug': 'business', 'period': 'monthly'},
-            )
+        BillingService.handle_payment_success_webhook(
+            invoice.pk,
+            payment_id='pay_001',
+            amount='990.00',
+            currency='RUB',
+        )
 
         invoice.refresh_from_db()
         sub.refresh_from_db()
         assert invoice.status == Invoice.STATUS_PAID
         assert invoice.paid_at is not None
         assert sub.status == Subscription.STATUS_ACTIVE
-        mock_notify.delay.assert_called_once()
+        assert BillingOutboxEvent.objects.filter(invoice=invoice).count() == 2
 
-    def test_payment_succeeded_sends_billing_email(self):
+    def test_payment_succeeded_saves_billing_notification(self):
         """Вебхук payment.succeeded → email-уведомление тенанту."""
         tenant, _ = make_tenant_with_subscription('yook-email')
-        Invoice.objects.create(
+        invoice = Invoice.objects.create(
             tenant=tenant,
             amount=Decimal('990.00'),
             status=Invoice.STATUS_PENDING,
             yookassa_payment_id='pay_002',
         )
 
-        with patch('apps.notifications.tasks.send_notification_task') as mock_notify:
-            BillingService.handle_payment_success_webhook(
-                payment_id='pay_002',
-                amount='990.00',
-                metadata={'plan_slug': 'business', 'period': 'monthly'},
-            )
+        BillingService.handle_payment_success_webhook(
+            invoice.pk,
+            payment_id='pay_002',
+            amount='990.00',
+            currency='RUB',
+        )
 
-        mock_notify.delay.assert_called_once()
-        call_args = mock_notify.delay.call_args[0]
-        assert call_args[0] == tenant.pk    # tenant_id
-        assert call_args[1] == 'billing'    # level
+        event = BillingOutboxEvent.objects.get(
+            invoice=invoice,
+            event_type=BillingOutboxEvent.EVENT_NOTIFICATION,
+        )
+        assert event.tenant_id == tenant.pk
+        assert event.payload['level'] == 'billing'
 
-    def test_payment_succeeded_requeues_limit_reached_listings(
-        self, django_capture_on_commit_callbacks,
-    ):
+    def test_payment_succeeded_saves_limit_reached_requeue(self):
         """После активации подписки листинги «Лимит достигнут» уходят на перепубликацию."""
         tenant, _ = make_tenant_with_subscription('yook-requeue')
-        Invoice.objects.create(
+        invoice = Invoice.objects.create(
             tenant=tenant,
             amount=Decimal('990.00'),
             status=Invoice.STATUS_PENDING,
             yookassa_payment_id='pay_003',
         )
 
-        with patch('apps.notifications.tasks.send_notification_task'), \
-             patch('apps.marketplaces.tasks.requeue_limit_reached_listings') as mock_requeue:
-            with django_capture_on_commit_callbacks(execute=True):
-                BillingService.handle_payment_success_webhook(
-                    payment_id='pay_003',
-                    amount='990.00',
-                    metadata={'plan_slug': 'business', 'period': 'monthly'},
-                )
+        BillingService.handle_payment_success_webhook(
+            invoice.pk,
+            payment_id='pay_003',
+            amount='990.00',
+            currency='RUB',
+        )
 
-        mock_requeue.delay.assert_called_once_with(tenant.pk)
+        assert BillingOutboxEvent.objects.filter(
+            invoice=invoice,
+            tenant=tenant,
+            event_type=BillingOutboxEvent.EVENT_REQUEUE_LIMIT_REACHED,
+        ).exists()
 
     def test_ai_topup_webhook_adds_purchased_credits_once(self):
         tenant, _sub = make_tenant_with_subscription('yook-ai-topup')
@@ -175,19 +182,33 @@ class TestPaymentSucceeded:
             yookassa_payment_id='pay_ai_001',
             purchase_type=Invoice.TYPE_AI_TOPUP,
             metadata={'package_id': str(package.pk)},
+            entitlement_snapshot={
+                'schema': 1,
+                'purchase_type': Invoice.TYPE_AI_TOPUP,
+                'amount': str(package.price_rub),
+                'currency': 'RUB',
+                'package': {
+                    'id': package.pk,
+                    'name': package.name,
+                    'credits': str(package.credits),
+                    'price_rub': str(package.price_rub),
+                },
+            },
         )
         before = AIWalletService.summary(tenant)['purchased']
 
         with patch('apps.notifications.tasks.send_notification_task'):
             BillingService.handle_payment_success_webhook(
+                invoice.pk,
                 payment_id='pay_ai_001',
                 amount=str(package.price_rub),
-                metadata={},
+                currency='RUB',
             )
             BillingService.handle_payment_success_webhook(
+                invoice.pk,
                 payment_id='pay_ai_001',
                 amount=str(package.price_rub),
-                metadata={},
+                currency='RUB',
             )
 
         invoice.refresh_from_db()
@@ -221,21 +242,20 @@ class TestPaymentSucceeded:
             },
         )
 
-        with patch('apps.notifications.tasks.send_notification_task') as notify:
-            processed = BillingService.handle_payment_success_webhook(
-                payment_id='pay_mismatch',
-                amount=amount,
-                currency=currency,
-                metadata={},
-            )
+        processed = BillingService.handle_payment_success_webhook(
+            invoice.pk,
+            payment_id='pay_mismatch',
+            amount=amount,
+            currency=currency,
+        )
 
         invoice.refresh_from_db()
         sub.refresh_from_db()
         assert processed is False
-        assert invoice.status == Invoice.STATUS_PENDING
+        assert invoice.status == Invoice.STATUS_MANUAL_REVIEW
         assert invoice.paid_at is None
         assert sub.status == Subscription.STATUS_TRIAL
-        notify.delay.assert_not_called()
+        assert not BillingOutboxEvent.objects.filter(invoice=invoice).exists()
 
     def test_repeated_subscription_webhook_has_no_second_side_effect(self):
         tenant, sub = make_tenant_with_subscription('yook-idempotent')
@@ -252,33 +272,32 @@ class TestPaymentSucceeded:
             },
         )
 
-        with patch('apps.notifications.tasks.send_notification_task') as notify:
-            BillingService.handle_payment_success_webhook(
-                'pay_idempotent',
-                str(plan.price_yearly),
-                {},
-                currency='RUB',
-            )
-            sub.refresh_from_db()
-            first_period_end = sub.current_period_end
-            BillingService.handle_payment_success_webhook(
-                'pay_idempotent',
-                str(plan.price_yearly),
-                {'plan_slug': Plan.SLUG_ENTERPRISE},
-                currency='RUB',
-            )
+        BillingService.handle_payment_success_webhook(
+            invoice.pk,
+            payment_id='pay_idempotent',
+            amount=str(plan.price_yearly),
+            currency='RUB',
+        )
+        sub.refresh_from_db()
+        first_period_end = sub.current_period_end
+        BillingService.handle_payment_success_webhook(
+            invoice.pk,
+            payment_id='pay_idempotent',
+            amount=str(plan.price_yearly),
+            currency='RUB',
+        )
 
         invoice.refresh_from_db()
         sub.refresh_from_db()
         assert invoice.status == Invoice.STATUS_PAID
         assert sub.current_period_end == first_period_end
         assert sub.plan_id == plan.pk
-        notify.delay.assert_called_once()
+        assert BillingOutboxEvent.objects.filter(invoice=invoice).count() == 2
 
     def test_stored_invoice_metadata_wins_over_webhook_metadata(self):
         tenant, _sub = make_tenant_with_subscription('yook-metadata')
         plan = Plan.objects.get(slug=Plan.SLUG_STARTER)
-        Invoice.objects.create(
+        invoice = Invoice.objects.create(
             tenant=tenant,
             amount=plan.price_monthly,
             currency='RUB',
@@ -292,12 +311,9 @@ class TestPaymentSucceeded:
 
         with patch('apps.notifications.tasks.send_notification_task'):
             BillingService.handle_payment_success_webhook(
-                'pay_metadata',
-                str(plan.price_monthly),
-                {
-                    'plan_slug': Plan.SLUG_ENTERPRISE,
-                    'period': Subscription.PERIOD_YEARLY,
-                },
+                invoice.pk,
+                payment_id='pay_metadata',
+                amount=str(plan.price_monthly),
                 currency='RUB',
             )
 
@@ -318,7 +334,10 @@ class TestPaymentFailed:
             yookassa_payment_id='pay_fail_001',
         )
 
-        BillingService.handle_payment_failed_webhook('pay_fail_001')
+        BillingService.handle_payment_failed_webhook(
+            invoice.pk,
+            payment_id='pay_fail_001',
+        )
 
         invoice.refresh_from_db()
         assert invoice.status == Invoice.STATUS_FAILED
@@ -379,8 +398,8 @@ class TestWebhookSecurity:
         )
         assert resp.status_code == 400
 
-    def test_valid_yookassa_ip_accepted(self, client):
-        """Запрос с IP YooKassa → 200 (неизвестный payment_id — просто игнорируется)."""
+    def test_unknown_invoice_is_retried(self, client):
+        """Подтверждённый платёж без Invoice получает retry, а не теряется."""
         payload = json.dumps({
             'event': 'payment.canceled',
             'object': {
@@ -390,13 +409,23 @@ class TestWebhookSecurity:
                 'metadata': {},
             },
         })
-        resp = client.post(
-            '/api/v1/billing/webhook/yookassa/',
-            data=payload,
-            content_type='application/json',
-            REMOTE_ADDR=YOOKASSA_IP,
-        )
-        assert resp.status_code == 200
+        with patch(
+            'apps.billing.webhook_processing.fetch_payment',
+            return_value=PaymentSnapshot(
+                id='pay_nonexistent',
+                status='canceled',
+                amount=Decimal('100.00'),
+                currency='RUB',
+            ),
+        ):
+            resp = client.post(
+                '/api/v1/billing/webhook/yookassa/',
+                data=payload,
+                content_type='application/json',
+                REMOTE_ADDR=YOOKASSA_IP,
+            )
+        assert resp.status_code == 503
+        assert resp['Retry-After']
 
     def test_webhook_with_wrong_currency_is_acknowledged_but_not_applied(self, client):
         tenant, sub = make_tenant_with_subscription('webhook-currency')
@@ -417,15 +446,24 @@ class TestWebhookSecurity:
             },
         })
 
-        response = client.post(
-            '/api/v1/billing/webhook/yookassa/',
-            data=payload,
-            content_type='application/json',
-            REMOTE_ADDR=YOOKASSA_IP,
-        )
+        with patch(
+            'apps.billing.webhook_processing.fetch_payment',
+            return_value=PaymentSnapshot(
+                id='pay_wrong_currency',
+                status='succeeded',
+                amount=Decimal('990.00'),
+                currency='USD',
+            ),
+        ):
+            response = client.post(
+                '/api/v1/billing/webhook/yookassa/',
+                data=payload,
+                content_type='application/json',
+                REMOTE_ADDR=YOOKASSA_IP,
+            )
 
         invoice.refresh_from_db()
         sub.refresh_from_db()
         assert response.status_code == 200
-        assert invoice.status == Invoice.STATUS_PENDING
+        assert invoice.status == Invoice.STATUS_MANUAL_REVIEW
         assert sub.status == Subscription.STATUS_TRIAL

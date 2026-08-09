@@ -6,6 +6,7 @@ import requests
 from django.conf import settings
 from django.utils.html import strip_tags
 
+from apps.core.http_responses import bounded_http_request, trusted_api_max_bytes
 from apps.image_search.sources.base import BaseImageSource, ImageCandidate
 from apps.image_search.sources.connection import image_source_api_key, image_source_connection
 from apps.image_search.sources.registry import register
@@ -13,6 +14,7 @@ from apps.image_search.sources.registry import register
 logger = logging.getLogger(__name__)
 
 _API_URL = 'https://api.tavily.com/search'
+_MAX_IMAGES_PER_QUERY = 5
 
 
 @register
@@ -49,7 +51,8 @@ class TavilyImageSource(BaseImageSource):
         seen_urls: set[str] = set()
         for query, confidence in self.build_queries()[:self.max_queries]:
             try:
-                response = requests.post(
+                response = bounded_http_request(
+                    requests.post,
                     _API_URL,
                     headers={'Authorization': f'Bearer {api_key}'},
                     json={
@@ -57,12 +60,13 @@ class TavilyImageSource(BaseImageSource):
                         'query': query,
                         'topic': 'general',
                         'search_depth': connection.parameters.get('search_depth', 'basic'),
-                        'max_results': 5,
+                        'max_results': _MAX_IMAGES_PER_QUERY,
                         'include_answer': False,
                         'include_images': True,
                         'include_image_descriptions': True,
                     },
                     timeout=max(3, min(int(connection.parameters.get('timeout', 20)), 60)),
+                    max_bytes=trusted_api_max_bytes(settings),
                 )
                 if response.status_code >= 400:
                     self.last_error_code = (
@@ -72,18 +76,44 @@ class TavilyImageSource(BaseImageSource):
                     logger.warning('[tavily-images] HTTP %s', response.status_code)
                     continue
                 data = response.json()
-            except (requests.RequestException, ValueError) as exc:
+                if not isinstance(data, dict):
+                    raise ValueError('top-level JSON must be an object')
+                images = data.get('images')
+                if images is None:
+                    images = []
+                if not isinstance(images, list):
+                    raise ValueError('images must be a list')
+            except ValueError as exc:
+                self.last_error_code = 'invalid_response'
+                self.last_error = f'Tavily вернул некорректный ответ: {exc}'
+                logger.warning('[tavily-images] некорректный ответ для %r: %s', query, exc)
+                continue
+            except requests.RequestException as exc:
                 self.last_error_code = 'source_error'
                 self.last_error = f'Tavily недоступен: {exc}'
                 logger.warning('[tavily-images] ошибка для %r: %s', query, exc)
                 continue
 
-            for rank, item in enumerate(data.get('images') or [], start=1):
+            for rank, item in enumerate(images[:_MAX_IMAGES_PER_QUERY], start=1):
                 if isinstance(item, str):
                     url, description = item, ''
+                elif isinstance(item, dict):
+                    raw_url = item.get('url')
+                    raw_description = item.get('description')
+                    if raw_url is not None and not isinstance(raw_url, str):
+                        self.last_error_code = 'invalid_response'
+                        self.last_error = 'Tavily вернул некорректный URL изображения.'
+                        continue
+                    if raw_description is not None and not isinstance(raw_description, str):
+                        self.last_error_code = 'invalid_response'
+                        self.last_error = 'Tavily вернул некорректное описание изображения.'
+                        continue
+                    url = (raw_url or '').strip()
+                    description = strip_tags(raw_description or '').strip()
                 else:
-                    url = str(item.get('url') or '').strip()
-                    description = strip_tags(str(item.get('description') or '')).strip()
+                    self.last_error_code = 'invalid_response'
+                    self.last_error = 'Tavily вернул некорректный элемент images.'
+                    continue
                 if not url or url in seen_urls:
                     continue
                 seen_urls.add(url)

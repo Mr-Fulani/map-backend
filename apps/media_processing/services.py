@@ -2,12 +2,13 @@
 
 import hashlib
 import io
+import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import PurePosixPath
 from urllib.parse import urlparse
 
-import requests
+from django.conf import settings
 from django.core.cache import caches
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.files.storage import default_storage
@@ -19,7 +20,11 @@ from apps.billing.ai_wallet import (
     AIWalletService,
     InsufficientAICredits,
 )
-from apps.core.url_security import is_safe_public_http_url
+from apps.core.image_security import validate_image_pixel_budget
+from apps.core.url_security import (
+    REDIRECT_SAME_ORIGIN,
+    request_public_http_url,
+)
 from apps.media_processing.models import (
     MediaProcessingJob,
     MediaProcessingPreset,
@@ -45,7 +50,11 @@ GENERATIVE_OPERATIONS = {
     MediaOperation.REPLACE_BACKGROUND,
     MediaOperation.GENERATIVE_FILL,
 }
-MAX_PROVIDER_OUTPUT_BYTES = 25 * 1024 * 1024
+_URL_IN_ERROR_RE = re.compile(r'https?://[^\s<>"\']+', re.IGNORECASE)
+_GENERIC_PROVIDER_FAILURE = 'Медиа-провайдер не смог обработать изображение.'
+_GENERIC_PROVIDER_OUTPUT_FAILURE = (
+    'Результат медиа-провайдера не прошёл проверку безопасности.'
+)
 
 
 class MediaProviderRateLimitExceeded(MediaProviderUnavailable):
@@ -484,14 +493,22 @@ def apply_provider_result(
 
     if result.status == MediaProviderResultStatus.FAILED:
         _release_job_credits(job, reason=result.error_code or 'provider_error')
-        return fail_job(job, result.error_code or 'provider_error', result.error_message)
+        return fail_job(
+            job,
+            result.error_code or 'provider_error',
+            _GENERIC_PROVIDER_FAILURE,
+        )
 
     try:
         raw_bytes, content_type = _provider_result_bytes(result)
         variant = _store_variant(job, raw_bytes, content_type)
-    except Exception as exc:
+    except Exception:
         _release_job_credits(job, reason='invalid_provider_output')
-        return fail_job(job, 'invalid_provider_output', str(exc))
+        return fail_job(
+            job,
+            'invalid_provider_output',
+            _GENERIC_PROVIDER_OUTPUT_FAILURE,
+        )
 
     _settle_job_credits(job)
     job.status = MediaProcessingJob.Status.SUCCEEDED
@@ -507,7 +524,13 @@ def apply_provider_result(
 def fail_job(job: MediaProcessingJob, error_code: str, error_message: str) -> MediaProcessingJob:
     job.status = MediaProcessingJob.Status.FAILED
     job.error_code = error_code[:100]
-    job.error_message = error_message
+    # Never persist signed provider URLs from transport exceptions. Provider
+    # messages are user-visible through the job serializer, so keep them short
+    # and strip controls even for internal callers.
+    safe_message = _URL_IN_ERROR_RE.sub('[redacted-url]', str(error_message or ''))
+    job.error_message = ''.join(
+        char for char in safe_message if char in {'\n', '\t'} or ord(char) >= 32
+    )[:1000]
     job.finished_at = now()
     job.save(update_fields=[
         'status', 'error_code', 'error_message', 'finished_at', 'updated_at',
@@ -542,25 +565,30 @@ def _provider_result_bytes(result: MediaProviderResult) -> tuple[bytes, str]:
         raw_bytes = result.output_bytes
         content_type = result.output_content_type or 'image/jpeg'
     elif result.output_url:
-        if not is_safe_public_http_url(result.output_url):
-            raise ValueError('Провайдер вернул небезопасный URL результата.')
-        response = requests.get(result.output_url, timeout=30, stream=True)
-        response.raise_for_status()
+        parsed_output_url = urlparse(str(result.output_url))
+        if (
+            parsed_output_url.scheme.lower() != 'https'
+            or not parsed_output_url.hostname
+            or parsed_output_url.username is not None
+            or parsed_output_url.password is not None
+        ):
+            raise ValueError('Результат провайдера должен использовать HTTPS URL.')
+        try:
+            response = request_public_http_url(
+                result.output_url,
+                timeout=30,
+                max_response_bytes=settings.MEDIA_PROVIDER_OUTPUT_MAX_BYTES,
+                redirect_policy=REDIRECT_SAME_ORIGIN,
+            )
+            response.raise_for_status()
+        except Exception as exc:
+            raise ValueError(_GENERIC_PROVIDER_OUTPUT_FAILURE) from exc
         content_type = response.headers.get('Content-Type', '').split(';', 1)[0]
-        chunks = []
-        size = 0
-        for chunk in response.iter_content(chunk_size=64 * 1024):
-            if not chunk:
-                continue
-            size += len(chunk)
-            if size > MAX_PROVIDER_OUTPUT_BYTES:
-                raise ValueError('Некорректный размер результата провайдера.')
-            chunks.append(chunk)
-        raw_bytes = b''.join(chunks)
+        raw_bytes = response.content
     else:
         raise ValueError('Провайдер не вернул изображение.')
 
-    if not raw_bytes or len(raw_bytes) > MAX_PROVIDER_OUTPUT_BYTES:
+    if not raw_bytes or len(raw_bytes) > settings.MEDIA_PROVIDER_OUTPUT_MAX_BYTES:
         raise ValueError('Некорректный размер результата провайдера.')
     if content_type and not content_type.startswith('image/'):
         raise ValueError('Провайдер вернул не изображение.')
@@ -576,6 +604,7 @@ def _store_variant(
 
     try:
         image = Image.open(io.BytesIO(raw_bytes))
+        validate_image_pixel_budget(image)
         image.load()
     except (UnidentifiedImageError, OSError) as exc:
         raise ValueError('Результат провайдера не удалось открыть как изображение.') from exc

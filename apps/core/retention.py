@@ -6,12 +6,13 @@ from django.utils import timezone
 
 def purge_retained_data(*, dry_run: bool = False) -> dict[str, int]:
     """Физически удаляет только данные, чей soft-delete/audit retention истёк."""
-    from apps.billing.models import BillingWebhookEvent
+    from apps.billing.models import BillingOutboxEvent, BillingWebhookEvent
     from apps.datasources.models import DataSourceConnection
     from apps.marketplaces.models import Listing, MarketplaceAccount
     from apps.products.models import Product
     from apps.sync.models import SyncLog
     from apps.tenants.models import WebhookDelivery, WebhookEndpoint, WebhookEvent
+    from rest_framework_simplejwt.token_blacklist.models import OutstandingToken
 
     now = timezone.now()
     soft_cutoff = now - timedelta(days=settings.SOFT_DELETE_RETENTION_DAYS)
@@ -28,6 +29,7 @@ def purge_retained_data(*, dry_run: bool = False) -> dict[str, int]:
         'webhook_events': WebhookEvent.objects.filter(created_at__lt=webhook_cutoff).exclude(
             deliveries__status__in=[
                 WebhookDelivery.STATUS_PENDING,
+                WebhookDelivery.STATUS_QUEUED,
                 WebhookDelivery.STATUS_RETRY,
                 WebhookDelivery.STATUS_DELIVERING,
             ],
@@ -36,7 +38,14 @@ def purge_retained_data(*, dry_run: bool = False) -> dict[str, int]:
             created_at__lt=billing_cutoff,
             processed_at__isnull=False,
         ).exclude(decision=BillingWebhookEvent.DECISION_MANUAL_REVIEW),
+        'billing_outbox_events': BillingOutboxEvent.objects.filter(
+            status=BillingOutboxEvent.STATUS_DISPATCHED,
+            dispatched_at__lt=billing_cutoff,
+        ),
         'sync_logs': SyncLog.objects.filter(created_at__lt=sync_cutoff),
+        # Удаление OutstandingToken каскадно удаляет BlacklistedToken. Хранить
+        # истёкшие JWT дольше их cryptographic lifetime нет оснований.
+        'expired_jwt_tokens': OutstandingToken.objects.filter(expires_at__lt=now),
     }
 
     result = {name: queryset.count() for name, queryset in querysets.items()}
@@ -45,7 +54,8 @@ def purge_retained_data(*, dry_run: bool = False) -> dict[str, int]:
     # Сначала дочерние записи, затем их владельцы.
     for name in (
         'listings', 'products', 'marketplace_accounts', 'datasource_connections',
-        'webhook_endpoints', 'webhook_events', 'billing_webhook_events', 'sync_logs',
+        'webhook_endpoints', 'webhook_events', 'billing_webhook_events',
+        'billing_outbox_events', 'sync_logs', 'expired_jwt_tokens',
     ):
         querysets[name].delete()
     return result

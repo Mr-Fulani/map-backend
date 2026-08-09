@@ -2,8 +2,9 @@ from django.contrib import admin
 from unfold.admin import ModelAdmin
 
 from apps.billing.models import (
-    AICreditPackage, AICreditTransaction, AIWallet, BillingWebhookEvent,
-    Invoice, PaymentReversal, Plan, Subscription,
+    AICreditPackage, AICreditTransaction, AIWallet, BillingOutboxEvent,
+    BillingWebhookEvent, CheckoutIntentKey, Invoice, PaymentReversal, Plan,
+    Subscription,
 )
 
 
@@ -46,7 +47,12 @@ class SubscriptionAdmin(ModelAdmin):
     ]
     list_filter = ['status', 'plan', 'billing_period']
     search_fields = ['tenant__name', 'tenant__slug']
-    readonly_fields = ['created_at', 'updated_at', 'cancelled_at']
+    readonly_fields = [
+        'tenant', 'plan', 'status', 'billing_period',
+        'current_period_start', 'current_period_end',
+        'ai_period_start', 'ai_period_end', 'yookassa_subscription_id',
+        'billing_version', 'cancelled_at', 'created_at', 'updated_at',
+    ]
     fieldsets = [
         ('Тенант и тариф', {
             'fields': ['tenant', 'plan', 'status', 'billing_period'],
@@ -62,7 +68,7 @@ class SubscriptionAdmin(ModelAdmin):
             'classes': ['collapse'],
         }),
         ('Служебное', {
-            'fields': ['cancelled_at', 'created_at', 'updated_at'],
+            'fields': ['billing_version', 'cancelled_at', 'created_at', 'updated_at'],
             'classes': ['collapse'],
         }),
     ]
@@ -71,11 +77,14 @@ class SubscriptionAdmin(ModelAdmin):
     def get_effective_status(self, obj):
         return dict(obj.STATUS_CHOICES)[obj.effective_status]
 
-    def save_model(self, request, obj, form, change):
-        """Subscription — источник истины; legacy-дата тенанта только синхронизируется."""
-        super().save_model(request, obj, form, change)
-        from apps.billing.services import BillingService
-        BillingService.sync_tenant_trial_end(obj)
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(Invoice)
@@ -85,13 +94,23 @@ class InvoiceAdmin(ModelAdmin):
     list_display = [
         'tenant', 'purchase_type', 'amount', 'currency',
         'status', 'refunded_amount', 'refund_review_required',
-        'paid_at', 'created_at',
+        'checkout_state', 'reconciliation_attempts', 'paid_at', 'created_at',
     ]
     list_filter = ['status', 'purchase_type', 'refund_review_required']
     search_fields = ['tenant__name', 'yookassa_payment_id']
     readonly_fields = [
-        'yookassa_payment_id', 'pdf_s3_key', 'paid_at',
-        'refunded_amount', 'created_at', 'updated_at',
+        'tenant', 'purchase_type', 'amount', 'currency', 'metadata', 'status',
+        'yookassa_payment_id', 'pdf_s3_key', 'paid_at', 'refunded_amount',
+        'refund_review_required',
+        'checkout_client_key', 'provider_idempotency_key',
+        'checkout_payload_hash', 'checkout_return_url',
+        'checkout_confirmation_url', 'checkout_state',
+        'checkout_attempt_count', 'checkout_first_attempt_at',
+        'checkout_last_attempt_at', 'checkout_last_error',
+        'entitlement_snapshot', 'entitlement_plan',
+        'expected_subscription_version', 'reconciliation_attempts',
+        'next_reconciliation_at', 'last_reconciliation_at',
+        'created_at', 'updated_at',
     ]
     fieldsets = [
         ('Основное', {
@@ -101,7 +120,23 @@ class InvoiceAdmin(ModelAdmin):
             ],
         }),
         ('Интеграция ЮKassa', {
-            'fields': ['yookassa_payment_id', 'pdf_s3_key', 'metadata'],
+            'fields': [
+                'yookassa_payment_id', 'pdf_s3_key', 'metadata',
+                'checkout_client_key', 'provider_idempotency_key',
+                'checkout_payload_hash', 'checkout_return_url',
+                'checkout_confirmation_url', 'checkout_state',
+                'checkout_attempt_count', 'checkout_first_attempt_at',
+                'checkout_last_attempt_at', 'checkout_last_error',
+                'reconciliation_attempts', 'next_reconciliation_at',
+                'last_reconciliation_at',
+            ],
+            'classes': ['collapse'],
+        }),
+        ('Финансовый snapshot', {
+            'fields': [
+                'entitlement_snapshot', 'entitlement_plan',
+                'expected_subscription_version',
+            ],
             'classes': ['collapse'],
         }),
         ('Служебное', {
@@ -109,6 +144,65 @@ class InvoiceAdmin(ModelAdmin):
             'classes': ['collapse'],
         }),
     ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(CheckoutIntentKey)
+class CheckoutIntentKeyAdmin(ModelAdmin):
+    """Read-only registry of canonical and coalesced browser checkout keys."""
+
+    list_display = ['client_key', 'tenant', 'invoice', 'created_at']
+    search_fields = [
+        'client_key', 'tenant__name', 'tenant__slug', 'invoice__id',
+    ]
+    readonly_fields = [
+        'tenant', 'invoice', 'client_key', 'checkout_payload_hash',
+        'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(BillingOutboxEvent)
+class BillingOutboxEventAdmin(ModelAdmin):
+    """Read-only operational view of durable broker publications."""
+
+    list_display = [
+        'id', 'tenant', 'event_type', 'status', 'attempts',
+        'next_attempt_at', 'dispatched_at', 'created_at',
+    ]
+    list_filter = ['event_type', 'status']
+    search_fields = ['id', 'tenant__name', 'tenant__slug', 'idempotency_key']
+    readonly_fields = [
+        'id', 'tenant', 'invoice', 'event_type', 'idempotency_key', 'payload',
+        'status', 'attempts', 'next_attempt_at', 'processing_token',
+        'processing_started_at', 'dispatched_at', 'dead_lettered_at', 'last_error',
+        'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(AIWallet)
@@ -118,7 +212,20 @@ class AIWalletAdmin(ModelAdmin):
         'reserved_balance', 'included_limit', 'included_expires_at',
     ]
     search_fields = ['tenant__name', 'tenant__slug']
-    readonly_fields = ['notification_state', 'created_at', 'updated_at']
+    readonly_fields = [
+        'tenant', 'included_balance', 'purchased_balance', 'reserved_balance',
+        'included_limit', 'included_expires_at', 'notification_state',
+        'created_at', 'updated_at',
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(AICreditTransaction)
@@ -190,7 +297,9 @@ class BillingWebhookEventAdmin(ModelAdmin):
         'provider', 'event_type', 'object_id', 'payment_id',
         'idempotency_key', 'invoice', 'tenant', 'amount', 'currency',
         'decision', 'reason', 'payload', 'source_ip', 'delivery_count',
-        'processed_at', 'created_at', 'updated_at',
+        'processing_token', 'processing_started_at', 'processed_at',
+        'reconciliation_attempts', 'next_reconciliation_at',
+        'last_reconciliation_at', 'created_at', 'updated_at',
     ]
 
     def has_add_permission(self, request):

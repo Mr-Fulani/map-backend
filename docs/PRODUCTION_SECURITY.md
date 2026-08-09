@@ -64,7 +64,7 @@ cache запрещено направлять на endpoint broker-а. Productio
 2. Установить `FIELD_ENCRYPTION_KEYS=<new>,<old>` и развернуть приложение.
 3. Проверить расшифровку: `python manage.py rotate_encryption_keys --dry-run`.
 4. Выполнить `python manage.py rotate_encryption_keys` — все credentials и webhook
-   secrets будут перешифрованы первым ключом.
+   secrets, включая подключения web-search, будут перешифрованы первым ключом.
 5. Удалить старый ключ из `FIELD_ENCRYPTION_KEYS` и развернуть повторно.
 
 Команда не выводит расшифрованные значения.
@@ -83,6 +83,134 @@ cache запрещено направлять на endpoint broker-а. Productio
 Успехом считается любой HTTP `2xx`. Redirect запрещён. Повторы выполняются с
 экспоненциальными задержками до `WEBHOOK_MAX_ATTEMPTS`; история хранится
 `WEBHOOK_AUDIT_RETENTION_DAYS`.
+
+Тело ответа получателя не читается: доставка использует только HTTP status и
+закрывает соединение. Поэтому уже принятый получателем `2xx` не превращается в
+повторную доставку из-за большого, медленного или бесконечного response body.
+
+## Resource limits и исходящие URL
+
+Значения ниже можно уменьшать через environment для более строгой политики.
+Увеличение выше встроенного hard ceiling намеренно ограничивается кодом, чтобы
+ошибка конфигурации не отключила защиту памяти, времени или кардинальности.
+
+- `MAX_IMAGE_UPLOAD_BYTES` ограничивает ручные и удалённые исходные изображения;
+- `MEDIA_PROVIDER_OUTPUT_MAX_BYTES` ограничивает результат media-провайдера;
+- `MAX_DECODED_IMAGE_PIXELS` блокирует decompression bombs до полной декодировки;
+- `API_BULK_MAX_ITEMS` ограничивает синхронные массовые операции;
+- `API_REQUEST_MAX_BYTES` ограничивает non-file request body в Django, а nginx
+  отклоняет общий API request крупнее 12 MiB до передачи приложению;
+- `FILE_UPLOAD_MEMORY_MAX_BYTES` переводит крупные upload во временный файл,
+  вместо удержания всего содержимого в памяти процесса;
+- `PART_PAGE_MAX_BYTES` ограничивает HTML-ответы внешних каталогов запчастей;
+- `TRUSTED_API_RESPONSE_MAX_BYTES` ограничивает несжатые JSON/text-ответы
+  доверенных API (AI, Brave, Tavily и Telegram). Такие запросы используют
+  streaming, запрашивают только `identity` encoding и всегда закрывают response;
+- `AVITO_API_RESPONSE_MAX_BYTES` отдельно ограничивает ответы фиксированного
+  API Avito тем же механизмом;
+- `DATASOURCE_UPLOAD_MAX_BYTES` ограничивает фактический объём CSV/XLS/XLSX;
+- `DATASOURCE_XLSX_MAX_UNCOMPRESSED_BYTES` блокирует XLSX ZIP bombs до
+  передачи архива в `openpyxl`;
+- `DATASOURCE_IMPORT_MAX_ROWS` и `DATASOURCE_IMPORT_MAX_CELLS` ограничивают
+  физические строки (включая заголовки/пустые строки) и суммарное число ячеек;
+- `DATASOURCE_XML_MAX_BYTES` ограничивает распакованное HTTP-клиентом тело XML
+  выгрузки 1С;
+- `DATASOURCE_HTTP_MAX_BYTES` ограничивает JSON-ответ HTTP-интеграции 1С;
+- Все внешние HTTP(S) URL разрешаются ровно один раз на каждом redirect-hop;
+  соединение открывается к зафиксированному публичному IP, при этом исходный
+  hostname сохраняется в `Host`, TLS SNI и проверке сертификата. Ответ DNS,
+  содержащий хотя бы один loopback/private/metadata адрес, отклоняется целиком;
+- системные proxy (`trust_env`), автоматические retry и redirect отключены.
+  Redirect обрабатывается вручную, новый URL заново разрешается и фиксируется,
+  а credentials и чувствительные заголовки не переходят на другой origin;
+- тот же DNS-pinned транспорт и лимиты ответа применяются к изображениям,
+  media-provider output, HTML внешних каталогов и HTTP/XML-интеграциям 1С;
+- media-provider output принимается только по HTTPS; redirect разрешён только
+  внутри исходного origin, а transport error не сохраняет signed URL/query;
+- webhook delivery и тест endpoint-а запрещают redirect и не читают тело ответа.
+
+Один абсолютный wall-clock deadline охватывает DNS, admission в ограниченный пул,
+connect/TLS, ожидание headers, redirects и body. Одновременно может выполняться не
+более 32 защищённых blocking HTTP-операций; при исчерпании слотов новые запросы
+завершаются fail-closed в пределах собственного deadline. Это ограничивает ущерб
+от зависшего системного resolver, который CPython не умеет безопасно прервать.
+
+CSV и Excel читаются построчно; заявленный клиентом размер файла не считается
+доверенным и повторно проверяется по полученным chunk-ам. Для XML-выгрузки 1С
+разрешены только публичные HTTP(S) URL. Каждый redirect проходит повторную
+DNS/IP-проверку, redirect на другой origin запрещён, чтобы не раскрыть Basic Auth.
+XML разбирается без DTD, внешних entities, сети и режима `huge_tree`.
+
+Production Compose использует единственный активный конфиг `nginx.conf` в корне
+репозитория. В нём отдельно ограничены billing webhook, checkout/AI top-up,
+admin и общий API; устаревший дублирующий конфиг удалён.
+
+YooKassa `return_url` принимается только для origin из
+`BILLING_RETURN_URL_ALLOWED_ORIGINS`; в production разрешены только HTTPS origins.
+Авторитетный объект Payment обязан содержать `test=false`; тестовые платежи не
+активируют подписку/AI-баланс, а `YOOKASSA_ALLOW_TEST_PAYMENTS` запрещён production-настройками.
+Production также требует `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY`, фиксирует API
+на `https://api.yookassa.ru/v3`, запрещает сжатые ответы и ограничивает JSON 4 MiB.
+Создание Payment/Refund и авторитетные GET выполняются единым прямым HTTP-клиентом:
+SDK YooKassa не используется, redirects отключены, Basic Auth передаётся только на
+фиксированный HTTPS origin, заданы connect/read timeouts и `Accept-Encoding: identity`.
+Checkout сначала сохраняет неизменяемый Invoice intent и provider idempotency key,
+а ошибки webhook и незавершённые платежи сверяются задачей
+`reconcile_yookassa_billing` каждые пять минут с ограниченным backoff. Ручной
+запуск для диагностики: `python manage.py reconcile_yookassa --invoice-id ID --force`.
+
+Checkout-endpoint-ы явно выполняются вне `ATOMIC_REQUESTS`: сетевой запрос к
+YooKassa начинается только после commit устойчивого Invoice intent. Сервис также
+останавливает checkout при попытке вызвать его из внешнего `transaction.atomic()`.
+Одновременно активные intents с одинаковым tenant и payload дедуплицируются под
+lock подписки и защищены частичным уникальным constraint в PostgreSQL. Поэтому
+разные client UUID из параллельных вкладок используют один provider payment, а
+каждый принятый UUID неизменно связывается с canonical Invoice в
+`CheckoutIntentKey`. Потеря ответа во второй вкладке поэтому не может превратить
+её следующий retry в новый платёж.
+Число ключей на Invoice ограничено `BILLING_CHECKOUT_MAX_KEYS_PER_INVOICE`;
+слот canonical key резервируется даже при падении между commit Invoice и созданием
+registry-записи. Новый alias сверх лимита получает `409 checkout_key_limit`, а уже
+принятые ключи сохраняют идемпотентность.
+Повтор с ключом уже завершённого Invoice (`paid`, `failed`,
+`partially_refunded`, `refunded`) не возвращает устаревший confirmation URL: API отвечает
+`409 checkout_terminal` с `rotate_idempotency_key=true`. Только этот код разрешает
+frontend удалить сохранённый ключ и создать новый. `checkout_pending` и
+`checkout_manual_review` ключ не освобождают.
+
+Уведомления об оплате, истечении подписки и порогах AI-баланса, а также повторная
+постановка листингов после снятия лимита сохраняются в `BillingOutboxEvent` внутри
+той же транзакции, что и финансовое изменение. Немедленный запуск dispatcher —
+только ускорение:
+`dispatch_billing_outbox` каждую минуту повторно подбирает pending и просроченные
+processing-события. Broker errors получают экспоненциальный backoff без удаления
+события. После `BILLING_OUTBOX_MAX_ATTEMPTS` событие переводится в `dead`, больше
+автоматически не выбирается и остаётся доступным в read-only billing admin.
+После устранения причины оператор выполняет адресный принудительный повтор:
+
+```bash
+python manage.py dispatch_billing_outbox --limit 100
+python manage.py dispatch_billing_outbox --event-id UUID --force
+```
+
+`--force` без явного `--event-id` отклоняется, чтобы операторская команда не могла
+массово обойти backoff всех ожидающих событий.
+
+Публикация outbox имеет семантику at-least-once: событие не теряется при падении
+broker, но авария процесса между подтверждением broker и DB-finalize теоретически
+может повторить downstream-задачу. Для трассировки используется стабильный Celery
+`task_id`; финансовые проводки и entitlement остаются идемпотентными независимо от
+повторной публикации. Настройки retry: `BILLING_OUTBOX_BASE_DELAY_SECONDS`,
+`BILLING_OUTBOX_MAX_DELAY_SECONDS`, `BILLING_OUTBOX_PROCESSING_TIMEOUT_SECONDS` и
+`BILLING_OUTBOX_BATCH_SIZE`, `BILLING_OUTBOX_MAX_ATTEMPTS`. Только успешно
+опубликованные outbox-записи удаляются
+общим retention-процессом через `BILLING_AUDIT_RETENTION_DAYS`; pending/processing
+записи retention не затрагивает.
+
+Public auth endpoints имеют раздельные application-level лимиты по адресу
+клиента и по SHA-256 fingerprint нормализованного email. Токены восстановления
+пароля и смены email передаются frontend-у только в URL fragment, удаляются из
+адресной строки до рендера формы и отправляются backend-у через POST.
 
 ## Soft-delete и retention
 
@@ -137,20 +265,56 @@ reviewers и определить:
 На сервере скопируйте `.deploy.env.example` в `.deploy.env`, направьте
 `PROD_SMOKE_URL` на публичный `/api/v1/ready/` и ограничьте доступ к файлу
 (`chmod 600`). `/api/v1/live/` проверяет только HTTP-процесс, а readiness также
-проверяет PostgreSQL и cache. Скрипт:
+проверяет PostgreSQL и cache. `PROD_DRAIN_TIMEOUT_SECONDS` должен быть больше
+наибольшего hard time limit фоновой задачи (по умолчанию 3700 секунд при лимите
+3600 секунд). Скрипт:
 
 1. блокирует параллельный ручной запуск и проверяет SHA, чистоту working tree,
    Compose-конфигурацию, доступность Docker и запас диска;
 2. сохраняет image ID текущего release и собирает новый до переключения web/worker
    процессов;
-3. выполняет `check --deploy`, migration plan и обязательный зашифрованный S3
-   backup; только после его успеха применяет миграции в one-shot контейнере;
-4. ждёт readiness всех сервисов и проверяет публичный HTTPS endpoint;
-5. при ошибке возвращает application-сервисы на предыдущие сохранённые образы.
+3. выполняет `check --deploy` и migration plan, затем включает maintenance:
+   останавливает ingress, beat, старый web и workers с graceful drain;
+4. при остановленных writers делает обязательный зашифрованный S3 backup и только
+   после его успеха применяет миграции в one-shot контейнере;
+5. готовит release data, запускает новый release, ждёт readiness всех сервисов и
+   проверяет публичный HTTPS endpoint;
+6. при ошибке **до** начала миграций возвращает application-сервисы на предыдущие
+   сохранённые образы.
+
+### Maintenance и forward recovery
+
+Окно недоступности начинается с остановки `nginx` и заканчивается успешным внешним
+smoke-check. В него входят graceful drain, backup, миграции, подготовка данных и
+readiness. Перед deploy предупредите пользователей об окне и убедитесь, что нет
+длительных импортов/экспортов. Не уменьшайте drain timeout ниже максимального
+времени задачи: принудительно завершённый worker мог уже выполнить внешний side
+effect, но ещё не зафиксировать локальный результат.
+
+После установки `MIGRATIONS_STARTED=true` автоматический rollback намеренно
+запрещён. Старый web/worker release остаётся остановленным: даже частично
+применённая схема может быть с ним несовместима. Дежурный оператор должен:
+
+1. оставить `nginx`, `django`, `frontend`, `celery_beat`, `celery_worker` и
+   `celery_worker_images` остановленными;
+2. сохранить вывод упавшей команды и проверить таблицу `django_migrations`,
+   migration plan и наличие успешного pre-migration backup/manifest;
+3. подготовить через обычный CI новый forward-fix (или исправленную идемпотентную
+   data migration), пройти review и развернуть точный проверенный SHA;
+4. повторить deploy: новый backup создаётся снова, `migrate` продолжает историю,
+   а writers запускаются только после завершения всех миграций;
+5. выполнить readiness/smoke-check и предметную сверку billing/webhook/outbox до
+   завершения maintenance window.
+
+Не применяйте обратные Django-миграции и не запускайте старый release вручную без
+отдельно проверенного restore/cutover-плана. Если forward recovery невозможен,
+используйте процедуру восстановления из зашифрованного backup на отдельном хосте
+из [`BACKUP_RESTORE.md`](BACKUP_RESTORE.md), затем выполняйте контролируемый
+cutover.
 
 Глобальные `docker * prune` намеренно не выполняются: один deploy не должен удалять
 ресурсы других Compose-проектов на том же хосте. Миграции БД автоматически не
-откатываются, поэтому production-миграции должны следовать expand/contract-подходу
-и оставаться совместимыми с предыдущей версией приложения. Ошибка pre-deploy
-backup блокирует миграцию. Полная настройка, retention и ежемесячный restore drill:
+откатываются, поэтому production-миграции должны следовать expand/contract-подходу.
+Ошибка pre-deploy backup блокирует миграцию. Полная настройка, retention и
+ежемесячный restore drill:
 [`BACKUP_RESTORE.md`](BACKUP_RESTORE.md).

@@ -119,6 +119,11 @@ UNFOLD = {
                         "link": "/admin/billing/subscription/",
                     },
                     {"title": "Счета", "icon": "receipt", "link": "/admin/billing/invoice/"},
+                    {
+                        "title": "Billing outbox",
+                        "icon": "outbox",
+                        "link": "/admin/billing/billingoutboxevent/",
+                    },
                 ],
             },
             {
@@ -402,7 +407,28 @@ REST_FRAMEWORK = {
         'expensive_image_tenant': '12/min',
         'expensive_research_principal': '3/min',
         'expensive_research_tenant': '6/min',
+        'image_upload_principal': '12/min',
+        'image_upload_tenant': '30/min',
+        'webhook_create_principal': '10/hour',
+        'webhook_create_tenant': '20/hour',
+        'webhook_test_principal': '6/min',
+        'webhook_test_tenant': '20/min',
+        'datasource_test_principal': '5/min',
+        'datasource_test_tenant': '10/min',
+        'datasource_sync_principal': '2/min',
+        'datasource_sync_tenant': '4/min',
+        'datasource_upload_principal': '2/hour',
+        'datasource_upload_tenant': '6/hour',
+        'auth_login': '20/min',
+        'auth_register': '10/hour',
+        'auth_refresh': '60/min',
+        'billing_checkout': '6/min',
+        'password_reset_request': '5/hour',
+        'password_reset_confirm': '10/hour',
     },
+    # Production traffic проходит через один nginx hop. Берём последний адрес
+    # из X-Forwarded-For, который nginx добавляет сам, а не доверяем всей цепочке.
+    'NUM_PROXIES': int(os.environ.get('API_NUM_PROXIES', '1')),
     'EXCEPTION_HANDLER': 'apps.core.exceptions.map_exception_handler',
 }
 
@@ -421,6 +447,41 @@ SIMPLE_JWT = {
 # --- CORS ---
 CORS_ALLOWED_ORIGINS = os.environ.get('CORS_ALLOWED_ORIGINS', 'http://localhost:3000').split(',')
 CORS_ALLOW_CREDENTIALS = True
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000').split(',')
+    if origin.strip()
+]
+
+# Refresh token браузерной сессии никогда не доступен JavaScript-коду.
+AUTH_REFRESH_COOKIE_NAME = os.environ.get('AUTH_REFRESH_COOKIE_NAME', 'map_refresh')
+AUTH_REFRESH_COOKIE_PATH = '/api/v1/auth/browser/'
+AUTH_REFRESH_COOKIE_SAMESITE = 'Lax'
+PASSWORD_RESET_TIMEOUT = min(
+    24 * 60 * 60,
+    max(5 * 60, int(os.environ.get('PASSWORD_RESET_TIMEOUT', '3600'))),
+)
+
+# Bound non-file request bodies at Django as a second line behind nginx.
+# Uploaded files are streamed to disk once they exceed the much smaller memory cap.
+DATA_UPLOAD_MAX_MEMORY_SIZE = min(
+    16 * 1024 * 1024,
+    max(
+        1024,
+        int(os.environ.get('API_REQUEST_MAX_BYTES', str(12 * 1024 * 1024))),
+    ),
+)
+FILE_UPLOAD_MAX_MEMORY_SIZE = min(
+    2 * 1024 * 1024,
+    max(
+        1024,
+        int(os.environ.get('FILE_UPLOAD_MEMORY_MAX_BYTES', str(1024 * 1024))),
+    ),
+)
+DATA_UPLOAD_MAX_NUMBER_FIELDS = min(
+    5000,
+    max(1, int(os.environ.get('DATA_UPLOAD_MAX_NUMBER_FIELDS', '2000'))),
+)
 
 # --- Swagger ---
 SPECTACULAR_SETTINGS = {
@@ -452,9 +513,15 @@ SPECTACULAR_SETTINGS = {
             'apps.web_research.models.COMPETITOR_OFFER_REVIEW_STATUS_CHOICES'
         ),
         'DataSourceTypeEnum': 'apps.datasources.models.DataSourceConnection.TYPE_CHOICES',
+        'APIKeyRoleEnum': 'apps.tenants.models.APIKey.ROLE_CHOICES',
+        'TenantUserRoleEnum': 'apps.tenants.models.TenantUser.ROLES',
     },
     'TAGS': [
         {'name': 'Auth', 'description': 'Регистрация, JWT, информация о текущем пользователе'},
+        {
+            'name': 'Browser Auth',
+            'description': 'CSRF-защищённая браузерная сессия с HttpOnly refresh cookie',
+        },
         {'name': 'Tenant', 'description': 'Организация и её пользователи'},
         {'name': 'Profile', 'description': 'Профиль и настройки текущего пользователя'},
         {'name': 'API Keys', 'description': 'Управление API-ключами'},
@@ -516,14 +583,139 @@ FIELD_ENCRYPTION_KEYS = [
     for key in os.environ.get('FIELD_ENCRYPTION_KEYS', FIELD_ENCRYPTION_KEY).split(',')
     if key.strip()
 ]
-WEBHOOK_REQUEST_TIMEOUT_SECONDS = int(os.environ.get('WEBHOOK_REQUEST_TIMEOUT_SECONDS', '10'))
-WEBHOOK_MAX_ATTEMPTS = int(os.environ.get('WEBHOOK_MAX_ATTEMPTS', '8'))
+WEBHOOK_REQUEST_TIMEOUT_SECONDS = min(
+    30,
+    max(1, int(os.environ.get('WEBHOOK_REQUEST_TIMEOUT_SECONDS', '10'))),
+)
+WEBHOOK_MAX_ATTEMPTS = min(
+    20,
+    max(1, int(os.environ.get('WEBHOOK_MAX_ATTEMPTS', '8'))),
+)
+WEBHOOK_ENDPOINTS_PER_TENANT = min(
+    100,
+    max(1, int(os.environ.get('WEBHOOK_ENDPOINTS_PER_TENANT', '20'))),
+)
+WEBHOOK_DISPATCH_BATCH_SIZE = min(
+    500,
+    max(1, int(os.environ.get('WEBHOOK_DISPATCH_BATCH_SIZE', '100'))),
+)
+MAX_IMAGE_UPLOAD_BYTES = min(
+    5 * 1024 * 1024,
+    max(1, int(os.environ.get('MAX_IMAGE_UPLOAD_BYTES', str(5 * 1024 * 1024)))),
+)
+MAX_DECODED_IMAGE_PIXELS = min(
+    16_000_000,
+    max(1, int(os.environ.get('MAX_DECODED_IMAGE_PIXELS', '16000000'))),
+)
+MEDIA_PROVIDER_OUTPUT_MAX_BYTES = min(
+    25 * 1024 * 1024,
+    max(
+        1,
+        int(os.environ.get('MEDIA_PROVIDER_OUTPUT_MAX_BYTES', str(25 * 1024 * 1024))),
+    ),
+)
+API_BULK_MAX_ITEMS = min(
+    500,
+    max(1, int(os.environ.get('API_BULK_MAX_ITEMS', '500'))),
+)
+DATASOURCE_UPLOAD_MAX_BYTES = min(
+    5 * 1024 * 1024,
+    max(1, int(os.environ.get('DATASOURCE_UPLOAD_MAX_BYTES', str(5 * 1024 * 1024)))),
+)
+DATASOURCE_XLSX_MAX_UNCOMPRESSED_BYTES = min(
+    25 * 1024 * 1024,
+    max(
+        1,
+        int(os.environ.get(
+            'DATASOURCE_XLSX_MAX_UNCOMPRESSED_BYTES',
+            str(25 * 1024 * 1024),
+        )),
+    ),
+)
+DATASOURCE_XLSX_MAX_ARCHIVE_ENTRIES = min(
+    1024,
+    max(1, int(os.environ.get('DATASOURCE_XLSX_MAX_ARCHIVE_ENTRIES', '1024'))),
+)
+DATASOURCE_IMPORT_MAX_ROWS = min(
+    5000,
+    max(1, int(os.environ.get('DATASOURCE_IMPORT_MAX_ROWS', '5000'))),
+)
+DATASOURCE_IMPORT_MAX_COLUMNS = min(
+    128,
+    max(1, int(os.environ.get('DATASOURCE_IMPORT_MAX_COLUMNS', '128'))),
+)
+DATASOURCE_IMPORT_MAX_CELLS = min(
+    100_000,
+    max(1, int(os.environ.get('DATASOURCE_IMPORT_MAX_CELLS', '100000'))),
+)
+DATASOURCE_XML_MAX_BYTES = min(
+    8 * 1024 * 1024,
+    max(1, int(os.environ.get('DATASOURCE_XML_MAX_BYTES', str(8 * 1024 * 1024)))),
+)
+DATASOURCE_HTTP_MAX_BYTES = min(
+    5 * 1024 * 1024,
+    max(1, int(os.environ.get('DATASOURCE_HTTP_MAX_BYTES', str(5 * 1024 * 1024)))),
+)
+DATASOURCE_XML_MAX_NODES = min(
+    60_000,
+    max(1, int(os.environ.get('DATASOURCE_XML_MAX_NODES', '60000'))),
+)
+DATASOURCE_XML_MAX_TEXT_CHARS = min(
+    4 * 1024 * 1024,
+    max(
+        1,
+        int(os.environ.get('DATASOURCE_XML_MAX_TEXT_CHARS', str(4 * 1024 * 1024))),
+    ),
+)
+DATASOURCE_XML_MAX_ITEMS = min(
+    5000,
+    max(1, int(os.environ.get('DATASOURCE_XML_MAX_ITEMS', '5000'))),
+)
+DATASOURCE_FETCH_PAGE_MAX_ITEMS = min(
+    500,
+    max(1, int(os.environ.get('DATASOURCE_FETCH_PAGE_MAX_ITEMS', '500'))),
+)
+PART_PAGE_MAX_BYTES = min(
+    2 * 1024 * 1024,
+    max(1, int(os.environ.get('PART_PAGE_MAX_BYTES', str(2 * 1024 * 1024)))),
+)
+AVITO_API_RESPONSE_MAX_BYTES = min(
+    5 * 1024 * 1024,
+    max(1, int(os.environ.get('AVITO_API_RESPONSE_MAX_BYTES', str(5 * 1024 * 1024)))),
+)
+AVITO_API_MAX_PAGES = min(
+    100, max(1, int(os.environ.get('AVITO_API_MAX_PAGES', '50'))),
+)
+AVITO_TREE_MAX_DEPTH = min(
+    32, max(1, int(os.environ.get('AVITO_TREE_MAX_DEPTH', '12'))),
+)
+AVITO_TREE_MAX_NODES = min(
+    20000, max(1, int(os.environ.get('AVITO_TREE_MAX_NODES', '10000'))),
+)
+AVITO_TREE_MAX_LEAVES = min(
+    10000, max(1, int(os.environ.get('AVITO_TREE_MAX_LEAVES', '2000'))),
+)
+AVITO_TREE_MAX_TOTAL_CALLS = min(
+    10000, max(1, int(os.environ.get('AVITO_TREE_MAX_TOTAL_CALLS', '3000'))),
+)
+TRUSTED_API_RESPONSE_MAX_BYTES = min(
+    5 * 1024 * 1024,
+    max(1, int(os.environ.get('TRUSTED_API_RESPONSE_MAX_BYTES', str(5 * 1024 * 1024)))),
+)
 
 # --- Retention ---
-SOFT_DELETE_RETENTION_DAYS = int(os.environ.get('SOFT_DELETE_RETENTION_DAYS', '90'))
-WEBHOOK_AUDIT_RETENTION_DAYS = int(os.environ.get('WEBHOOK_AUDIT_RETENTION_DAYS', '180'))
-BILLING_AUDIT_RETENTION_DAYS = int(os.environ.get('BILLING_AUDIT_RETENTION_DAYS', '730'))
-SYNC_LOG_RETENTION_DAYS = int(os.environ.get('SYNC_LOG_RETENTION_DAYS', '90'))
+SOFT_DELETE_RETENTION_DAYS = min(
+    3650, max(1, int(os.environ.get('SOFT_DELETE_RETENTION_DAYS', '90'))),
+)
+WEBHOOK_AUDIT_RETENTION_DAYS = min(
+    3650, max(1, int(os.environ.get('WEBHOOK_AUDIT_RETENTION_DAYS', '180'))),
+)
+BILLING_AUDIT_RETENTION_DAYS = min(
+    3650, max(1, int(os.environ.get('BILLING_AUDIT_RETENTION_DAYS', '730'))),
+)
+SYNC_LOG_RETENTION_DAYS = min(
+    3650, max(1, int(os.environ.get('SYNC_LOG_RETENTION_DAYS', '90'))),
+)
 
 # --- AI ---
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
@@ -535,23 +727,33 @@ MOONSHOT_API_KEY = os.environ.get('MOONSHOT_API_KEY', '')
 # --- Image Search ---
 BRAVE_SEARCH_API_KEY = os.environ.get('BRAVE_SEARCH_API_KEY', '')
 TAVILY_API_KEY = os.environ.get('TAVILY_API_KEY', '')
-IMAGE_SEARCH_BULK_MAX_PRODUCTS = max(
-    1, int(os.environ.get('IMAGE_SEARCH_BULK_MAX_PRODUCTS', '25')),
+IMAGE_SEARCH_BULK_MAX_PRODUCTS = min(
+    25,
+    max(1, int(os.environ.get('IMAGE_SEARCH_BULK_MAX_PRODUCTS', '25'))),
 )
-IMAGE_SEARCH_TENANT_DAILY_JOBS = max(
-    1, int(os.environ.get('IMAGE_SEARCH_TENANT_DAILY_JOBS', '100')),
+IMAGE_SEARCH_TENANT_DAILY_JOBS = min(
+    1000,
+    max(1, int(os.environ.get('IMAGE_SEARCH_TENANT_DAILY_JOBS', '100'))),
 )
-WEB_RESEARCH_TENANT_DAILY_STARTS = max(
-    1, int(os.environ.get('WEB_RESEARCH_TENANT_DAILY_STARTS', '30')),
+WEB_RESEARCH_TENANT_DAILY_STARTS = min(
+    300,
+    max(1, int(os.environ.get('WEB_RESEARCH_TENANT_DAILY_STARTS', '30'))),
 )
 WEB_RESEARCH_AUTO_FALLBACK = os.environ.get(
     'WEB_RESEARCH_AUTO_FALLBACK', 'true',
 ).lower() in {'1', 'true', 'yes'}
-WEB_RESEARCH_COVERAGE_THRESHOLD = float(os.environ.get(
-    'WEB_RESEARCH_COVERAGE_THRESHOLD', '0.65',
-))
-WEB_RESEARCH_MAX_QUERIES = int(os.environ.get('WEB_RESEARCH_MAX_QUERIES', '2'))
-WEB_RESEARCH_RESULTS_PER_QUERY = int(os.environ.get('WEB_RESEARCH_RESULTS_PER_QUERY', '8'))
+WEB_RESEARCH_COVERAGE_THRESHOLD = min(
+    1.0,
+    max(0.0, float(os.environ.get('WEB_RESEARCH_COVERAGE_THRESHOLD', '0.65'))),
+)
+WEB_RESEARCH_MAX_QUERIES = min(
+    10,
+    max(1, int(os.environ.get('WEB_RESEARCH_MAX_QUERIES', '2'))),
+)
+WEB_RESEARCH_RESULTS_PER_QUERY = min(
+    20,
+    max(1, int(os.environ.get('WEB_RESEARCH_RESULTS_PER_QUERY', '8'))),
+)
 
 # --- Avito ---
 AVITO_CLIENT_ID = os.environ.get('AVITO_CLIENT_ID', '')
@@ -560,10 +762,103 @@ AVITO_CLIENT_SECRET = os.environ.get('AVITO_CLIENT_SECRET', '')
 # --- Биллинг ---
 YOOKASSA_SHOP_ID = os.environ.get('YOOKASSA_SHOP_ID', '')
 YOOKASSA_SECRET_KEY = os.environ.get('YOOKASSA_SECRET_KEY', '')
-BILLING_TRIAL_DAYS = int(os.environ.get('BILLING_TRIAL_DAYS', '14'))
-BILLING_GRACE_PERIOD_DAYS = int(os.environ.get('BILLING_GRACE_PERIOD_DAYS', '7'))
+YOOKASSA_API_BASE_URL = os.environ.get(
+    'YOOKASSA_API_BASE_URL',
+    'https://api.yookassa.ru/v3',
+)
+YOOKASSA_API_CONNECT_TIMEOUT_SECONDS = min(
+    30.0,
+    max(0.1, float(os.environ.get('YOOKASSA_API_CONNECT_TIMEOUT_SECONDS', '3.05'))),
+)
+YOOKASSA_API_READ_TIMEOUT_SECONDS = min(
+    60.0,
+    max(0.1, float(os.environ.get('YOOKASSA_API_READ_TIMEOUT_SECONDS', '10'))),
+)
+YOOKASSA_API_MAX_ELAPSED_SECONDS = min(
+    120.0,
+    max(1.0, float(os.environ.get('YOOKASSA_API_MAX_ELAPSED_SECONDS', '30'))),
+)
+YOOKASSA_API_MAX_RESPONSE_BYTES = min(
+    4 * 1024 * 1024,
+    max(1024, int(os.environ.get('YOOKASSA_API_MAX_RESPONSE_BYTES', '1048576'))),
+)
+YOOKASSA_WEBHOOK_PROCESSING_TIMEOUT_SECONDS = min(
+    3600,
+    max(
+        30,
+        int(os.environ.get('YOOKASSA_WEBHOOK_PROCESSING_TIMEOUT_SECONDS', '120')),
+    ),
+)
+YOOKASSA_WEBHOOK_RETRY_AFTER_SECONDS = min(
+    3600,
+    max(1, int(os.environ.get('YOOKASSA_WEBHOOK_RETRY_AFTER_SECONDS', '10'))),
+)
+YOOKASSA_RECONCILIATION_MAX_ATTEMPTS = min(
+    1000,
+    max(1, int(os.environ.get('YOOKASSA_RECONCILIATION_MAX_ATTEMPTS', '48'))),
+)
+YOOKASSA_RECONCILIATION_BASE_DELAY_SECONDS = min(
+    3600,
+    max(1, int(os.environ.get('YOOKASSA_RECONCILIATION_BASE_DELAY_SECONDS', '60'))),
+)
+YOOKASSA_RECONCILIATION_MAX_DELAY_SECONDS = min(
+    86400,
+    max(
+        YOOKASSA_RECONCILIATION_BASE_DELAY_SECONDS,
+        int(os.environ.get('YOOKASSA_RECONCILIATION_MAX_DELAY_SECONDS', '3600')),
+    ),
+)
+YOOKASSA_RECONCILIATION_BATCH_SIZE = min(
+    1000,
+    max(1, int(os.environ.get('YOOKASSA_RECONCILIATION_BATCH_SIZE', '100'))),
+)
+BILLING_OUTBOX_BASE_DELAY_SECONDS = min(
+    3600,
+    max(1, int(os.environ.get('BILLING_OUTBOX_BASE_DELAY_SECONDS', '30'))),
+)
+BILLING_OUTBOX_MAX_DELAY_SECONDS = min(
+    86400,
+    max(
+        BILLING_OUTBOX_BASE_DELAY_SECONDS,
+        int(os.environ.get('BILLING_OUTBOX_MAX_DELAY_SECONDS', '3600')),
+    ),
+)
+BILLING_OUTBOX_PROCESSING_TIMEOUT_SECONDS = min(
+    3600,
+    max(30, int(os.environ.get('BILLING_OUTBOX_PROCESSING_TIMEOUT_SECONDS', '300'))),
+)
+BILLING_OUTBOX_BATCH_SIZE = min(
+    1000,
+    max(1, int(os.environ.get('BILLING_OUTBOX_BATCH_SIZE', '100'))),
+)
+BILLING_OUTBOX_MAX_ATTEMPTS = min(
+    1000,
+    max(1, int(os.environ.get('BILLING_OUTBOX_MAX_ATTEMPTS', '25'))),
+)
+BILLING_CHECKOUT_MAX_KEYS_PER_INVOICE = min(
+    100,
+    max(1, int(os.environ.get('BILLING_CHECKOUT_MAX_KEYS_PER_INVOICE', '32'))),
+)
+YOOKASSA_ALLOW_TEST_PAYMENTS = os.environ.get(
+    'YOOKASSA_ALLOW_TEST_PAYMENTS',
+    'false',
+).strip().lower() in ('1', 'true', 'yes')
+BILLING_TRIAL_DAYS = min(
+    365, max(1, int(os.environ.get('BILLING_TRIAL_DAYS', '14'))),
+)
+BILLING_GRACE_PERIOD_DAYS = min(
+    90, max(0, int(os.environ.get('BILLING_GRACE_PERIOD_DAYS', '7'))),
+)
 SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8000')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+BILLING_RETURN_URL_ALLOWED_ORIGINS = [
+    origin.strip().rstrip('/')
+    for origin in os.environ.get(
+        'BILLING_RETURN_URL_ALLOWED_ORIGINS',
+        FRONTEND_URL,
+    ).split(',')
+    if origin.strip()
+]
 
 # --- Уведомления ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
@@ -597,8 +892,13 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
 # --- Пароли ---
 AUTH_PASSWORD_VALIDATORS = [
-    {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
+    {
+        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {'min_length': 12},
+    },
     {'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator'},
+    {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
 # --- Поиск изображений ---

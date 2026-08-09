@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { tenantApi, accountApi, notificationApi, productApi, aiApi } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,7 +23,10 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store, Search } from 'lucide-react';
-import { profileApi, datasourceApi } from '@/lib/api';
+import {
+  datasourceApi,
+  profileApi,
+} from '@/lib/api';
 import {
   CatalogCategoryPicker,
   type CatalogCategoryOption,
@@ -336,7 +340,8 @@ function MarginEditor({
 }
 
 export default function SettingsPage() {
-  const { user, tenant, role } = useAuth();
+  const { user, tenant, role, clearLocalSession } = useAuth();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -434,6 +439,7 @@ export default function SettingsPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [changingPassword, setChangingPassword] = useState(false);
   const [newEmail, setNewEmail] = useState('');
+  const [emailCurrentPassword, setEmailCurrentPassword] = useState('');
   const [requestingEmail, setRequestingEmail] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
 
@@ -622,13 +628,22 @@ export default function SettingsPage() {
       toast.error('Пароли не совпадают');
       return;
     }
+    if (newPassword.length < 12) {
+      toast.error('Новый пароль должен содержать не менее 12 символов');
+      return;
+    }
     setChangingPassword(true);
     try {
       await profileApi.changePassword(currentPassword, newPassword);
-      toast.success('Пароль изменён');
       setCurrentPassword('');
       setNewPassword('');
       setConfirmPassword('');
+      // changePassword already revokes every server-side session and publishes
+      // a cleared browser revision. A second cookie logout could revoke a newer
+      // login performed by another tab in the gap.
+      clearLocalSession();
+      toast.success('Пароль изменён. Войдите снова.');
+      router.replace('/login');
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
       toast.error(msg ?? 'Ошибка смены пароля');
@@ -640,7 +655,8 @@ export default function SettingsPage() {
   async function requestEmailChange() {
     setRequestingEmail(true);
     try {
-      await profileApi.changeEmail(newEmail);
+      await profileApi.changeEmail(newEmail, emailCurrentPassword);
+      setEmailCurrentPassword('');
       setEmailSent(true);
       toast.success('Письмо отправлено');
     } catch (err: unknown) {
@@ -1371,17 +1387,30 @@ export default function SettingsPage() {
                   </Button>
                 </div>
               ) : (
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Input
-                    type="email"
-                    placeholder="new@example.com"
-                    value={newEmail}
-                    onChange={(e) => setNewEmail(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && requestEmailChange()}
-                  />
+                <div className="grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+                  <div className="space-y-2">
+                    <Label htmlFor="new-email">Новый email</Label>
+                    <Input
+                      id="new-email"
+                      type="email"
+                      placeholder="new@example.com"
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="email-current-password">Текущий пароль</Label>
+                    <PasswordInput
+                      id="email-current-password"
+                      value={emailCurrentPassword}
+                      onChange={(e) => setEmailCurrentPassword(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && requestEmailChange()}
+                      autoComplete="current-password"
+                    />
+                  </div>
                   <Button
                     onClick={requestEmailChange}
-                    disabled={requestingEmail || !newEmail.trim()}
+                    disabled={requestingEmail || !newEmail.trim() || !emailCurrentPassword}
                   >
                     {requestingEmail ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Отправить'}
                   </Button>
@@ -1409,7 +1438,8 @@ export default function SettingsPage() {
                   <PasswordInput
                     value={newPassword}
                     onChange={(e) => setNewPassword(e.target.value)}
-                    placeholder="Минимум 8 символов"
+                    placeholder="Минимум 12 символов"
+                    minLength={12}
                   />
                 </div>
                 <div className="space-y-2">
@@ -1417,12 +1447,18 @@ export default function SettingsPage() {
                   <PasswordInput
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
+                    minLength={12}
                   />
                 </div>
               </div>
               <Button
                 onClick={changePassword}
-                disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
+                disabled={
+                  changingPassword
+                  || !currentPassword
+                  || newPassword.length < 12
+                  || confirmPassword.length < 12
+                }
               >
                 {changingPassword && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Изменить пароль

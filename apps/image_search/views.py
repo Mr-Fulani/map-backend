@@ -329,6 +329,9 @@ class ImageUploadView(APIView):
 
     api_key_enabled = True
     parser_classes = [MultiPartParser]
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'image_upload_principal'
+    tenant_throttle_scope = 'image_upload_tenant'
 
     @extend_schema(
         operation_id='product_image_upload',
@@ -354,7 +357,19 @@ class ImageUploadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        raw_bytes = file_obj.read()
+        if file_obj.size > settings.MAX_IMAGE_UPLOAD_BYTES:
+            return Response(
+                {'status': 'error', 'code': 'validation_error',
+                 'errors': {'image': ['Файл превышает допустимый размер.']}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        raw_bytes = file_obj.read(settings.MAX_IMAGE_UPLOAD_BYTES + 1)
+        if len(raw_bytes) > settings.MAX_IMAGE_UPLOAD_BYTES:
+            return Response(
+                {'status': 'error', 'code': 'validation_error',
+                 'errors': {'image': ['Файл превышает допустимый размер.']}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         pi = moderation.upload_image(product, raw_bytes)
         if pi is None:
             return Response(

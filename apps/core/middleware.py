@@ -70,10 +70,9 @@ class TenantMiddleware:
                 return None
 
             # 2. По JWT token — декодируем прямо здесь, т.к. DRF ещё не запускался
-            else:
-                tenant = self._resolve_from_jwt(plaintext)
-                if tenant:
-                    return tenant
+            # Bearer credential никогда не дополняется tenant-ом из Host: это
+            # позволяло токену без tenant claim получить чужой request.tenant.
+            return self._resolve_from_jwt(plaintext)
 
         # 3. По поддомену (slug.map.domain.ru)
         host = request.get_host().split(':')[0]
@@ -99,32 +98,25 @@ class TenantMiddleware:
     def _resolve_from_jwt(self, token_string):
         """Декодирует JWT и проверяет актуальное членство пользователя в tenant-е."""
         from apps.tenants.models import Tenant, TenantUser
+        from apps.users.models import User
 
         try:
             from rest_framework_simplejwt.tokens import AccessToken
             token = AccessToken(token_string)
             tenant_id = token.get('tenant_id')
             user_id = token.get('user_id')
-            if tenant_id and user_id and TenantUser.objects.filter(
+            auth_version = token.get('auth_version')
+            if not tenant_id or not user_id or auth_version is None:
+                return None
+            user = User.objects.filter(pk=user_id, is_active=True).only('auth_version').first()
+            if user is None or user.auth_version != auth_version:
+                return None
+            if TenantUser.objects.filter(
                 tenant_id=tenant_id,
                 user_id=user_id,
+                tenant__is_active=True,
             ).exists():
                 return Tenant.objects.get(pk=tenant_id)
-        except Exception:
-            pass
-
-        # Fallback: если tenant_id нет в claims, ищем по user_id
-        try:
-            from rest_framework_simplejwt.tokens import AccessToken
-            token = AccessToken(token_string)
-            user_id = token.get('user_id')
-            if user_id:
-                from apps.tenants.models import TenantUser
-                membership = TenantUser.objects.filter(
-                    user_id=user_id
-                ).select_related('tenant').first()
-                if membership:
-                    return membership.tenant
         except Exception:
             pass
 
@@ -140,6 +132,9 @@ class TenantMiddleware:
             '/api/v1/ready/',
             '/api/v1/auth/register/',
             '/api/v1/auth/token/',
+            '/api/v1/auth/browser/',
+            '/api/v1/auth/password-reset/',
+            '/api/v1/auth/confirm-email/',
             '/api/v1/billing/plans/',
             '/api/v1/billing/webhook/',
             '/api/v1/notifications/webhook/telegram/',
@@ -148,4 +143,10 @@ class TenantMiddleware:
 
     def _is_billing_recovery_path(self, path):
         """Запись, необходимая для восстановления подписки."""
-        return path.startswith('/api/v1/billing/checkout/')
+        return path.startswith((
+            '/api/v1/billing/checkout/',
+            '/api/v1/auth/change-password/',
+            '/api/v1/auth/change-email/',
+            '/api/v1/auth/logout/',
+            '/api/v1/auth/logout-all/',
+        ))

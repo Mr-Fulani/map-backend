@@ -23,6 +23,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     phone = models.CharField(max_length=20, blank=True, verbose_name='Телефон')
     is_active = models.BooleanField(default=True, verbose_name='Активен')
     is_staff = models.BooleanField(default=False, verbose_name='Сотрудник (доступ в админку)')
+    auth_version = models.PositiveIntegerField(
+        default=1,
+        verbose_name='Версия сессий',
+        help_text='Увеличивается при отзыве всех JWT-сессий.',
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='Дата регистрации')
 
     USERNAME_FIELD = 'email'

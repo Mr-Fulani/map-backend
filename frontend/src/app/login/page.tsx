@@ -19,22 +19,44 @@ import { toast } from 'sonner';
 export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [tenantSlug, setTenantSlug] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const { login } = useAuth();
+  const { login, isLoading: isAuthLoading } = useAuth();
   const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isAuthLoading) return;
     setIsLoading(true);
 
     try {
-      await login(email, password);
+      await login(email, password, tenantSlug.trim() || undefined);
       toast.success('Вход выполнен');
       router.push('/dashboard');
     } catch (err: unknown) {
+      const response = (err as {
+        response?: {
+          data?: {
+            detail?: string;
+            message?: string;
+            tenant_slug?: string | string[];
+            errors?: {
+              detail?: string | string[];
+              tenant_slug?: string | string[];
+            };
+          };
+        };
+      })?.response?.data;
+      const firstMessage = (value?: string | string[]) => (
+        Array.isArray(value) ? value.find((item) => typeof item === 'string') : value
+      );
       const message =
-        (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail ||
-        'Неверный email или пароль';
+        firstMessage(response?.errors?.detail)
+        || firstMessage(response?.errors?.tenant_slug)
+        || response?.message
+        || response?.detail
+        || firstMessage(response?.tenant_slug)
+        || 'Неверный email или пароль';
       toast.error(message);
     } finally {
       setIsLoading(false);
@@ -69,23 +91,48 @@ export default function LoginPage() {
                 placeholder="user@company.ru"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
+                maxLength={254}
                 required
                 autoComplete="email"
                 autoFocus
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="password">Пароль</Label>
+              <Label htmlFor="tenant-slug">Организация</Label>
+              <Input
+                id="tenant-slug"
+                placeholder="company-slug (если организаций несколько)"
+                value={tenantSlug}
+                onChange={(e) => setTenantSlug(e.target.value)}
+                pattern="[a-z0-9-]+"
+                maxLength={50}
+                autoComplete="organization"
+              />
+              <p className="text-xs text-muted-foreground">
+                Можно не указывать, если у вас одна организация.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Label htmlFor="password">Пароль</Label>
+                <Link
+                  href="/forgot-password"
+                  className="text-xs text-primary hover:underline"
+                >
+                  Забыли пароль?
+                </Link>
+              </div>
               <PasswordInput
                 id="password"
                 placeholder="••••••••"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                maxLength={256}
                 required
                 autoComplete="current-password"
               />
             </div>
-            <Button type="submit" className="w-full" disabled={isLoading}>
+            <Button type="submit" className="w-full" disabled={isLoading || isAuthLoading}>
               {isLoading ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

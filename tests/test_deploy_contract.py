@@ -38,6 +38,27 @@ def test_migration_precedes_application_rollout_and_smoke_check():
     assert build < migration < rollout < smoke
 
 
+def test_old_application_writers_are_drained_before_backup_and_migration():
+    execution = DEPLOY_SCRIPT
+    drain = execution.index('drain_application_writers\n')
+    backup = execution.index('DEPLOY_PHASE="pre-migration database backup"')
+    migration_started = execution.index('MIGRATIONS_STARTED=true', drain)
+    migration = execution.index('migrate --noinput', migration_started)
+
+    assert drain < backup < migration_started < migration
+    assert 'stop -t 30 nginx' in execution
+    assert 'stop -t "$PROD_DRAIN_TIMEOUT_SECONDS" "${DRAIN_SERVICES[@]}"' in execution
+
+
+def test_rollback_never_restarts_old_writers_after_migration_started():
+    execution = DEPLOY_SCRIPT
+    guard = execution.index('if [[ "$MIGRATIONS_STARTED" == "true" ]]')
+    old_release = execution.index('Возврат application-сервисов')
+
+    assert guard < old_release
+    assert 'старый application release автоматически не запускается' in execution
+
+
 def test_deploy_has_readiness_lock_and_controlled_rollback():
     assert 'flock -n 9' in DEPLOY_SCRIPT
     assert 'wait_for_service' in DEPLOY_SCRIPT

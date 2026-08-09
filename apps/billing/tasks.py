@@ -1,10 +1,33 @@
 import logging
-from datetime import timedelta
 
 from celery import shared_task
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+
+@shared_task(
+    queue='billing',
+    acks_late=True,
+    reject_on_worker_lost=True,
+)
+def dispatch_billing_outbox(event_ids=None, limit=None, force=False):
+    """Публикует сохранённые billing side effects и повторяет broker failures."""
+    from apps.billing.outbox import dispatch_due_billing_outbox
+
+    return dispatch_due_billing_outbox(
+        event_ids=event_ids,
+        limit=limit,
+        force=force,
+    )
+
+
+@shared_task(queue='billing')
+def reconcile_yookassa_billing():
+    """Сверяет зависшие checkout intents и ошибки webhook с YooKassa API."""
+    from apps.billing.reconciliation import reconcile_yookassa_billing as reconcile
+
+    return reconcile()
 
 
 @shared_task(queue='billing')
@@ -16,48 +39,10 @@ def billing_check_expired():
     Шаг 1: trial/active с истёкшим периодом → past_due + уведомление.
     Шаг 2: past_due дольше GRACE_PERIOD_DAYS → cancelled + уведомление.
     """
-    from apps.billing.services import BillingService, GRACE_PERIOD_DAYS
-    from apps.billing.models import Subscription
-    from apps.notifications.services import LEVEL_BILLING, LEVEL_CRITICAL
-    from apps.notifications.tasks import send_notification_task
-
-    today = timezone.localdate()
-    past_due_ids = list(
-        Subscription.objects.filter(
-            status__in=(Subscription.STATUS_TRIAL, Subscription.STATUS_ACTIVE),
-            current_period_end__lt=today,
-        ).values_list('pk', flat=True)
-    )
-    grace_deadline = today - timedelta(days=GRACE_PERIOD_DAYS)
-    cancelled_ids = list(
-        Subscription.objects.filter(
-            status=Subscription.STATUS_PAST_DUE,
-            current_period_end__lt=grace_deadline,
-        ).values_list('pk', flat=True)
-    )
+    from apps.billing.services import BillingService
 
     past_due_count = BillingService.check_expired_trials()
     cancelled_count = BillingService.check_grace_period_expired()
-
-    # Уведомляем тенантов, чьи подписки переведены в past_due
-    if past_due_count:
-        for sub in Subscription.objects.filter(pk__in=past_due_ids).select_related('tenant'):
-            send_notification_task.delay(
-                sub.tenant.pk,
-                LEVEL_BILLING,
-                f'Ваша подписка MAP истекла. Продлите подписку в течение {GRACE_PERIOD_DAYS} дней.',
-            )
-
-    # Уведомляем тенантов, чьи подписки отменены
-    if cancelled_count:
-        for sub in Subscription.objects.filter(
-            pk__in=cancelled_ids,
-        ).select_related('tenant'):
-            send_notification_task.delay(
-                sub.tenant.pk,
-                LEVEL_CRITICAL,
-                'Ваша подписка MAP отменена. Публикация новых объявлений заблокирована.',
-            )
 
     logger.info(
         'billing_check_expired: past_due=%d, cancelled=%d', past_due_count, cancelled_count,

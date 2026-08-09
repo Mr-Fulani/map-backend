@@ -7,8 +7,9 @@ import requests
 from PIL import Image, UnidentifiedImageError
 from django.conf import settings
 
+from apps.core.image_security import validate_image_pixel_budget
+from apps.core.url_security import request_public_http_url
 from apps.products.models import ProductImage
-from apps.core.url_security import is_safe_public_http_url
 
 MAX_PHOTOS = 10
 MAX_DIMENSION = 1280
@@ -149,27 +150,21 @@ class PhotoUploadPipeline:
         if check_limit and product.images.exclude(status=ProductImage.Status.REJECTED).count() >= MAX_PHOTOS:
             return None
 
-        if not is_safe_public_http_url(source_url):
-            return None
-
         try:
             request_headers = source_image_request_headers(source_url, source_id)
-            response = requests.get(
+            response = request_public_http_url(
                 source_url,
                 timeout=DOWNLOAD_TIMEOUT,
-                **({'headers': request_headers} if request_headers else {}),
+                headers=request_headers,
+                max_response_bytes=settings.MAX_IMAGE_UPLOAD_BYTES,
             )
             response.raise_for_status()
             raw = response.content
-        except requests.RequestException:
+        except (requests.RequestException, ValueError):
             return None
 
         if validate_quality:
-            cfg = getattr(settings, 'IMAGE_SEARCH_SETTINGS', {})
-            max_bytes = int(cfg.get('MAX_FILE_SIZE_MB', 5) * 1024 * 1024)
             content_type = str(response.headers.get('Content-Type', '')).split(';', 1)[0]
-            if len(raw) > max_bytes:
-                return None
             if content_type and not content_type.startswith('image/'):
                 return None
 
@@ -178,6 +173,7 @@ class PhotoUploadPipeline:
 
         try:
             img = Image.open(io.BytesIO(raw))
+            validate_image_pixel_budget(img)
             img.load()
         except (UnidentifiedImageError, Exception):
             return None

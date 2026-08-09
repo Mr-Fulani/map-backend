@@ -21,8 +21,13 @@ npm run build
 
 ## API и авторизация
 
-API-клиент находится в `src/lib/api.ts`. JWT access и refresh токены выдаются
-через `/api/v1/auth/token/`; access token обновляется автоматически после 401.
+API-клиент находится в `src/lib/api.ts`. Browser login и refresh выполняются
+через CSRF-защищённые `/api/v1/auth/browser/*`: refresh остаётся только в
+HttpOnly cookie, а access token — только в памяти вкладки. Поле
+`browser_session_id` не является credential: это стабильный идентификатор
+refresh-цепочки для согласования сессии между вкладками. Он не даёт повторить
+старый запрос после смены пользователя. `/api/v1/auth/token/*` предназначены
+для header-based клиентов.
 
 В production `NEXT_PUBLIC_API_URL` следует оставить пустым. Запросы пойдут на
 same-origin `/api`, а Nginx направит их в Django. Для отдельного локального

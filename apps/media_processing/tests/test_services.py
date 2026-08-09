@@ -1,6 +1,6 @@
 import io
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from django.core.cache.backends.locmem import LocMemCache
@@ -29,7 +29,9 @@ from apps.media_processing.providers.registry import (
 )
 from apps.media_processing.services import (
     MediaProviderRateLimitExceeded,
+    _provider_result_bytes,
     activate_variant,
+    apply_provider_result,
     create_processing_job,
     submit_job,
 )
@@ -42,6 +44,56 @@ def make_png() -> bytes:
     buffer = io.BytesIO()
     Image.new('RGB', (640, 640), 'white').save(buffer, format='PNG')
     return buffer.getvalue()
+
+
+def test_remote_provider_output_uses_bounded_public_transport(settings):
+    raw = make_png()
+    response = MagicMock(
+        status_code=200,
+        headers={'Content-Type': 'image/png', 'Content-Length': str(len(raw))},
+    )
+    response.content = raw
+    settings.MEDIA_PROVIDER_OUTPUT_MAX_BYTES = 12345
+
+    with patch(
+        'apps.media_processing.services.request_public_http_url',
+        return_value=response,
+    ) as request:
+        payload, content_type = _provider_result_bytes(MediaProviderResult(
+            status=MediaProviderResultStatus.SUCCEEDED,
+            output_url='https://cdn.example.com/result.png',
+        ))
+
+    assert payload == raw
+    assert content_type == 'image/png'
+    assert request.call_args.kwargs['max_response_bytes'] == 12345
+    assert request.call_args.kwargs['redirect_policy'] == 'same-origin'
+
+
+def test_remote_provider_output_requires_https_before_transport():
+    with patch(
+        'apps.media_processing.services.request_public_http_url',
+    ) as request, pytest.raises(ValueError, match='HTTPS'):
+        _provider_result_bytes(MediaProviderResult(
+            status=MediaProviderResultStatus.SUCCEEDED,
+            output_url='http://cdn.example.com/result.png?token=secret',
+        ))
+
+    request.assert_not_called()
+
+
+def test_remote_provider_transport_error_does_not_expose_signed_url():
+    signed_url = 'https://cdn.example.com/result.png?token=historic-secret'
+    with patch(
+        'apps.media_processing.services.request_public_http_url',
+        side_effect=RuntimeError(f'download failed: {signed_url}'),
+    ), pytest.raises(ValueError) as raised:
+        _provider_result_bytes(MediaProviderResult(
+            status=MediaProviderResultStatus.SUCCEEDED,
+            output_url=signed_url,
+        ))
+
+    assert 'historic-secret' not in str(raised.value)
 
 
 class FakeExternalProvider(BaseMediaProvider):
@@ -407,6 +459,25 @@ def test_provider_failure_releases_reserved_policy_credits(product_image, isolat
     wallet = AIWalletService.summary(tenant)
     assert wallet['available'] == available_before
     assert wallet['reserved'] == 0
+
+
+@pytest.mark.django_db
+def test_provider_failure_message_is_not_persisted_verbatim(
+    product_image,
+    configured_media_provider,
+):
+    job = create_processing_job(product_image=product_image, operations=['resize'])
+
+    apply_provider_result(job, MediaProviderResult(
+        status=MediaProviderResultStatus.FAILED,
+        error_code='vendor_failed',
+        error_message='token=provider-secret https://vendor.test/result?key=secret',
+    ))
+
+    job.refresh_from_db()
+    assert job.status == MediaProcessingJob.Status.FAILED
+    assert job.error_message == 'Медиа-провайдер не смог обработать изображение.'
+    assert 'provider-secret' not in job.error_message
 
 
 @pytest.mark.django_db

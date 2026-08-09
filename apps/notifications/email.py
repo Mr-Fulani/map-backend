@@ -22,14 +22,16 @@ class EmailNotifier:
         if not to:
             return False
         try:
-            send_mail(
+            sent = send_mail(
                 subject=subject,
                 message=body,
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[to],
                 fail_silently=False,
             )
-            return True
+            return sent == 1
         except Exception as exc:
-            logger.warning('Email send failed to %s: %s', to, exc)
+            # Recipient addresses and provider exception text may contain PII
+            # or credential-bearing connection details. Keep logs structural.
+            logger.warning('Email send failed (%s).', type(exc).__name__)
             return False

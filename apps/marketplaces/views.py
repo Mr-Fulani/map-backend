@@ -43,6 +43,7 @@ from apps.marketplaces.services import (
     AvitoAccountStatusService,
     CategoryMappingService,
     InvalidMarketplaceCredentials,
+    ListingBulkLimitExceeded,
     ListingAccountConflict,
     InvalidListingStatus,
     ListingNotFound,
@@ -692,7 +693,13 @@ class ListingBulkPlacementView(APIView):
             field: data.get(field)
             for field in ('listing_ids', 'account_id', 'status', 'category_source', 'catalog_category_id')
         }
-        updated = ListingService.bulk_update_placement(request.tenant, filters, data)
+        try:
+            updated = ListingService.bulk_update_placement(request.tenant, filters, data)
+        except ListingBulkLimitExceeded as exc:
+            return Response(
+                {'status': 'error', 'code': 'bulk_limit_exceeded', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response({'status': 'ok', 'data': {'updated': updated}})
 
 
@@ -730,7 +737,13 @@ class ListingBulkActionView(APIView):
     def post(self, request):
         serializer = ListingBulkActionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        result = ListingService.bulk_action(request.tenant, serializer.validated_data)
+        try:
+            result = ListingService.bulk_action(request.tenant, serializer.validated_data)
+        except ListingBulkLimitExceeded as exc:
+            return Response(
+                {'status': 'error', 'code': 'bulk_limit_exceeded', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response({'status': 'ok', 'data': result})
 
 

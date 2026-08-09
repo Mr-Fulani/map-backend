@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 import pytest
 from django.core.cache.backends.locmem import LocMemCache
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import Client
 from django.test import override_settings
 from django.utils import timezone
@@ -76,6 +77,21 @@ def product_image(product, db):
         position=0,
         status=ProductImage.Status.NEEDS_REVIEW,
     )
+
+
+@pytest.mark.django_db
+def test_manual_upload_rejects_file_before_unbounded_read(tenant_client, product, settings):
+    settings.MAX_IMAGE_UPLOAD_BYTES = 10
+    upload = SimpleUploadedFile('oversized.jpg', b'x' * 11, content_type='image/jpeg')
+
+    response = tenant_client.post(
+        f'/api/v1/products/{product.pk}/images/upload/',
+        {'image': upload},
+    )
+
+    assert response.status_code == 400
+    assert response.json()['code'] == 'validation_error'
+    assert 'превышает' in response.json()['errors']['image'][0]
 
 
 # ---------------------------------------------------------------------------

@@ -6,8 +6,10 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { Moon, Sun, LogOut, User, Building2, Menu } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Moon, Sun, LogOut, User, Building2, Menu, ShieldX } from 'lucide-react';
 import { useTheme } from 'next-themes';
+import { toast } from 'sonner';
 import { useAuth } from '@/lib/auth-context';
 import { Button } from '@/components/ui/button';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
@@ -29,8 +31,27 @@ import { MobileSidebar } from './mobile-sidebar';
 
 export function Header() {
   const { theme, setTheme } = useTheme();
-  const { user, tenant, role, subscription, logout } = useAuth();
+  const { user, tenant, role, subscription, logout, logoutAll } = useAuth();
+  const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+
+  async function handleLogout(everywhere = false) {
+    if (isLoggingOut) return;
+    setIsLoggingOut(true);
+    try {
+      await (everywhere ? logoutAll() : logout());
+      router.replace('/login');
+    } catch {
+      toast.error(
+        everywhere
+          ? 'Не удалось отозвать все сессии. Повторите попытку.'
+          : 'Не удалось завершить сессию на сервере. Повторите попытку.'
+      );
+    } finally {
+      setIsLoggingOut(false);
+    }
+  }
 
   const initials = user?.email
     ? user.email.substring(0, 2).toUpperCase()
@@ -123,9 +144,21 @@ export function Header() {
               </Link>
             </DropdownMenuItem>
             <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={logout} className="text-destructive">
+            <DropdownMenuItem
+              onClick={() => void handleLogout()}
+              disabled={isLoggingOut}
+              className="text-destructive"
+            >
               <LogOut className="mr-2 h-4 w-4" />
               Выйти
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => void handleLogout(true)}
+              disabled={isLoggingOut}
+              className="text-destructive"
+            >
+              <ShieldX className="mr-2 h-4 w-4" />
+              Выйти на всех устройствах
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

@@ -4,11 +4,17 @@ import requests
 from django.conf import settings
 from django.utils.html import strip_tags
 
+from apps.core.http_responses import (
+    TrustedResponseError, bounded_http_request, trusted_api_max_bytes,
+)
 from apps.web_research.providers.base import (
     BaseWebSearchProvider, WebSearchProviderError, WebSearchResult,
 )
 from apps.web_research.providers.registry import register_search_provider
 from apps.web_research.search_context import SearchContext
+
+
+_MAX_RESULTS = 20
 
 
 @register_search_provider
@@ -46,20 +52,22 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
         global ``images`` collection, so they use this narrowly-scoped method
         without duplicating credentials, timeouts and error handling.
         """
+        result_limit = _requested_count(count)
         if not self.api_key:
             raise WebSearchProviderError(
                 'Tavily API key is not configured.', code='not_configured',
             )
         configured_domains = self.parameters.get('include_domains', [])
         try:
-            response = requests.post(
+            response = bounded_http_request(
+                requests.post,
                 self.endpoint,
                 json={
                     'api_key': self.api_key,
                     'query': query,
                     'topic': 'general',
                     'search_depth': self.parameters.get('search_depth', 'basic'),
-                    'max_results': max(1, min(count, 20)),
+                    'max_results': result_limit,
                     'include_answer': False,
                     'include_raw_content': bool(
                         self.parameters.get('include_raw_content', True)
@@ -79,7 +87,13 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                     'include_image_descriptions': include_image_descriptions,
                 },
                 timeout=max(3, min(int(self.parameters.get('timeout', 20)), 60)),
+                max_bytes=trusted_api_max_bytes(settings),
             )
+        except TrustedResponseError as exc:
+            raise WebSearchProviderError(
+                f'Tavily response rejected: {exc}',
+                retryable=False, code='invalid_response',
+            ) from exc
         except requests.RequestException as exc:
             raise WebSearchProviderError(
                 f'Tavily connection error: {exc}',
@@ -92,11 +106,41 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                 code=f'http_{response.status_code}',
             )
         try:
-            return response.json()
+            data = response.json()
         except ValueError as exc:
             raise WebSearchProviderError(
                 'Tavily returned invalid JSON.', code='invalid_json',
             ) from exc
+        if not isinstance(data, dict):
+            _invalid_response('top-level JSON must be an object')
+
+        sanitized = dict(data)
+        results = _optional_list(data, 'results')
+        selected_results = results[:result_limit]
+        if not all(isinstance(item, dict) for item in selected_results):
+            _invalid_response('results items must be objects')
+        for item in selected_results:
+            for key in ('title', 'url', 'content', 'raw_content', 'published_date'):
+                _validate_optional_string(item, key)
+            score = item.get('score')
+            if (
+                score is not None
+                and (isinstance(score, bool) or not isinstance(score, (int, float)))
+            ):
+                _invalid_response('score must be numeric')
+        sanitized['results'] = selected_results
+
+        if 'images' in data and data.get('images') is not None:
+            images = _optional_list(data, 'images')
+            selected_images = images[:result_limit]
+            if not all(isinstance(item, (str, dict)) for item in selected_images):
+                _invalid_response('images items must be strings or objects')
+            for item in selected_images:
+                if isinstance(item, dict):
+                    _validate_optional_string(item, 'url')
+                    _validate_optional_string(item, 'description')
+            sanitized['images'] = selected_images
+        return sanitized
 
     def search(
         self, query: str, *, count: int = 8, context: SearchContext | None = None,
@@ -134,3 +178,32 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                 },
             ))
         return results
+
+
+def _requested_count(value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError('count must be an integer')
+    return max(1, min(value, _MAX_RESULTS))
+
+
+def _optional_list(container: dict, key: str) -> list:
+    value = container.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        _invalid_response(f'{key} must be a list')
+    return value
+
+
+def _validate_optional_string(container: dict, key: str) -> None:
+    value = container.get(key)
+    if value is not None and not isinstance(value, str):
+        _invalid_response(f'{key} must be a string')
+
+
+def _invalid_response(detail: str) -> None:
+    raise WebSearchProviderError(
+        f'Tavily returned an invalid response: {detail}.',
+        retryable=False,
+        code='invalid_response',
+    )

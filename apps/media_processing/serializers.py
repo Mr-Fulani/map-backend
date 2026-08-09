@@ -110,6 +110,7 @@ class MediaJobCreateSerializer(serializers.Serializer):
     operations = serializers.ListField(
         child=serializers.ChoiceField(choices=[operation.value for operation in MediaOperation]),
         required=False,
+        max_length=len(MediaOperation),
     )
     parameters = serializers.DictField(required=False)
     provider_id = serializers.SlugField(required=False, allow_blank=True)

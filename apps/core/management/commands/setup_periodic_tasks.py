@@ -49,10 +49,22 @@ class Command(BaseCommand):
                 'queue': 'notifications',
             },
             {
+                'name': 'dispatch_billing_outbox',
+                'task': 'apps.billing.tasks.dispatch_billing_outbox',
+                'schedule': every_1m,
+                'queue': 'billing',
+            },
+            {
                 'name': 'sync_all_tenants',
                 'task': 'apps.sync.tasks.sync_all_tenants',
                 'schedule': every_5m,
                 'queue': 'sync_import',
+            },
+            {
+                'name': 'reconcile_yookassa_billing',
+                'task': 'apps.billing.tasks.reconcile_yookassa_billing',
+                'schedule': every_5m,
+                'queue': 'billing',
             },
             {
                 'name': 'update_tenant_counters',

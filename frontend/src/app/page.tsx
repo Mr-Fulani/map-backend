@@ -7,16 +7,19 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { AuthRecovery } from '@/components/auth-recovery';
 
 export default function HomePage() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, hasAuthError } = useAuth();
   const router = useRouter();
 
   useEffect(() => {
-    if (!isLoading) {
+    if (!isLoading && !hasAuthError) {
       router.replace(isAuthenticated ? '/dashboard' : '/login');
     }
-  }, [isAuthenticated, isLoading, router]);
+  }, [hasAuthError, isAuthenticated, isLoading, router]);
+
+  if (hasAuthError) return <AuthRecovery />;
 
   return (
     <div className="flex min-h-screen items-center justify-center">

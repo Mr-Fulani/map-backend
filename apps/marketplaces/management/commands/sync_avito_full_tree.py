@@ -16,9 +16,12 @@ import json
 import time
 from pathlib import Path
 
+import requests
 from django.core.management.base import BaseCommand, CommandError
 
+from apps.core.url_security import ResponseTooLarge, UnsafePublicURL
 from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
+from apps.marketplaces.avito_tree_sync import AvitoTreeSyncError, _request_avito_values
 from apps.marketplaces.models import MarketplaceAccount
 
 DATA_DIR = Path(__file__).resolve().parents[2] / 'data'
@@ -181,17 +184,31 @@ class Command(BaseCommand):
 
     def _fetch_link_values(self, adapter, url: str) -> list[str]:
         """Догружает значения поля по ссылке values_link_json (с авторизацией)."""
-        import requests
         token = adapter._auth.get_token(adapter.account)
         for attempt in range(4):
             try:
-                resp = requests.get(url, headers={'Authorization': f'Bearer {token}'}, timeout=30)
-            except requests.RequestException:
+                resp = _request_avito_values(url, token)
+            except (
+                AvitoTreeSyncError,
+                requests.RequestException,
+                ResponseTooLarge,
+                UnsafePublicURL,
+            ):
                 return []
             if resp.status_code == 429:
                 time.sleep(3 * (attempt + 1))
                 continue
             if not resp.ok:
                 return []
-            return [v.get('value') for v in (resp.json().get('values') or []) if v.get('value')]
+            try:
+                payload = resp.json()
+            except ValueError:
+                return []
+            if not isinstance(payload, dict):
+                return []
+            return [
+                value.get('value')
+                for value in payload.get('values') or []
+                if isinstance(value, dict) and value.get('value')
+            ]
         return []

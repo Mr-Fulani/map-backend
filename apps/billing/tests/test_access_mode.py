@@ -2,7 +2,7 @@ from datetime import date, timedelta
 from unittest.mock import patch
 
 import pytest
-from django.test import Client
+from django.test import Client, override_settings
 
 from apps.billing.models import Subscription
 from apps.tenants.services import TenantService
@@ -36,6 +36,7 @@ def test_expired_subscription_allows_reads_but_blocks_mutations():
 
 
 @pytest.mark.django_db
+@override_settings(BILLING_RETURN_URL_ALLOWED_ORIGINS=['https://app.example'])
 def test_expired_subscription_can_open_checkout():
     tenant, _ = TenantService.create_tenant(
         'Renew', 'renew-co', 'renew@test.com', 'pass12345',
@@ -54,6 +55,7 @@ def test_expired_subscription_can_open_checkout():
                 'plan_slug': sub.plan.slug,
                 'period': Subscription.PERIOD_MONTHLY,
                 'return_url': 'https://app.example/billing',
+                'idempotency_key': '00000000-0000-4000-8000-000000000003',
             },
             content_type='application/json',
             HTTP_AUTHORIZATION=f'Bearer {owner_access_token(tenant)}',

@@ -4,6 +4,7 @@ from django.conf import settings
 from django.db import IntegrityError, transaction
 
 from apps.tenants.models import WebhookDelivery, WebhookEndpoint, WebhookEvent
+from apps.tenants.webhook_limits import webhook_endpoint_quota
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +26,21 @@ def enqueue_webhook_event(
     idempotency_key: str = '',
 ) -> WebhookEvent | None:
     """Атомарно создаёт outbox-событие и доставки для подписанных endpoint-ов."""
-    endpoints = [
-        endpoint
-        for endpoint in WebhookEndpoint.objects.filter(tenant=tenant, is_active=True)
-        if event_type in endpoint.events
-    ]
+    fanout_limit = webhook_endpoint_quota()
+    endpoints = list(
+        WebhookEndpoint.objects.filter(
+            tenant=tenant,
+            is_active=True,
+            events__contains=[event_type],
+        ).order_by('pk')[:fanout_limit + 1],
+    )
+    if len(endpoints) > fanout_limit:
+        logger.error(
+            'Webhook tenant=%s exceeds endpoint quota; fan-out capped at %d',
+            tenant.pk,
+            fanout_limit,
+        )
+        endpoints = endpoints[:fanout_limit]
     if not endpoints:
         return None
 

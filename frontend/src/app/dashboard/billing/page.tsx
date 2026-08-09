@@ -96,6 +96,34 @@ function fmt(n: number | null) {
   return n === null ? '∞' : n.toLocaleString('ru-RU');
 }
 
+function billingErrorMessage(error: unknown, fallback: string): string {
+  const payload = (error as {
+    response?: { data?: { code?: string; message?: string } };
+  })?.response?.data;
+  if (payload?.code === 'checkout_pending') {
+    return 'Платёж ещё создаётся. Повторите через несколько секунд — дубликат не появится.';
+  }
+  if (payload?.code === 'checkout_manual_review') {
+    return 'Платёж требует ручной проверки. Новый платёж создавать не нужно.';
+  }
+  if (payload?.code === 'idempotency_conflict') {
+    return 'Параметры платёжной попытки изменились. Повторите операцию.';
+  }
+  if (payload?.code === 'checkout_terminal') {
+    return 'Предыдущая попытка уже завершена. Нажмите ещё раз, чтобы создать новый платёж.';
+  }
+  return payload?.message || fallback;
+}
+
+function navigateToPayment(value: unknown) {
+  if (typeof value !== 'string') throw new Error('Платёжная ссылка отсутствует');
+  const target = new URL(value);
+  if (target.protocol !== 'https:' || target.username || target.password) {
+    throw new Error('Платёжная ссылка должна использовать HTTPS');
+  }
+  window.location.assign(target.toString());
+}
+
 export default function BillingPage() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -128,10 +156,9 @@ export default function BillingPage() {
     setCheckoutLoading(`${planSlug}-${period}`);
     try {
       const res = await billingApi.checkout(planSlug, period);
-      const url = res.data.data?.payment_url;
-      if (url) window.open(url, '_blank');
-    } catch {
-      toast.error('Ошибка создания платежа');
+      navigateToPayment(res.data.data?.payment_url);
+    } catch (error: unknown) {
+      toast.error(billingErrorMessage(error, 'Ошибка создания платежа'));
     } finally {
       setCheckoutLoading(null);
     }
@@ -141,10 +168,9 @@ export default function BillingPage() {
     setTopupLoading(packageId);
     try {
       const res = await billingApi.topupAI(packageId);
-      const url = res.data.data?.payment_url;
-      if (url) window.open(url, '_blank');
-    } catch {
-      toast.error('Не удалось создать платёж на пополнение');
+      navigateToPayment(res.data.data?.payment_url);
+    } catch (error: unknown) {
+      toast.error(billingErrorMessage(error, 'Не удалось создать платёж на пополнение'));
     } finally {
       setTopupLoading(null);
     }

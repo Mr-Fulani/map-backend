@@ -19,6 +19,7 @@ COMPOSE_FILE="$ROOT_DIR/docker-compose.prod.yml"
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
 BUILD_SERVICES=(django celery_worker celery_beat celery_worker_images frontend backup)
 APPLICATION_SERVICES=(django celery_worker celery_beat celery_worker_images frontend nginx)
+DRAIN_SERVICES=(celery_beat celery_worker celery_worker_images django frontend)
 HEALTH_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
 LOG_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
 
@@ -29,12 +30,14 @@ PROD_MIN_FREE_DISK_MB="${PROD_MIN_FREE_DISK_MB:-2048}"
 PROD_ROLLBACK_ENABLED="${PROD_ROLLBACK_ENABLED:-true}"
 PROD_BROKER_MIGRATION_CONFIRMED="${PROD_BROKER_MIGRATION_CONFIRMED:-false}"
 PROD_BACKUP_TIMEOUT_SECONDS="${PROD_BACKUP_TIMEOUT_SECONDS:-7200}"
+PROD_DRAIN_TIMEOUT_SECONDS="${PROD_DRAIN_TIMEOUT_SECONDS:-3700}"
 PROD_SMOKE_URL="${PROD_SMOKE_URL:-}"
 PREVIOUS_SHA="${PREVIOUS_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
 
 DEPLOY_PHASE="initialization"
 SERVICES_CHANGED=false
 MIGRATIONS_APPLIED=false
+MIGRATIONS_STARTED=false
 declare -A ROLLBACK_IMAGE_IDS=()
 declare -A ROLLBACK_IMAGE_NAMES=()
 
@@ -100,7 +103,10 @@ rollback_deployment() {
   echo "==> Деплой прерван на этапе '${DEPLOY_PHASE}' (exit=${exit_code})." >&2
   show_logs
 
-  if [[ "$SERVICES_CHANGED" == "true" && "$PROD_ROLLBACK_ENABLED" == "true" && "$PREVIOUS_SHA" != "$TARGET_SHA" && "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  if [[ "$MIGRATIONS_STARTED" == "true" ]]; then
+    echo "КРИТИЧЕСКАЯ ОШИБКА: миграция БД уже началась; старый application release автоматически не запускается." >&2
+    echo "Оставьте writers остановленными, проверьте django_migrations/backup и выполните forward recovery по runbook." >&2
+  elif [[ "$SERVICES_CHANGED" == "true" && "$PROD_ROLLBACK_ENABLED" == "true" && "$PREVIOUS_SHA" != "$TARGET_SHA" && "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]]; then
     echo "==> Возврат application-сервисов на ${PREVIOUS_SHA}..."
     for service in "${BUILD_SERVICES[@]}"; do
       if [[ -n "${ROLLBACK_IMAGE_IDS[$service]:-}" && -n "${ROLLBACK_IMAGE_NAMES[$service]:-}" ]]; then
@@ -158,6 +164,7 @@ preflight() {
   validate_integer_setting PROD_LOG_TAIL "$PROD_LOG_TAIL"
   validate_integer_setting PROD_MIN_FREE_DISK_MB "$PROD_MIN_FREE_DISK_MB"
   validate_integer_setting PROD_BACKUP_TIMEOUT_SECONDS "$PROD_BACKUP_TIMEOUT_SECONDS"
+  validate_integer_setting PROD_DRAIN_TIMEOUT_SECONDS "$PROD_DRAIN_TIMEOUT_SECONDS"
   [[ "$PROD_ROLLBACK_ENABLED" == "true" || "$PROD_ROLLBACK_ENABLED" == "false" ]] \
     || fail "PROD_ROLLBACK_ENABLED должен быть true или false."
   [[ "$PROD_BROKER_MIGRATION_CONFIRMED" == "true" ]] \
@@ -200,6 +207,16 @@ preflight() {
     || fail "недостаточно свободного места: требуется минимум ${PROD_MIN_FREE_DISK_MB} MiB."
 }
 
+drain_application_writers() {
+  DEPLOY_PHASE="billing maintenance drain"
+  echo "==> Остановка входящего трафика и drain старых application writers..."
+  # Сначала закрываем ingress и scheduler: после этого новые checkout/webhook и
+  # периодические billing-задачи не появятся. Workers/Gunicorn получают TERM и
+  # должны завершить текущую работу до schema migration.
+  "${COMPOSE[@]}" stop -t 30 nginx
+  "${COMPOSE[@]}" stop -t "$PROD_DRAIN_TIMEOUT_SECONDS" "${DRAIN_SERVICES[@]}"
+}
+
 smoke_check() {
   local attempt
 
@@ -239,6 +256,8 @@ echo "==> Проверка новой Django-сборки..."
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py makemigrations --check --dry-run
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py migrate --plan
 
+drain_application_writers
+
 DEPLOY_PHASE="pre-migration database backup"
 echo "==> Создание зашифрованного backup перед миграциями..."
 timeout --foreground --signal=TERM --kill-after=60s \
@@ -247,7 +266,8 @@ timeout --foreground --signal=TERM --kill-after=60s \
     -e DEPLOY_GIT_SHA="$TARGET_SHA" backup
 
 DEPLOY_PHASE="database migration"
-echo "==> Применение backward-compatible миграций до запуска нового Django..."
+echo "==> Применение миграций при остановленных старых writers..."
+MIGRATIONS_STARTED=true
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py migrate --noinput
 MIGRATIONS_APPLIED=true
 

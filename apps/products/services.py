@@ -3,6 +3,7 @@ import json
 import re
 from decimal import Decimal
 
+from django.conf import settings
 from django.utils.timezone import now
 
 from apps.products.attribute_presentation import normalize_attribute_text
@@ -28,7 +29,7 @@ from apps.tenants.models import CatalogDomain, TenantCatalogDomain
 
 
 MAX_BULK_ACTION_PAUSE_SECONDS = 3600
-MAX_BULK_ACTION_PRODUCT_IDS = 500
+MAX_BULK_ACTION_PRODUCT_IDS = settings.API_BULK_MAX_ITEMS
 
 
 # Латинские буквы-двойники → кириллица. В источниках (1С/CSV) названия часто

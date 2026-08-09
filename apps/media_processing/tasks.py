@@ -43,6 +43,7 @@ def process_media_job(self, job_id: int) -> dict:
     try:
         job = submit_job(job)
     except Exception as exc:
-        fail_job(job, 'submission_failed', str(exc))
-        raise self.retry(exc=exc)
+        message = 'Не удалось безопасно отправить задачу медиа-провайдеру.'
+        fail_job(job, 'submission_failed', message)
+        raise self.retry(exc=RuntimeError(message)) from exc
     return {'job_id': job.pk, 'status': job.status, 'provider_id': job.provider_id}

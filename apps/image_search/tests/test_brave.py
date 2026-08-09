@@ -116,6 +116,42 @@ class TestBraveImageSource:
 
         assert results == []
 
+    def test_search_rejects_malformed_nested_json(self):
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            'results': [{'properties': [], 'thumbnail': {}}],
+        }
+        source = _make_source()
+
+        with patch(
+            'apps.image_search.sources.brave.image_source_api_key', return_value='test-key',
+        ), patch(
+            'apps.image_search.sources.brave.requests.get', return_value=mock_resp,
+        ), _patch_quota:
+            results = source.search()
+
+        assert results == []
+        assert source.last_error_code == 'invalid_response'
+
+    def test_search_materializes_at_most_requested_results_per_query(self):
+        mock_resp = MagicMock(status_code=200)
+        mock_resp.json.return_value = {
+            'results': [
+                _brave_result(f'https://img.example.com/{index}.jpg')
+                for index in range(30)
+            ],
+        }
+        source = _make_source()
+
+        with patch(
+            'apps.image_search.sources.brave.image_source_api_key', return_value='test-key',
+        ), patch(
+            'apps.image_search.sources.brave.requests.get', return_value=mock_resp,
+        ), _patch_quota:
+            results = source.search()
+
+        assert len(results) == 15
+
     def test_source_зарегистрирован_в_реестре(self):
         import apps.image_search.sources.brave  # noqa: F401
         from apps.image_search.sources.registry import get_registered_sources

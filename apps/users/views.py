@@ -1,15 +1,20 @@
-from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
+from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.users.serializers import (
     ChangeEmailSerializer,
     ChangePasswordSerializer,
+    EmailConfirmationSerializer,
+    PasswordResetConfirmSerializer,
+    PasswordResetRequestSerializer,
     ProfileUpdateSerializer,
 )
 from apps.users.services import ProfileService
+from apps.users.throttles import CredentialScopedRateThrottle
 from apps.tenants.permissions import HumanUserOnly
 
 
@@ -72,7 +77,7 @@ class ChangePasswordView(APIView):
     )
     def post(self, request):
         """Проверяет текущий пароль и устанавливает новый."""
-        serializer = ChangePasswordSerializer(data=request.data)
+        serializer = ChangePasswordSerializer(data=request.data, context={'user': request.user})
         serializer.is_valid(raise_exception=True)
         try:
             ProfileService.change_password(
@@ -106,6 +111,7 @@ class ChangeEmailRequestView(APIView):
             ProfileService.request_email_change(
                 request.user,
                 serializer.validated_data['new_email'],
+                serializer.validated_data['current_password'],
             )
         except ValueError as exc:
             return Response(
@@ -120,30 +126,67 @@ class ChangeEmailRequestView(APIView):
 
 @extend_schema(tags=['Profile'])
 class ConfirmEmailView(APIView):
-    """GET /api/v1/auth/confirm-email/?token=... — подтвердить смену email по токену."""
+    """POST /api/v1/auth/confirm-email/ — подтвердить смену email одноразовым токеном."""
 
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     @extend_schema(
-        parameters=[
-            OpenApiParameter(
-                name='token',
-                type=str,
-                location=OpenApiParameter.QUERY,
-                required=True,
-                description='Одноразовый токен подтверждения смены email.',
-            ),
-        ],
+        request=EmailConfirmationSerializer,
         responses=_PROFILE_MESSAGE_RESPONSE,
     )
-    def get(self, request):
+    def post(self, request):
         """Верифицирует токен и обновляет email пользователя."""
-        token = request.query_params.get('token', '')
+        serializer = EmailConfirmationSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         try:
-            ProfileService.confirm_email_change(token)
+            ProfileService.confirm_email_change(serializer.validated_data['token'])
         except ValueError as exc:
             return Response(
                 {'status': 'error', 'message': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response({'status': 'ok', 'data': {'message': 'Email успешно изменён'}})
+
+
+@extend_schema(tags=['Auth'])
+class PasswordResetRequestView(APIView):
+    """POST /auth/password-reset/ — единообразно принимает любой корректный email."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [ScopedRateThrottle, CredentialScopedRateThrottle]
+    throttle_scope = 'password_reset_request'
+
+    @extend_schema(request=PasswordResetRequestSerializer, responses={202: _PROFILE_MESSAGE_RESPONSE})
+    def post(self, request):
+        serializer = PasswordResetRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        ProfileService.request_password_reset(serializer.validated_data['email'])
+        return Response({
+            'status': 'ok',
+            'data': {'message': 'Если аккаунт существует, письмо уже отправлено.'},
+        }, status=status.HTTP_202_ACCEPTED)
+
+
+@extend_schema(tags=['Auth'])
+class PasswordResetConfirmView(APIView):
+    """POST /auth/password-reset/confirm/ — установить новый пароль."""
+
+    permission_classes = [AllowAny]
+    authentication_classes = []
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'password_reset_confirm'
+
+    @extend_schema(request=PasswordResetConfirmSerializer, responses=_PROFILE_STATUS_RESPONSE)
+    def post(self, request):
+        serializer = PasswordResetConfirmSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            ProfileService.confirm_password_reset(**serializer.validated_data)
+        except ValueError as exc:
+            return Response(
+                {'status': 'error', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({'status': 'ok'})

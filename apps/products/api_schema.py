@@ -5,6 +5,7 @@ envelope.  These serializers describe that envelope for drf-spectacular
 without coupling request handling to documentation-only validation.
 """
 
+from django.conf import settings
 from rest_framework import serializers
 
 from apps.products.serializers import (
@@ -135,7 +136,7 @@ class TenantSourceCategoryListResponseSerializer(serializers.Serializer):
 class ProductCategoryAssignRequestSerializer(serializers.Serializer):
     product_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
-        max_length=500,
+        max_length=settings.API_BULK_MAX_ITEMS,
         allow_empty=False,
     )
     catalog_category = serializers.IntegerField(
@@ -160,6 +161,7 @@ class ProductCategoryAssignResponseSerializer(serializers.Serializer):
 class ProductExcludeRequestSerializer(serializers.Serializer):
     product_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
+        max_length=settings.API_BULK_MAX_ITEMS,
         allow_empty=False,
     )
     exclude = serializers.BooleanField(default=True, required=False)
@@ -168,6 +170,7 @@ class ProductExcludeRequestSerializer(serializers.Serializer):
 class ProductBulkDeleteRequestSerializer(serializers.Serializer):
     product_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
+        max_length=settings.API_BULK_MAX_ITEMS,
         allow_empty=False,
     )
 
@@ -219,6 +222,8 @@ class ProductBulkActionRequestSerializer(serializers.Serializer):
     action = serializers.CharField()
     product_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
+        max_length=settings.API_BULK_MAX_ITEMS,
+        allow_empty=False,
     )
     source = serializers.CharField(required=False)
     batch_size = serializers.IntegerField(min_value=1, default=20, required=False)

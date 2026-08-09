@@ -1,9 +1,19 @@
 /**
  * API-клиент для взаимодействия с Django backend.
- * Автоматически обновляет JWT access token через refresh при 401.
+ * Access/CSRF живут только в памяти, refresh — только в HttpOnly cookie.
  */
 
-import axios from 'axios';
+import axios, { type AxiosRequestConfig } from 'axios';
+import {
+  advanceBrowserSessionVersion,
+  readBrowserSessionVersion,
+  requireBrowserSessionStorage,
+  requireBrowserSessionVersion,
+  subscribeToBrowserSessionVersion,
+  type BrowserSessionLockGuard,
+  type BrowserSessionVersion,
+  withBrowserSessionLock,
+} from '@/lib/browser-session-lock';
 
 // Пустое значение означает same-origin: в production Nginx проксирует /api/ в Django.
 export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
@@ -16,81 +26,536 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// === Token management ===
+// Auth endpoints use an isolated transport without the application interceptors.
+// This prevents a failed refresh/login request from recursively refreshing itself.
+const authTransport = axios.create({
+  baseURL: `${API_BASE_URL}/api/v1`,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  withCredentials: true,
+  timeout: 10_000,
+});
+
+// === In-memory browser session ===
 
 let accessToken: string | null = null;
+let csrfToken: string | null = null;
+let csrfPromise: Promise<string> | null = null;
+let refreshPromise: Promise<string> | null = null;
+let authChannel: BroadcastChannel | null = null;
+let authChannelUnavailable = false;
+let storageSessionSignalsReady = false;
+let sessionVersion = readBrowserSessionVersion();
+
+const AUTH_EXPIRED_EVENT = 'map:auth-expired';
+const AUTH_REPLACED_EVENT = 'map:auth-replaced';
+const AUTH_CHANNEL_NAME = 'map:browser-session';
+
+type AuthChannelMessage =
+  | {
+      type: 'active';
+      access: string;
+      revision: number;
+      sequence: number;
+      sessionId: string;
+    }
+  | {
+      type: 'cleared';
+      revision: number;
+      sequence: number;
+      sessionId: null;
+    };
+
+type SessionRequestConfig = {
+  _browserSessionRevision?: number;
+  _retry?: boolean;
+};
+
+export class BrowserSessionChangedError extends Error {
+  constructor() {
+    super('Browser session changed in another tab');
+    this.name = 'BrowserSessionChangedError';
+  }
+}
 
 export function setAccessToken(token: string | null) {
   accessToken = token;
-  if (token) {
-    localStorage.setItem('map_access_token', token);
-  } else {
-    localStorage.removeItem('map_access_token');
-  }
 }
 
 export function getAccessToken(): string | null {
-  if (accessToken) return accessToken;
-  if (typeof window !== 'undefined') {
-    accessToken = localStorage.getItem('map_access_token');
-  }
   return accessToken;
 }
 
-export function setRefreshToken(token: string | null) {
-  if (token) {
-    localStorage.setItem('map_refresh_token', token);
-  } else {
-    localStorage.removeItem('map_refresh_token');
-  }
+export function getBrowserSessionRevision(): number {
+  return sessionVersion.revision;
 }
 
-export function getRefreshToken(): string | null {
+export function clearLegacyTokenStorage() {
   if (typeof window !== 'undefined') {
-    return localStorage.getItem('map_refresh_token');
+    try {
+      localStorage.removeItem('map_access_token');
+      localStorage.removeItem('map_refresh_token');
+    } catch {
+      // Storage can be unavailable in hardened/private browser contexts.
+    }
   }
-  return null;
 }
 
 export function clearTokens() {
   accessToken = null;
-  localStorage.removeItem('map_access_token');
-  localStorage.removeItem('map_refresh_token');
+}
+
+function isValidVersion(value: Partial<BrowserSessionVersion>): value is BrowserSessionVersion {
+  return (
+    Number.isSafeInteger(value.revision)
+    && (value.revision ?? -1) >= 0
+    && Number.isSafeInteger(value.sequence)
+    && (value.sequence ?? -1) >= 0
+  );
+}
+
+function isNewerVersion(value: BrowserSessionVersion): boolean {
+  return (
+    value.revision > sessionVersion.revision
+    || (
+      value.revision === sessionVersion.revision
+      && value.sequence > sessionVersion.sequence
+    )
+  );
+}
+
+function isValidAccessToken(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && value.length <= 8192;
+}
+
+function isValidBrowserSessionId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{16,128}$/.test(value);
+}
+
+function applyActiveSession(access: string, version: BrowserSessionVersion) {
+  accessToken = access;
+  sessionVersion = version;
+}
+
+function applyClearedSession(version: BrowserSessionVersion) {
+  clearTokens();
+  sessionVersion = version;
+}
+
+function handleStoredSessionVersion(version: BrowserSessionVersion) {
+  if (!isNewerVersion(version)) return;
+  const sessionWasReplaced = (
+    version.revision > sessionVersion.revision
+    || (
+      version.state === 'active'
+      && sessionVersion.state === 'active'
+      && version.sessionId !== sessionVersion.sessionId
+    )
+  );
+  if (version.state === 'cleared') {
+    clearAllBillingAttempts();
+    applyClearedSession(version);
+    notifyAuthExpired();
+  } else if (version.state === 'active') {
+    if (sessionWasReplaced) {
+      clearAllBillingAttempts();
+      clearTokens();
+    }
+    sessionVersion = version;
+    if (sessionWasReplaced) notifyAuthReplaced();
+  }
+}
+
+function assertSessionRevision(
+  expectedRevision: number,
+  guard?: BrowserSessionLockGuard
+) {
+  guard?.assertOwned();
+  const previousVersion = sessionVersion;
+  const sharedVersion = requireBrowserSessionVersion();
+  const activeIdentityChanged = (
+    previousVersion.state === 'active'
+    && sharedVersion.state === 'active'
+    && previousVersion.sessionId !== sharedVersion.sessionId
+  );
+  if (isNewerVersion(sharedVersion)) handleStoredSessionVersion(sharedVersion);
+  if (
+    sessionVersion.revision !== expectedRevision
+    || sharedVersion.revision !== expectedRevision
+    || activeIdentityChanged
+  ) {
+    throw new BrowserSessionChangedError();
+  }
+  guard?.assertOwned();
+}
+
+function ensureStorageSessionSignals() {
+  if (storageSessionSignalsReady || typeof window === 'undefined') return;
+  storageSessionSignalsReady = true;
+  subscribeToBrowserSessionVersion(handleStoredSessionVersion);
+}
+
+function getAuthChannel(): BroadcastChannel | null {
+  // BroadcastChannel is low-latency, while the storage event is a durable
+  // fallback when a backgrounded tab misses a channel message.
+  ensureStorageSessionSignals();
+  if (
+    authChannelUnavailable
+    || typeof window === 'undefined'
+    || typeof BroadcastChannel === 'undefined'
+  ) {
+    return null;
+  }
+  if (!authChannel) {
+    try {
+      authChannel = new BroadcastChannel(AUTH_CHANNEL_NAME);
+    } catch {
+      authChannelUnavailable = true;
+      return null;
+    }
+    authChannel.onmessage = (event: MessageEvent<AuthChannelMessage>) => {
+      const message = event.data;
+      if (
+        !message
+        || !isValidVersion(message)
+        || (message.type !== 'active' && message.type !== 'cleared')
+        || (
+          message.type === 'active'
+          && (
+            !isValidAccessToken(message.access)
+            || !isValidBrowserSessionId(message.sessionId)
+          )
+        )
+        || (message.type === 'cleared' && message.sessionId !== null)
+      ) return;
+      const version: BrowserSessionVersion = {
+        revision: message.revision,
+        sequence: message.sequence,
+        state: message.type === 'active' ? 'active' : 'cleared',
+        sessionId: message.sessionId,
+      };
+      const sameActiveVersionWithoutToken = (
+        message.type === 'active'
+        && !accessToken
+        && version.revision === sessionVersion.revision
+        && version.sequence === sessionVersion.sequence
+      );
+      if (!isNewerVersion(version) && !sameActiveVersionWithoutToken) return;
+
+      const sessionWasReplaced = (
+        version.revision > sessionVersion.revision
+        || (
+          version.state === 'active'
+          && sessionVersion.state === 'active'
+          && version.sessionId !== sessionVersion.sessionId
+        )
+      );
+      if (message.type === 'active') {
+        if (sessionWasReplaced) clearAllBillingAttempts();
+        applyActiveSession(message.access, version);
+        if (sessionWasReplaced) notifyAuthReplaced();
+      } else if (message.type === 'cleared') {
+        clearAllBillingAttempts();
+        applyClearedSession(version);
+        notifyAuthExpired();
+      }
+    };
+  }
+  return authChannel;
+}
+
+function broadcastAuthMessage(message: AuthChannelMessage) {
+  getAuthChannel()?.postMessage(message);
+}
+
+function publishActiveSession(
+  access: string,
+  replaceSession: boolean,
+  sessionId: string,
+  notifyReplacement = false
+) {
+  if (!isValidBrowserSessionId(sessionId)) {
+    throw new Error('Backend did not return a browser session identifier');
+  }
+  const previousRevision = sessionVersion.revision;
+  const version = advanceBrowserSessionVersion(
+    replaceSession,
+    'active',
+    sessionId,
+    sessionVersion
+  );
+  if (replaceSession || version.revision > previousRevision) {
+    clearAllBillingAttempts();
+  }
+  applyActiveSession(access, version);
+  broadcastAuthMessage({
+    type: 'active',
+    access,
+    revision: version.revision,
+    sequence: version.sequence,
+    sessionId,
+  });
+  if (
+    version.revision > previousRevision
+    && (notifyReplacement || !replaceSession)
+  ) {
+    notifyAuthReplaced();
+  }
+}
+
+function publishClearedSession() {
+  const version = advanceBrowserSessionVersion(
+    true,
+    'cleared',
+    null,
+    sessionVersion
+  );
+  clearAllBillingAttempts();
+  applyClearedSession(version);
+  broadcastAuthMessage({
+    type: 'cleared',
+    revision: version.revision,
+    sequence: version.sequence,
+    sessionId: null,
+  });
+  notifyAuthExpired();
+}
+
+function unwrapResponse<T>(body: T | { data: T }): T {
+  if (body && typeof body === 'object' && 'data' in body) {
+    return body.data;
+  }
+  return body;
+}
+
+export async function ensureCsrfToken(force = false): Promise<string> {
+  if (!force && csrfToken) return csrfToken;
+  if (csrfPromise) return csrfPromise;
+
+  csrfPromise = authTransport
+    .get('/auth/browser/csrf/')
+    .then(({ data }) => {
+      const payload = unwrapResponse<{ csrf_token?: string }>(data);
+      if (!payload.csrf_token) {
+        throw new Error('Backend did not return a CSRF token');
+      }
+      csrfToken = payload.csrf_token;
+      return csrfToken;
+    })
+    .finally(() => {
+      csrfPromise = null;
+    });
+
+  return csrfPromise;
+}
+
+async function authPost<T>(
+  path: string,
+  data?: unknown,
+  requestAccess?: string | null,
+  guard?: BrowserSessionLockGuard
+) {
+  async function post(token: string) {
+    guard?.assertOwned();
+    const headers: Record<string, string> = { 'X-CSRFToken': token };
+    if (requestAccess) {
+      headers.Authorization = `Bearer ${requestAccess}`;
+    }
+    return authTransport.post<T>(path, data ?? {}, { headers });
+  }
+
+  try {
+    return await post(await ensureCsrfToken());
+  } catch (error) {
+    // Recover when the browser dropped/rotated the CSRF cookie while this tab stayed open.
+    if (!axios.isAxiosError(error) || error.response?.status !== 403) throw error;
+    guard?.assertOwned();
+    const token = await ensureCsrfToken(true);
+    guard?.assertOwned();
+    return post(token);
+  }
+}
+
+async function performBrowserRefresh(
+  expectedRevision: number,
+  guard: BrowserSessionLockGuard
+): Promise<string> {
+  assertSessionRevision(expectedRevision, guard);
+  const { data } = await authPost<
+    | { access: string; browser_session_id: string }
+    | { data: { access: string; browser_session_id: string } }
+  >(
+    '/auth/browser/refresh/',
+    undefined,
+    undefined,
+    guard
+  );
+  assertSessionRevision(expectedRevision, guard);
+  const payload = unwrapResponse<{
+    access?: string;
+    browser_session_id?: string;
+  }>(data);
+  if (
+    !isValidAccessToken(payload.access)
+    || !isValidBrowserSessionId(payload.browser_session_id)
+  ) {
+    throw new Error('Backend did not return complete browser session credentials');
+  }
+  const sessionWasReplaced = (
+    sessionVersion.state !== 'active'
+    || sessionVersion.sessionId !== payload.browser_session_id
+  );
+  publishActiveSession(
+    payload.access,
+    sessionWasReplaced,
+    payload.browser_session_id,
+    sessionWasReplaced
+  );
+  if (sessionWasReplaced) {
+    // Never replay a request created by the previous principal with the access
+    // token recovered from a different refresh-cookie chain.
+    throw new BrowserSessionChangedError();
+  }
+  return payload.access;
+}
+
+export async function refreshBrowserSession(
+  expectedRevision = sessionVersion.revision
+): Promise<string> {
+  if (refreshPromise) {
+    const token = await refreshPromise;
+    assertSessionRevision(expectedRevision);
+    return token;
+  }
+
+  getAuthChannel();
+  const pendingRefresh = withBrowserSessionLock(
+    (guard) => performBrowserRefresh(expectedRevision, guard)
+  );
+  refreshPromise = pendingRefresh;
+  try {
+    const token = await pendingRefresh;
+    assertSessionRevision(expectedRevision);
+    return token;
+  } catch (error) {
+    if (isAuthenticationRejection(error)) {
+      await expireBrowserSession(expectedRevision);
+    }
+    throw error;
+  } finally {
+    if (refreshPromise === pendingRefresh) refreshPromise = null;
+  }
+}
+
+async function expireBrowserSession(expectedRevision: number): Promise<void> {
+  getAuthChannel();
+  try {
+    await withBrowserSessionLock(async (guard) => {
+      try {
+        assertSessionRevision(expectedRevision, guard);
+      } catch (error) {
+        if (error instanceof BrowserSessionChangedError) return;
+        throw error;
+      }
+      try {
+        // The refresh credential is already known to be unusable. This call is
+        // best-effort and exists to expire the stale HttpOnly cookie as well.
+        await authPost(
+          '/auth/browser/logout/',
+          undefined,
+          undefined,
+          guard
+        );
+      } catch {
+        guard.assertOwned();
+      }
+      assertSessionRevision(expectedRevision, guard);
+      publishClearedSession();
+    });
+  } catch (error) {
+    if (error instanceof BrowserSessionChangedError) return;
+    // Shared storage failures make coordinated mutation impossible, but this
+    // tab must still stop using a refresh credential proven invalid.
+    clearTokens();
+    notifyAuthExpired();
+  }
+}
+
+function notifyAuthExpired() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(AUTH_EXPIRED_EVENT));
+  }
+}
+
+function notifyAuthReplaced() {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new Event(AUTH_REPLACED_EVENT));
+  }
+}
+
+export function isAuthenticationRejection(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 401;
+}
+
+export function subscribeToAuthExpired(listener: () => void) {
+  if (typeof window === 'undefined') return () => undefined;
+  getAuthChannel();
+  window.addEventListener(AUTH_EXPIRED_EVENT, listener);
+  return () => window.removeEventListener(AUTH_EXPIRED_EVENT, listener);
+}
+
+export function subscribeToAuthReplaced(listener: () => void) {
+  if (typeof window === 'undefined') return () => undefined;
+  getAuthChannel();
+  window.addEventListener(AUTH_REPLACED_EVENT, listener);
+  return () => window.removeEventListener(AUTH_REPLACED_EVENT, listener);
 }
 
 // === Interceptors ===
 
-// Request: добавляем Authorization header
-api.interceptors.request.use((config) => {
-  const token = getAccessToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
-  }
-  return config;
-});
-
-// Response: при 401 пробуем refresh
-let isRefreshing = false;
-let failedQueue: Array<{
-  resolve: (value: unknown) => void;
-  reject: (reason: unknown) => void;
-}> = [];
-
-const processQueue = (error: unknown, token: string | null = null) => {
-  failedQueue.forEach((prom) => {
-    if (error) {
-      prom.reject(error);
-    } else {
-      prom.resolve(token);
+// Capture the browser-session revision synchronously with the token used by the
+// original request. A later retry must remain in that same logical session.
+api.interceptors.request.use(
+  (config) => {
+    const sessionConfig = config as typeof config & SessionRequestConfig;
+    const expectedRevision = sessionConfig._browserSessionRevision
+      ?? sessionVersion.revision;
+    assertSessionRevision(expectedRevision);
+    sessionConfig._browserSessionRevision = expectedRevision;
+    const token = getAccessToken();
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
     }
-  });
-  failedQueue = [];
-};
+    return config;
+  },
+  (error) => {
+    throw error;
+  },
+  { synchronous: true }
+);
 
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    const responseConfig = response.config as typeof response.config & SessionRequestConfig;
+    const requestRevision = responseConfig._browserSessionRevision;
+    if (Number.isSafeInteger(requestRevision)) {
+      assertSessionRevision(requestRevision as number);
+    }
+    return response;
+  },
   async (error) => {
     const originalRequest = error.config;
+    const requestRevision = (
+      originalRequest as (typeof originalRequest & SessionRequestConfig) | undefined
+    )?._browserSessionRevision;
+    if (Number.isSafeInteger(requestRevision)) {
+      try {
+        assertSessionRevision(requestRevision as number);
+      } catch (sessionError) {
+        return Promise.reject(sessionError);
+      }
+    }
 
     if (
       error.response?.status === 402
@@ -102,48 +567,21 @@ api.interceptors.response.use(
       return Promise.reject(error);
     }
 
-    if (error.response?.status === 401 && !originalRequest._retry) {
-      if (isRefreshing) {
-        return new Promise((resolve, reject) => {
-          failedQueue.push({ resolve, reject });
-        })
-          .then((token) => {
-            originalRequest.headers.Authorization = `Bearer ${token}`;
-            return api(originalRequest);
-          })
-          .catch((err) => Promise.reject(err));
-      }
-
-      originalRequest._retry = true;
-      isRefreshing = true;
-
-      const refreshToken = getRefreshToken();
-      if (!refreshToken) {
-        clearTokens();
-        window.location.href = '/login';
-        return Promise.reject(error);
-      }
+    if (error.response?.status === 401 && originalRequest && !originalRequest._retry) {
+      const sessionRequest = originalRequest as typeof originalRequest & SessionRequestConfig;
+      const retryRevision = sessionRequest._browserSessionRevision;
+      if (!Number.isSafeInteger(retryRevision)) return Promise.reject(error);
+      sessionRequest._retry = true;
 
       try {
-        const { data } = await axios.post(`${API_BASE_URL}/api/v1/auth/token/refresh/`, {
-          refresh: refreshToken,
-        });
-
-        setAccessToken(data.access);
-        if (data.refresh) {
-          setRefreshToken(data.refresh);
-        }
-
-        processQueue(null, data.access);
-        originalRequest.headers.Authorization = `Bearer ${data.access}`;
+        assertSessionRevision(retryRevision as number);
+        const token = await refreshBrowserSession(retryRevision as number);
+        assertSessionRevision(retryRevision as number);
+        if (getAccessToken() !== token) throw new BrowserSessionChangedError();
+        originalRequest.headers.Authorization = `Bearer ${token}`;
         return api(originalRequest);
       } catch (refreshError) {
-        processQueue(refreshError, null);
-        clearTokens();
-        window.location.href = '/login';
         return Promise.reject(refreshError);
-      } finally {
-        isRefreshing = false;
       }
     }
 
@@ -157,22 +595,103 @@ export default api;
 
 // Auth
 export const authApi = {
-  login: (email: string, password: string, tenant_slug?: string) =>
-    api.post('/auth/token/', { email, password, tenant_slug }),
-  refresh: (refresh: string) =>
-    api.post('/auth/token/refresh/', { refresh }),
+  login: async (email: string, password: string, tenant_slug?: string) => {
+    getAuthChannel();
+    return withBrowserSessionLock(async (guard) => {
+      guard.assertOwned();
+      const response = await authPost<
+        | { access: string; browser_session_id: string }
+        | { data: { access: string; browser_session_id: string } }
+      >(
+        '/auth/browser/login/',
+        { email, password, tenant_slug },
+        undefined,
+        guard
+      );
+      guard.assertOwned();
+      const payload = unwrapResponse<{
+        access?: string;
+        browser_session_id?: string;
+      }>(response.data);
+      if (
+        !isValidAccessToken(payload.access)
+        || !isValidBrowserSessionId(payload.browser_session_id)
+      ) {
+        throw new Error('Backend did not return complete browser session credentials');
+      }
+      publishActiveSession(payload.access, true, payload.browser_session_id);
+      return Object.assign(response, {
+        browserSessionRevision: sessionVersion.revision,
+      });
+    });
+  },
+  refresh: refreshBrowserSession,
+  logout: async () => {
+    const expectedRevision = sessionVersion.revision;
+    const requestAccess = accessToken;
+    getAuthChannel();
+    return withBrowserSessionLock(async (guard) => {
+      assertSessionRevision(expectedRevision, guard);
+      const response = await authPost(
+        '/auth/browser/logout/',
+        undefined,
+        requestAccess,
+        guard
+      );
+      assertSessionRevision(expectedRevision, guard);
+      publishClearedSession();
+      return response;
+    });
+  },
+  logoutAll: async () => {
+    const expectedRevision = sessionVersion.revision;
+    const requestAccess = accessToken;
+    getAuthChannel();
+    return withBrowserSessionLock(async (guard) => {
+      assertSessionRevision(expectedRevision, guard);
+      const response = await authPost(
+        '/auth/browser/logout-all/',
+        undefined,
+        requestAccess,
+        guard
+      );
+      assertSessionRevision(expectedRevision, guard);
+      publishClearedSession();
+      return response;
+    });
+  },
   register: (data: { name: string; slug: string; email: string; password: string }) =>
-    api.post('/auth/register/', data),
+    authPost('/auth/register/', data),
+  forgotPassword: (email: string) =>
+    authPost('/auth/password-reset/', { email }),
+  resetPassword: (data: { uid: string; token: string; new_password: string }) =>
+    authPost('/auth/password-reset/confirm/', data),
   me: () => api.get('/auth/me/'),
 };
 
 // Profile
 export const profileApi = {
   updatePhone: (phone: string) => api.patch('/auth/profile/', { phone }),
-  changePassword: (current_password: string, new_password: string) =>
-    api.post('/auth/change-password/', { current_password, new_password }),
-  changeEmail: (new_email: string) => api.post('/auth/change-email/', { new_email }),
-  confirmEmail: (token: string) => api.get('/auth/confirm-email/', { params: { token } }),
+  changePassword: (current_password: string, new_password: string) => {
+    const expectedRevision = sessionVersion.revision;
+    const requestAccess = accessToken;
+    if (!requestAccess) throw new BrowserSessionChangedError();
+    return withBrowserSessionLock(async (guard) => {
+      assertSessionRevision(expectedRevision, guard);
+      const response = await authPost(
+        '/auth/change-password/',
+        { current_password, new_password },
+        requestAccess,
+        guard
+      );
+      assertSessionRevision(expectedRevision, guard);
+      publishClearedSession();
+      return response;
+    });
+  },
+  changeEmail: (new_email: string, current_password: string) =>
+    api.post('/auth/change-email/', { new_email, current_password }),
+  confirmEmail: (token: string) => authPost('/auth/confirm-email/', { token }),
 };
 
 // Tenant
@@ -188,16 +707,140 @@ export const tenantApi = {
 };
 
 // Billing
+const BILLING_ATTEMPT_PREFIX = 'map:billing-attempt:';
+type BillingPaymentResponse = {
+  status: string;
+  data?: { payment_url?: string };
+};
+
+function createIdempotencyUuid(): string {
+  if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
+    throw new Error('Secure UUID generation is unavailable in this browser');
+  }
+  return crypto.randomUUID();
+}
+
+function billingAttemptStorageKey(fingerprint: string): string {
+  return `${BILLING_ATTEMPT_PREFIX}${fingerprint}`;
+}
+
+function isUuid(value: string | null): value is string {
+  return Boolean(value && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value));
+}
+
+async function getOrCreateBillingAttempt(
+  fingerprint: string,
+  expectedRevision: number
+): Promise<string> {
+  const storageKey = billingAttemptStorageKey(fingerprint);
+  return withBrowserSessionLock(async (guard) => {
+    assertSessionRevision(expectedRevision, guard);
+    const storage = requireBrowserSessionStorage();
+    const stored = storage.getItem(storageKey);
+    if (isUuid(stored)) {
+      return stored;
+    }
+    if (stored) storage.removeItem(storageKey);
+    const idempotencyKey = createIdempotencyUuid();
+    storage.setItem(storageKey, idempotencyKey);
+    if (storage.getItem(storageKey) !== idempotencyKey) {
+      throw new Error('Billing attempt could not be persisted');
+    }
+    assertSessionRevision(expectedRevision, guard);
+    return idempotencyKey;
+  });
+}
+
+function clearBillingAttempt(fingerprint: string) {
+  const storageKey = billingAttemptStorageKey(fingerprint);
+  try {
+    window.localStorage.removeItem(storageKey);
+    // Remove keys written by pre-hardening builds as well.
+    window.sessionStorage.removeItem(storageKey);
+  } catch {
+    // Session replacement still clears the in-memory access credential.
+  }
+}
+
+function clearAllBillingAttempts() {
+  if (typeof window === 'undefined') return;
+  try {
+    for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.localStorage.key(index);
+      if (key?.startsWith(BILLING_ATTEMPT_PREFIX)) {
+        window.localStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Auth mutations fail closed if shared storage is unavailable.
+  }
+  try {
+    for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
+      const key = window.sessionStorage.key(index);
+      if (key?.startsWith(BILLING_ATTEMPT_PREFIX)) {
+        window.sessionStorage.removeItem(key);
+      }
+    }
+  } catch {
+    // Legacy per-tab keys are best-effort cleanup only.
+  }
+}
+
+function shouldReuseBillingAttempt(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || !error.response) return true;
+  const code = error.response.data?.code;
+  return (
+    code === 'checkout_pending'
+    || code === 'checkout_manual_review'
+    || error.response.status === 408
+    || error.response.status === 429
+    || error.response.status >= 500
+  );
+}
+
+async function postBillingAttempt<T>(
+  fingerprint: string,
+  path: string,
+  payload: Record<string, unknown>
+) {
+  const expectedRevision = sessionVersion.revision;
+  const idempotencyKey = await getOrCreateBillingAttempt(
+    fingerprint,
+    expectedRevision
+  );
+  try {
+    assertSessionRevision(expectedRevision);
+    const requestConfig: AxiosRequestConfig & SessionRequestConfig = {
+      _browserSessionRevision: expectedRevision,
+    };
+    return await api.post<T>(path, {
+      ...payload,
+      idempotency_key: idempotencyKey,
+    }, requestConfig);
+  } catch (error) {
+    if (!shouldReuseBillingAttempt(error)) clearBillingAttempt(fingerprint);
+    throw error;
+  }
+}
+
 export const billingApi = {
   getPlans: () => api.get('/billing/plans/'),
   getSubscription: () => api.get('/billing/subscription/'),
   getUsage: () => api.get('/billing/usage/'),
   getInvoices: () => api.get('/billing/invoices/'),
   getAIPackages: () => api.get('/billing/ai-packages/'),
-  checkout: (plan_slug: string, period: string) =>
-    api.post('/billing/checkout/', { plan_slug, period }),
-  topupAI: (package_id: number) =>
-    api.post('/billing/ai-topup/', { package_id }),
+  checkout: (plan_slug: string, period: 'monthly' | 'yearly') => (
+    postBillingAttempt<BillingPaymentResponse>(
+      `r${sessionVersion.revision}:subscription:${plan_slug}:${period}`,
+      '/billing/checkout/',
+      { plan_slug, period }
+    )
+  ),
+  topupAI: (package_id: number) => postBillingAttempt<BillingPaymentResponse>(
+    `r${sessionVersion.revision}:ai-topup:${package_id}`,
+    '/billing/ai-topup/',
+    { package_id }
+  ),
 };
 
 // AI models and tenant routing

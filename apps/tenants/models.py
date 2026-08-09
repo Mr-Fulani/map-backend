@@ -399,6 +399,20 @@ class WebhookEndpoint(SoftDeleteModel):
     class Meta:
         verbose_name = 'Вебхук-эндпоинт'
         verbose_name_plural = 'Вебхук-эндпоинты'
+        constraints = [
+            models.CheckConstraint(
+                check=(
+                    Q(deleted_at__isnull=False)
+                    | Q(url__startswith='https://')
+                ),
+                name='webhook_endpoint_live_https_only',
+            ),
+            models.UniqueConstraint(
+                fields=['tenant', 'url'],
+                condition=Q(deleted_at__isnull=True),
+                name='unique_live_tenant_webhook_url',
+            ),
+        ]
         indexes = [
             models.Index(fields=['tenant', 'is_active']),
         ]
@@ -420,9 +434,21 @@ class WebhookEndpoint(SoftDeleteModel):
         return decrypt_text(self.secret_encrypted)
 
     def soft_delete(self):
+        """Disable and hide the endpoint atomically, releasing its URL."""
+        if self.deleted_at is not None:
+            return
+        deleted_at = timezone.now()
+        type(self).all_objects.filter(
+            pk=self.pk,
+            deleted_at__isnull=True,
+        ).update(
+            is_active=False,
+            deleted_at=deleted_at,
+            updated_at=deleted_at,
+        )
         self.is_active = False
-        self.save(update_fields=['is_active', 'updated_at'])
-        super().soft_delete()
+        self.deleted_at = deleted_at
+        self.updated_at = deleted_at
 
 
 class WebhookEvent(TimestampedModel):
@@ -458,12 +484,14 @@ class WebhookDelivery(TimestampedModel):
     """Состояние доставки одного outbox-события на один endpoint."""
 
     STATUS_PENDING = 'pending'
+    STATUS_QUEUED = 'queued'
     STATUS_DELIVERING = 'delivering'
     STATUS_RETRY = 'retry'
     STATUS_DELIVERED = 'delivered'
     STATUS_FAILED = 'failed'
     STATUS_CHOICES = [
         (STATUS_PENDING, 'Ожидает'),
+        (STATUS_QUEUED, 'В очереди'),
         (STATUS_DELIVERING, 'Отправляется'),
         (STATUS_RETRY, 'Повтор'),
         (STATUS_DELIVERED, 'Доставлено'),
@@ -488,6 +516,8 @@ class WebhookDelivery(TimestampedModel):
     max_attempts = models.PositiveSmallIntegerField(default=8)
     next_attempt_at = models.DateTimeField(null=True, blank=True)
     last_attempt_at = models.DateTimeField(null=True, blank=True)
+    claim_token = models.UUIDField(null=True, blank=True, editable=False)
+    claimed_at = models.DateTimeField(null=True, blank=True, editable=False)
     delivered_at = models.DateTimeField(null=True, blank=True)
     response_status = models.PositiveSmallIntegerField(null=True, blank=True)
     response_body = models.TextField(blank=True)
@@ -502,6 +532,26 @@ class WebhookDelivery(TimestampedModel):
                 fields=['event', 'endpoint'],
                 name='unique_webhook_event_endpoint_delivery',
             ),
+            models.CheckConstraint(
+                check=(
+                    Q(
+                        status__in=['queued', 'delivering'],
+                        claim_token__isnull=False,
+                        claimed_at__isnull=False,
+                    )
+                    | Q(
+                        status__in=[
+                            'pending',
+                            'retry',
+                            'delivered',
+                            'failed',
+                        ],
+                        claim_token__isnull=True,
+                        claimed_at__isnull=True,
+                    )
+                ),
+                name='webhook_delivery_claim_state_valid',
+            ),
         ]
         indexes = [
             models.Index(
@@ -511,5 +561,9 @@ class WebhookDelivery(TimestampedModel):
             models.Index(
                 fields=['endpoint', '-created_at'],
                 name='wh_delivery_endpoint_idx',
+            ),
+            models.Index(
+                fields=['status', 'claimed_at'],
+                name='wh_delivery_claim_idx',
             ),
         ]

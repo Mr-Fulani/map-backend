@@ -14,7 +14,7 @@ from apps.marketplaces.adapters.avito.error_handler import backoff
 from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
 from apps.marketplaces.adapters.avito.feed_builder import build_feed, get_ad_id
 from apps.marketplaces.models import CategoryMapping, Listing, MarketplaceAccount, MarketplacePlacementAddress
-from apps.marketplaces.services import ListingService
+from apps.marketplaces.services import ListingBulkLimitExceeded, ListingService
 from apps.products.models import Product, ProductImage, TenantCatalogCategory
 from apps.products.services import ProductService
 from apps.sync.models import SyncLog
@@ -134,6 +134,78 @@ class TestAvitoAuthManager:
 
         assert token == 'tok-validation'
         assert cache.get('avito:token:None') is None
+
+    @pytest.mark.parametrize(
+        'payload',
+        [
+            [],
+            {'access_token': '', 'expires_in': 3600},
+            {'access_token': 'token', 'expires_in': True},
+            {'access_token': 'token', 'expires_in': -1},
+            {'access_token': 'x' * 8193, 'expires_in': 3600},
+        ],
+    )
+    @responses_lib.activate
+    def test_refresh_rejects_malformed_token_response(self, payload):
+        responses_lib.add(
+            responses_lib.POST,
+            'https://api.avito.ru/token',
+            json=payload,
+            status=200,
+        )
+        account = MagicMock()
+        account.pk = None
+        account.credentials_enc = encrypt({
+            'client_id': 'cid',
+            'client_secret': 'csec',
+        })
+
+        with pytest.raises(ValueError, match='некоррект'):
+            AvitoAuthManager()._refresh(account)
+
+
+class TestAvitoAdapterNetworkBounds:
+    @staticmethod
+    def _adapter():
+        adapter = object.__new__(AvitoAdapter)
+        adapter.account = MagicMock()
+        adapter._auth = MagicMock()
+        adapter._auth.get_token.return_value = 'token'
+        return adapter
+
+    def test_feed_item_error_pagination_stops_at_hard_page_limit(self, settings):
+        settings.AVITO_API_MAX_PAGES = 2
+
+        def response_for_page(*_args, **kwargs):
+            response = MagicMock(ok=True)
+            response.json.return_value = {
+                'items': [],
+                'meta': {'pages': 999},
+            }
+            return response
+
+        with patch(
+            'apps.marketplaces.adapters.avito.adapter._avito_request',
+            side_effect=response_for_page,
+        ) as request:
+            result = self._adapter().get_feed_item_errors(['wanted-id'])
+
+        assert result == {}
+        assert request.call_count == 2
+        assert [call.kwargs['params']['page'] for call in request.call_args_list] == [1, 2]
+
+    def test_feed_item_error_pagination_ends_safely_on_malformed_json(self):
+        response = MagicMock(ok=True)
+        response.json.return_value = []
+
+        with patch(
+            'apps.marketplaces.adapters.avito.adapter._avito_request',
+            return_value=response,
+        ) as request:
+            result = self._adapter().get_feed_item_errors(['wanted-id'])
+
+        assert result == {}
+        request.assert_called_once()
 
 
 # ------------------------------------------------------------------ #
@@ -1248,6 +1320,35 @@ class TestFeedWindowCoordinator:
 
 @pytest.mark.django_db
 class TestListingBulkActions:
+    def test_filtered_bulk_operations_reject_more_rows_than_hard_cap(self, settings):
+        settings.API_BULK_MAX_ITEMS = 1
+        tenant = make_tenant('bulk-hard-cap-co')
+        account = make_account(tenant)
+        first = make_listing(tenant, make_product(tenant), account)
+        second = make_listing(
+            tenant,
+            make_product_with_article(tenant, 'ART-CAP-2'),
+            account,
+        )
+
+        with pytest.raises(ListingBulkLimitExceeded):
+            ListingService.bulk_action(tenant, {
+                'action': 'update_placement',
+                'account_id': account.pk,
+                'address_override': 'Москва',
+            })
+        with pytest.raises(ListingBulkLimitExceeded):
+            ListingService.bulk_update_placement(
+                tenant,
+                {'account_id': account.pk},
+                {'address_override': 'Москва'},
+            )
+
+        first.refresh_from_db()
+        second.refresh_from_db()
+        assert first.address_override == ''
+        assert second.address_override == ''
+
     def test_bulk_update_placement_updates_db_and_logs(self):
         tenant = make_tenant('bulk-placement-action-co')
         account = make_account(tenant)

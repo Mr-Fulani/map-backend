@@ -2,9 +2,11 @@
 from __future__ import annotations
 
 import requests
+from django.conf import settings
 from django.db import transaction
 from django.utils.timezone import now
 
+from apps.core.http_responses import bounded_http_request
 from apps.marketplaces.adapters.avito.adapter import AVITO_API_BASE, AvitoAdapter
 from apps.marketplaces.models import AvitoBrandCatalog, MarketplaceAccount
 
@@ -23,10 +25,12 @@ def fetch_avito_brands(account: MarketplaceAccount | None = None) -> list[str]:
     if account is None:
         raise BrandCatalogSyncError('Нет активного аккаунта Avito для запроса API')
     token = AvitoAdapter(account)._auth.get_token(account)
-    response = requests.get(
+    response = bounded_http_request(
+        requests.get,
         f'{AVITO_API_BASE}/autoload/v1/user-docs/node/{SOURCE_NODE}/field/{BRAND_FIELD_ID}/values-json',
         headers={'Authorization': f'Bearer {token}'},
         timeout=60,
+        max_bytes=settings.AVITO_API_RESPONSE_MAX_BYTES,
     )
     response.raise_for_status()
     payload = response.json()

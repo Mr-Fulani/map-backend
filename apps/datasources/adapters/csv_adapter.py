@@ -1,11 +1,16 @@
 import csv
-import io
+import codecs
+import os
+import zipfile
+from collections.abc import Iterable, Iterator, Sequence
 from decimal import Decimal, InvalidOperation
+from itertools import chain, islice
 from pathlib import Path
 
 import openpyxl
 
 from apps.datasources.base import BaseDataSourceAdapter
+from apps.datasources.limits import datasource_limit
 
 
 class CSVValidationError(ValueError):
@@ -17,6 +22,9 @@ class CSVAdapter(BaseDataSourceAdapter):
     OPTIONAL_COLUMNS = ['brand', 'category', 'condition', 'oem_numbers', 'cross_numbers', 'description']
     MAX_HEADER_SCAN_ROWS = 50
     MAX_HEADER_DEPTH = 2
+    HEADER_DATA_SAMPLE_ROWS = 5
+    CSV_SNIFF_BYTES = 64 * 1024
+    READ_CHUNK_BYTES = 64 * 1024
 
     def fetch_changes(self, since=None, limit=500, offset=0) -> list[dict]:
         raise NotImplementedError('CSVAdapter использует process_uploaded_file()')
@@ -41,6 +49,7 @@ class CSVAdapter(BaseDataSourceAdapter):
 
     def _read_rows(self, file_path: str) -> list[dict]:
         """Выбирает парсер по расширению; неподдерживаемый формат → понятная ошибка (а не 500)."""
+        self._validate_file_size(file_path)
         suffix = Path(file_path).suffix.lower()
         if suffix == '.xlsx':
             return self._read_xlsx(file_path)
@@ -52,22 +61,44 @@ class CSVAdapter(BaseDataSourceAdapter):
             f'Формат "{suffix}" не поддерживается. Загрузите файл .csv, .xls или .xlsx.'
         )
 
-    def _read_csv(self, file_path: str) -> list[dict]:
-        with open(file_path, 'rb') as f:
-            raw = f.read()
-        text = None
-        for encoding in ('utf-8-sig', 'cp1251'):
-            try:
-                text = raw.decode(encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-        if text is None:
+    @staticmethod
+    def _validate_file_size(file_path: str) -> None:
+        max_bytes = datasource_limit('DATASOURCE_UPLOAD_MAX_BYTES')
+        try:
+            file_size = os.path.getsize(file_path)
+        except OSError as exc:
+            raise CSVValidationError('Не удалось прочитать загруженный файл.') from exc
+        if file_size > max_bytes:
             raise CSVValidationError(
-                'Не удалось распознать кодировку файла. Сохраните CSV в UTF-8 или Windows-1251.'
+                'Размер файла превышает допустимый лимит '
+                f'{max_bytes} байт.'
             )
-        delimiter = self._detect_delimiter(text)
-        return self._rows_to_dicts(list(csv.reader(io.StringIO(text), delimiter=delimiter)))
+
+    def _read_csv(self, file_path: str) -> list[dict]:
+        encoding = self._detect_csv_encoding(file_path)
+        try:
+            with open(file_path, encoding=encoding, newline='') as source:
+                sample = source.read(self.CSV_SNIFF_BYTES)
+                source.seek(0)
+                reader = csv.reader(
+                    source,
+                    delimiter=self._detect_delimiter(sample),
+                    strict=True,
+                )
+                return self._rows_to_dicts(reader)
+        except (csv.Error, UnicodeError) as exc:
+            raise CSVValidationError('CSV повреждён или имеет некорректный формат.') from exc
+
+    def _detect_csv_encoding(self, file_path: str) -> str:
+        decoder = codecs.getincrementaldecoder('utf-8-sig')()
+        try:
+            with open(file_path, 'rb') as source:
+                while chunk := source.read(self.READ_CHUNK_BYTES):
+                    decoder.decode(chunk, final=False)
+                decoder.decode(b'', final=True)
+        except UnicodeDecodeError:
+            return 'cp1251'
+        return 'utf-8-sig'
 
     @staticmethod
     def _detect_delimiter(text: str) -> str:
@@ -81,17 +112,57 @@ class CSVAdapter(BaseDataSourceAdapter):
             return max(counts, key=counts.get) if any(counts.values()) else ','
 
     def _read_xlsx(self, file_path: str) -> list[dict]:
+        self._validate_xlsx_archive(file_path)
         try:
-            wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
+            wb = openpyxl.load_workbook(
+                file_path,
+                read_only=True,
+                data_only=True,
+                keep_links=False,
+            )
         except Exception as exc:
             raise CSVValidationError(
                 'Файл повреждён или не является настоящим .xlsx. '
                 'Пересохраните его в Excel как «Книга Excel (.xlsx)».'
             ) from exc
-        ws = wb.active
-        rows = list(ws.iter_rows(values_only=True))
-        wb.close()
-        return self._rows_to_dicts(rows)
+        try:
+            ws = wb.active
+            self._validate_sheet_dimensions(ws.max_row, ws.max_column)
+            return self._rows_to_dicts(ws.iter_rows(values_only=True))
+        finally:
+            wb.close()
+
+    @staticmethod
+    def _validate_xlsx_archive(file_path: str) -> None:
+        max_expanded_bytes = datasource_limit(
+            'DATASOURCE_XLSX_MAX_UNCOMPRESSED_BYTES',
+        )
+        max_entries = datasource_limit('DATASOURCE_XLSX_MAX_ARCHIVE_ENTRIES')
+        try:
+            with zipfile.ZipFile(file_path) as archive:
+                expanded_bytes = 0
+                members = archive.infolist()
+                if len(members) > max_entries:
+                    raise CSVValidationError(
+                        'Количество файлов внутри .xlsx превышает допустимый лимит '
+                        f'{max_entries}.',
+                    )
+                for member in members:
+                    if member.flag_bits & 0x1:
+                        raise CSVValidationError('Зашифрованные .xlsx файлы не поддерживаются.')
+                    expanded_bytes += member.file_size
+                    if expanded_bytes > max_expanded_bytes:
+                        raise CSVValidationError(
+                            'Распакованный размер .xlsx превышает допустимый лимит '
+                            f'{max_expanded_bytes} байт.'
+                        )
+        except CSVValidationError:
+            raise
+        except (OSError, zipfile.BadZipFile) as exc:
+            raise CSVValidationError(
+                'Файл повреждён или не является настоящим .xlsx. '
+                'Пересохраните его в Excel как «Книга Excel (.xlsx)».'
+            ) from exc
 
     def _read_xls(self, file_path: str) -> list[dict]:
         try:
@@ -106,26 +177,93 @@ class CSVAdapter(BaseDataSourceAdapter):
                 'Пересохраните его в Excel как «Книга Excel 97-2003 (.xls)».'
             ) from exc
         sheet = wb.sheet_by_index(0)
-        rows = []
-        for row_idx in range(sheet.nrows):
-            row = []
-            for col_idx in range(sheet.ncols):
-                value = sheet.cell_value(row_idx, col_idx)
-                # xlrd отдаёт все числа как float; целые приводим к int (12345.0 → 12345),
-                # чтобы артикулы/количества совпадали с поведением .xlsx и CSV.
-                if isinstance(value, float) and value.is_integer():
-                    value = int(value)
-                row.append(value)
-            rows.append(tuple(row))
-        return self._rows_to_dicts(rows)
+        self._validate_sheet_dimensions(sheet.nrows, sheet.ncols)
 
-    def _rows_to_dicts(self, rows: list[tuple]) -> list[dict]:
-        if not rows:
+        def iter_rows() -> Iterator[tuple]:
+            for row_idx in range(sheet.nrows):
+                row = []
+                for col_idx in range(sheet.ncols):
+                    value = sheet.cell_value(row_idx, col_idx)
+                    # xlrd отдаёт все числа как float; целые приводим к int
+                    # (12345.0 → 12345), чтобы артикулы/количества совпадали
+                    # с поведением .xlsx и CSV.
+                    if isinstance(value, float) and value.is_integer():
+                        value = int(value)
+                    row.append(value)
+                yield tuple(row)
+
+        try:
+            return self._rows_to_dicts(iter_rows())
+        finally:
+            release_resources = getattr(wb, 'release_resources', None)
+            if release_resources is not None:
+                release_resources()
+
+    @staticmethod
+    def _validate_sheet_dimensions(row_count: int | None, column_count: int | None) -> None:
+        """Reject sparse sheets whose declared range would allocate giant rows."""
+        max_rows = datasource_limit('DATASOURCE_IMPORT_MAX_ROWS')
+        max_columns = datasource_limit('DATASOURCE_IMPORT_MAX_COLUMNS')
+        max_cells = datasource_limit('DATASOURCE_IMPORT_MAX_CELLS')
+        rows = max(0, int(row_count or 0))
+        columns = max(0, int(column_count or 0))
+        if rows > max_rows:
+            raise CSVValidationError(
+                'Количество строк превышает допустимый лимит '
+                f'{max_rows}.'
+            )
+        if columns > max_columns:
+            raise CSVValidationError(
+                'Количество колонок превышает допустимый лимит '
+                f'{max_columns}.'
+            )
+        if rows and columns > max_cells // rows:
+            raise CSVValidationError(
+                'Количество ячеек в заявленном диапазоне листа превышает лимит '
+                f'{max_cells} ячеек.'
+            )
+
+    def _iter_limited_rows(
+        self,
+        rows: Iterable[Sequence],
+    ) -> Iterator[tuple]:
+        max_rows = datasource_limit('DATASOURCE_IMPORT_MAX_ROWS')
+        max_columns = datasource_limit('DATASOURCE_IMPORT_MAX_COLUMNS')
+        max_cells = datasource_limit('DATASOURCE_IMPORT_MAX_CELLS')
+        total_cells = 0
+        for row_number, source_row in enumerate(rows, start=1):
+            if row_number > max_rows:
+                raise CSVValidationError(
+                    'Количество строк превышает допустимый лимит '
+                    f'{max_rows}.'
+                )
+            row = tuple(source_row)
+            if len(row) > max_columns:
+                raise CSVValidationError(
+                    'Количество колонок превышает допустимый лимит '
+                    f'{max_columns}.',
+                )
+            total_cells += len(row)
+            if total_cells > max_cells:
+                raise CSVValidationError(
+                    'Количество ячеек превышает допустимый лимит '
+                    f'{max_cells}.'
+                )
+            yield row
+
+    def _rows_to_dicts(self, rows: Iterable[Sequence]) -> list[dict]:
+        row_iterator = iter(self._iter_limited_rows(rows))
+        buffered_rows = list(islice(
+            row_iterator,
+            self.MAX_HEADER_SCAN_ROWS + self.MAX_HEADER_DEPTH + self.HEADER_DATA_SAMPLE_ROWS,
+        ))
+        if not buffered_rows:
             return []
-        header_start, header_depth, headers = self._detect_header(rows)
+        header_start, header_depth, headers = self._detect_header(buffered_rows)
         result = []
         last_group_values = {}
-        for row in rows[header_start + header_depth:]:
+        data_rows = chain(buffered_rows[header_start + header_depth:], row_iterator)
+        for row in data_rows:
             row_dict = {}
             has_any_value = False
             for i, header in enumerate(headers):

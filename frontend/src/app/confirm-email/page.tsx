@@ -1,7 +1,6 @@
 'use client';
 
-import { Suspense, useEffect, useState } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { profileApi } from '@/lib/api';
 import { CheckCircle2, XCircle, Loader2 } from 'lucide-react';
@@ -10,12 +9,17 @@ import { Button } from '@/components/ui/button';
 type State = 'loading' | 'success' | 'error';
 
 function ConfirmEmailContent() {
-  const searchParams = useSearchParams();
   const [state, setState] = useState<State>('loading');
   const [errorMessage, setErrorMessage] = useState('');
+  const fragmentConsumed = useRef(false);
 
-  useEffect(() => {
-    const token = searchParams.get('token') ?? '';
+  useLayoutEffect(() => {
+    if (fragmentConsumed.current) return;
+    fragmentConsumed.current = true;
+    const currentUrl = new URL(window.location.href);
+    const fragment = new URLSearchParams(currentUrl.hash.replace(/^#/, ''));
+    const token = fragment.get('token') ?? '';
+    window.history.replaceState(window.history.state, '', currentUrl.pathname);
     if (!token) {
       setState('error');
       setErrorMessage('Токен не найден. Проверьте ссылку из письма.');
@@ -29,7 +33,7 @@ function ConfirmEmailContent() {
         setErrorMessage(msg ?? 'Ошибка подтверждения. Попробуйте запросить смену email заново.');
         setState('error');
       });
-  }, [searchParams]);
+  }, []);
 
   return (
     <>
@@ -71,14 +75,7 @@ export default function ConfirmEmailPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <div className="w-full max-w-md rounded-xl border bg-card p-8 text-center shadow-sm">
-        <Suspense fallback={
-          <>
-            <Loader2 className="mx-auto mb-4 h-12 w-12 animate-spin text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">Загрузка...</p>
-          </>
-        }>
-          <ConfirmEmailContent />
-        </Suspense>
+        <ConfirmEmailContent />
       </div>
     </div>
   );

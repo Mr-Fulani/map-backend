@@ -71,6 +71,10 @@ class TenantJWTAuthentication(JWTAuthentication):
 
         user, validated_token = result
         tenant_id = validated_token.get('tenant_id')
+        token_auth_version = validated_token.get('auth_version')
+
+        if token_auth_version != user.auth_version:
+            raise AuthenticationFailed('Сессия отозвана. Войдите снова.')
 
         from apps.tenants.models import TenantUser
 
