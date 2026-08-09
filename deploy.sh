@@ -133,7 +133,9 @@ wait_for_service() {
         echo "    ${service}: ${health/none/running}"
         return 0
       fi
-      if [[ "$state" == "exited" || "$state" == "dead" || "$health" == "unhealthy" ]]; then
+      # A failed early health probe is recoverable: Docker can move a service
+      # from unhealthy back to healthy after the process finishes starting.
+      if [[ "$state" == "exited" || "$state" == "dead" ]]; then
         fail "сервис ${service} перешёл в состояние state=${state}, health=${health}."
         return 1
       fi

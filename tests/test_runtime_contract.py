@@ -458,7 +458,11 @@ def test_edge_proxy_uses_read_only_config_and_sanitized_logs():
     assert 'strip_query_terms on' in SQUID_CONFIG
     assert 'httpd_suppress_version_string on' in SQUID_CONFIG
     assert 'http_access deny manager' in SQUID_CONFIG
+    assert 'acl manager proto cache_object' not in SQUID_CONFIG
+    assert 'localhost .localhost' not in SQUID_CONFIG
     assert 'logformat safe_access' in SQUID_CONFIG
+    assert 'access_log /var/log/squid/access.log safe_access' in SQUID_CONFIG
+    assert 'cache_log /var/log/squid/cache.log' in SQUID_CONFIG
     assert '%>rd:%>rP' in SQUID_CONFIG
     assert '%ru' not in SQUID_CONFIG
     assert '%rp' not in SQUID_CONFIG
