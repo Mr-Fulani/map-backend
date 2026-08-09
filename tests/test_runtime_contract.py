@@ -217,6 +217,8 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
         dockerfiles['frontend']
     )
     assert '\nUSER node\n' in frontend_runner
+    assert 'rm -rf /usr/local/lib/node_modules/npm' in frontend_runner
+    assert 'rm -f /usr/local/bin/npm /usr/local/bin/npx' in frontend_runner
     assert '--chown=node:node' in frontend_runner
     assert '/app/.next/standalone ./' in frontend_runner
     assert 'CMD ["node", "server.js"]' in frontend_runner
