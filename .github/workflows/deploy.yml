@@ -1,19 +1,51 @@
 name: Deploy
 
 on:
-  push:
-    branches: [main]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
     # Автодеплой включается repo-переменной PROD_DEPLOY_ENABLED=true
-    # (плюс секреты PROD_HOST/PROD_USER/PROD_SSH_KEY). Контекст secrets
-    # в job-level if недопустим — из-за этого воркфлоу падал на каждом пуше.
-    if: ${{ vars.PROD_DEPLOY_ENABLED == 'true' }}
+    # и выполняется только после успешного CI для push в main. Защиту и
+    # обязательных reviewers следует настроить для GitHub environment production.
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        vars.PROD_DEPLOY_ENABLED == 'true'
+      }}
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Проверить deploy-настройки
+        env:
+          DEPLOY_SHA: ${{ github.event.workflow_run.head_sha }}
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+          PROD_HOST_FINGERPRINT: ${{ secrets.PROD_HOST_FINGERPRINT }}
+        run: |
+          test -n "$PROD_HOST"
+          test -n "$PROD_USER"
+          test -n "$PROD_SSH_KEY"
+          test -n "$PROD_HOST_FINGERPRINT"
+          case "$DEPLOY_SHA" in
+            ''|*[!0-9a-f]*) echo "Некорректный commit SHA" >&2; exit 1 ;;
+          esac
+          test "${#DEPLOY_SHA}" -eq 40
 
       - name: Деплой на продакшн-сервер
         uses: appleboy/ssh-action@v1.0.3
@@ -21,6 +53,14 @@ jobs:
           host: ${{ secrets.PROD_HOST }}
           username: ${{ secrets.PROD_USER }}
           key: ${{ secrets.PROD_SSH_KEY }}
+          fingerprint: ${{ secrets.PROD_HOST_FINGERPRINT }}
+          command_timeout: 30m
           script: |
+            set -eu
             cd /opt/saas_poster
-            ./deploy.sh
+            target_sha='${{ github.event.workflow_run.head_sha }}'
+            git fetch --no-tags origin main
+            git cat-file -e "${target_sha}^{commit}"
+            git merge-base --is-ancestor "$target_sha" origin/main
+            git checkout --detach "$target_sha"
+            ./deploy.sh "$target_sha"

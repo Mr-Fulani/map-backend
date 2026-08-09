@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Деплой на продакшн: git pull → очистка → Docker (prod) → миграции → collectstatic
-set -e
+# Деплой на продакшн для конкретного commit SHA, прошедшего CI.
+set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
+TARGET_SHA="${1:-}"
 COMPOSE="docker compose -f docker-compose.prod.yml"
 LOG_TAIL="${PROD_LOG_TAIL:-200}"
 COMPOSE_LOG_SERVICES=(db redis egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
@@ -14,9 +15,26 @@ show_logs() {
   $COMPOSE logs --tail="$LOG_TAIL" "${COMPOSE_LOG_SERVICES[@]}" || true
 }
 
-# ── 1. Подтянуть код ──────────────────────────────────────────────────────────
-echo "==> git pull..."
-git pull origin main
+# ── 1. Переключиться на проверенный CI commit ─────────────────────────────────
+if [[ ! "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "ОШИБКА: deploy.sh ожидает полный 40-символьный commit SHA." >&2
+  exit 2
+fi
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  echo "ОШИБКА: на production-сервере есть незакоммиченные tracked-изменения." >&2
+  exit 2
+fi
+
+echo "==> Получение и проверка commit ${TARGET_SHA}..."
+git fetch --no-tags origin main
+git cat-file -e "${TARGET_SHA}^{commit}"
+if ! git merge-base --is-ancestor "$TARGET_SHA" origin/main; then
+  echo "ОШИБКА: commit ${TARGET_SHA} не принадлежит актуальной ветке origin/main." >&2
+  exit 2
+fi
+git checkout --detach "$TARGET_SHA"
+test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
 echo "==> Проверка production-конфигурации и обязательных секретов..."
 $COMPOSE config --quiet

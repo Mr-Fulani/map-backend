@@ -78,6 +78,19 @@ endpoint-ы, необходимые Avito, AI-провайдерам, S3 и tena
 
 ## Deployment
 
-`deploy.sh` выполняет `docker compose config --quiet` до пересборки. CI отклоняет
-изменения при branch coverage ниже 70%. После изменения
-секретов сначала выполните ту же команду вручную и только затем запускайте deploy.
+Workflow `Deploy` запускается событием `workflow_run` только после успешного CI для
+`push` в `main` и передаёт на сервер точный 40-символьный commit SHA. `deploy.sh`
+проверяет принадлежность SHA ветке `origin/main` и разворачивает именно этот commit,
+а не текущее состояние ветки на момент подключения к серверу.
+
+В GitHub необходимо создать защищённое environment `production`, включить required
+reviewers и определить:
+
+- repository variable `PROD_DEPLOY_ENABLED=true`;
+- secrets `PROD_HOST`, `PROD_USER`, `PROD_SSH_KEY`;
+- secret `PROD_HOST_FINGERPRINT` с SHA256 fingerprint SSH host key.
+
+Деплои сериализованы через concurrency group `production-deploy`. `deploy.sh`
+выполняет `docker compose config --quiet` до пересборки, а CI отклоняет изменения
+при branch coverage ниже 70%. После изменения production-секретов сначала
+проверьте конфигурацию вручную и только затем разрешайте deploy в environment.

@@ -122,7 +122,7 @@ Trial: 14 дней бесплатно на плане Business. Скидка 20%
 ### Инфраструктура
 - **Docker** + **docker-compose** (django, postgres, redis, celery_worker, celery_beat)
 - **Nginx** — reverse proxy, rate limiting
-- **GitHub Actions** — CI (pytest, flake8, строгая проверка OpenAPI) + CD (деплой при пуше в main)
+- **GitHub Actions** — CI (pytest, flake8, строгая проверка OpenAPI) + CD только после успешного CI для main
 - **Timeweb Cloud** — хостинг
 
 ---
@@ -317,7 +317,7 @@ saas_poster/
 - [x] Управление webhook endpoint-ами и безопасная тестовая отправка
 - [x] Transactional webhook outbox, HMAC-подпись, retry и аудит доставок
 - [x] Soft-delete и автоматическая retention-очистка критичных сущностей
-- [x] CI/CD: GitHub Actions (lint + тесты + OpenAPI без предупреждений + деплой)
+- [x] CI/CD: GitHub Actions (lint + тесты + OpenAPI без предупреждений + gated deploy проверенного commit SHA)
 
 ### 🚧 В планах (Phase 3)
 
