@@ -167,6 +167,7 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
         'backend': (ROOT / 'Dockerfile').read_text(),
         'frontend': (ROOT / 'frontend/Dockerfile').read_text(),
         'backup': (ROOT / 'backup/Dockerfile').read_text(),
+        'egress_proxy': (ROOT / 'egress-proxy/Dockerfile').read_text(),
     }
 
     for name, dockerfile in dockerfiles.items():
@@ -200,6 +201,14 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
         'FROM postgres:16.14-alpine@sha256:'
         '57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777'
     )
+    assert dockerfiles['egress_proxy'].splitlines()[0] == (
+        'FROM ubuntu/squid:6.6-24.04_edge@sha256:'
+        '8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
+    )
+    assert '--only-upgrade' in dockerfiles['egress_proxy']
+    assert 'for package in libssl3t64 openssl' in dockerfiles['egress_proxy']
+    assert 'dpkg --compare-versions' in dockerfiles['egress_proxy']
+    assert 'ge 3.0.13-0ubuntu3.11' in dockerfiles['egress_proxy']
     assert '\nUSER app\n' in dockerfiles['backend']
     assert '/usr/sbin/nologin' in dockerfiles['backend']
     frontend_runner = dockerfiles['frontend'].split(' AS runner', 1)[1]
@@ -364,8 +373,9 @@ def test_ci_scans_every_unique_production_image_and_its_service_images_match_ci(
     assert ci_services['db']['image'] == COMPOSE['services']['db']['image']
     assert ci_services['redis']['image'] == COMPOSE['services']['redis']['image']
     assert (
-        RESTORE_COMPOSE['services']['egress_proxy']['image']
-        == COMPOSE['services']['egress_proxy']['image']
+        RESTORE_COMPOSE['services']['egress_proxy']['build']
+        == COMPOSE['services']['egress_proxy']['build']
+        == {'context': '.', 'dockerfile': 'egress-proxy/Dockerfile'}
     )
     assert 'declare -A scanned_image_ids=()' in CI_WORKFLOW
     assert 'config --images restore' in CI_WORKFLOW
@@ -657,6 +667,7 @@ def test_restore_runtime_is_separate_ephemeral_and_read_only():
     assert 'flock -n 9' in wrapper
     assert 'down --volumes --remove-orphans' in wrapper
     assert 'restore cleanup failed' in wrapper
+    assert 'build restore egress_proxy' in wrapper
     assert 'run --rm restore' in wrapper
 
 

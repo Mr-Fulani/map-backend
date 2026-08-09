@@ -90,7 +90,8 @@ COMPOSE=(
   -f "$COMPOSE_FILE"
 )
 BUILD_SERVICES=(django celery_worker celery_beat celery_worker_images frontend backup)
-APPLICATION_SERVICES=(django celery_worker celery_beat celery_worker_images frontend nginx)
+ROLLBACK_SERVICES=(egress_proxy "${BUILD_SERVICES[@]}")
+APPLICATION_SERVICES=(egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
 DRAIN_SERVICES=(celery_beat celery_worker celery_worker_images django frontend)
 HEALTH_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
 LOG_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
@@ -149,7 +150,7 @@ wait_for_service() {
 capture_rollback_images() {
   local service container_id image_id image_name
 
-  for service in "${BUILD_SERVICES[@]}"; do
+  for service in "${ROLLBACK_SERVICES[@]}"; do
     container_id="$("${COMPOSE[@]}" ps -q "$service" 2>/dev/null || true)"
     [[ -n "$container_id" ]] || continue
 
@@ -177,7 +178,7 @@ rollback_deployment() {
     echo "Оставьте writers остановленными, проверьте django_migrations/backup и выполните forward recovery по runbook." >&2
   elif [[ "$SERVICES_CHANGED" == "true" && "$PROD_ROLLBACK_ENABLED" == "true" && "$PREVIOUS_SHA" != "$TARGET_SHA" && "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]]; then
     echo "==> Возврат application-сервисов на ${PREVIOUS_SHA}..."
-    for service in "${BUILD_SERVICES[@]}"; do
+    for service in "${ROLLBACK_SERVICES[@]}"; do
       if [[ -n "${ROLLBACK_IMAGE_IDS[$service]:-}" && -n "${ROLLBACK_IMAGE_NAMES[$service]:-}" ]]; then
         docker image tag "${ROLLBACK_IMAGE_IDS[$service]}" "${ROLLBACK_IMAGE_NAMES[$service]}" || rollback_failed=true
       fi
@@ -308,6 +309,8 @@ echo "==> Сохранение образов текущего release для ro
 capture_rollback_images
 
 DEPLOY_PHASE="infrastructure readiness"
+echo "==> Сборка patched egress proxy до изменения работающих сервисов..."
+"${COMPOSE[@]}" build --pull egress_proxy
 SERVICES_CHANGED=true
 echo "==> Запуск инфраструктурных зависимостей..."
 "${COMPOSE[@]}" up -d --no-build db redis redis_broker egress_proxy

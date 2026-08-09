@@ -216,9 +216,10 @@ jobs:
           docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.prod.yml --profile ops config --quiet
           docker compose -f docker-compose.prod.yml --profile ops build \
-            django celery_worker celery_beat celery_worker_images frontend backup
+            django celery_worker celery_beat celery_worker_images frontend backup \
+            egress_proxy
           docker compose -f docker-compose.prod.yml pull \
-            db redis redis_broker egress_proxy nginx
+            db redis redis_broker nginx
           docker compose -f docker-compose.prod.yml up --detach egress_proxy
           egress_ready=false
           for attempt in $(seq 1 30); do
@@ -249,7 +250,8 @@ jobs:
           install -m 600 /dev/null /tmp/backup-age-identity.txt
           sed -i 's|^RESTORE_AGE_IDENTITY_HOST_FILE=.*|RESTORE_AGE_IDENTITY_HOST_FILE=/tmp/backup-age-identity.txt|' .restore.env
           docker compose --env-file .restore.env -f docker-compose.restore.yml config --quiet
-          docker compose --env-file .restore.env -f docker-compose.restore.yml build restore
+          docker compose --env-file .restore.env -f docker-compose.restore.yml \
+            build restore egress_proxy
           scan_services=(
             django
             celery_worker

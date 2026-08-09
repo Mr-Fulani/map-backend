@@ -154,7 +154,19 @@ def test_deploy_has_readiness_lock_and_controlled_rollback():
     assert 'wait_for_service' in DEPLOY_SCRIPT
     assert 'docker image tag' in DEPLOY_SCRIPT
     assert '--force-recreate "${APPLICATION_SERVICES[@]}"' in DEPLOY_SCRIPT
+    assert 'ROLLBACK_SERVICES=(egress_proxy "${BUILD_SERVICES[@]}")' in DEPLOY_SCRIPT
+    assert 'APPLICATION_SERVICES=(egress_proxy django ' in DEPLOY_SCRIPT
     assert 'MIGRATIONS_APPLIED' in DEPLOY_SCRIPT
+
+
+def test_patched_egress_is_built_before_runtime_is_changed():
+    build_proxy = DEPLOY_SCRIPT.index('build --pull egress_proxy')
+    services_changed = DEPLOY_SCRIPT.index('SERVICES_CHANGED=true', build_proxy)
+    start_infrastructure = DEPLOY_SCRIPT.index(
+        'up -d --no-build db redis redis_broker egress_proxy',
+    )
+
+    assert build_proxy < services_changed < start_infrastructure
 
 
 def test_deploy_pins_the_production_compose_scope():

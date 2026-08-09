@@ -115,5 +115,5 @@ trap 'cleanup 143' TERM
 # the fixed plaintext workspace. The global lock guarantees no live run owns it.
 "${COMPOSE[@]}" down --volumes --remove-orphans
 "${COMPOSE[@]}" config --quiet
-"${COMPOSE[@]}" build restore
+"${COMPOSE[@]}" build restore egress_proxy
 "${COMPOSE[@]}" run --rm restore

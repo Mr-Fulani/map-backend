@@ -62,7 +62,9 @@ services:
     stop_grace_period: 5m
 
   egress_proxy:
-    image: ubuntu/squid:6.6-24.04_edge@sha256:8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c
+    build:
+      context: .
+      dockerfile: egress-proxy/Dockerfile
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
