@@ -176,14 +176,17 @@ class WebhookEndpointWriteSerializer(serializers.Serializer):
     def validate_url(self, value):
         from urllib.parse import urlsplit
 
-        from apps.core.url_security import UnsafePublicURL, resolve_public_http_url
+        from apps.core.url_security import (
+            UnsafePublicURL,
+            resolve_public_http_transport_url,
+        )
 
         if urlsplit(value).scheme.lower() != 'https':
             raise serializers.ValidationError(
                 'Webhook URL должен использовать HTTPS.',
             )
         try:
-            target = resolve_public_http_url(value)
+            target = resolve_public_http_transport_url(value)
         except UnsafePublicURL as exc:
             raise serializers.ValidationError(
                 'Webhook URL должен вести на публичный HTTPS-адрес.',
