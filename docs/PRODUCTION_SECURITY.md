@@ -11,9 +11,10 @@ Production-контур останавливает запуск при отсу�
   `CELERY_RESULT_BACKEND` и `COORDINATION_REDIS_URL` для durable Redis;
 - `FIELD_ENCRYPTION_KEYS` либо `FIELD_ENCRYPTION_KEY` с валидным Fernet-ключом;
 - `YC_S3_BUCKET`, `YC_S3_ACCESS_KEY` и `YC_S3_SECRET_KEY` для production media;
-- `YOOKASSA_SHOP_ID`, `YOOKASSA_SECRET_KEY` и
-  `BILLING_RETURN_URL_ALLOWED_ORIGINS`; production принимает только HTTPS origins,
-  фиксированный `https://api.yookassa.ru/v3` и `YOOKASSA_ALLOW_TEST_PAYMENTS=false`;
+- явный `BILLING_ENABLED=true|false` и `BILLING_RETURN_URL_ALLOWED_ORIGINS`;
+  при включённом billing обязательны `YOOKASSA_SHOP_ID` и
+  `YOOKASSA_SECRET_KEY`. Production принимает только HTTPS origins, фиксированный
+  `https://api.yookassa.ru/v3` и `YOOKASSA_ALLOW_TEST_PAYMENTS=false`;
 - `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, HTTPS
   `SITE_URL` и `FRONTEND_URL`;
 - `RESEND_API_KEY` с domain-scoped Sending access, валидный plain-email
@@ -168,8 +169,13 @@ YooKassa `return_url` принимается только для origin из
 `BILLING_RETURN_URL_ALLOWED_ORIGINS`; в production разрешены только HTTPS origins.
 Авторитетный объект Payment обязан содержать `test=false`; тестовые платежи не
 активируют подписку/AI-баланс, а `YOOKASSA_ALLOW_TEST_PAYMENTS` запрещён production-настройками.
-Production также требует `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY`, фиксирует API
-на `https://api.yookassa.ru/v3`, запрещает сжатые ответы и ограничивает JSON 4 MiB.
+При `BILLING_ENABLED=true` production требует
+`YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY`, фиксирует API на
+`https://api.yookassa.ru/v3`, запрещает сжатые ответы и ограничивает JSON 4 MiB.
+При `BILLING_ENABLED=false` checkout, AI top-up, webhook, provider client и
+reconciliation закрыты до обращения к БД или сети; read-only billing endpoints
+остаются доступны. Deploy по-прежнему проверяет public HTTPS transport
+неаутентифицированным side-effect-free GET.
 Создание Payment/Refund и авторитетные GET выполняются единым прямым HTTP-клиентом:
 SDK YooKassa не используется, redirects отключены, Basic Auth передаётся только на
 фиксированный HTTPS origin, заданы connect/read timeouts и `Accept-Encoding: identity`.

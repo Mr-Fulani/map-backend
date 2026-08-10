@@ -521,6 +521,10 @@ def reconcile_yookassa_billing(
     invoice_ids: list[int] | None = None,
 ) -> dict[str, int]:
     """Durably reconciles failed events and incomplete checkout/payment intents."""
+    if not settings.BILLING_ENABLED:
+        result = ReconciliationStats().to_dict()
+        logger.info('YooKassa reconciliation skipped: billing is disabled.')
+        return result
     batch_limit = min(
         max(1, int(limit or settings.YOOKASSA_RECONCILIATION_BATCH_SIZE)),
         1000,

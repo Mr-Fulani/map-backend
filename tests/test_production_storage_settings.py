@@ -45,6 +45,7 @@ def _production_environment() -> dict[str, str]:
         'SITE_URL': 'https://api.example.test',
         'FRONTEND_URL': 'https://app.example.test',
         'BILLING_RETURN_URL_ALLOWED_ORIGINS': 'https://app.example.test',
+        'BILLING_ENABLED': 'true',
         'YOOKASSA_SHOP_ID': 'shop-id',
         'YOOKASSA_SECRET_KEY': 'payment-secret',
         'YOOKASSA_ALLOW_TEST_PAYMENTS': 'false',
@@ -56,6 +57,67 @@ def _production_environment() -> dict[str, str]:
         'EMAIL_HTTP_PROXY_URL': 'http://egress_proxy:3128',
         'PUBLIC_HTTP_PROXY_URL': 'http://egress_proxy:3128',
     }
+
+
+def test_production_allows_explicitly_disabled_billing_without_credentials():
+    environment = _production_environment()
+    environment['BILLING_ENABLED'] = 'false'
+    environment.pop('YOOKASSA_SHOP_ID')
+    environment.pop('YOOKASSA_SECRET_KEY')
+
+    command = (
+        'import config.settings.production as settings; '
+        'assert not settings.BILLING_ENABLED'
+    )
+    result = subprocess.run(
+        [sys.executable, '-c', command],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('missing_name', ('YOOKASSA_SHOP_ID', 'YOOKASSA_SECRET_KEY'))
+def test_production_enabled_billing_requires_provider_credentials(missing_name):
+    environment = _production_environment()
+    environment.pop(missing_name)
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert f'{missing_name} обязателен в production.' in result.stderr
+
+
+@pytest.mark.parametrize('value', ('', 'yes', '0', 'disabled'))
+def test_production_requires_explicit_boolean_billing_switch(value):
+    environment = _production_environment()
+    environment['BILLING_ENABLED'] = value
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'BILLING_ENABLED' in result.stderr
 
 
 @pytest.mark.parametrize(

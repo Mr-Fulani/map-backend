@@ -96,7 +96,7 @@ targets, если daemon занят чужим проектом.
       broker raw passwords различаются.
 - [ ] При первом переключении broker legacy queues/ETA tasks drained и только
       после этого установлен `PROD_BROKER_MIGRATION_CONFIRMED=true`.
-- [ ] В YooKassa зарегистрирован точный HTTPS endpoint
+- [ ] Если `BILLING_ENABLED=true`, в YooKassa зарегистрирован точный HTTPS endpoint
       `https://dodugir.com/api/v1/billing/webhook/yookassa/` для
       `payment.succeeded`, `payment.canceled`, `refund.succeeded`; подтверждена
       доставка событий без rejected/retry backlog.
@@ -124,7 +124,8 @@ targets, если daemon занят чужим проектом.
 - [ ] Deploy workflow получил тот же release SHA; устаревший workflow не
       разворачивается, если `main` уже указывает на другой commit.
 - [ ] Preflight, infrastructure readiness, image build, Django pre-deploy checks,
-      Redis `PING`, SMTP CONNECT/STARTTLS/login и public HTTPS/YooKassa GET из
+      Redis `PING`, SMTP CONNECT/STARTTLS/login и public HTTPS GET (с проверкой
+      YooKassa credentials только при `BILLING_ENABLED=true`) из
       нового image завершились до остановки ingress; SMTP check не отправлял
       письмо, public HTTP check не создавал и не изменял платёж.
 - [ ] Старые ingress/Beat/web/workers завершили graceful drain без SIGKILL и

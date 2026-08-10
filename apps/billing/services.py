@@ -35,6 +35,15 @@ class CheckoutConflictError(RuntimeError):
         )
 
 
+class BillingDisabledError(RuntimeError):
+    """Provider-backed billing mutations are disabled by the operator."""
+
+
+def _require_billing_enabled() -> None:
+    if not settings.BILLING_ENABLED:
+        raise BillingDisabledError('Онлайн-оплата временно отключена.')
+
+
 class CheckoutKeyLimitError(RuntimeError):
     """An active intent already has the maximum number of browser aliases."""
 
@@ -1178,6 +1187,7 @@ class BillingService:
         idempotency_key,
     ) -> str:
         """Creates or safely resumes one durable subscription checkout intent."""
+        _require_billing_enabled()
         _assert_checkout_transaction_boundary()
         client_key = BillingService._normalize_client_checkout_key(idempotency_key)
         payload_hash = _checkout_payload_hash({
@@ -1209,6 +1219,7 @@ class BillingService:
         idempotency_key,
     ) -> str:
         """Creates or safely resumes one durable AI top-up checkout intent."""
+        _require_billing_enabled()
         _assert_checkout_transaction_boundary()
         client_key = BillingService._normalize_client_checkout_key(idempotency_key)
         payload_hash = _checkout_payload_hash({

@@ -340,7 +340,7 @@ timeout --foreground --signal=TERM --kill-after=5s 60s \
   "${COMPOSE[@]}" run --rm --no-deps django \
     python manage.py check_email_connectivity
 
-echo "==> Проверка public HTTPS transport и YooKassa credentials..."
+echo "==> Проверка public HTTPS transport и, если billing включён, YooKassa credentials..."
 timeout --foreground --signal=TERM --kill-after=5s 60s \
   "${COMPOSE[@]}" run --rm --no-deps django \
     python manage.py check_public_http_connectivity

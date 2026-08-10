@@ -11,6 +11,7 @@ test('billing mutations stay blocked until subscription state is trustworthy', (
   assert.equal(canStartBillingMutation('loading'), false);
   assert.equal(canStartBillingMutation('error'), false);
   assert.equal(canStartBillingMutation('loaded'), true);
+  assert.equal(canStartBillingMutation('loaded', false), false);
 });
 
 

@@ -25,6 +25,15 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _required_bool_env(name: str) -> bool:
+    value = _required_env(name).lower()
+    if value not in {'true', 'false'}:
+        raise ImproperlyConfigured(
+            f'{name} должен быть явно задан как true или false.',
+        )
+    return value == 'true'
+
+
 def _is_https_origin(value: str) -> bool:
     if any(character.isspace() for character in value):
         return False
@@ -161,10 +170,12 @@ for origin_setting_name, allowed_origins in (
         raise ImproperlyConfigured(
             f'{origin_setting_name} должен включать FRONTEND_URL.',
         )
+BILLING_ENABLED = _required_bool_env('BILLING_ENABLED')
 if YOOKASSA_ALLOW_TEST_PAYMENTS:
     raise ImproperlyConfigured('YOOKASSA_ALLOW_TEST_PAYMENTS запрещён в production.')
-YOOKASSA_SHOP_ID = _required_env('YOOKASSA_SHOP_ID')
-YOOKASSA_SECRET_KEY = _required_env('YOOKASSA_SECRET_KEY')
+if BILLING_ENABLED:
+    YOOKASSA_SHOP_ID = _required_env('YOOKASSA_SHOP_ID')
+    YOOKASSA_SECRET_KEY = _required_env('YOOKASSA_SECRET_KEY')
 try:
     _yookassa_api_url = urlsplit(YOOKASSA_API_BASE_URL)
     _valid_yookassa_api_url = (

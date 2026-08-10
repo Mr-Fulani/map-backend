@@ -34,6 +34,11 @@ class YooKassaSnapshotError(ValueError):
     """Ответ YooKassa не содержит полный и непротиворечивый объект."""
 
 
+def _require_billing_enabled() -> None:
+    if not settings.BILLING_ENABLED:
+        raise YooKassaAPIError('Платёжный провайдер отключён оператором.')
+
+
 @dataclass(frozen=True, slots=True)
 class PaymentSnapshot:
     id: str
@@ -139,6 +144,7 @@ def _api_transport_settings() -> tuple[
     tuple[float, float],
     float,
 ]:
+    _require_billing_enabled()
     shop_id = settings.YOOKASSA_SHOP_ID
     secret_key = settings.YOOKASSA_SECRET_KEY
     if not shop_id or not secret_key:
