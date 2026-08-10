@@ -18,6 +18,7 @@ from backup.common import (
     json_bytes,
     load_json_body,
     notify_monitor_safely,
+    object_metadata_value,
     parse_utc,
     positive_int_env,
     postgres_environment,
@@ -277,7 +278,7 @@ def create_backup(settings: BackupSettings) -> dict:
             )
             if archive_head.get('ContentLength') != encrypted_size:
                 raise RuntimeError('Uploaded archive size differs from the local file')
-            if archive_head.get('Metadata', {}).get('sha256') != checksum:
+            if object_metadata_value(archive_head, 'sha256') != checksum:
                 raise RuntimeError('Uploaded archive checksum metadata is missing or invalid')
             archive_version_id = archive_head.get('VersionId')
             if not archive_version_id or archive_version_id == 'null':

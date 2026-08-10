@@ -7,6 +7,7 @@ from backup.common import (
     S3Settings,
     load_json_body,
     notify_monitor_safely,
+    object_metadata_value,
     parse_utc,
     required_env,
     utc_now,
@@ -65,7 +66,7 @@ def check_freshness(
     )
     if archive_head.get('ContentLength') != manifest['encrypted_size_bytes']:
         raise BackupConfigError('Encrypted archive size differs from the manifest')
-    metadata_checksum = archive_head.get('Metadata', {}).get('sha256')
+    metadata_checksum = object_metadata_value(archive_head, 'sha256')
     if metadata_checksum != manifest['sha256']:
         raise BackupConfigError('Encrypted archive metadata checksum differs from manifest')
 
