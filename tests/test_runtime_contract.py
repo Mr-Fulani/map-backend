@@ -525,7 +525,7 @@ def test_edge_proxy_uses_read_only_config_and_sanitized_logs():
     assert 'acl blocked_destinations dst ff00::/8' in SQUID_CONFIG
 
 
-def test_smtp_egress_is_fixed_to_sendpulse_submission_via_connect():
+def test_smtp_egress_is_fixed_to_resend_submission_via_connect():
     for name in ('django', 'celery_worker', 'celery_beat', 'celery_worker_images'):
         assert COMPOSE['services'][name]['environment']['EMAIL_HTTP_PROXY_URL'] == (
             'http://egress_proxy:3128'
@@ -534,12 +534,12 @@ def test_smtp_egress_is_fixed_to_sendpulse_submission_via_connect():
     assert 'acl SSL_ports port 443 587' in SQUID_CONFIG
     assert 'acl Safe_ports port 80 443 587' in SQUID_CONFIG
     assert 'acl smtp_submission_port port 587' in SQUID_CONFIG
-    assert 'acl sendpulse_smtp dstdomain smtp.sendpulse.com' in SQUID_CONFIG
+    assert 'acl platform_smtp dstdomain smtp.resend.com' in SQUID_CONFIG
     deny_non_connect = SQUID_CONFIG.index(
         'http_access deny smtp_submission_port !CONNECT'
     )
     deny_other_hosts = SQUID_CONFIG.index(
-        'http_access deny smtp_submission_port !sendpulse_smtp'
+        'http_access deny smtp_submission_port !platform_smtp'
     )
     allow = SQUID_CONFIG.index('http_access allow all')
     assert deny_non_connect < deny_other_hosts < allow

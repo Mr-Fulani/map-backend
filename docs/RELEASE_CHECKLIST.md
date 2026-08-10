@@ -82,9 +82,11 @@ targets, если daemon занят чужим проектом.
 - [ ] `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`,
       `SITE_URL`, `FRONTEND_URL`, `BILLING_RETURN_URL_ALLOWED_ORIGINS` и
       `PROD_SMOKE_URL` согласованы с текущим HTTPS origin.
-- [ ] SMTP настроен только как `smtp.sendpulse.com:587` через
-      `http://egress_proxy:3128`; login/password актуальны, а
-      `DEFAULT_FROM_EMAIL` является разрешённым plain email отправителя.
+- [ ] Platform SMTP настроен только как `smtp.resend.com:587` через
+      `http://egress_proxy:3128`; domain-scoped Sending key актуален, а
+      `DEFAULT_FROM_EMAIL` является plain email на `notify.dodugir.com`.
+- [ ] Platform credential не используется для tenant sender identities;
+      tenant mail требует отдельного verified domain и scoped/BYOK credential.
 - [ ] `PUBLIC_HTTP_PROXY_URL` равен строго `http://egress_proxy:3128`; application
       services находятся только во внутренней сети, а Squid `dst` ACL отклоняет
       private/loopback/link-local итоговые IP до общего allow.

@@ -29,7 +29,7 @@ def test_command_fails_closed_without_leaking_provider_or_credentials(
 ):
     connection = MagicMock()
     connection.open.side_effect = OSError(
-        'smtp.sendpulse.com login user@example.test password=provider-secret'
+        'smtp.resend.com login user@example.test password=provider-secret'
     )
     connection_factory.return_value = connection
 
@@ -37,7 +37,7 @@ def test_command_fails_closed_without_leaking_provider_or_credentials(
         check_email_connectivity.Command().handle()
 
     assert 'OSError' in str(error.value)
-    assert 'smtp.sendpulse.com' not in str(error.value)
+    assert 'smtp.resend.com' not in str(error.value)
     assert 'user@example.test' not in str(error.value)
     assert 'provider-secret' not in str(error.value)
     connection.close.assert_called_once_with()

@@ -78,17 +78,15 @@ SITE_URL = _required_https_origin('SITE_URL')
 FRONTEND_URL = _required_https_origin('FRONTEND_URL')
 
 EMAIL_BACKEND = 'apps.core.email_backend.HTTPProxySMTPEmailBackend'
-EMAIL_HOST = _required_env('SENDPULSE_SMTP_HOST')
-if EMAIL_HOST != 'smtp.sendpulse.com':
-    raise ImproperlyConfigured(
-        'SENDPULSE_SMTP_HOST в production должен быть smtp.sendpulse.com.',
-    )
+EMAIL_HOST = 'smtp.resend.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
 EMAIL_USE_SSL = False
 EMAIL_TIMEOUT = 10
-EMAIL_HOST_USER = _required_env('SENDPULSE_SMTP_LOGIN')
-EMAIL_HOST_PASSWORD = _required_env('SENDPULSE_SMTP_PASSWORD')
+EMAIL_HOST_USER = 'resend'
+EMAIL_HOST_PASSWORD = _required_env('RESEND_API_KEY')
+if not EMAIL_HOST_PASSWORD.startswith('re_') or len(EMAIL_HOST_PASSWORD) < 20:
+    raise ImproperlyConfigured('RESEND_API_KEY должен быть ключом Resend.')
 DEFAULT_FROM_EMAIL = _required_env('DEFAULT_FROM_EMAIL')
 try:
     _email_validator(DEFAULT_FROM_EMAIL)
@@ -96,6 +94,10 @@ except ValidationError as exc:
     raise ImproperlyConfigured(
         'DEFAULT_FROM_EMAIL должен быть корректным email без display name.',
     ) from exc
+if DEFAULT_FROM_EMAIL.rsplit('@', 1)[-1].lower() != 'notify.dodugir.com':
+    raise ImproperlyConfigured(
+        'DEFAULT_FROM_EMAIL должен принадлежать platform-домену notify.dodugir.com.',
+    )
 EMAIL_HTTP_PROXY_URL = _required_env('EMAIL_HTTP_PROXY_URL')
 if EMAIL_HTTP_PROXY_URL != 'http://egress_proxy:3128':
     raise ImproperlyConfigured(

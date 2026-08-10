@@ -51,10 +51,8 @@ def _production_environment() -> dict[str, str]:
         'YC_S3_BUCKET': 'media-production',
         'YC_S3_ACCESS_KEY': 'media-access',
         'YC_S3_SECRET_KEY': 'media-secret',
-        'SENDPULSE_SMTP_HOST': 'smtp.sendpulse.com',
-        'SENDPULSE_SMTP_LOGIN': 'smtp-user',
-        'SENDPULSE_SMTP_PASSWORD': 'smtp-secret',
-        'DEFAULT_FROM_EMAIL': 'noreply@example.test',
+        'RESEND_API_KEY': 're_ci-only-provider-secret',
+        'DEFAULT_FROM_EMAIL': 'noreply@notify.dodugir.com',
         'EMAIL_HTTP_PROXY_URL': 'http://egress_proxy:3128',
         'PUBLIC_HTTP_PROXY_URL': 'http://egress_proxy:3128',
     }
@@ -165,9 +163,7 @@ def test_production_rejects_redis_url_and_server_password_mismatch(
     'missing_name',
     (
         'CORS_ALLOWED_ORIGINS',
-        'SENDPULSE_SMTP_HOST',
-        'SENDPULSE_SMTP_LOGIN',
-        'SENDPULSE_SMTP_PASSWORD',
+        'RESEND_API_KEY',
         'DEFAULT_FROM_EMAIL',
         'EMAIL_HTTP_PROXY_URL',
     ),
@@ -263,12 +259,12 @@ def test_production_requires_frontend_in_browser_and_checkout_allowlists(
 @pytest.mark.parametrize(
     ('setting_name', 'invalid_value'),
     (
-        ('SENDPULSE_SMTP_HOST', 'smtp.attacker.example'),
+        ('RESEND_API_KEY', 'not-a-resend-key'),
         ('EMAIL_HTTP_PROXY_URL', 'http://attacker.example:3128'),
         ('EMAIL_HTTP_PROXY_URL', 'http://user:secret@egress_proxy:3128'),
     ),
 )
-def test_production_rejects_configurable_smtp_destinations(
+def test_production_rejects_invalid_smtp_credentials_or_proxy(
     setting_name,
     invalid_value,
 ):
@@ -295,6 +291,8 @@ def test_production_rejects_configurable_smtp_destinations(
         'not-an-email',
         'MAP <noreply@example.test>',
         'noreply@example.test\nBcc: attacker@example.test',
+        'noreply@dodugir.com',
+        'noreply@tenant.example',
     ),
 )
 def test_production_rejects_invalid_default_from_email(invalid_sender):
@@ -319,11 +317,12 @@ def test_production_uses_fixed_starttls_backend_and_bounded_timeout():
     assertions = """
 from config.settings import production as settings
 assert settings.EMAIL_BACKEND == 'apps.core.email_backend.HTTPProxySMTPEmailBackend'
-assert settings.EMAIL_HOST == 'smtp.sendpulse.com'
+assert settings.EMAIL_HOST == 'smtp.resend.com'
 assert settings.EMAIL_PORT == 587
 assert settings.EMAIL_USE_TLS is True
 assert settings.EMAIL_USE_SSL is False
 assert settings.EMAIL_TIMEOUT == 10
+assert settings.EMAIL_HOST_USER == 'resend'
 assert settings.EMAIL_HTTP_PROXY_URL == 'http://egress_proxy:3128'
 """
 

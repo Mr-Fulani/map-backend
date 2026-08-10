@@ -120,10 +120,8 @@ YOOKASSA_API_BASE_URL=https://api.yookassa.ru/v3
 YOOKASSA_ALLOW_TEST_PAYMENTS=false
 PUBLIC_HTTP_PROXY_URL=http://egress_proxy:3128
 
-SENDPULSE_SMTP_HOST=smtp.sendpulse.com
-SENDPULSE_SMTP_LOGIN=<production-smtp-login>
-SENDPULSE_SMTP_PASSWORD=<production-smtp-password>
-DEFAULT_FROM_EMAIL=noreply@dodugir.com
+RESEND_API_KEY=<domain-scoped-production-sending-key>
+DEFAULT_FROM_EMAIL=noreply@notify.dodugir.com
 EMAIL_HTTP_PROXY_URL=http://egress_proxy:3128
 ```
 
@@ -144,10 +142,17 @@ Media bucket предназначен для публично читаемых �
 
 Application-контейнеры не имеют прямого SMTP-маршрута. Django открывает туннель
 через фиксированный `egress_proxy:3128` только к
-`smtp.sendpulse.com:587`, затем выполняет STARTTLS с проверкой сертификата и
-SMTP login. Другой SMTP host, proxy URL, пустые credentials или некорректный
-`DEFAULT_FROM_EMAIL` останавливают production settings. Deploy дополнительно
+`smtp.resend.com:587`, затем выполняет STARTTLS с проверкой сертификата и
+SMTP login. Resend key должен иметь только Sending access и быть ограничен
+доменом `notify.dodugir.com`; `DEFAULT_FROM_EMAIL` также обязан принадлежать
+этому platform-домену. Другой SMTP host, proxy URL, пустой/невалидный key или
+чужой sender domain останавливают production settings. Deploy дополнительно
 проверяет CONNECT, greeting, STARTTLS и login из нового image без отправки письма.
+
+Этот SMTP channel предназначен только для security/transactional писем самой
+платформы. Будущие письма от имени тенантов должны использовать отдельные
+проверенные tenant sender identities и отдельные domain-scoped/BYOK credentials;
+tenant-настройки не могут переопределять `DEFAULT_FROM_EMAIL`.
 
 ### Первичная регистрация YooKassa webhook
 

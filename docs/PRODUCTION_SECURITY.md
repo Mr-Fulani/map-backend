@@ -16,8 +16,8 @@ Production-контур останавливает запуск при отсу�
   фиксированный `https://api.yookassa.ru/v3` и `YOOKASSA_ALLOW_TEST_PAYMENTS=false`;
 - `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`, HTTPS
   `SITE_URL` и `FRONTEND_URL`;
-- `SENDPULSE_SMTP_HOST=smtp.sendpulse.com`, `SENDPULSE_SMTP_LOGIN`,
-  `SENDPULSE_SMTP_PASSWORD`, валидный plain-email `DEFAULT_FROM_EMAIL` и
+- `RESEND_API_KEY` с domain-scoped Sending access, валидный plain-email
+  `DEFAULT_FROM_EMAIL` на `notify.dodugir.com` и
   `EMAIL_HTTP_PROXY_URL=http://egress_proxy:3128`;
 - `PUBLIC_HTTP_PROXY_URL=http://egress_proxy:3128`; другой public HTTP proxy в
   production запрещён;
@@ -275,13 +275,20 @@ admission и Squid `dst` ACL являются независимыми пров�
 payment sentinel и до drain проверяет этот маршрут, TLS и credentials без записи.
 
 SMTP является отдельным узким исключением: Squid принимает CONNECT на порт 587
-только для точного имени `smtp.sendpulse.com`. Django не использует прямой
+только для точного имени `smtp.resend.com`. Django не использует прямой
 `smtplib` socket наружу, а открывает CONNECT tunnel через внутренний proxy;
 SMTP greeting, STARTTLS, проверка upstream-сертификата и login происходят внутри
 туннеля. `check_email_connectivity` не отправляет письмо и скрывает текст provider
 errors, но перед drain доказывает доступность маршрута и credentials из нового
 image. Изменение host/порта/proxy требует отдельного threat review и синхронного
 обновления backend, Squid ACL, Compose contract и тестов.
+
+Глобальный SMTP credential и `DEFAULT_FROM_EMAIL` обслуживают только письма
+платформы (восстановление пароля, подтверждение email, security notifications).
+Отправка от имени тенанта требует отдельной проверенной sender identity. Для
+tenant mail используется domain-scoped credential или BYOK с отдельными quotas,
+suppression/audit trail и webhook routing; произвольный tenant `From` через
+platform credential запрещён.
 
 `NO_PROXY` содержит только внутренние имена `db`, `redis`, `redis_broker`,
 `django`, `frontend`, `nginx` и `egress_proxy`. Изменять этот список следует только
