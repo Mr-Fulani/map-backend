@@ -89,5 +89,5 @@ def test_command_still_checks_public_transport_when_billing_is_disabled(
 
     check_public_http_connectivity.Command(stdout=output).handle()
 
-    assert public_request.call_args.kwargs['auth'] is None
+    assert 'auth' not in public_request.call_args.kwargs
     assert 'Public HTTPS transport: ok (billing disabled)' in output.getvalue()
