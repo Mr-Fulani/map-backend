@@ -495,6 +495,9 @@ def test_edge_proxy_uses_read_only_config_and_sanitized_logs():
     assert 'ssl_reject_handshake on;' in NGINX_CONFIG
     assert 'ssl_session_tickets off;' in NGINX_CONFIG
     assert 'log_format main_sanitized' in NGINX_CONFIG
+    # nginx:alpine already defines this singleton directive in the enclosing
+    # http block; repeating it in conf.d/default.conf prevents nginx startup.
+    assert '\nkeepalive_timeout ' not in f'\n{NGINX_CONFIG}'
     assert '$args' not in NGINX_CONFIG
     assert '$http_referer' not in NGINX_CONFIG
     assert '$http_user_agent' not in NGINX_CONFIG
