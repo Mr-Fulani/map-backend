@@ -14,6 +14,30 @@ YOOKASSA_NOT_FOUND_STATUS = 404
 YOOKASSA_UNAUTHORIZED_STATUS = 401
 
 
+def _request_preflight(auth=None):
+    request_options = {
+        'method': 'GET',
+        'timeout': (
+            settings.YOOKASSA_API_CONNECT_TIMEOUT_SECONDS,
+            settings.YOOKASSA_API_READ_TIMEOUT_SECONDS,
+        ),
+        'status_only': True,
+        'redirect_policy': REDIRECT_NONE,
+        'max_redirects': 0,
+        'max_elapsed_seconds': settings.YOOKASSA_API_MAX_ELAPSED_SECONDS,
+    }
+    if auth is None:
+        return request_public_http_url(
+            YOOKASSA_PREFLIGHT_URL,
+            **request_options,
+        )
+    return request_public_http_url(
+        YOOKASSA_PREFLIGHT_URL,
+        auth=auth,
+        **request_options,
+    )
+
+
 class Command(BaseCommand):
     requires_system_checks = []
     help = (
@@ -33,19 +57,7 @@ class Command(BaseCommand):
             expected_status = YOOKASSA_NOT_FOUND_STATUS
             success_message = 'Public HTTPS transport and YooKassa credentials: ok'
         try:
-            response = request_public_http_url(
-                YOOKASSA_PREFLIGHT_URL,
-                method='GET',
-                timeout=(
-                    settings.YOOKASSA_API_CONNECT_TIMEOUT_SECONDS,
-                    settings.YOOKASSA_API_READ_TIMEOUT_SECONDS,
-                ),
-                auth=auth,
-                status_only=True,
-                redirect_policy=REDIRECT_NONE,
-                max_redirects=0,
-                max_elapsed_seconds=settings.YOOKASSA_API_MAX_ELAPSED_SECONDS,
-            )
+            response = _request_preflight(auth)
             if response.status_code != expected_status:
                 raise RuntimeError('YooKassa sentinel returned an unexpected status')
         except Exception as exc:
