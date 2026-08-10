@@ -12,6 +12,7 @@ from backup.common import (
     collect_database_metadata,
     collect_row_counts,
     load_json_body,
+    object_metadata_value,
     parse_database_url,
     postgres_environment,
     postgres_server_major,
@@ -163,7 +164,7 @@ def restore_backup(settings: RestoreSettings) -> dict:
     )
     if archive_head.get('ContentLength') != manifest['encrypted_size_bytes']:
         raise ValueError('Encrypted archive size differs from signed manifest')
-    if archive_head.get('Metadata', {}).get('sha256') != manifest['sha256']:
+    if object_metadata_value(archive_head, 'sha256') != manifest['sha256']:
         raise ValueError('Encrypted archive metadata differs from signed manifest')
 
     with tempfile.TemporaryDirectory(prefix='postgres-restore-') as temp_dir:

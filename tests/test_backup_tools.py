@@ -23,6 +23,7 @@ from backup.common import (
     CRITICAL_TABLES,
     DatabaseTarget,
     S3Settings,
+    object_metadata_value,
     parse_database_url,
     postgres_environment,
     sign_manifest,
@@ -40,6 +41,21 @@ SIGNING_PUBLIC_KEY = base64.b64encode(
         format=serialization.PublicFormat.Raw,
     )
 ).decode()
+
+
+@pytest.mark.parametrize('metadata_key', ('sha256', 'Sha256', 'SHA256'))
+def test_s3_metadata_lookup_is_provider_case_insensitive(metadata_key):
+    assert object_metadata_value(
+        {'Metadata': {metadata_key: 'checksum'}},
+        'sha256',
+    ) == 'checksum'
+
+
+def test_s3_metadata_lookup_rejects_ambiguous_case_variants():
+    assert object_metadata_value(
+        {'Metadata': {'sha256': 'first', 'Sha256': 'second'}},
+        'sha256',
+    ) is None
 
 
 class FakeS3Client:

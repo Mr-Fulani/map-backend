@@ -34,6 +34,26 @@ def required_env(name: str) -> str:
     return value
 
 
+def object_metadata_value(response: dict, name: str) -> str | None:
+    """Read S3 user metadata without assuming provider key casing.
+
+    AWS returns metadata keys lower-cased, while Yandex Object Storage may
+    preserve title casing (for example ``Sha256``). Reject ambiguous duplicate
+    spellings instead of silently trusting one of them.
+    """
+    metadata = response.get('Metadata')
+    if not isinstance(metadata, dict):
+        return None
+    matches = [
+        value
+        for key, value in metadata.items()
+        if isinstance(key, str) and key.casefold() == name.casefold()
+    ]
+    if len(matches) != 1 or not isinstance(matches[0], str):
+        return None
+    return matches[0]
+
+
 def positive_int_env(name: str, default: int) -> int:
     raw_value = os.environ.get(name, str(default))
     try:
