@@ -10,8 +10,16 @@ from apps.core.url_security import REDIRECT_NONE
 
 
 YOOKASSA_SETTINGS = SimpleNamespace(
+    BILLING_ENABLED=True,
     YOOKASSA_SHOP_ID='shop-id',
     YOOKASSA_SECRET_KEY='provider-secret',
+    YOOKASSA_API_CONNECT_TIMEOUT_SECONDS=3.05,
+    YOOKASSA_API_READ_TIMEOUT_SECONDS=10,
+    YOOKASSA_API_MAX_ELAPSED_SECONDS=30,
+)
+
+DISABLED_BILLING_SETTINGS = SimpleNamespace(
+    BILLING_ENABLED=False,
     YOOKASSA_API_CONNECT_TIMEOUT_SECONDS=3.05,
     YOOKASSA_API_READ_TIMEOUT_SECONDS=10,
     YOOKASSA_API_MAX_ELAPSED_SECONDS=30,
@@ -65,3 +73,21 @@ def test_command_requires_authenticated_not_found_sentinel(public_request):
 
     assert 'RuntimeError' in str(error.value)
     assert '401' not in str(error.value)
+
+
+@patch.object(
+    check_public_http_connectivity,
+    'settings',
+    DISABLED_BILLING_SETTINGS,
+)
+@patch.object(check_public_http_connectivity, 'request_public_http_url')
+def test_command_still_checks_public_transport_when_billing_is_disabled(
+    public_request,
+):
+    public_request.return_value = MagicMock(status_code=401)
+    output = StringIO()
+
+    check_public_http_connectivity.Command(stdout=output).handle()
+
+    assert public_request.call_args.kwargs['auth'] is None
+    assert 'Public HTTPS transport: ok (billing disabled)' in output.getvalue()

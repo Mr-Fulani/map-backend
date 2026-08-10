@@ -140,6 +140,7 @@ function navigateToPayment(value: unknown) {
 
 export default function BillingPage() {
   const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [billingEnabled, setBillingEnabled] = useState(false);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
   const [usage, setUsage] = useState<AIUsage | null>(null);
@@ -179,6 +180,7 @@ export default function BillingPage() {
       if (!active) return;
       if (result.status === 'fulfilled') {
         setPlans(result.value.data.data);
+        setBillingEnabled(result.value.data.billing_enabled === true);
       } else {
         setPlansError(true);
         toast.error('Не удалось загрузить тарифные планы');
@@ -238,6 +240,7 @@ export default function BillingPage() {
     try {
       const response = await billingApi.getPlans();
       setPlans(response.data.data);
+      setBillingEnabled(response.data.billing_enabled === true);
       setPlansError(false);
     } catch {
       setPlansError(true);
@@ -288,7 +291,10 @@ export default function BillingPage() {
     ? (subscription.effective_status ?? subscription.status)
     : null;
   const hasFullAccess = subscription?.access_mode === 'full';
-  const billingMutationAllowed = canStartBillingMutation(subscriptionState);
+  const billingMutationAllowed = canStartBillingMutation(
+    subscriptionState,
+    billingEnabled,
+  );
   const subscriptionCheckoutAllowed = billingMutationAllowed && !hasFullAccess;
   const aiPercentUsed = Math.min(
     100,
@@ -301,6 +307,15 @@ export default function BillingPage() {
         <h1 className="text-2xl font-bold tracking-tight">Биллинг</h1>
         <p className="text-muted-foreground">Управление подпиской и платежами</p>
       </div>
+
+      {!loading && !billingEnabled && !plansError && (
+        <Card className="border-amber-500/50">
+          <CardContent className="p-4 text-sm">
+            Онлайн-оплата временно недоступна. Текущий тариф, лимиты и история
+            платежей остаются доступны.
+          </CardContent>
+        </Card>
+      )}
 
       {subscriptionState === 'loading' && (
         <Card>

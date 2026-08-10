@@ -39,6 +39,7 @@ _PLAN_LIST_RESPONSE = inline_serializer(
     name='BillingPlanListResponse',
     fields={
         'status': serializers.CharField(),
+        'billing_enabled': serializers.BooleanField(),
         'data': PlanSerializer(many=True),
     },
 )
@@ -83,6 +84,17 @@ _PAYMENT_URL_RESPONSE = inline_serializer(
         ),
     },
 )
+
+
+def _billing_disabled_response():
+    return Response(
+        {
+            'status': 'error',
+            'code': 'billing_disabled',
+            'message': 'Онлайн-оплата временно недоступна.',
+        },
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
 
 
 def _checkout_error_response(exc):
@@ -250,6 +262,7 @@ class PlanListView(APIView):
         plans = Plan.objects.filter(is_active=True)
         return Response({
             'status': 'ok',
+            'billing_enabled': settings.BILLING_ENABLED,
             'data': PlanSerializer(plans, many=True).data,
         })
 
@@ -329,6 +342,8 @@ class AITopupCheckoutView(APIView):
         responses={200: _PAYMENT_URL_RESPONSE},
     )
     def post(self, request):
+        if not settings.BILLING_ENABLED:
+            return _billing_disabled_response()
         serializer = AITopupCheckoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         return_url = serializer.validated_data.get(
@@ -377,6 +392,8 @@ class CheckoutView(APIView):
         responses={200: _PAYMENT_URL_RESPONSE},
     )
     def post(self, request):
+        if not settings.BILLING_ENABLED:
+            return _billing_disabled_response()
         serializer = CheckoutSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
@@ -422,6 +439,8 @@ class YooKassaWebhookView(APIView):
     authentication_classes = []
 
     def post(self, request):
+        if not settings.BILLING_ENABLED:
+            return _billing_disabled_response()
         request_data = request.data if isinstance(request.data, dict) else {}
         event = _safe_webhook_text(request_data.get('event'), 80)
         raw_payment_obj = request_data.get('object')

@@ -16,8 +16,9 @@ export type BillingLoadState = 'loading' | 'loaded' | 'error';
 
 export function canStartBillingMutation(
   subscriptionState: BillingLoadState,
+  billingEnabled = true,
 ): boolean {
-  return subscriptionState === 'loaded';
+  return billingEnabled && subscriptionState === 'loaded';
 }
 
 function settle<T>(

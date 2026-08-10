@@ -764,6 +764,9 @@ AVITO_CLIENT_ID = os.environ.get('AVITO_CLIENT_ID', '')
 AVITO_CLIENT_SECRET = os.environ.get('AVITO_CLIENT_SECRET', '')
 
 # --- Биллинг ---
+BILLING_ENABLED = os.environ.get('BILLING_ENABLED', 'true').strip().lower() in {
+    '1', 'true', 'yes',
+}
 YOOKASSA_SHOP_ID = os.environ.get('YOOKASSA_SHOP_ID', '')
 YOOKASSA_SECRET_KEY = os.environ.get('YOOKASSA_SECRET_KEY', '')
 YOOKASSA_API_BASE_URL = os.environ.get(

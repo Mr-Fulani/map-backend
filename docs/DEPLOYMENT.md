@@ -114,6 +114,7 @@ MEDIA_KEY_PREFIX=prod
 SITE_URL=https://dodugir.com
 FRONTEND_URL=https://dodugir.com
 BILLING_RETURN_URL_ALLOWED_ORIGINS=https://dodugir.com
+BILLING_ENABLED=true
 YOOKASSA_SHOP_ID=<production-shop-id>
 YOOKASSA_SECRET_KEY=<production-secret-key>
 YOOKASSA_API_BASE_URL=https://api.yookassa.ru/v3
@@ -127,6 +128,12 @@ EMAIL_HTTP_PROXY_URL=http://egress_proxy:3128
 
 Значения в угловых скобках — placeholders, их нельзя оставлять буквально.
 Если CDN не используется, оставьте `YC_CDN_DOMAIN` пустым.
+До подключения платёжного провайдера явно задайте `BILLING_ENABLED=false` и
+оставьте `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY` пустыми. В этом режиме чтение
+тарифов, подписки, лимитов и истории доступно, а checkout, AI top-up, webhook,
+provider API и reconciliation закрыты fail-closed. Для включения оплаты одной
+замены флага недостаточно: сначала добавьте production credentials и webhook,
+затем выполните полный deploy с provider preflight.
 
 Пароли в URL должны быть URL-safe либо percent-encoded. Cache и durable broker
 обязаны быть разными Redis-процессами; DB `0/1/2` broker-процесса зарезервированы
@@ -156,7 +163,7 @@ tenant-настройки не могут переопределять `DEFAULT_
 
 ### Первичная регистрация YooKassa webhook
 
-До включения production checkout зарегистрируйте в кабинете/API YooKassa точный
+До установки `BILLING_ENABLED=true` зарегистрируйте в кабинете/API YooKassa точный
 HTTPS endpoint:
 
 ```text
