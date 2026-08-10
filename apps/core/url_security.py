@@ -321,6 +321,40 @@ def _configured_public_http_proxy_url() -> str | None:
     return proxy_url
 
 
+def resolve_public_http_transport_url(
+    value: str,
+    *,
+    resolver: Callable | None = None,
+) -> ResolvedPublicTarget:
+    """Admit a URL using the DNS authority of the selected transport.
+
+    Direct connections resolve and pin DNS locally.  Production containers
+    intentionally have no direct Internet route (including external DNS), so
+    hostname resolution is delegated to the only trusted proxy.  Squid's
+    ``dst`` ACL resolves the final destination and rejects every private,
+    special-use, local and multicast address before allowing the request.
+    Literal IP addresses are still rejected locally before any connection.
+    """
+    proxy_url = _configured_public_http_proxy_url()
+    if proxy_url is None:
+        return resolve_public_http_url(value, resolver=resolver)
+
+    parsed = _parse_public_http_url(value)
+    try:
+        literal = ipaddress.ip_address(parsed.hostname)
+    except ValueError:
+        approved_ips: tuple[str, ...] = ()
+    else:
+        address = literal.compressed
+        if not _is_public_address(address):
+            raise UnsafePublicURL('URL не указывает только на публичные IP-адреса.')
+        approved_ips = (address,)
+    return ResolvedPublicTarget(
+        **parsed.__dict__,
+        approved_ips=approved_ips,
+    )
+
+
 @contextmanager
 def _open_pinned_response(
     target: ResolvedPublicTarget,
@@ -410,12 +444,12 @@ def request_public_http_url(
 ):
     """Perform a public request and return a closed bounded response.
 
-    Development connects to the admitted DNS result directly. Production first
-    admits only public DNS answers and then uses the exact trusted proxy, whose
-    ``dst`` ACL independently resolves and rejects non-public final addresses.
-    System/environment proxies remain disabled in both modes. The elapsed budget
-    is a hard total across DNS, connect/TLS, response headers, redirects and body
-    streaming; per-socket ``requests`` timeouts are secondary.
+    Development resolves, admits and pins DNS locally. Production delegates DNS
+    to the exact trusted proxy, whose ordered ``dst`` ACL rejects non-public
+    final addresses before connecting; the application still rejects private IP
+    literals locally. System/environment proxies remain disabled in both modes.
+    The elapsed budget is a hard total across DNS, connect/TLS, response headers,
+    redirects and body streaming; per-socket ``requests`` timeouts are secondary.
     """
     normalized_method = str(method or '').upper()
     if normalized_method not in {'GET', 'HEAD', 'POST'}:
@@ -487,7 +521,10 @@ def _request_public_http_url_sync(
     current_params = params
 
     for redirect_count in range(max_redirects + 1):
-        target = resolve_public_http_url(current_url, resolver=resolver)
+        target = resolve_public_http_transport_url(
+            current_url,
+            resolver=resolver,
+        )
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise RequestDeadlineExceeded('HTTP-запрос превысил общий лимит времени.')

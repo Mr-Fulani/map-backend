@@ -19,6 +19,7 @@ from apps.core.url_security import (
     read_response_limited,
     request_public_http_url,
     resolve_public_http_url,
+    resolve_public_http_transport_url,
 )
 
 
@@ -188,13 +189,13 @@ def test_pinned_adapter_rejects_proxy():
         )
 
 
-def test_production_transport_pre_resolves_then_uses_only_trusted_proxy(
+def test_production_transport_delegates_dns_to_only_trusted_proxy(
     settings,
     monkeypatch,
 ):
     settings.PUBLIC_HTTP_PROXY_URL = TRUSTED_PUBLIC_HTTP_PROXY_URL
     monkeypatch.setenv('HTTPS_PROXY', 'http://attacker.invalid:8080')
-    resolver = MagicMock(side_effect=public_resolver)
+    resolver = MagicMock(side_effect=OSError('external DNS is unreachable'))
     response = FakeStreamResponse(chunks=[b'ok'])
     session = FakeSession(response)
 
@@ -207,8 +208,7 @@ def test_production_transport_pre_resolves_then_uses_only_trusted_proxy(
         )
 
     assert result.content == b'ok'
-    resolver.assert_called_once()
-    assert resolver.call_args.args == ('origin.example', 443)
+    resolver.assert_not_called()
     assert session.trust_env is False
     assert session.requests[0][1] == 'https://origin.example/path'
     assert session.requests[0][2]['proxies'] == {
@@ -216,8 +216,37 @@ def test_production_transport_pre_resolves_then_uses_only_trusted_proxy(
     }
     adapter = session.mounted[0][1]
     assert isinstance(adapter, _TrustedProxyAdapter)
-    assert adapter.target.approved_ips == (PUBLIC_IP,)
+    assert adapter.target.approved_ips == ()
     assert adapter.max_retries.total == 0
+
+
+def test_production_transport_rejects_private_literal_before_proxy(
+    settings,
+):
+    settings.PUBLIC_HTTP_PROXY_URL = TRUSTED_PUBLIC_HTTP_PROXY_URL
+    session_factory = MagicMock()
+
+    with patch('apps.core.url_security.requests.Session', session_factory):
+        with pytest.raises(UnsafePublicURL):
+            request_public_http_url(
+                'https://127.0.0.1/private',
+                timeout=5,
+                max_response_bytes=10,
+            )
+
+    session_factory.assert_not_called()
+
+
+def test_proxy_transport_canonicalizes_hostname_without_external_dns(settings):
+    settings.PUBLIC_HTTP_PROXY_URL = TRUSTED_PUBLIC_HTTP_PROXY_URL
+
+    target = resolve_public_http_transport_url(
+        'HTTPS://Origin.Example.:443/path#fragment',
+        resolver=MagicMock(side_effect=OSError('DNS unavailable')),
+    )
+
+    assert target.url == 'https://origin.example/path'
+    assert target.approved_ips == ()
 
 
 def test_public_transport_rejects_arbitrary_configured_proxy(settings):
