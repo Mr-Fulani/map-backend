@@ -10,7 +10,7 @@ class EmailNotifier:
     """
     Отправляет email-уведомления через настроенный Django mail backend.
 
-    Использует SendPulse SMTP из настроек (EMAIL_HOST, EMAIL_HOST_USER и т.д.).
+    Использует защищённый platform SMTP backend из настроек Django.
     """
 
     def send(self, to: str, subject: str, body: str) -> bool:

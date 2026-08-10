@@ -869,11 +869,11 @@ TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_BOT_USERNAME = os.environ.get('TELEGRAM_BOT_USERNAME', '')  # без @, напр. MyMapBot
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@yourdomain.ru')
 EMAIL_BACKEND = 'django.core.mail.backends.smtp.EmailBackend'
-EMAIL_HOST = os.environ.get('SENDPULSE_SMTP_HOST', 'smtp.sendpulse.com')
+EMAIL_HOST = 'smtp.resend.com'
 EMAIL_PORT = 587
 EMAIL_USE_TLS = True
-EMAIL_HOST_USER = os.environ.get('SENDPULSE_SMTP_LOGIN', '')
-EMAIL_HOST_PASSWORD = os.environ.get('SENDPULSE_SMTP_PASSWORD', '')
+EMAIL_HOST_USER = 'resend'
+EMAIL_HOST_PASSWORD = os.environ.get('RESEND_API_KEY', '')
 
 # --- Пользователь ---
 AUTH_USER_MODEL = 'users.User'

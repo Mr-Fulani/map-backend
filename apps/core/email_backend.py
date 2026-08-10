@@ -8,7 +8,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.core.mail.backends.smtp import EmailBackend
 
 
-SMTP_HOST = 'smtp.sendpulse.com'
+SMTP_HOST = 'smtp.resend.com'
 SMTP_PORT = 587
 SMTP_PROXY_URL = 'http://egress_proxy:3128'
 MAX_PROXY_RESPONSE_HEADER_BYTES = 8192

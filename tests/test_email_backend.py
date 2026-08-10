@@ -36,7 +36,7 @@ class FakeSocket:
 @override_settings(EMAIL_HTTP_PROXY_URL=SMTP_PROXY_URL)
 @patch('apps.core.email_backend.socket.create_connection')
 def test_connect_tunnel_preserves_the_upstream_smtp_greeting(create_connection):
-    greeting = b'220 smtp.sendpulse.com ESMTP ready\r\n'
+    greeting = b'220 smtp.resend.com ESMTP ready\r\n'
     proxy_socket = FakeSocket(
         b'HTTP/1.1 200 Connection established\r\nProxy-Agent: squid\r\n\r\n'
         + greeting
@@ -49,8 +49,8 @@ def test_connect_tunnel_preserves_the_upstream_smtp_greeting(create_connection):
     assert result is proxy_socket
     assert bytes(proxy_socket.response) == greeting
     assert proxy_socket.sent == (
-        b'CONNECT smtp.sendpulse.com:587 HTTP/1.1\r\n'
-        b'Host: smtp.sendpulse.com:587\r\n'
+        b'CONNECT smtp.resend.com:587 HTTP/1.1\r\n'
+        b'Host: smtp.resend.com:587\r\n'
         b'Proxy-Connection: Keep-Alive\r\n\r\n'
     )
     create_connection.assert_called_once_with(('egress_proxy', 3128), 7, None)
