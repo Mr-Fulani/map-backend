@@ -85,6 +85,26 @@ CORS_ALLOWED_ORIGINS = _required_https_origins('CORS_ALLOWED_ORIGINS')
 CSRF_TRUSTED_ORIGINS = _required_https_origins('CSRF_TRUSTED_ORIGINS')
 SITE_URL = _required_https_origin('SITE_URL')
 FRONTEND_URL = _required_https_origin('FRONTEND_URL')
+if PUBLIC_HTTP_PREFLIGHT_URL != 'https://storage.yandexcloud.net/':
+    raise ImproperlyConfigured(
+        'PUBLIC_HTTP_PREFLIGHT_URL должен указывать на фиксированный '
+        'Yandex Object Storage infrastructure endpoint.',
+    )
+site_hostname = urlsplit(SITE_URL).hostname
+if not site_hostname or not any(
+    allowed_host == site_hostname
+    or (
+        allowed_host.startswith('.')
+        and (
+            site_hostname == allowed_host[1:]
+            or site_hostname.endswith(allowed_host)
+        )
+    )
+    for allowed_host in ALLOWED_HOSTS
+):
+    raise ImproperlyConfigured(
+        'Hostname из SITE_URL должен быть разрешён в ALLOWED_HOSTS.',
+    )
 
 EMAIL_BACKEND = 'apps.core.email_backend.HTTPProxySMTPEmailBackend'
 EMAIL_HOST = 'smtp.resend.com'

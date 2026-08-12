@@ -858,6 +858,11 @@ BILLING_GRACE_PERIOD_DAYS = min(
 )
 SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8000')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+# This endpoint is deliberately outside the application failure domain.  It is
+# a required production infrastructure provider, performs no bucket/object
+# operation and lets a forward recovery validate DNS/TLS/egress while ingress
+# for this application is unavailable.
+PUBLIC_HTTP_PREFLIGHT_URL = 'https://storage.yandexcloud.net/'
 BILLING_RETURN_URL_ALLOWED_ORIGINS = [
     origin.strip().rstrip('/')
     for origin in os.environ.get(

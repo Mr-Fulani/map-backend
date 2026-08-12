@@ -149,6 +149,7 @@ jobs:
         run: >-
           shellcheck dev.sh deploy.sh scripts/backup.sh scripts/restore.sh
           scripts/compile_requirements.sh
+          scripts/ci_production_runtime_smoke.sh
           scripts/check_backup_freshness.sh scripts/production_backup.sh
           scripts/production_backup_check.sh scripts/production_restore.sh
           scripts/reload_production_nginx.sh
@@ -208,7 +209,9 @@ jobs:
             fi
             docker compose -f docker-compose.prod.yml down --remove-orphans \
               >/dev/null 2>&1 || true
-            rm -f .env .backup.env .restore.env /tmp/backup-age-identity.txt
+            rm -f \
+              .env .backup.env .restore.env \
+              /tmp/backup-age-identity.txt
           }
           trap cleanup EXIT
           cp .env.example .env
@@ -220,32 +223,7 @@ jobs:
             egress_proxy
           docker compose -f docker-compose.prod.yml pull \
             db redis redis_broker nginx
-          docker compose -f docker-compose.prod.yml up --detach egress_proxy
-          egress_ready=false
-          for attempt in $(seq 1 30); do
-            if docker compose -f docker-compose.prod.yml exec -T egress_proxy \
-              /bin/bash -ec 'exec 3<>/dev/tcp/127.0.0.1/3128'; then
-              egress_ready=true
-              break
-            fi
-            container_id="$(
-              docker compose -f docker-compose.prod.yml ps -q egress_proxy
-            )"
-            state="$(
-              docker inspect --format '{{.State.Status}}' "$container_id"
-            )"
-            if [[ "$state" == "exited" || "$state" == "dead" ]]; then
-              break
-            fi
-            echo "egress_proxy ещё не готов (${attempt}/30, state=${state})"
-            sleep 2
-          done
-          if [[ "$egress_ready" != true ]]; then
-            docker compose -f docker-compose.prod.yml logs egress_proxy
-            exit 1
-          fi
-          docker compose -f docker-compose.prod.yml stop egress_proxy
-          docker compose -f docker-compose.prod.yml rm --force egress_proxy
+          scripts/ci_production_runtime_smoke.sh
           cp .restore.env.example .restore.env
           install -m 600 /dev/null /tmp/backup-age-identity.txt
           sed -i 's|^RESTORE_AGE_IDENTITY_HOST_FILE=.*|RESTORE_AGE_IDENTITY_HOST_FILE=/tmp/backup-age-identity.txt|' .restore.env

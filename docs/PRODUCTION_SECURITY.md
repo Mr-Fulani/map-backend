@@ -22,6 +22,9 @@ Production-контур останавливает запуск при отсу�
   `EMAIL_HTTP_PROXY_URL=http://egress_proxy:3128`;
 - `PUBLIC_HTTP_PROXY_URL=http://egress_proxy:3128`; другой public HTTP proxy в
   production запрещён;
+- `PUBLIC_HTTP_PREFLIGHT_URL` зафиксирован в коде на независимом корне Yandex
+  Object Storage: check не обращается к bucket/object и остаётся доступен для
+  forward recovery при остановленном ingress приложения;
 - отдельный `.backup.env` с read-only DB role, S3 credentials без права удаления,
   публичными `BACKUP_AGE_RECIPIENTS` и Ed25519 signing key; private age identity
   на production отсутствует.
@@ -318,6 +321,9 @@ reviewers и определить:
 выполняет `docker compose config --quiet` до пересборки, а CI отклоняет изменения
 при branch coverage ниже 70%. После изменения production-секретов сначала
 проверьте конфигурацию вручную и только затем разрешайте deploy в environment.
+Ручной incident deploy обязан сохранить текущий `git rev-parse HEAD` до checkout
+target и передать его как `PREVIOUS_SHA`; скрипт fail-close отклоняет запуск без
+этого значения.
 
 На сервере скопируйте `.deploy.env.example` в `.deploy.env`, направьте
 `PROD_SMOKE_URL` на публичный `/api/v1/ready/` и ограничьте доступ к файлу
