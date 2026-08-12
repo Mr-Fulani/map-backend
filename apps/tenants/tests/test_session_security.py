@@ -235,6 +235,44 @@ def test_browser_session_is_csrf_protected_and_hides_refresh_token():
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize(
+    'refresh_cookie',
+    (None, 'not-a-valid-refresh-token', 'x' * 4097),
+)
+def test_browser_refresh_rejects_missing_or_invalid_cookie_as_signed_out(
+    refresh_cookie,
+):
+    client = Client(enforce_csrf_checks=True)
+    csrf_rejected = client.post(
+        '/api/v1/auth/browser/refresh/',
+        content_type='application/json',
+    )
+    assert csrf_rejected.status_code == 403
+
+    csrf_token = client.get('/api/v1/auth/browser/csrf/').json()['csrf_token']
+    if refresh_cookie is not None:
+        client.cookies[settings.AUTH_REFRESH_COOKIE_NAME] = refresh_cookie
+
+    response = client.post(
+        '/api/v1/auth/browser/refresh/',
+        content_type='application/json',
+        HTTP_X_CSRFTOKEN=csrf_token,
+    )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        'status': 'error',
+        'code': 'unauthorized',
+        'message': 'Сессия истекла. Войдите снова.',
+    }
+    cleared = response.cookies[settings.AUTH_REFRESH_COOKIE_NAME]
+    assert cleared.value == ''
+    assert cleared['path'] == settings.AUTH_REFRESH_COOKIE_PATH
+    assert int(cleared['max-age']) == 0
+    assert 'no-store' in response['Cache-Control']
+
+
+@pytest.mark.django_db
 def test_browser_logout_all_revokes_access_without_authorization_header():
     _session(slug='browser-all', email='browser-all@example.com')
     client = Client(enforce_csrf_checks=True)

@@ -1,0 +1,9 @@
+services:
+  egress_proxy:
+    extra_hosts:
+      - "ci-private-target.dodugir.com:127.0.0.1"
+
+  nginx:
+    volumes:
+      - ${CI_CERTIFICATE_LIVE_DIR:?CI certificate live directory is required}:/etc/letsencrypt/live/dodugir.com:ro
+      - ${CI_CERTIFICATE_ARCHIVE_DIR:?CI certificate archive directory is required}:/etc/letsencrypt/archive/dodugir.com:ro

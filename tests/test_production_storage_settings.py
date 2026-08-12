@@ -82,6 +82,48 @@ def test_production_allows_explicitly_disabled_billing_without_credentials():
     assert result.returncode == 0, result.stderr
 
 
+def test_production_public_preflight_uses_independent_storage_infrastructure():
+    environment = _production_environment()
+    environment['PUBLIC_HTTP_PREFLIGHT_URL'] = (
+        'https://attacker.example.test/ignored'
+    )
+    command = (
+        'import config.settings.production as settings; '
+        'assert settings.PUBLIC_HTTP_PREFLIGHT_URL == '
+        '"https://storage.yandexcloud.net/"'
+    )
+
+    result = subprocess.run(
+        [sys.executable, '-c', command],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_production_requires_site_hostname_in_allowed_hosts():
+    environment = _production_environment()
+    environment['ALLOWED_HOSTS'] = 'other.example.test'
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'Hostname из SITE_URL должен быть разрешён' in result.stderr
+
+
 @pytest.mark.parametrize('missing_name', ('YOOKASSA_SHOP_ID', 'YOOKASSA_SECRET_KEY'))
 def test_production_enabled_billing_requires_provider_credentials(missing_name):
     environment = _production_environment()

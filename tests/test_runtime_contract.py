@@ -9,6 +9,9 @@ ROOT = Path(__file__).resolve().parents[1]
 DEV_COMPOSE = yaml.safe_load((ROOT / 'docker-compose.yml').read_text())
 COMPOSE = yaml.safe_load((ROOT / 'docker-compose.prod.yml').read_text())
 RESTORE_COMPOSE = yaml.safe_load((ROOT / 'docker-compose.restore.yml').read_text())
+CI_RUNTIME_COMPOSE = yaml.safe_load(
+    (ROOT / 'docker-compose.ci-runtime.yml').read_text()
+)
 CI_WORKFLOW = (ROOT / '.github/workflows/ci.yml').read_text()
 DEPLOY_WORKFLOW = (ROOT / '.github/workflows/deploy.yml').read_text()
 NGINX_CONFIG = (ROOT / 'nginx.conf').read_text()
@@ -102,7 +105,9 @@ def test_runtime_healthchecks_cover_http_workers_beat_and_proxy():
         'CMD', '/bin/bash', '-ec', 'exec 3<>/dev/tcp/127.0.0.1/3128',
     ]
 
-    assert '/api/v1/live/' in ' '.join(services['django']['healthcheck']['test'])
+    assert services['django']['healthcheck']['test'] == [
+        'CMD', 'python', '-m', 'apps.core.healthchecks', 'django-liveness',
+    ]
     assert 'worker-main@' in services['celery_worker']['command']
     assert 'worker-main@' in ' '.join(services['celery_worker']['healthcheck']['test'])
     assert 'worker-images@' in ' '.join(
@@ -116,6 +121,28 @@ def test_runtime_healthchecks_cover_http_workers_beat_and_proxy():
         == proxy_healthcheck
     )
     assert '/nginx-health' in ' '.join(services['nginx']['healthcheck']['test'])
+
+
+def test_public_ingress_is_isolated_to_nginx():
+    services = COMPOSE['services']
+
+    assert COMPOSE['networks']['backend']['internal'] is True
+    assert COMPOSE['networks']['ingress_public'] is None
+    assert set(services['nginx']['networks']) == {'backend', 'ingress_public'}
+    assert services['nginx']['ports'] == ['80:80', '443:443']
+    for name, service in services.items():
+        if name != 'nginx':
+            assert 'ingress_public' not in service.get('networks', []), name
+
+
+def test_ci_runtime_override_uses_ephemeral_certs_and_private_dns_target():
+    nginx_volumes = CI_RUNTIME_COMPOSE['services']['nginx']['volumes']
+
+    assert all('/etc/letsencrypt/' in volume for volume in nginx_volumes)
+    assert all('CI_CERTIFICATE_' in volume for volume in nginx_volumes)
+    assert CI_RUNTIME_COMPOSE['services']['egress_proxy']['extra_hosts'] == [
+        'ci-private-target.dodugir.com:127.0.0.1',
+    ]
 
 
 def test_cache_and_durable_broker_are_separate_services():
@@ -317,6 +344,20 @@ def test_ci_actions_are_commit_pinned_and_job_is_bounded():
     assert '--requirement requirements/ci-tools.txt' in CI_WORKFLOW
     assert 'scripts/compile_requirements.sh' in CI_WORKFLOW
     assert 'shellcheck dev.sh deploy.sh' in CI_WORKFLOW
+    assert 'scripts/ci_production_runtime_smoke.sh' in CI_WORKFLOW
+    runtime_smoke = (
+        ROOT / 'scripts/ci_production_runtime_smoke.sh'
+    ).read_text()
+    assert 'python manage.py check_public_http_connectivity' in runtime_smoke
+    assert 'python scripts/ci_verify_egress_proxy.py' in runtime_smoke
+    assert 'RUNNER_ENVIRONMENT:-' in runtime_smoke
+    assert 'github-hosted' in runtime_smoke
+    assert 'https://dodugir.com/api/v1/ready/' in runtime_smoke
+    assert 'http://dodugir.com/' in runtime_smoke
+    assert '/etc/letsencrypt' not in runtime_smoke
+    egress_verifier = (ROOT / 'scripts/ci_verify_egress_proxy.py').read_text()
+    assert 'ci-private-target.dodugir.com:443' in egress_verifier
+    assert "'[::2]:443'" in egress_verifier
     assert 'git ls-files --error-unmatch' in CI_WORKFLOW
     assert 'git diff --exit-code -- "${lock_files[@]}"' in CI_WORKFLOW
     assert 'requirements/prod.txt' in CI_WORKFLOW
@@ -561,6 +602,26 @@ def test_public_http_egress_uses_exact_proxy_with_final_destination_acl():
     assert 'acl blocked_destinations dst 127.0.0.0/8' in SQUID_CONFIG
     assert 'acl blocked_destinations dst 169.254.0.0/16' in SQUID_CONFIG
     assert 'acl blocked_destinations dst fc00::/7' in SQUID_CONFIG
+    assert 'acl blocked_destinations dst ::/96' in SQUID_CONFIG
+    for network in (
+        '100::/8',
+        '200::/7',
+        '400::/6',
+        '800::/5',
+        '1000::/4',
+        '2001::/23',
+        '3fff::/20',
+        '4000::/3',
+        '6000::/3',
+        '8000::/3',
+        'a000::/3',
+        'c000::/3',
+        'e000::/4',
+        'f000::/5',
+        'f800::/6',
+        'fe00::/9',
+    ):
+        assert f'acl blocked_destinations dst {network}' in SQUID_CONFIG
     deny_final_ip = SQUID_CONFIG.index('http_access deny blocked_destinations')
     allow_public = SQUID_CONFIG.index('http_access allow all')
     assert deny_final_ip < allow_public

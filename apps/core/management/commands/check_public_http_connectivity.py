@@ -11,10 +11,9 @@ YOOKASSA_PREFLIGHT_URL = (
     '00000000-000f-5000-8000-000000000000'
 )
 YOOKASSA_NOT_FOUND_STATUS = 404
-YOOKASSA_UNAUTHORIZED_STATUS = 401
 
 
-def _request_preflight(auth=None):
+def _request_preflight(url, auth=None):
     request_options = {
         'method': 'GET',
         'timeout': (
@@ -28,11 +27,11 @@ def _request_preflight(auth=None):
     }
     if auth is None:
         return request_public_http_url(
-            YOOKASSA_PREFLIGHT_URL,
+            url,
             **request_options,
         )
     return request_public_http_url(
-        YOOKASSA_PREFLIGHT_URL,
+        url,
         auth=auth,
         **request_options,
     )
@@ -47,19 +46,22 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         auth = None
-        expected_status = YOOKASSA_UNAUTHORIZED_STATUS
-        success_message = 'Public HTTPS transport: ok (billing disabled)'
         if settings.BILLING_ENABLED:
+            preflight_url = YOOKASSA_PREFLIGHT_URL
             auth = (
                 settings.YOOKASSA_SHOP_ID,
                 settings.YOOKASSA_SECRET_KEY,
             )
             expected_status = YOOKASSA_NOT_FOUND_STATUS
             success_message = 'Public HTTPS transport and YooKassa credentials: ok'
+        else:
+            preflight_url = settings.PUBLIC_HTTP_PREFLIGHT_URL
+            expected_status = 200
+            success_message = 'Public HTTPS transport: ok (billing disabled)'
         try:
-            response = _request_preflight(auth)
+            response = _request_preflight(preflight_url, auth)
             if response.status_code != expected_status:
-                raise RuntimeError('YooKassa sentinel returned an unexpected status')
+                raise RuntimeError('Public HTTPS preflight returned an unexpected status')
         except Exception as exc:
             # Provider/transport errors can include endpoint or credential data.
             raise CommandError(

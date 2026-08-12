@@ -87,9 +87,12 @@ targets, если daemon занят чужим проектом.
       `DEFAULT_FROM_EMAIL` является plain email на `notify.dodugir.com`.
 - [ ] Platform credential не используется для tenant sender identities;
       tenant mail требует отдельного verified domain и scoped/BYOK credential.
-- [ ] `PUBLIC_HTTP_PROXY_URL` равен строго `http://egress_proxy:3128`; application
-      services находятся только во внутренней сети, а Squid `dst` ACL отклоняет
-      private/loopback/link-local итоговые IP до общего allow.
+- [ ] `PUBLIC_HTTP_PROXY_URL` равен строго `http://egress_proxy:3128`;
+      Django/workers/Beat/frontend находятся только во внутренней сети, Nginx —
+      единственный service в `ingress_public`, а Squid `dst` ACL отклоняет
+      private/loopback/link-local/special-use итоговые IP до общего allow.
+- [ ] Фиксированный public preflight к корню Yandex Object Storage доступен
+      через Squid и не зависит от ingress текущего release.
 - [ ] PostgreSQL, cache Redis и durable Celery broker используют отдельные
       случайные credentials; cache и broker не указывают на один endpoint.
       URL-decoded Redis passwords совпадают с raw server passwords, а cache и
@@ -123,9 +126,13 @@ targets, если daemon занят чужим проектом.
 
 - [ ] Deploy workflow получил тот же release SHA; устаревший workflow не
       разворачивается, если `main` уже указывает на другой commit.
+- [ ] Для incident/manual deploy предыдущий SHA сохранён до checkout target и
+      явно передан как `PREVIOUS_SHA`; запуск без него завершился бы до Docker
+      mutation.
 - [ ] Preflight, infrastructure readiness, image build, Django pre-deploy checks,
-      Redis `PING`, SMTP CONNECT/STARTTLS/login и public HTTPS GET (с проверкой
-      YooKassa credentials только при `BILLING_ENABLED=true`) из
+      Redis `PING`, SMTP CONNECT/STARTTLS/login и public HTTPS GET к независимому
+      Yandex Object Storage (с проверкой YooKassa credentials только при
+      `BILLING_ENABLED=true`) из
       нового image завершились до остановки ingress; SMTP check не отправлял
       письмо, public HTTP check не создавал и не изменял платёж.
 - [ ] Старые ingress/Beat/web/workers завершили graceful drain без SIGKILL и
@@ -133,6 +140,8 @@ targets, если daemon занят чужим проектом.
 - [ ] Pre-migration backup подтверждён до начала `migrate`.
 - [ ] Все services (`db`, оба Redis, proxy, Django, оба workers, Beat, frontend,
       Nginx) стали healthy/running.
+- [ ] Nginx — единственный service в `ingress_public`, а `docker compose ps`
+      показывает фактические host bindings для TCP 80 и 443.
 - [ ] Публичный HTTPS `PROD_SMOKE_URL` (`/api/v1/ready/`) возвращает успех.
 - [ ] Проверены предметные сценарии: login/refresh, dashboard, checkout без
       реального списания, webhook/outbox backlog, Celery named ping и Beat

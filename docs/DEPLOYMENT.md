@@ -256,7 +256,9 @@ Fingerprint берётся по доверенному администрати�
 3. выполняет `check --deploy`, проверку незаписанных миграций, `migrate --plan`,
    ограниченный по времени Redis `PING` для cache, broker, result backend и
    coordination store, SMTP CONNECT/STARTTLS/login и side-effect-free public
-   HTTPS GET к YooKassa из нового Django image; все connectivity gates
+   HTTPS GET к независимому корню Yandex Object Storage, а при включённом
+   billing — к YooKassa с проверкой credentials, из нового Django image; все
+   connectivity gates
    завершаются до maintenance/drain;
 4. останавливает ingress, Beat, web и workers с graceful drain;
 5. создаёт обязательный зашифрованный и подписанный S3 backup;
@@ -267,7 +269,23 @@ Fingerprint берётся по доверенному администрати�
 
 Ручной запуск `deploy.sh` не является способом обойти CI или protected
 environment: он допустим только по отдельной incident/change процедуре с тем же
-проверенным SHA и зафиксированным предыдущим SHA.
+проверенным SHA и зафиксированным предыдущим SHA. `PREVIOUS_SHA` обязателен:
+его нужно сохранить **до** checkout целевого commit, иначе автоматический
+rollback до начала миграций невозможен.
+
+```bash
+cd /opt/saas_poster
+previous_sha="$(git rev-parse HEAD)"
+git fetch --no-tags origin main
+target_sha="$(git rev-parse origin/main)"
+git checkout --detach "$target_sha"
+PREVIOUS_SHA="$previous_sha" ./deploy.sh "$target_sha"
+```
+
+Nginx подключён одновременно к внутренней `backend` и отдельной внешней
+`ingress_public`; только Nginx имеет доступ к последней. Если `docker compose ps`
+не показывает host bindings `0.0.0.0:80->80` и `0.0.0.0:443->443`, release нельзя
+считать доступным, даже если внутренний Nginx healthcheck зелёный.
 
 ## 6. Проверка после deploy
 

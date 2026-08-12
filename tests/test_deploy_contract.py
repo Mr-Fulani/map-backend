@@ -15,6 +15,21 @@ def test_deploy_is_gated_by_ci_and_uses_exact_commit():
     assert 'PREVIOUS_SHA="$previous_sha" ./deploy.sh "$target_sha"' in DEPLOY_WORKFLOW
 
 
+def test_previous_sha_is_explicit_and_validated_before_docker_mutation():
+    assert 'PREVIOUS_SHA="${PREVIOUS_SHA:-}"' in DEPLOY_SCRIPT
+    assert 'PREVIOUS_SHA:-$(git rev-parse HEAD' not in DEPLOY_SCRIPT
+    validation = DEPLOY_SCRIPT.index(
+        'PREVIOUS_SHA обязателен и должен быть сохранён до checkout TARGET_SHA.'
+    )
+    first_build = DEPLOY_SCRIPT.index('build --pull')
+
+    assert validation < first_build
+    assert 'git cat-file -e "${PREVIOUS_SHA}^{commit}"' in DEPLOY_SCRIPT
+    assert 'git merge-base --is-ancestor "$PREVIOUS_SHA" "$TARGET_SHA"' in (
+        DEPLOY_SCRIPT
+    )
+
+
 def test_image_build_rejects_tracked_and_untracked_worktree_drift():
     status_command = (
         'git status --porcelain=v1 --untracked-files=normal '

@@ -20,6 +20,7 @@ YOOKASSA_SETTINGS = SimpleNamespace(
 
 DISABLED_BILLING_SETTINGS = SimpleNamespace(
     BILLING_ENABLED=False,
+    PUBLIC_HTTP_PREFLIGHT_URL='https://platform.example.test/api/v1/live/',
     YOOKASSA_API_CONNECT_TIMEOUT_SECONDS=3.05,
     YOOKASSA_API_READ_TIMEOUT_SECONDS=10,
     YOOKASSA_API_MAX_ELAPSED_SECONDS=30,
@@ -84,10 +85,35 @@ def test_command_requires_authenticated_not_found_sentinel(public_request):
 def test_command_still_checks_public_transport_when_billing_is_disabled(
     public_request,
 ):
-    public_request.return_value = MagicMock(status_code=401)
+    public_request.return_value = MagicMock(status_code=200)
     output = StringIO()
 
     check_public_http_connectivity.Command(stdout=output).handle()
 
+    public_request.assert_called_once_with(
+        DISABLED_BILLING_SETTINGS.PUBLIC_HTTP_PREFLIGHT_URL,
+        method='GET',
+        timeout=(3.05, 10),
+        status_only=True,
+        redirect_policy=REDIRECT_NONE,
+        max_redirects=0,
+        max_elapsed_seconds=30,
+    )
     assert 'auth' not in public_request.call_args.kwargs
     assert 'Public HTTPS transport: ok (billing disabled)' in output.getvalue()
+
+
+@patch.object(
+    check_public_http_connectivity,
+    'settings',
+    DISABLED_BILLING_SETTINGS,
+)
+@patch.object(check_public_http_connectivity, 'request_public_http_url')
+def test_disabled_billing_requires_successful_platform_liveness(public_request):
+    public_request.return_value = MagicMock(status_code=503)
+
+    with pytest.raises(CommandError) as error:
+        check_public_http_connectivity.Command().handle()
+
+    assert 'RuntimeError' in str(error.value)
+    assert '503' not in str(error.value)

@@ -105,7 +105,7 @@ PROD_BROKER_MIGRATION_CONFIRMED="${PROD_BROKER_MIGRATION_CONFIRMED:-false}"
 PROD_BACKUP_TIMEOUT_SECONDS="${PROD_BACKUP_TIMEOUT_SECONDS:-7200}"
 PROD_DRAIN_TIMEOUT_SECONDS="${PROD_DRAIN_TIMEOUT_SECONDS:-3700}"
 PROD_SMOKE_URL="${PROD_SMOKE_URL:-}"
-PREVIOUS_SHA="${PREVIOUS_SHA:-$(git rev-parse HEAD 2>/dev/null || true)}"
+PREVIOUS_SHA="${PREVIOUS_SHA:-}"
 
 DEPLOY_PHASE="initialization"
 SERVICES_CHANGED=false
@@ -242,6 +242,8 @@ preflight() {
 
   [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]] \
     || fail "deploy.sh ожидает полный 40-символьный commit SHA."
+  [[ "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]] \
+    || fail "PREVIOUS_SHA обязателен и должен быть сохранён до checkout TARGET_SHA."
   [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]] \
     || fail "рабочая копия должна быть переключена на TARGET_SHA до запуска deploy.sh."
   if [[ -n "$(git status --porcelain=v1 --untracked-files=normal --ignore-submodules=none)" ]]; then
@@ -250,6 +252,9 @@ preflight() {
 
   git fetch --no-tags origin main
   git cat-file -e "${TARGET_SHA}^{commit}"
+  git cat-file -e "${PREVIOUS_SHA}^{commit}"
+  git merge-base --is-ancestor "$PREVIOUS_SHA" "$TARGET_SHA" \
+    || fail "PREVIOUS_SHA должен быть предком TARGET_SHA."
   git merge-base --is-ancestor "$TARGET_SHA" origin/main \
     || fail "commit ${TARGET_SHA} не принадлежит актуальной ветке origin/main."
 
