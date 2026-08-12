@@ -7,6 +7,7 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_protect
 from drf_spectacular.utils import extend_schema, extend_schema_view
 from rest_framework import status
+from rest_framework.exceptions import ValidationError
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
@@ -54,6 +55,20 @@ def _delete_refresh_cookie(response):
         path=settings.AUTH_REFRESH_COOKIE_PATH,
         samesite=settings.AUTH_REFRESH_COOKIE_SAMESITE,
     )
+
+
+def _browser_session_rejected_response():
+    """Return an authentication rejection without conflating it with CSRF."""
+    response = Response(
+        {
+            'status': 'error',
+            'code': 'unauthorized',
+            'message': 'Сессия истекла. Войдите снова.',
+        },
+        status=status.HTTP_401_UNAUTHORIZED,
+    )
+    _delete_refresh_cookie(response)
+    return response
 
 
 class NoStoreAuthResponseMixin:
@@ -200,11 +215,14 @@ class BrowserRefreshView(NoStoreAuthResponseMixin, APIView):
     def post(self, request):
         raw_token = request.COOKIES.get(settings.AUTH_REFRESH_COOKIE_NAME, '')
         if not raw_token:
-            raise InvalidToken('Refresh cookie отсутствует.')
+            return _browser_session_rejected_response()
         serializer = TenantTokenRefreshSerializer(data={
             'refresh': raw_token,
         })
-        serializer.is_valid(raise_exception=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+        except (InvalidToken, ValidationError):
+            return _browser_session_rejected_response()
         payload = dict(serializer.validated_data)
         refresh = payload.pop('refresh')
         response = Response(payload)
