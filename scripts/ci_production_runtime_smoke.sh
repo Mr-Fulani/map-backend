@@ -47,7 +47,7 @@ wait_healthy() {
   local service="$1"
   local attempt container_id state health
 
-  for attempt in $(seq 1 60); do
+  for ((attempt = 1; attempt <= 60; attempt++)); do
     container_id="$("${COMPOSE[@]}" ps -q "$service")"
     if [[ -n "$container_id" ]]; then
       state="$(docker inspect --format '{{.State.Status}}' "$container_id")"
