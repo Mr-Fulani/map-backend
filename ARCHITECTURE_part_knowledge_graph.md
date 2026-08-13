@@ -1,5 +1,13 @@
 # ARCHITECTURE: Platform Parts Knowledge Graph
 
+> [!WARNING]
+> **Статус: исторический architecture snapshot, не operational runbook.** Документ
+> фиксирует решение enrichment MVP на дату ниже и может отставать от моделей,
+> миграций и runtime. Актуальные инструкции находятся в [README](README.md),
+> [DEV](DEV.md), [production deployment](docs/DEPLOYMENT.md) и
+> [security runbook](docs/PRODUCTION_SECURITY.md); фактический контракт задают код
+> и текущие миграции.
+
 > **Дата:** 29.05.2026
 > **Проект:** MAP
 > **Статус:** первая итерация после enrichment MVP

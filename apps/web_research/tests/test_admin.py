@@ -10,10 +10,12 @@ from apps.tenants.models import TenantUser
 from apps.tenants.services import TenantService
 from apps.web_research.admin import (
     WebResearchClaimAdmin, WebResearchEvidenceAdmin, WebResearchRunAdmin,
-    WebSearchConnectionAdmin, WebSearchConnectionForm,
+    WebSearchAttemptAdmin, WebSearchConnectionAdmin, WebSearchConnectionForm,
+    WebSearchWorkflowAdmin,
 )
 from apps.web_research.models import (
     WebResearchClaim, WebResearchEvidence, WebResearchRun, WebSearchConnection,
+    WebSearchAttempt, WebSearchWorkflow,
 )
 
 
@@ -87,11 +89,15 @@ def test_superuser_sees_all_research_but_cannot_mutate_audit_journals():
     request = RequestFactory().get('/admin/web_research/')
     request.user = superuser
     run_admin = WebResearchRunAdmin(WebResearchRun, AdminSite())
+    attempt_admin = WebSearchAttemptAdmin(WebSearchAttempt, AdminSite())
+    workflow_admin = WebSearchWorkflowAdmin(WebSearchWorkflow, AdminSite())
 
     assert run_admin.get_queryset(request).count() == 2
     assert run_admin.has_add_permission(request) is False
     assert run_admin.has_change_permission(request) is False
     assert run_admin.has_delete_permission(request) is False
+    assert attempt_admin.has_delete_permission(request) is False
+    assert workflow_admin.has_delete_permission(request) is False
 
     client = Client()
     client.force_login(superuser)
@@ -149,3 +155,27 @@ def test_saving_new_primary_demotes_previous_primary():
     replacement.refresh_from_db()
     assert previous.priority == WebSearchConnection.FALLBACK_PRIORITY
     assert replacement.priority == WebSearchConnection.PRIMARY_PRIORITY
+
+
+@pytest.mark.django_db
+def test_admin_connection_check_never_sends_unowned_provider_request():
+    connection = WebSearchConnection.objects.create(
+        provider_id='brave',
+        display_name='Brave',
+    )
+    request = RequestFactory().post('/admin/web_research/websearchconnection/')
+    request.user = get_user_model().objects.create_superuser(
+        'admin-ledger@test.com', 'password',
+    )
+    model_admin = WebSearchConnectionAdmin(WebSearchConnection, AdminSite())
+
+    from unittest.mock import patch
+    with patch.object(model_admin, 'message_user') as message, patch(
+        'apps.web_research.admin.create_search_provider',
+        side_effect=AssertionError('admin must not call provider'),
+    ):
+        model_admin.check_connections(
+            request,
+            WebSearchConnection.objects.filter(pk=connection.pk),
+        )
+    message.assert_called_once()

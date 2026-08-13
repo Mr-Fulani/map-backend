@@ -1,10 +1,12 @@
 from datetime import timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 from xml.etree import ElementTree as ET
 
 import pytest
 import responses as responses_lib
+from django.core.cache.backends.locmem import LocMemCache
 from django.utils.timezone import now
 
 from apps.datasources.encryption import encrypt
@@ -13,6 +15,11 @@ from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 from apps.marketplaces.adapters.avito.error_handler import backoff
 from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
 from apps.marketplaces.adapters.avito.feed_builder import build_feed, get_ad_id
+from apps.marketplaces.adapters.avito import rate_limiter
+from apps.marketplaces.adapters.avito.rate_limiter import (
+    AvitoRateLimiter,
+    RateLimitError,
+)
 from apps.marketplaces.models import CategoryMapping, Listing, MarketplaceAccount, MarketplacePlacementAddress
 from apps.marketplaces.services import ListingBulkLimitExceeded, ListingService
 from apps.products.models import Product, ProductImage, TenantCatalogCategory
@@ -74,6 +81,27 @@ def make_listing(tenant, product, account, **kwargs):
         description_ai='Описание тестовое',
         **kwargs,
     )
+
+
+def test_rate_limiter_creates_ttl_window_and_rejects_only_over_limit(monkeypatch):
+    local_cache = LocMemCache('avito-rate-limit-test', {})
+    monkeypatch.setattr(rate_limiter, 'cache', local_cache)
+    monkeypatch.setitem(rate_limiter.RATE_LIMITS, 'test-operation', {
+        'rate': 2,
+        'per': 60,
+    })
+    account = SimpleNamespace(pk=42)
+    limiter = AvitoRateLimiter()
+
+    with patch.object(limiter, '_log_rate_limit') as log_rate_limit:
+        limiter.consume(account, 'test-operation')
+        limiter.consume(account, 'test-operation')
+        with pytest.raises(RateLimitError) as exc_info:
+            limiter.consume(account, 'test-operation')
+
+    assert exc_info.value.retry_after == 60
+    assert local_cache.get('avito:rl:42:test-operation') == 3
+    log_rate_limit.assert_called_once_with(account, 'test-operation')
 
 
 # ------------------------------------------------------------------ #

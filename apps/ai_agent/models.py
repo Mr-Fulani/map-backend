@@ -1,3 +1,4 @@
+import uuid
 from decimal import Decimal, ROUND_HALF_UP, ROUND_UP
 
 from django.core.exceptions import ValidationError
@@ -423,3 +424,124 @@ class AIRequestLog(TimestampedModel):
             models.Index(fields=['tenant', 'task_type', '-created_at']),
             models.Index(fields=['provider', 'model_id', '-created_at']),
         ]
+
+
+class AIProviderOperation(TimestampedModel):
+    """Durable accounting state for one call to a paid AI provider.
+
+    The row is written in the same transaction as the wallet reservation and
+    before the network call starts.  It therefore remains available for an
+    explicit operator decision when a timeout leaves the provider outcome
+    unknown.
+    """
+
+    class Status(models.TextChoices):
+        RESERVED = 'reserved', 'Зарезервировано'
+        PENDING_RECONCILIATION = 'pending_reconciliation', 'Требует сверки'
+        RELEASED = 'released', 'Резерв возвращён'
+        SETTLED = 'settled', 'Резерв списан'
+
+    class DomainType(models.TextChoices):
+        PRODUCT = 'product', 'Товар'
+        WEB_RESEARCH_RUN = 'web_research_run', 'Интернет-исследование'
+
+    class ResolutionAction(models.TextChoices):
+        RELEASE = 'release', 'Вернуть резерв'
+        SETTLE = 'settle', 'Списать по фактическому потреблению'
+        SETTLE_RESERVED = 'settle_reserved', 'Списать зарезервированное'
+
+    class ApplyState(models.TextChoices):
+        NOT_REQUIRED = 'not_required', 'Применение не требуется'
+        PENDING = 'pending', 'Ожидает применения'
+        APPLIED = 'applied', 'Применено'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.PROTECT, related_name='ai_provider_operations',
+    )
+    task_type = models.CharField(max_length=40, choices=AITaskType.choices)
+    provider = models.CharField(max_length=20)
+    model_id = models.CharField(max_length=120)
+    reservation_key = models.CharField(max_length=160)
+    reserved_amount = models.DecimalField(max_digits=16, decimal_places=4)
+    charged_amount = models.DecimalField(
+        max_digits=16, decimal_places=4, null=True, blank=True,
+    )
+    domain_type = models.CharField(max_length=40, choices=DomainType.choices)
+    domain_reference = models.CharField(max_length=160)
+    status = models.CharField(
+        max_length=30, choices=Status.choices, default=Status.RESERVED,
+        db_index=True,
+    )
+    provider_error_code = models.CharField(max_length=80, blank=True)
+    terminal_reason = models.CharField(max_length=120, blank=True)
+    resolution_action = models.CharField(
+        max_length=30, choices=ResolutionAction.choices, blank=True,
+    )
+    operator_note = models.TextField(blank=True)
+    validated_result = models.JSONField(null=True, blank=True)
+    apply_state = models.CharField(
+        max_length=20,
+        choices=ApplyState.choices,
+        default=ApplyState.NOT_REQUIRED,
+        db_index=True,
+    )
+    network_started_at = models.DateTimeField(null=True, blank=True)
+    uncertainty_marked_at = models.DateTimeField(null=True, blank=True)
+    released_at = models.DateTimeField(null=True, blank=True)
+    settled_at = models.DateTimeField(null=True, blank=True)
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    applied_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Операция AI-провайдера'
+        verbose_name_plural = 'Операции AI-провайдеров'
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(
+                fields=['tenant', 'status', '-created_at'],
+                name='ai_op_tenant_status_idx',
+            ),
+            models.Index(
+                fields=['status', 'uncertainty_marked_at'],
+                name='ai_op_uncertain_idx',
+            ),
+            models.Index(
+                fields=['status', 'network_started_at'],
+                name='ai_op_network_started_idx',
+            ),
+            models.Index(
+                fields=['status', 'apply_state', 'created_at'],
+                name='ai_op_apply_queue_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'reservation_key'],
+                name='unique_tenant_ai_provider_reservation',
+            ),
+            models.UniqueConstraint(
+                fields=[
+                    'tenant', 'task_type', 'domain_type', 'domain_reference',
+                ],
+                condition=(
+                    models.Q(status__in=['reserved', 'pending_reconciliation'])
+                    | models.Q(status='settled', apply_state='pending')
+                ),
+                name='unique_unresolved_ai_provider_domain',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(reserved_amount__gte=0),
+                name='ai_provider_reserved_nonnegative',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(charged_amount__isnull=True)
+                    | models.Q(charged_amount__gte=0)
+                ),
+                name='ai_provider_charged_nonnegative',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.task_type}/{self.provider}/{self.model_id} [{self.status}] {self.pk}'

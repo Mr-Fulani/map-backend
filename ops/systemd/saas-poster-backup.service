@@ -7,16 +7,23 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=saas-poster
-Group=docker
+User=root
+Group=root
+UMask=0077
 WorkingDirectory=/opt/saas_poster
-ExecStart=/opt/saas_poster/scripts/production_backup.sh
+ExecStart=/usr/local/sbin/saas-poster-backup
 TimeoutStartSec=3h
 Nice=10
 IOSchedulingClass=best-effort
 IOSchedulingPriority=7
 Restart=on-failure
 RestartSec=30m
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+NoNewPrivileges=true
+LockPersonality=true
+RestrictSUIDSGID=true
 
 [Install]
 WantedBy=multi-user.target

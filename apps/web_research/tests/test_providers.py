@@ -1,6 +1,7 @@
 from unittest.mock import Mock, patch
 
 import pytest
+import requests
 from django.test import override_settings
 
 from apps.web_research.providers.brave import BraveWebSearchProvider
@@ -70,6 +71,7 @@ def test_brave_rejects_malformed_json_shapes(payload):
             BraveWebSearchProvider().search('query')
 
     assert error.value.code == 'invalid_response'
+    assert error.value.outcome_uncertain is True
 
 
 @override_settings(BRAVE_SEARCH_API_KEY='test-key', TRUSTED_API_RESPONSE_MAX_BYTES=5)
@@ -83,7 +85,64 @@ def test_brave_rejects_oversized_response_without_retrying():
 
     assert error.value.code == 'invalid_response'
     assert error.value.retryable is False
+    assert error.value.outcome_uncertain is True
     response.close.assert_called_once_with()
+
+
+@pytest.mark.parametrize(
+    'status_code',
+    [402, 408, 409, 424, 429, 451, 500, 502, 503],
+)
+@override_settings(BRAVE_SEARCH_API_KEY='test-key')
+def test_brave_non_authoritative_http_outcome_is_uncertain(status_code):
+    response = Mock(status_code=status_code)
+    with patch('apps.web_research.providers.brave.requests.get', return_value=response):
+        with pytest.raises(WebSearchProviderError) as error:
+            BraveWebSearchProvider().search('query')
+
+    assert error.value.code == f'http_{status_code}'
+    assert error.value.outcome_uncertain is True
+    assert error.value.retryable is False
+
+
+@override_settings(BRAVE_SEARCH_API_KEY='test-key')
+def test_brave_documented_422_allows_provider_fallback():
+    response = Mock(status_code=422)
+    with patch('apps.web_research.providers.brave.requests.get', return_value=response):
+        with pytest.raises(WebSearchProviderError) as error:
+            BraveWebSearchProvider().search('query')
+
+    assert error.value.code == 'http_422'
+    assert error.value.outcome_uncertain is False
+
+
+@override_settings(BRAVE_SEARCH_API_KEY='test-key')
+def test_brave_connect_timeout_is_proven_pre_send():
+    with patch(
+        'apps.web_research.providers.brave.requests.get',
+        side_effect=requests.ConnectTimeout('not sent'),
+    ), pytest.raises(WebSearchProviderError) as error:
+        BraveWebSearchProvider().search('query')
+
+    assert error.value.code == 'pre_send_failure'
+    assert error.value.retryable is True
+    assert error.value.outcome_uncertain is False
+
+
+@override_settings(BRAVE_SEARCH_API_KEY='test-key')
+def test_brave_ambiguous_connection_error_is_uncertain_and_scrubbed():
+    with patch(
+        'apps.web_research.providers.brave.requests.get',
+        side_effect=requests.ReadTimeout(
+            'https://api.example.test/?api_key=must-not-leak',
+        ),
+    ), pytest.raises(WebSearchProviderError) as error:
+        BraveWebSearchProvider().search('query')
+
+    assert error.value.code == 'connection_error'
+    assert error.value.outcome_uncertain is True
+    assert 'must-not-leak' not in str(error.value)
+    assert 'api.example.test' not in str(error.value)
 
 
 @override_settings(BRAVE_SEARCH_API_KEY='test-key')
@@ -109,6 +168,18 @@ def test_brave_image_search_retains_source_page_for_exact_product_validation():
     assert results[0]['properties']['url'].endswith('/6148741/1.jpg')
     assert get.call_args.kwargs['params']['spellcheck'] is False
     track_quota.assert_called_once_with(response)
+
+
+@override_settings(BRAVE_SEARCH_API_KEY='test-key')
+def test_brave_image_search_500_is_uncertain():
+    response = Mock(status_code=500)
+    with patch(
+        'apps.web_research.providers.brave.requests.get', return_value=response,
+    ), pytest.raises(WebSearchProviderError) as error:
+        BraveWebSearchProvider().search_images('query')
+
+    assert error.value.code == 'http_500'
+    assert error.value.outcome_uncertain is True
 
 
 @override_settings(BRAVE_SEARCH_API_KEY='')
@@ -179,6 +250,23 @@ def test_tavily_rejects_malformed_json_shapes(payload):
             TavilyWebSearchProvider().search_payload('query', include_images=True)
 
     assert error.value.code == 'invalid_response'
+    assert error.value.outcome_uncertain is True
+
+
+@pytest.mark.parametrize(
+    'status_code',
+    [402, 408, 409, 424, 429, 432, 433, 451, 500, 502, 503],
+)
+@override_settings(TAVILY_API_KEY='test-tavily-key')
+def test_tavily_non_authoritative_http_outcome_is_uncertain(status_code):
+    response = Mock(status_code=status_code)
+    with patch('apps.web_research.providers.tavily.requests.post', return_value=response):
+        with pytest.raises(WebSearchProviderError) as error:
+            TavilyWebSearchProvider().search_payload('query')
+
+    assert error.value.code == f'http_{status_code}'
+    assert error.value.outcome_uncertain is True
+    assert error.value.retryable is False
 
 
 @override_settings(TAVILY_API_KEY='test-tavily-key')

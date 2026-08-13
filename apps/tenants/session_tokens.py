@@ -1,5 +1,7 @@
 """Atomic JWT refresh rotation and session revocation primitives."""
 
+from typing import cast
+
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
@@ -9,7 +11,7 @@ from rest_framework_simplejwt.token_blacklist.models import (
     BlacklistedToken,
     OutstandingToken,
 )
-from rest_framework_simplejwt.tokens import RefreshToken
+from rest_framework_simplejwt.tokens import RefreshToken, Token
 from rest_framework_simplejwt.utils import datetime_from_epoch
 
 from apps.tenants.models import TenantUser
@@ -26,7 +28,10 @@ def _decode_refresh(raw_token: str) -> RefreshToken:
     if not isinstance(raw_token, str) or not raw_token:
         raise _invalid_refresh()
     try:
-        return RefreshToken(raw_token)
+        # SimpleJWT 5.x incorrectly annotates its encoded-token constructor as
+        # ``Token | None`` although the decoder runtime contract is a string.
+        # Keep the checked public input and bridge only that third-party stub.
+        return RefreshToken(cast(Token, raw_token))
     except TokenError as exc:
         raise _invalid_refresh() from exc
 

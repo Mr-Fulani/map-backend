@@ -4,11 +4,13 @@ import requests
 from django.conf import settings
 from django.utils.html import strip_tags
 
+from apps.core.provider_boundary import TAVILY_AUTHORITATIVE_REJECTION_STATUSES
 from apps.core.http_responses import (
     TrustedResponseError, bounded_http_request, trusted_api_max_bytes,
 )
 from apps.web_research.providers.base import (
     BaseWebSearchProvider, WebSearchProviderError, WebSearchResult,
+    provider_http_error, provider_response_error, provider_transport_error,
 )
 from apps.web_research.providers.registry import register_search_provider
 from apps.web_research.search_context import SearchContext
@@ -90,27 +92,18 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                 max_bytes=trusted_api_max_bytes(settings),
             )
         except TrustedResponseError as exc:
-            raise WebSearchProviderError(
-                f'Tavily response rejected: {exc}',
-                retryable=False, code='invalid_response',
-            ) from exc
+            raise provider_response_error('Tavily') from exc
         except requests.RequestException as exc:
-            raise WebSearchProviderError(
-                f'Tavily connection error: {exc}',
-                retryable=True, code='connection_error',
-            ) from exc
-        if response.status_code >= 400:
-            raise WebSearchProviderError(
-                f'Tavily HTTP {response.status_code}',
-                retryable=response.status_code == 429 or response.status_code >= 500,
-                code=f'http_{response.status_code}',
+            raise provider_transport_error('Tavily', exc) from exc
+        if not 200 <= response.status_code < 300:
+            raise provider_http_error(
+                'Tavily', response.status_code,
+                documented_rejections=TAVILY_AUTHORITATIVE_REJECTION_STATUSES,
             )
         try:
             data = response.json()
         except ValueError as exc:
-            raise WebSearchProviderError(
-                'Tavily returned invalid JSON.', code='invalid_json',
-            ) from exc
+            raise provider_response_error('Tavily', 'invalid JSON') from exc
         if not isinstance(data, dict):
             _invalid_response('top-level JSON must be an object')
 
@@ -202,8 +195,4 @@ def _validate_optional_string(container: dict, key: str) -> None:
 
 
 def _invalid_response(detail: str) -> None:
-    raise WebSearchProviderError(
-        f'Tavily returned an invalid response: {detail}.',
-        retryable=False,
-        code='invalid_response',
-    )
+    raise provider_response_error('Tavily', detail)

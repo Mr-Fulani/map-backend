@@ -6,15 +6,30 @@
 """
 
 import logging
+from typing import NoReturn
 
 import requests
 from django.conf import settings
 
-from apps.core.http_responses import bounded_http_request, trusted_api_max_bytes
+from apps.core.http_responses import (
+    TrustedResponseError, bounded_http_request, trusted_api_max_bytes,
+)
+from apps.core.provider_boundary import (
+    BRAVE_AUTHORITATIVE_REJECTION_STATUSES,
+    is_authoritative_provider_rejection,
+    is_proven_pre_send_failure,
+)
 from apps.image_search.models import BraveQuota
-from apps.image_search.sources.base import BaseImageSource, ImageCandidate
-from apps.image_search.sources.connection import image_source_api_key, image_source_connection
+from apps.image_search.sources.base import (
+    BaseImageSource, ImageCandidate, ImageSearchOutcomeUncertain,
+)
+from apps.image_search.sources.connection import (
+    execute_recorded_image_search,
+    image_source_api_key,
+    image_source_connection,
+)
 from apps.image_search.sources.registry import register
+from apps.web_research.providers.base import WebSearchProviderError
 
 logger = logging.getLogger(__name__)
 
@@ -70,26 +85,73 @@ class BraveImageSource(BaseImageSource):
             result.append((query, confidence))
         return result
 
+    def build_workflow_plan(self, *, source_index: int) -> dict:
+        plan = super().build_workflow_plan(source_index=source_index)
+        plan['calls'] = [
+            {
+                'slot': f'source:{source_index}:query:{query_index}',
+                'query': query,
+                'confidence': confidence,
+                'request_payload': {
+                    'provider_id': self.provider_id,
+                    'call_kind': 'image',
+                    'query': query,
+                    'count': _MAX_RESULTS_PER_QUERY,
+                    'search_lang': 'ru',
+                    'country': 'ru',
+                    'safesearch': 'off',
+                },
+            }
+            for query_index, (query, confidence) in enumerate(
+                self.build_queries()[:self.max_queries],
+            )
+        ]
+        return plan
+
     def search(self) -> list[ImageCandidate]:
         """Ищет изображения через Brave Search API.
 
         Returns:
             Список ImageCandidate с width/height и confidence в raw_meta.
         """
-        api_key = image_source_api_key(
-            self.source_id, getattr(self.product, 'tenant', None), 'BRAVE_SEARCH_API_KEY',
-            getattr(settings, 'BRAVE_SEARCH_API_KEY', ''),
-        )
-        if not api_key:
-            logger.warning('[brave] BRAVE_SEARCH_API_KEY не задан')
-            return []
-
-        queries = self.build_queries()[:self.max_queries]
+        plan = self.workflow_plan or self.build_workflow_plan(source_index=0)
+        calls = plan.get('calls')
+        if not isinstance(calls, list):
+            raise ValueError('Brave image-search workflow calls are invalid')
         candidates: list[ImageCandidate] = []
         seen_urls: set[str] = set()
 
-        for query, confidence in queries:
-            results = self._fetch(api_key, query)
+        for raw_call in calls:
+            if not isinstance(raw_call, dict):
+                raise ValueError('Brave image-search workflow call is invalid')
+            query = raw_call.get('query')
+            confidence = raw_call.get('confidence')
+            slot = raw_call.get('slot')
+            request_payload = raw_call.get('request_payload')
+            if (
+                not isinstance(query, str)
+                or not isinstance(confidence, str)
+                or not isinstance(slot, str)
+                or not isinstance(request_payload, dict)
+            ):
+                raise ValueError('Brave image-search workflow call is invalid')
+            self.last_attempt_query = query
+            try:
+                results = execute_recorded_image_search(
+                    self,
+                    query=query,
+                    slot=slot,
+                    request_payload=request_payload,
+                    call=lambda query=query, request_payload=request_payload: (
+                        self._fetch_runtime(query, request_payload)
+                    ),
+                )
+            except WebSearchProviderError as exc:
+                if exc.outcome_uncertain or exc.code == 'provider_reconciliation_required':
+                    raise
+                self.last_error_code = exc.code
+                self.last_error = str(exc)
+                break
             for rank, r in enumerate(results, start=1):
                 props = r.get('properties') or {}
                 thumb = r.get('thumbnail') or {}
@@ -113,8 +175,38 @@ class BraveImageSource(BaseImageSource):
 
         return candidates
 
-    def _fetch(self, api_key: str, query: str) -> list[dict]:
+    def _fetch_runtime(self, query: str, request_payload: dict) -> list[dict]:
+        """Resolve current credentials only after checkpoint replay missed."""
+        api_key = image_source_api_key(
+            self.source_id,
+            getattr(self.product, 'tenant', None),
+            'BRAVE_SEARCH_API_KEY',
+            getattr(settings, 'BRAVE_SEARCH_API_KEY', ''),
+        )
+        if not api_key:
+            raise WebSearchProviderError(
+                'Brave Image Search API key is not configured.',
+                retryable=False,
+                code='not_configured',
+            )
+        return self._fetch(api_key, query, request_payload=request_payload)
+
+    def _fetch(
+        self,
+        api_key: str,
+        query: str,
+        *,
+        request_payload: dict | None = None,
+    ) -> list[dict]:
         """Выполняет один HTTP-запрос к Brave Image Search API."""
+        self.last_attempt_query = query
+        request_payload = request_payload or {
+            'query': query,
+            'count': _MAX_RESULTS_PER_QUERY,
+            'search_lang': 'ru',
+            'country': 'ru',
+            'safesearch': 'off',
+        }
         try:
             resp = bounded_http_request(
                 requests.get,
@@ -124,32 +216,42 @@ class BraveImageSource(BaseImageSource):
                     'X-Subscription-Token': api_key,
                 },
                 params={
-                    'q': query,
-                    'count': _MAX_RESULTS_PER_QUERY,
-                    'search_lang': 'ru',
-                    'country': 'ru',
-                    'safesearch': 'off',
+                    'q': str(request_payload.get('query') or query),
+                    'count': int(
+                        request_payload.get('count')
+                        or _MAX_RESULTS_PER_QUERY
+                    ),
+                    'search_lang': str(
+                        request_payload.get('search_lang') or 'ru'
+                    ),
+                    'country': str(request_payload.get('country') or 'ru'),
+                    'safesearch': str(
+                        request_payload.get('safesearch') or 'off'
+                    ),
                 },
                 timeout=_TIMEOUT_SEC,
                 max_bytes=trusted_api_max_bytes(settings),
             )
 
-            if resp.status_code == 401:
-                self.last_error = 'Brave: неверный API-ключ.'
-                self.last_error_code = 'authentication_error'
-                logger.error('[brave] неверный API ключ (401)')
-                return []
-            if resp.status_code == 429:
-                self.last_error = 'Brave временно ограничил запросы.'
-                self.last_error_code = 'rate_limited'
-                logger.error(
-                    '[brave] ЛИМИТ ЗАПРОСОВ ИСЧЕРПАН (429) — пополните баланс на api.search.brave.com',
+            if not 200 <= resp.status_code < 300:
+                if is_authoritative_provider_rejection(
+                    resp.status_code,
+                    documented_statuses=BRAVE_AUTHORITATIVE_REJECTION_STATUSES,
+                ):
+                    self.last_error_code = (
+                        'authentication_error'
+                        if resp.status_code in {401, 403}
+                        else f'http_{resp.status_code}'
+                    )
+                    self.last_error = f'Brave отклонил запрос (HTTP {resp.status_code}).'
+                    logger.warning('[brave] безопасный отказ HTTP %s', resp.status_code)
+                    return []
+                self._raise_outcome_uncertain(
+                    query,
+                    code=f'http_{resp.status_code}',
                 )
-                return []
 
-            resp.raise_for_status()
-
-            # Инкрементируем персистентный счётчик только при успешном ответе
+            # A valid 2xx response proves the request was accepted and billed.
             self._track_quota(resp)
 
             payload = resp.json()
@@ -192,16 +294,40 @@ class BraveImageSource(BaseImageSource):
                                 f'{field_name} must be a non-negative integer',
                             )
             return selected
-        except ValueError as exc:
-            self.last_error = f'Brave вернул некорректный ответ: {exc}'
-            self.last_error_code = 'invalid_response'
-            logger.warning('[brave] некорректный ответ для %r: %s', query, exc)
-            return []
+        except ImageSearchOutcomeUncertain:
+            raise
+        except TrustedResponseError as exc:
+            self._raise_outcome_uncertain(query, code='invalid_response', cause=exc)
+        except requests.RequestException as exc:
+            if is_proven_pre_send_failure(exc):
+                self.last_error = 'Brave недоступен до отправки запроса.'
+                self.last_error_code = 'pre_send_failure'
+                logger.warning('[brave] запрос не был отправлен для %r', query)
+                raise WebSearchProviderError(
+                    self.last_error,
+                    retryable=True,
+                    code='pre_send_failure',
+                ) from exc
+            self._raise_outcome_uncertain(query, code='connection_error', cause=exc)
+        except (TypeError, ValueError) as exc:
+            self._raise_outcome_uncertain(query, code='invalid_response', cause=exc)
         except Exception as exc:
-            self.last_error = f'Brave недоступен: {exc}'
-            self.last_error_code = 'source_error'
-            logger.warning('[brave] ошибка для %r: %s', query, exc)
-            return []
+            self._raise_outcome_uncertain(query, code='provider_error', cause=exc)
+
+    def _raise_outcome_uncertain(
+        self,
+        query: str,
+        *,
+        code: str,
+        cause: BaseException | None = None,
+    ) -> NoReturn:
+        self.last_attempt_query = query
+        self.last_error_code = code
+        self.last_error = 'Результат Brave Image Search неизвестен; повтор запрещён.'
+        logger.error('[brave] результат запроса неизвестен для %r', query)
+        if cause is None:
+            raise ImageSearchOutcomeUncertain(self.last_error, code=code)
+        raise ImageSearchOutcomeUncertain(self.last_error, code=code) from cause
 
     @staticmethod
     def _track_quota(resp) -> None:

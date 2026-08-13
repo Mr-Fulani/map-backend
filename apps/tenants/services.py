@@ -37,6 +37,15 @@ class TenantService:
             role=TenantUser.ROLE_OWNER,
         )
 
+        # Billing and critical events can be emitted before the owner ever opens
+        # the settings page. Create the routing row as part of the same tenant
+        # transaction so those notifications are not silently discarded.
+        from apps.notifications.models import TenantNotificationSettings
+        TenantNotificationSettings.objects.create(
+            tenant=tenant,
+            notify_email=user.email,
+        )
+
         _, plaintext = APIKey.generate(
             tenant=tenant,
             name='Registration Read-only Key',

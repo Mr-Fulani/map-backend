@@ -1,18 +1,22 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from decimal import Decimal
+import uuid
 from unittest.mock import patch
 
 import pytest
 from django.core.cache.backends.locmem import LocMemCache
+from django.db import close_old_connections
 from django.test import Client
 from django.utils.timezone import now
 
+from apps.core.models import BackgroundJobDispatch, PaidIngressIntent
 from apps.marketplaces.models import Listing, MarketplaceAccount
 from apps.products.models import Product
 from apps.tenants.models import TenantUser
 from apps.tenants.services import TenantService
 from apps.tenants.tests.auth import (
-    create_tenant_with_operator_key,
+    create_operator_key, create_tenant_with_operator_key,
     owner_client as make_owner_client,
 )
 from apps.web_research.market import _difference, listing_market_comparison
@@ -64,6 +68,100 @@ def test_web_research_output_schema_is_strict_for_openai():
             assert_strict_object(schema['items'])
 
     assert_strict_object(WEB_RESEARCH_OUTPUT_SCHEMA)
+
+
+@pytest.mark.django_db
+def test_market_research_requires_uuid_and_replays_canonical_terminal_run(
+    django_capture_on_commit_callbacks,
+):
+    tenant, api_key = make_tenant('market-idempotency')
+    product = make_product(tenant)
+    client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
+    missing = Client(HTTP_AUTHORIZATION=(
+        f'Bearer {create_operator_key(tenant, name="Missing UUID key")}'
+    )).post(
+        f'/api/v1/products/{product.pk}/market-research/',
+        data={},
+        content_type='application/json',
+    )
+    key = str(uuid.uuid4())
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
+        with django_capture_on_commit_callbacks(execute=True):
+            first = client.post(
+                f'/api/v1/products/{product.pk}/market-research/',
+                data={'idempotency_key': key, 'force': True},
+                content_type='application/json',
+            )
+    run = WebResearchRun.objects.get(
+        product=product, purpose=WebResearchRun.Purpose.PRICING,
+    )
+    run.status = WebResearchRun.Status.COMPLETED
+    run.save(update_fields=['status', 'updated_at'])
+    retry = client.post(
+        f'/api/v1/products/{product.pk}/market-research/',
+        data={'idempotency_key': key, 'force': True},
+        content_type='application/json',
+    )
+    conflict = client.post(
+        f'/api/v1/products/{product.pk}/market-research/',
+        data={'idempotency_key': key, 'force': False},
+        content_type='application/json',
+    )
+
+    assert missing.status_code == 400
+    assert first.status_code == 201
+    assert retry.status_code == 201
+    assert retry.json()['data']['id'] == run.pk
+    assert retry.json()['data']['status'] == WebResearchRun.Status.COMPLETED
+    assert conflict.status_code == 409
+    assert conflict.json()['code'] == 'idempotency_conflict'
+    assert PaidIngressIntent.objects.filter(
+        tenant=tenant, operation='product-market-research',
+    ).count() == 1
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.web_research.tasks.run_web_research',
+    ).count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_market_research_retries_create_one_run_budget_and_dispatch():
+    from apps.core.models import TenantDailyPaidUsage
+
+    tenant, api_key = make_tenant('market-concurrent-idempotency')
+    product = make_product(tenant)
+    key = str(uuid.uuid4())
+
+    def submit():
+        close_old_connections()
+        try:
+            return Client(HTTP_AUTHORIZATION=f'Bearer {api_key}').post(
+                f'/api/v1/products/{product.pk}/market-research/',
+                data={'idempotency_key': key, 'force': True},
+                content_type='application/json',
+            ).status_code
+        finally:
+            close_old_connections()
+
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            statuses = list(pool.map(lambda _index: submit(), range(2)))
+
+    assert statuses == [201, 201]
+    assert WebResearchRun.objects.filter(
+        product=product,
+        purpose=WebResearchRun.Purpose.PRICING,
+    ).count() == 1
+    assert PaidIngressIntent.objects.filter(
+        tenant=tenant,
+        operation='product-market-research',
+    ).count() == 1
+    assert TenantDailyPaidUsage.objects.get(
+        tenant=tenant,
+        scope='web-research-starts',
+    ).units == 1
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.web_research.tasks.run_web_research',
+    ).count() == 1
 
 
 def test_price_difference_describes_subject_relative_to_reference():
@@ -262,15 +360,17 @@ def test_market_research_does_not_start_second_active_pricing_run(
     product = make_product(tenant)
     client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
 
-    with patch('apps.web_research.tasks.run_web_research.delay') as delay:
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
         with django_capture_on_commit_callbacks(execute=True):
             first = client.post(
                 f'/api/v1/products/{product.pk}/market-research/',
-                data={}, content_type='application/json',
+                data={'idempotency_key': str(uuid.uuid4())},
+                content_type='application/json',
             )
         second = client.post(
             f'/api/v1/products/{product.pk}/market-research/',
-            data={}, content_type='application/json',
+            data={'idempotency_key': str(uuid.uuid4())},
+            content_type='application/json',
         )
 
     assert first.status_code == 201
@@ -278,7 +378,9 @@ def test_market_research_does_not_start_second_active_pricing_run(
     assert WebResearchRun.objects.filter(
         product=product, purpose=WebResearchRun.Purpose.PRICING,
     ).count() == 1
-    delay.assert_called_once()
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.web_research.tasks.run_web_research',
+    ).count() == 1
 
 
 @pytest.mark.django_db

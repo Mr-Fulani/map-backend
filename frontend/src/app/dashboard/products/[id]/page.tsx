@@ -50,7 +50,7 @@ interface ProductImage {
 }
 
 interface ImageSearchResult {
-  state: 'running' | 'done' | 'failed';
+  state: 'running' | 'done' | 'failed' | 'reconciliation_required';
   reason_code?: string;
   message?: string;
   saved_count?: number;

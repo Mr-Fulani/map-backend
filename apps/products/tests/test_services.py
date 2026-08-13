@@ -432,7 +432,7 @@ class TestPhotoUploadPipeline:
         assert image.s3_key.endswith('.jpg')
         assert image.s3_key_thumb.endswith('_thumb.jpg')
 
-    def test_photo_pipeline_relocates_legacy_duplicate_key(self):
+    def test_photo_pipeline_does_not_reupload_existing_sha(self):
         from apps.products.storage import PhotoUploadPipeline
 
         tenant = make_tenant('legacy-media-co')
@@ -475,11 +475,85 @@ class TestPhotoUploadPipeline:
 
         assert result.pk == image.pk
         result.refresh_from_db()
-        assert result.s3_key.startswith(
-            'dev/products/legacy-media-co/auto_parts/tormoznye-kolodki/'
-        )
+        assert result.s3_key == f'products/{product.tenant_id}/{product.pk}/{sha}.jpg'
         assert result.status == ProductImage.Status.NEEDS_REVIEW
-        assert mock_storage.save.call_count == 2
+        mock_storage.save.assert_not_called()
+
+    def test_photo_pipeline_persists_actual_storage_names(self):
+        from apps.products.storage import PhotoUploadPipeline
+
+        tenant = make_tenant('actual-storage-keys')
+        ds = make_datasource(tenant)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        jpeg = self._make_jpeg_bytes()
+        mock_storage = MagicMock()
+        mock_storage.save.side_effect = [
+            'dev/products/actual/original_suffixed.jpg',
+            'dev/products/actual/thumb_suffixed.jpg',
+        ]
+
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
+            mock_get.return_value = self._mock_response(jpeg)
+            image = PhotoUploadPipeline(storage=mock_storage).process(
+                'http://example.com/actual.jpg',
+                product,
+            )
+
+        assert image.s3_key == 'dev/products/actual/original_suffixed.jpg'
+        assert image.s3_key_thumb == 'dev/products/actual/thumb_suffixed.jpg'
+
+    def test_photo_pipeline_removes_original_when_thumb_save_fails(self):
+        from apps.products.storage import PhotoUploadPipeline
+
+        tenant = make_tenant('partial-storage-failure')
+        ds = make_datasource(tenant)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        jpeg = self._make_jpeg_bytes()
+        mock_storage = MagicMock()
+        mock_storage.save.side_effect = [
+            'dev/products/partial/original.jpg',
+            OSError('thumb upload failed'),
+        ]
+
+        with patch('apps.products.storage.request_public_http_url') as mock_get:
+            mock_get.return_value = self._mock_response(jpeg)
+            image = PhotoUploadPipeline(storage=mock_storage).process(
+                'http://example.com/partial.jpg',
+                product,
+            )
+
+        assert image is None
+        mock_storage.delete.assert_called_once_with('dev/products/partial/original.jpg')
+        assert not ProductImage.objects.filter(product=product).exists()
+
+    def test_photo_pipeline_removes_both_files_when_db_create_fails(self):
+        from apps.products.storage import PhotoUploadPipeline
+
+        tenant = make_tenant('db-storage-failure')
+        ds = make_datasource(tenant)
+        product, _, _ = ProductService.upsert_from_source(tenant, ds, SAMPLE_DATA)
+        jpeg = self._make_jpeg_bytes()
+        mock_storage = MagicMock()
+        mock_storage.save.side_effect = [
+            'dev/products/db-failure/original.jpg',
+            'dev/products/db-failure/thumb.jpg',
+        ]
+
+        with (
+            patch('apps.products.storage.request_public_http_url') as mock_get,
+            patch.object(ProductImage.objects, 'create', side_effect=RuntimeError('db failed')),
+            pytest.raises(RuntimeError, match='db failed'),
+        ):
+            mock_get.return_value = self._mock_response(jpeg)
+            PhotoUploadPipeline(storage=mock_storage).process(
+                'http://example.com/db-failure.jpg',
+                product,
+            )
+
+        assert {call.args[0] for call in mock_storage.delete.call_args_list} == {
+            'dev/products/db-failure/original.jpg',
+            'dev/products/db-failure/thumb.jpg',
+        }
 
     def test_photo_limit_10_per_product(self):
         from apps.products.storage import PhotoUploadPipeline
@@ -527,3 +601,78 @@ class TestPhotoUploadPipeline:
             result = pipeline.process('http://example.com/new.jpg', product)
 
         assert result is not None
+
+
+@pytest.mark.django_db
+def test_active_euroauto_workflow_protects_parse_job_and_intent_from_delete():
+    import uuid
+
+    from django.db.models.deletion import ProtectedError
+    from django.db import transaction
+
+    from apps.products.models import ProductParseIntent, ProductParseJob
+    from apps.tenants.services import TenantService
+    from apps.web_research.models import WebSearchWorkflow
+
+    tenant, _ = TenantService.create_tenant(
+        'Euroauto delete guard',
+        'euroauto-delete-guard',
+        'euroauto-delete-guard@example.com',
+        'pass12345',
+    )
+    product = Product.objects.create(
+        tenant=tenant,
+        article='EUROAUTO-GUARD',
+        name='Euroauto workflow owner',
+        price='1.00',
+    )
+    intent = ProductParseIntent.objects.create(
+        tenant=tenant,
+        product=product,
+        idempotency_key=uuid.uuid4(),
+        request_fingerprint='a' * 64,
+        request_payload={'product_id': product.pk},
+    )
+    job = ProductParseJob.objects.create(
+        tenant=tenant,
+        product=product,
+        ingress_intent=intent,
+        article=product.article,
+        normalized_article='EUROAUTOGUARD',
+        brand='',
+        source_id='euroauto',
+    )
+    intent.primary_job = job
+    intent.job_ids = [job.pk]
+    intent.save(update_fields=['primary_job', 'job_ids', 'updated_at'])
+    workflow = WebSearchWorkflow.objects.create(
+        tenant=tenant,
+        product=product,
+        operation='euroauto',
+        domain_reference=f'product:{tenant.pk}:{product.pk}',
+        workflow_key=f'product-parse-job:{job.pk}',
+        input_fingerprint='b' * 64,
+        input_snapshot={'version': 1},
+        status=WebSearchWorkflow.Status.APPLY_PENDING,
+    )
+
+    with pytest.raises(ProtectedError, match='active paid provider workflow'), \
+         transaction.atomic():
+        job.delete()
+    with pytest.raises(ProtectedError, match='active paid provider workflow'), \
+         transaction.atomic():
+        ProductParseJob.objects.filter(pk=job.pk).delete()
+    with pytest.raises(ProtectedError, match='active paid provider workflow'), \
+         transaction.atomic():
+        intent.delete()
+    with pytest.raises(ProtectedError, match='active paid provider workflow'), \
+         transaction.atomic():
+        ProductParseIntent.objects.filter(pk=intent.pk).delete()
+
+    workflow.status = WebSearchWorkflow.Status.APPLIED
+    workflow.product = None
+    workflow.save(update_fields=['status', 'product', 'updated_at'])
+    intent.delete()
+
+    assert not ProductParseIntent.objects.filter(pk=intent.pk).exists()
+    assert not ProductParseJob.objects.filter(pk=job.pk).exists()

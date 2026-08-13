@@ -75,6 +75,7 @@ def test_provider_without_key_is_rejected_before_request():
                 call_model(model, 'system', 'user')
 
     assert error.value.code == 'missing_api_key'
+    assert error.value.request_not_accepted is True
     post.assert_not_called()
 
 
@@ -104,6 +105,60 @@ def test_openai_responses_uses_json_schema_when_provided():
     assert post.call_args.kwargs['json']['text']['format']['schema'] == schema
 
 
+@override_settings(OPENAI_API_KEY='key')
+def test_provider_4xx_is_authoritative_non_acceptance():
+    model = AIModel(
+        provider=AIModel.PROVIDER_OPENAI,
+        external_id='gpt-test',
+        display_name='GPT test',
+    )
+    response = Mock(status_code=400)
+    response.json.return_value = {'error': {'message': 'invalid request'}}
+
+    with patch('apps.ai_agent.providers.requests.post', return_value=response):
+        with pytest.raises(AIProviderError) as error:
+            call_model(model, 'system', 'user')
+
+    assert error.value.code == 'http_400'
+    assert error.value.request_not_accepted is True
+
+
+@override_settings(OPENAI_API_KEY='key')
+def test_provider_request_timeout_is_not_assumed_unbilled():
+    model = AIModel(
+        provider=AIModel.PROVIDER_OPENAI,
+        external_id='gpt-test',
+        display_name='GPT test',
+    )
+    response = Mock(status_code=408)
+    response.json.return_value = {'error': {'message': 'request timeout'}}
+
+    with patch('apps.ai_agent.providers.requests.post', return_value=response):
+        with pytest.raises(AIProviderError) as error:
+            call_model(model, 'system', 'user')
+
+    assert error.value.code == 'http_408'
+    assert error.value.request_not_accepted is False
+
+
+@override_settings(OPENAI_API_KEY='key')
+def test_provider_rate_limit_is_not_assumed_unbilled():
+    model = AIModel(
+        provider=AIModel.PROVIDER_OPENAI,
+        external_id='gpt-test',
+        display_name='GPT test',
+    )
+    response = Mock(status_code=429)
+    response.json.return_value = {'error': {'message': 'rate limited'}}
+
+    with patch('apps.ai_agent.providers.requests.post', return_value=response):
+        with pytest.raises(AIProviderError) as error:
+            call_model(model, 'system', 'user')
+
+    assert error.value.code == 'http_429'
+    assert error.value.request_not_accepted is False
+
+
 @override_settings(OPENAI_API_KEY='key', TRUSTED_API_RESPONSE_MAX_BYTES=5)
 def test_ai_provider_rejects_oversized_response_without_retrying():
     model = AIModel(
@@ -120,6 +175,7 @@ def test_ai_provider_rejects_oversized_response_without_retrying():
 
     assert error.value.code == 'invalid_provider_response'
     assert error.value.retryable is False
+    assert error.value.request_not_accepted is False
     response.close.assert_called_once_with()
 
 

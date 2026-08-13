@@ -4,7 +4,9 @@ import hashlib
 import json
 import logging
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urlsplit
 
 import requests
@@ -146,12 +148,16 @@ def _find_path(nodes: list[dict], path: tuple[str, ...]):
     return node
 
 
-def _walk_stored_tree(nodes: list[dict]):
+def _walk_stored_tree(
+    nodes: list[dict],
+) -> Iterator[tuple[dict, tuple[str, ...], int]]:
     if not isinstance(nodes, list):
         raise AvitoTreeLimitExceeded('Дерево Avito должно быть списком.')
     max_depth = _configured_limit('AVITO_TREE_MAX_DEPTH', 12, _ABSOLUTE_MAX_DEPTH)
     max_nodes = _configured_limit('AVITO_TREE_MAX_NODES', 10_000, _ABSOLUTE_MAX_NODES)
-    stack = [(node, (), 1) for node in reversed(nodes)]
+    stack: list[tuple[object, tuple[str, ...], int]] = [
+        (node, (), 1) for node in reversed(nodes)
+    ]
     seen = 0
     while stack:
         node, parent, depth = stack.pop()
@@ -242,7 +248,7 @@ class AvitoLiveTreeBuilder:
     def _build_node(self, node: dict, *, depth: int) -> dict:
         self._reserve_nodes(1, depth)
         children = _children(node)
-        result = {
+        result: dict[str, Any] = {
             'name': node.get('name'),
             'slug': node.get('slug'),
             'children': [],

@@ -13,6 +13,11 @@ from apps.notifications.models import (
     CONNECT_TOKEN_EXPIRED,
     TenantNotificationSettings,
 )
+from apps.notifications.serializers import (
+    NotificationSettingsResponseSerializer,
+    NotificationSettingsSerializer,
+    NotificationSettingsUpdateSerializer,
+)
 from apps.notifications.telegram import TelegramNotifier
 from apps.tenants.permissions import TenantAdminPermission, TenantAdminWritePermission
 
@@ -65,31 +70,6 @@ def _validated_telegram_text_message(update) -> tuple[str, str, str] | None:
     return text.strip(), chat_id, username[:100]
 
 
-_NOTIFICATION_SETTINGS = inline_serializer(
-    name='NotificationSettings',
-    fields={
-        'telegram_connected': serializers.BooleanField(),
-        'telegram_username': serializers.CharField(allow_blank=True),
-        'notify_email': serializers.EmailField(allow_blank=True),
-        'notify_on_error': serializers.BooleanField(),
-        'notify_on_critical': serializers.BooleanField(),
-    },
-)
-_NOTIFICATION_SETTINGS_UPDATE = inline_serializer(
-    name='NotificationSettingsUpdate',
-    fields={
-        'notify_email': serializers.EmailField(required=False, allow_blank=True),
-        'notify_on_error': serializers.BooleanField(required=False),
-        'notify_on_critical': serializers.BooleanField(required=False),
-    },
-)
-_NOTIFICATION_SETTINGS_RESPONSE = inline_serializer(
-    name='NotificationSettingsResponse',
-    fields={
-        'status': serializers.CharField(),
-        'data': _NOTIFICATION_SETTINGS,
-    },
-)
 _TELEGRAM_CONNECT_RESPONSE = inline_serializer(
     name='TelegramConnectResponse',
     fields={
@@ -129,13 +109,7 @@ def _get_or_create_settings(tenant, default_email: str = '') -> TenantNotificati
 
 def _serialize(ns: TenantNotificationSettings) -> dict:
     """Сериализует настройки уведомлений в dict для ответа API."""
-    return {
-        'telegram_connected': bool(ns.telegram_chat_id),
-        'telegram_username': ns.telegram_username,
-        'notify_email': ns.notify_email,
-        'notify_on_error': ns.notify_on_error,
-        'notify_on_critical': ns.notify_on_critical,
-    }
+    return NotificationSettingsSerializer(ns).data
 
 
 @extend_schema(tags=['Notifications'])
@@ -149,15 +123,15 @@ class NotificationSettingsView(APIView):
 
     permission_classes = [IsAuthenticated, TenantAdminWritePermission]
 
-    @extend_schema(responses=_NOTIFICATION_SETTINGS_RESPONSE)
+    @extend_schema(responses=NotificationSettingsResponseSerializer)
     def get(self, request):
         """Возвращает текущие настройки уведомлений тенанта."""
         ns = _get_or_create_settings(request.tenant, default_email=request.user.email)
         return Response({'status': 'ok', 'data': _serialize(ns)})
 
     @extend_schema(
-        request=_NOTIFICATION_SETTINGS_UPDATE,
-        responses=_NOTIFICATION_SETTINGS_RESPONSE,
+        request=NotificationSettingsUpdateSerializer,
+        responses=NotificationSettingsResponseSerializer,
     )
     def put(self, request):
         """
@@ -166,16 +140,13 @@ class NotificationSettingsView(APIView):
         Telegram привязывается отдельно через /telegram/connect/.
         """
         ns = _get_or_create_settings(request.tenant, default_email=request.user.email)
-        data = request.data
-
-        if 'notify_email' in data:
-            ns.notify_email = data['notify_email']
-        if 'notify_on_error' in data:
-            ns.notify_on_error = bool(data['notify_on_error'])
-        if 'notify_on_critical' in data:
-            ns.notify_on_critical = bool(data['notify_on_critical'])
-
-        ns.save(update_fields=['notify_email', 'notify_on_error', 'notify_on_critical'])
+        serializer = NotificationSettingsUpdateSerializer(
+            ns,
+            data=request.data,
+            partial=True,
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
         return Response({'status': 'ok', 'data': _serialize(ns)})
 
 
@@ -218,7 +189,7 @@ class TelegramDisconnectView(APIView):
 
     permission_classes = [IsAuthenticated, TenantAdminPermission]
 
-    @extend_schema(request=None, responses=_NOTIFICATION_SETTINGS_RESPONSE)
+    @extend_schema(request=None, responses=NotificationSettingsResponseSerializer)
     def delete(self, request):
         """Сбрасывает telegram_chat_id и username."""
         ns = _get_or_create_settings(request.tenant, default_email=request.user.email)

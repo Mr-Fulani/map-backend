@@ -1,5 +1,8 @@
 """JWT views for header-based clients and CSRF-protected browser sessions."""
 
+from datetime import timedelta
+from typing import Any, Protocol, cast
+
 from django.conf import settings
 from django.middleware.csrf import get_token
 from django.utils.decorators import method_decorator
@@ -16,6 +19,9 @@ from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from apps.tenants.jwt_serializers import (
+    BrowserCSRFFailureSerializer,
+    BrowserCSRFResponseSerializer,
+    BrowserSessionRejectedSerializer,
     BrowserTokenObtainPairResponseSerializer,
     BrowserTokenRefreshResponseSerializer,
     LogoutSerializer,
@@ -31,6 +37,16 @@ from apps.tenants.session_tokens import (
 from apps.users.throttles import CredentialScopedRateThrottle
 
 
+class _ResponseFinalizer(Protocol):
+    def finalize_response(
+        self,
+        request: Any,
+        response: Any,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any: ...
+
+
 def _disable_auth_response_caching(response):
     response['Cache-Control'] = 'no-store'
     response['Pragma'] = 'no-cache'
@@ -38,10 +54,14 @@ def _disable_auth_response_caching(response):
 
 
 def _set_refresh_cookie(response, refresh_token):
+    refresh_lifetime = cast(
+        timedelta,
+        settings.SIMPLE_JWT['REFRESH_TOKEN_LIFETIME'],
+    )
     response.set_cookie(
         settings.AUTH_REFRESH_COOKIE_NAME,
         refresh_token,
-        max_age=int(settings.SIMPLE_JWT['REFRESH_TOKEN_LIFETIME'].total_seconds()),
+        max_age=int(refresh_lifetime.total_seconds()),
         path=settings.AUTH_REFRESH_COOKIE_PATH,
         secure=not settings.DEBUG,
         httponly=True,
@@ -75,7 +95,8 @@ class NoStoreAuthResponseMixin:
     """Prevent credentials and token-bearing responses from browser/proxy caches."""
 
     def finalize_response(self, request, response, *args, **kwargs):
-        response = super().finalize_response(request, response, *args, **kwargs)
+        finalizer = cast(_ResponseFinalizer, super())
+        response = finalizer.finalize_response(request, response, *args, **kwargs)
         return _disable_auth_response_caching(response)
 
 
@@ -167,7 +188,7 @@ class BrowserCSRFView(NoStoreAuthResponseMixin, APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
 
-    @extend_schema(responses={200: None})
+    @extend_schema(responses={200: BrowserCSRFResponseSerializer})
     def get(self, request):
         return Response({'status': 'ok', 'csrf_token': get_token(request)})
 
@@ -211,7 +232,14 @@ class BrowserRefreshView(NoStoreAuthResponseMixin, APIView):
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'auth_refresh'
 
-    @extend_schema(request=None, responses={200: BrowserTokenRefreshResponseSerializer})
+    @extend_schema(
+        request=None,
+        responses={
+            200: BrowserTokenRefreshResponseSerializer,
+            401: BrowserSessionRejectedSerializer,
+            403: BrowserCSRFFailureSerializer,
+        },
+    )
     def post(self, request):
         raw_token = request.COOKIES.get(settings.AUTH_REFRESH_COOKIE_NAME, '')
         if not raw_token:

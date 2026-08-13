@@ -8,9 +8,11 @@ import io
 
 from django.conf import settings
 from django.core.files.storage import default_storage
+from django.db import transaction
 from django.utils.timezone import now
 
 from apps.core.image_security import validate_image_pixel_budget
+from apps.core.storage import delete_storage_keys
 from apps.products.models import ProductImage
 from apps.products.storage import (
     MAX_DIMENSION,
@@ -18,6 +20,7 @@ from apps.products.storage import (
     THUMB_DIMENSION,
     _product_media_keys,
     _resize,
+    _save_product_image_pair,
     _to_jpeg_bytes,
     perceptual_hash,
 )
@@ -124,20 +127,43 @@ def upload_image(product, raw_bytes: bytes) -> ProductImage | None:
     original_bytes = _to_jpeg_bytes(_resize(img.copy(), MAX_DIMENSION))
     thumb_bytes = _to_jpeg_bytes(_resize(img.copy(), THUMB_DIMENSION))
 
-    s3_key, s3_key_thumb = _product_media_keys(product, sha)
+    with transaction.atomic():
+        locked_product = type(product).objects.select_for_update().get(pk=product.pk)
+        existing = locked_product.images.filter(sha256=sha).first()
+        if existing is not None:
+            return existing
+        if locked_product.images.exclude(
+            status=ProductImage.Status.REJECTED,
+        ).count() >= MAX_PHOTOS:
+            return None
 
-    default_storage.save(s3_key, io.BytesIO(original_bytes))
-    default_storage.save(s3_key_thumb, io.BytesIO(thumb_bytes))
-
-    position = product.images.count()
-    return ProductImage.objects.create(
-        product=product,
-        s3_key=s3_key,
-        s3_key_thumb=s3_key_thumb,
-        sha256=sha,
-        position=position,
-        source_id='manual',
-        status=ProductImage.Status.MANUALLY_SET,
-        is_primary=(position == 0),
-        phash=phash,
-    )
+        requested_original_key, requested_thumb_key = _product_media_keys(
+            locked_product,
+            sha,
+        )
+        saved_keys = _save_product_image_pair(
+            default_storage,
+            requested_original_key,
+            original_bytes,
+            requested_thumb_key,
+            thumb_bytes,
+        )
+        if saved_keys is None:
+            return None
+        saved_original_key, saved_thumb_key = saved_keys
+        position = locked_product.images.count()
+        try:
+            return ProductImage.objects.create(
+                product=locked_product,
+                s3_key=saved_original_key,
+                s3_key_thumb=saved_thumb_key,
+                sha256=sha,
+                position=position,
+                source_id='manual',
+                status=ProductImage.Status.MANUALLY_SET,
+                is_primary=(position == 0),
+                phash=phash,
+            )
+        except Exception:
+            delete_storage_keys(saved_keys, storage=default_storage)
+            raise

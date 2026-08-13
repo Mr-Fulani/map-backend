@@ -15,6 +15,7 @@ BodySparePartType / TransmissionSparePartType) как подкатегории �
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 import requests
 from django.core.management.base import BaseCommand, CommandError
@@ -117,14 +118,22 @@ class Command(BaseCommand):
     def _build(self, adapter, node: dict) -> dict:
         """Рекурсивно строит {name, slug, children}; для листьев добавляет виды запчастей."""
         children = _children(node)
-        out = {'name': node.get('name'), 'slug': node.get('slug'), 'children': []}
+        out: dict[str, Any] = {
+            'name': node.get('name'),
+            'slug': node.get('slug'),
+            'children': [],
+        }
         if children:
             for child in children:
                 out['children'].append(self._build(adapter, child))
             return out
         # Лист — тянем виды запчастей как подкатегории.
         self._leaf_count += 1
-        for value in self._leaf_part_types(adapter, node.get('slug'), node.get('name')):
+        for value in self._leaf_part_types(
+            adapter,
+            str(node.get('slug') or ''),
+            str(node.get('name') or ''),
+        ):
             out['children'].append({'name': value, 'slug': None, 'children': []})
             self._deep_count += 1
         return out
@@ -133,12 +142,16 @@ class Command(BaseCommand):
         """Строит дерево из путей avito_field_specs.json (для усечённого Avito-корня)."""
         specs = json.loads((DATA_DIR / 'avito_field_specs.json').read_text(encoding='utf-8'))
         leaves = specs.get('leaves', [])
-        root = {'name': root_name, 'slug': None, 'children': []}
-        index = {}  # путь-кортеж → узел
+        root: dict[str, Any] = {
+            'name': root_name,
+            'slug': None,
+            'children': [],
+        }
+        index: dict[tuple[str, ...], dict[str, Any]] = {}
         for leaf in leaves:
             chain = leaf.get('path', [])[1:]  # без корня
             parent = root
-            acc = []
+            acc: list[str] = []
             for depth, name in enumerate(chain):
                 acc.append(name)
                 key = tuple(acc)
@@ -167,12 +180,18 @@ class Command(BaseCommand):
                     time.sleep(3 * (attempt + 1))
                     continue
                 return []
-            values = []
+            values: list[str] = []
             for field in data.get('fields', []):
                 if not _is_deep_tag(field.get('tag')):
                     continue
                 for content in (field.get('content') or []):
-                    inline = [v.get('value') for v in (content.get('values') or []) if v.get('value')]
+                    inline = [
+                        value
+                        for item in (content.get('values') or [])
+                        if isinstance(item, dict)
+                        and isinstance((value := item.get('value')), str)
+                        and value
+                    ]
                     # Часть полей (Кузов/Топливная/Электро) отдаёт виды не инлайн,
                     # а ссылкой values_link_json — догружаем её.
                     if not inline and content.get('values_link_json'):
@@ -206,9 +225,12 @@ class Command(BaseCommand):
                 return []
             if not isinstance(payload, dict):
                 return []
-            return [
-                value.get('value')
-                for value in payload.get('values') or []
-                if isinstance(value, dict) and value.get('value')
-            ]
+            values: list[str] = []
+            for item in payload.get('values') or []:
+                if not isinstance(item, dict):
+                    continue
+                value = item.get('value')
+                if isinstance(value, str) and value:
+                    values.append(value)
+            return values
         return []

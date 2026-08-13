@@ -213,7 +213,13 @@ def test_successful_publish_marks_event_dispatched_with_stable_task_id():
     assert event.status == BillingOutboxEvent.STATUS_DISPATCHED
     assert event.dispatched_at is not None
     publish.assert_called_once_with(
-        args=[tenant.pk, 'billing', 'Payment succeeded', {}],
+        args=[
+            tenant.pk,
+            'billing',
+            'Payment succeeded',
+            {},
+            f'billing-outbox:{event.pk}',
+        ],
         task_id=f'billing-outbox-{event.pk}',
     )
 

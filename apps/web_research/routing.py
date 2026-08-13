@@ -23,7 +23,12 @@ def _tenant_plan_slug(tenant) -> str:
 
 
 def _within_limits(connection: WebSearchConnection) -> bool:
-    attempts = WebSearchAttempt.objects.filter(connection=connection)
+    attempts = WebSearchAttempt.objects.filter(connection=connection).exclude(
+        status=WebSearchAttempt.Status.SKIPPED,
+    ).exclude(
+        status=WebSearchAttempt.Status.FAILED,
+        error_code='pre_send_failure',
+    )
     if connection.requests_per_minute:
         recent = attempts.filter(created_at__gte=now() - timedelta(minutes=1)).count()
         if recent >= connection.requests_per_minute:

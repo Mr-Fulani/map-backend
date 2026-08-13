@@ -1,6 +1,7 @@
 from django.contrib import admin
 from unfold.admin import ModelAdmin
 
+from apps.core.admin import TenantScopedAdminMixin
 from apps.media_processing.models import (
     ImageAssessment,
     MediaProcessingJob,
@@ -9,6 +10,7 @@ from apps.media_processing.models import (
     ProductImageVariant,
     TenantMediaSettings,
 )
+from apps.media_processing.protection import unresolved_media_job_q
 
 
 @admin.register(MediaProviderPolicy)
@@ -39,12 +41,12 @@ class TenantMediaSettingsAdmin(ModelAdmin):
 
 
 @admin.register(MediaProcessingJob)
-class MediaProcessingJobAdmin(ModelAdmin):
+class MediaProcessingJobAdmin(TenantScopedAdminMixin):
     list_display = (
         'id', 'tenant', 'product_image', 'provider_id', 'status',
-        'charged_credits', 'created_at',
+        'provider_response_state', 'charged_credits', 'created_at',
     )
-    list_filter = ('status', 'provider_id', 'created_at')
+    list_filter = ('status', 'provider_response_state', 'provider_id', 'created_at')
     search_fields = (
         'product_image__product__article', 'product_image__product__name',
         'provider_job_id', 'idempotency_key',
@@ -53,7 +55,26 @@ class MediaProcessingJobAdmin(ModelAdmin):
         'tenant', 'product_image', 'provider_job_id', 'status', 'idempotency_key',
         'provider_metadata', 'estimated_credits', 'charged_credits', 'error_code',
         'error_message', 'started_at', 'finished_at', 'created_at', 'updated_at',
+        'provider_response_digest', 'provider_response_status',
+        'provider_response_state', 'provider_response_recorded_at',
+        'provider_response_apply_claimed_at', 'provider_response_resolved_at',
     )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        """Never expose bulk delete; allow a reconciled terminal row explicitly."""
+        if not super().has_delete_permission(request, obj):
+            return False
+        if obj is None:
+            return False
+        return not MediaProcessingJob.objects.filter(
+            pk=obj.pk,
+        ).filter(unresolved_media_job_q()).exists()
 
 
 @admin.register(ProductImageVariant)

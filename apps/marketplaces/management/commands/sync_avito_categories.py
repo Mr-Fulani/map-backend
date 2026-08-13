@@ -8,6 +8,7 @@ apps/marketplaces/data/avito_field_specs.json. На него опираются 
 import json
 import time
 from pathlib import Path
+from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
@@ -57,7 +58,7 @@ class Command(BaseCommand):
         if not root:
             raise CommandError(f'Корневая категория «{options["root"]}» не найдена в дереве Avito')
 
-        leaves = []
+        leaves: list[dict[str, Any]] = []
         self._collect_leaves(root, [], leaves)
         self.stdout.write(f'Найдено листьев: {len(leaves)}')
 

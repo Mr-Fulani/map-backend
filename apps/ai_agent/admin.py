@@ -2,8 +2,9 @@ from django.contrib import admin, messages
 from django.db import transaction
 from unfold.admin import ModelAdmin
 
+from apps.core.admin import TenantScopedReadOnlyAdminMixin
 from apps.ai_agent.models import (
-    AIModel, AIPromptTemplate, AIProviderPrice, AIRequestLog,
+    AIModel, AIPromptTemplate, AIProviderOperation, AIProviderPrice, AIRequestLog,
     TenantAISettings, TenantAITaskModel,
 )
 
@@ -105,7 +106,7 @@ class TenantAITaskModelAdmin(ModelAdmin):
 
 
 @admin.register(AIRequestLog)
-class AIRequestLogAdmin(ModelAdmin):
+class AIRequestLogAdmin(TenantScopedReadOnlyAdminMixin):
     list_display = [
         'tenant', 'task_type', 'provider', 'model_id', 'status',
         'prompt_version', 'charged_credits', 'duration_ms', 'created_at',
@@ -120,11 +121,29 @@ class AIRequestLogAdmin(ModelAdmin):
         'created_at', 'updated_at',
     ]
 
-    def has_add_permission(self, request):
-        return False
 
-    def has_change_permission(self, request, obj=None):
-        return False
+@admin.register(AIProviderOperation)
+class AIProviderOperationAdmin(TenantScopedReadOnlyAdminMixin):
+    """Read-only queue and audit trail for paid-provider reconciliation."""
 
-    def has_delete_permission(self, request, obj=None):
-        return False
+    list_display = [
+        'id', 'tenant', 'task_type', 'provider', 'model_id', 'status',
+        'reserved_amount', 'charged_amount', 'uncertainty_marked_at',
+        'network_started_at', 'apply_state', 'applied_at',
+        'resolved_at', 'created_at',
+    ]
+    list_filter = ['status', 'task_type', 'provider', 'domain_type']
+    search_fields = [
+        'id', 'tenant__name', 'tenant__slug', 'model_id',
+        'domain_reference', 'reservation_key',
+    ]
+    readonly_fields = [
+        'id', 'tenant', 'task_type', 'provider', 'model_id',
+        'reservation_key', 'reserved_amount', 'charged_amount',
+        'domain_type', 'domain_reference', 'status', 'provider_error_code',
+        'terminal_reason', 'resolution_action', 'operator_note',
+        'validated_result', 'apply_state', 'applied_at',
+        'network_started_at', 'uncertainty_marked_at',
+        'released_at', 'settled_at', 'resolved_at',
+        'created_at', 'updated_at',
+    ]

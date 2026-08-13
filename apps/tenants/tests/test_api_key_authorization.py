@@ -90,8 +90,8 @@ class TestAPIKeyLeastPrivilege:
         assert principal.can_manage_users() is False
         assert principal.can_manage_connections() is False
 
-    @patch('apps.users.services.send_mail')
-    def test_api_key_cannot_request_owner_email_change(self, send_mail):
+    @patch('apps.users.services.EmailNotifier.send')
+    def test_api_key_cannot_request_owner_email_change(self, send_email):
         tenant, _ = TenantService.create_tenant(
             'No Takeover', 'no-takeover', 'owner@safe.test', 'pass12345',
         )
@@ -110,7 +110,7 @@ class TestAPIKeyLeastPrivilege:
         )
 
         assert response.status_code == 403
-        send_mail.assert_not_called()
+        send_email.assert_not_called()
         assert tenant.members.get(role='owner').user.email == 'owner@safe.test'
 
     def test_api_key_cannot_manage_api_keys(self):

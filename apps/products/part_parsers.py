@@ -281,7 +281,9 @@ class TachkaPartParser:
             if len(cells) >= 2 and cells[0] and cells[1]:
                 attributes[cells[0].rstrip(':')] = cells[1]
         for item in tree.css('[data-attribute-name]'):
-            name = _normalize_spaces(item.attributes.get('data-attribute-name', '')).rstrip(':')
+            name = _normalize_spaces(
+                item.attributes.get('data-attribute-name') or '',
+            ).rstrip(':')
             value = _normalize_spaces(item.text(separator=' '))
             if name and value:
                 attributes[name] = value
@@ -653,7 +655,12 @@ def _source_offer_from_mapping(data) -> ParsedSourceOffer:
         offers = [_source_offer_from_mapping(item) for item in data]
         priced = [item for item in offers if item.price is not None]
         if priced:
-            return min(priced, key=lambda item: item.price)
+            return min(
+                priced,
+                key=lambda item: (
+                    item.price if item.price is not None else Decimal('Infinity')
+                ),
+            )
         available = [item for item in offers if item.availability != 'unknown']
         return available[0] if available else ParsedSourceOffer()
     if not isinstance(data, dict):
@@ -1103,6 +1110,7 @@ class RosskoPartParser:
                 fallback=(
                     car.attributes.get('data-manufacturer')
                     or car.attributes.get('data-make')
+                    or ''
                 ),
             )
             raw_model = _first_node_text(car, [
@@ -1110,7 +1118,7 @@ class RosskoPartParser:
                 '.car-model',
                 '.car__model',
                 'h4',
-            ], fallback=car.attributes.get('data-model'))
+            ], fallback=car.attributes.get('data-model') or '')
             model, generation = _split_model_generation(raw_model)
             if not make or not model:
                 continue
@@ -1221,6 +1229,21 @@ class EuroautoPartParser:
     def set_tenant(self, tenant) -> None:
         self.tenant = tenant
 
+    def set_domain_reference(self, domain_reference: str) -> None:
+        fetcher = self._get_fetcher()
+        if hasattr(fetcher, 'set_domain_reference'):
+            fetcher.set_domain_reference(domain_reference)
+
+    def set_web_search_workflow(self, workflow) -> None:
+        fetcher = self._get_fetcher()
+        if hasattr(fetcher, 'set_web_search_workflow'):
+            fetcher.set_web_search_workflow(workflow)
+
+    def get_web_search_consumed_attempt_ids(self) -> set[int]:
+        fetcher = self._get_fetcher()
+        getter = getattr(fetcher, 'get_consumed_attempt_ids', None)
+        return set(getter()) if callable(getter) else set()
+
     def _get_fetcher(self):
         if self.fetcher is None:
             self.fetcher = get_part_fetcher(self.source_id, tenant=self.tenant)
@@ -1318,7 +1341,7 @@ class EuroautoPartParser:
 
     @staticmethod
     def _parse_attributes(tree: HTMLParser) -> dict[str, str]:
-        attributes = {}
+        attributes: dict[str, str] = {}
         table = tree.css_first('.part-parameters-table')
         if not table:
             return attributes

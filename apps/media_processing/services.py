@@ -1,12 +1,17 @@
 """Business services for provider-neutral media jobs and immutable variants."""
 
+import base64
 import hashlib
 import io
+import json
 import re
 from dataclasses import dataclass
+from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from pathlib import PurePosixPath
+from typing import Protocol, cast
 from urllib.parse import urlparse
+import uuid
 
 from django.conf import settings
 from django.core.cache import caches
@@ -21,10 +26,16 @@ from apps.billing.ai_wallet import (
     InsufficientAICredits,
 )
 from apps.core.image_security import validate_image_pixel_budget
+from apps.core.idempotency import (
+    canonical_payload_fingerprint,
+    raise_on_fingerprint_conflict,
+)
+from apps.core.storage import delete_storage_keys
 from apps.core.url_security import (
     REDIRECT_SAME_ORIGIN,
     request_public_http_url,
 )
+from apps.datasources.encryption import decrypt, encrypt
 from apps.media_processing.models import (
     MediaProcessingJob,
     MediaProcessingPreset,
@@ -33,6 +44,7 @@ from apps.media_processing.models import (
     TenantMediaSettings,
 )
 from apps.media_processing.providers.base import (
+    BaseMediaProvider,
     MediaOperation,
     MediaProviderRequest,
     MediaProviderResult,
@@ -44,6 +56,7 @@ from apps.media_processing.providers.registry import (
     list_media_providers,
 )
 from apps.media_processing.prompts import build_product_media_prompt
+from apps.products.models import ProductImage
 
 
 GENERATIVE_OPERATIONS = {
@@ -61,11 +74,36 @@ class MediaProviderRateLimitExceeded(MediaProviderUnavailable):
     """The configured provider quota has been exhausted for the current minute."""
 
 
+class MediaProviderOutcomeUncertain(RuntimeError):
+    """The provider may have accepted an operation before transport failed."""
+
+
+class MediaProviderCheckpointNotApplicable(RuntimeError):
+    """A known response exists, but its bounded checkpoint cannot be applied."""
+
+
+class MediaProviderCheckpointApplyInProgress(RuntimeError):
+    """Another worker owns a fresh durable local-apply claim."""
+
+
+class _CreationTrackedJob(Protocol):
+    _created_for_request: bool
+
+
 @dataclass(frozen=True)
 class ResolvedMediaProvider:
-    provider: object
+    provider: BaseMediaProvider
     policy: MediaProviderPolicy
     estimated_credits: Decimal
+
+
+_PROVIDER_RESPONSE_CHECKPOINT_VERSION = 1
+_PROVIDER_RESPONSE_BINARY_MAX_BYTES = 2 * 1024 * 1024
+_PROVIDER_RESPONSE_METADATA_MAX_BYTES = 64 * 1024
+_PROVIDER_RESPONSE_URL_MAX_CHARS = 8192
+_PROVIDER_RESPONSE_ID_MAX_CHARS = 4096
+_PROVIDER_RESPONSE_CHECKPOINT_MAX_BYTES = 3 * 1024 * 1024
+_PROVIDER_RESPONSE_APPLY_LEASE = timedelta(minutes=10)
 
 
 def _tenant_plan_slug(tenant) -> str:
@@ -134,6 +172,10 @@ def _resolve_provider_candidate(
     denial_reason = _policy_denial_reason(policy, tenant, operations)
     if denial_reason:
         raise MediaProviderUnavailable(f'Provider {normalized_id}: {denial_reason}')
+    if policy is None:
+        # Kept explicit for static narrowing; the fail-closed denial above is
+        # the only reachable branch for a missing policy.
+        raise MediaProviderUnavailable(f'Provider {normalized_id}: provider has no allow policy')
     try:
         provider = get_media_provider(normalized_id)
     except LookupError as exc:
@@ -237,6 +279,27 @@ def _preflight_provider_request(
         )
 
 
+def media_processing_request_fingerprint(
+    *,
+    product_image_id: int,
+    preset_id: int | None,
+    operations: list[str] | None,
+    parameters: dict | None,
+    provider_id: str,
+) -> str:
+    """Fingerprint only the stable, caller-supplied media-processing intent."""
+    requested_operations = [
+        MediaOperation(operation).value for operation in (operations or [])
+    ]
+    return canonical_payload_fingerprint({
+        'operations': requested_operations,
+        'parameters': parameters or {},
+        'preset_id': preset_id,
+        'product_image_id': product_image_id,
+        'provider_id': provider_id,
+    })
+
+
 def create_processing_job(
     *,
     product_image,
@@ -251,6 +314,26 @@ def create_processing_job(
     if preset and preset.tenant_id not in (None, tenant.pk):
         raise ValueError('Пресет принадлежит другому тенанту.')
 
+    request_fingerprint = media_processing_request_fingerprint(
+        product_image_id=product_image.pk,
+        preset_id=preset.pk if preset else None,
+        operations=operations,
+        parameters=parameters,
+        provider_id=provider_id,
+    )
+    if idempotency_key:
+        existing_job = MediaProcessingJob.objects.filter(
+            tenant=tenant,
+            idempotency_key=str(idempotency_key),
+        ).first()
+        if existing_job is not None:
+            raise_on_fingerprint_conflict(
+                existing_job.request_fingerprint,
+                request_fingerprint,
+            )
+            cast(_CreationTrackedJob, existing_job)._created_for_request = False
+            return existing_job
+
     effective_operations = operations or (preset.operations if preset else [])
     normalized_operations = [MediaOperation(operation).value for operation in effective_operations]
     if not normalized_operations:
@@ -258,47 +341,80 @@ def create_processing_job(
     if len(normalized_operations) != len(set(normalized_operations)):
         raise ValueError('Операции обработки не должны повторяться.')
 
-    tenant_settings = TenantMediaSettings.objects.filter(tenant=tenant).first()
-    if (
-        not (tenant_settings and tenant_settings.allow_generative_operations)
-        and set(map(MediaOperation, normalized_operations)) & GENERATIVE_OPERATIONS
-    ):
-        raise ValueError('Генеративные операции отключены в настройках тенанта.')
-
     normalized_operation_values = tuple(map(MediaOperation, normalized_operations))
+
+    def build_defaults() -> dict:
+        tenant_settings = TenantMediaSettings.objects.filter(tenant=tenant).first()
+        if (
+            not (tenant_settings and tenant_settings.allow_generative_operations)
+            and set(normalized_operation_values) & GENERATIVE_OPERATIONS
+        ):
+            raise ValueError('Генеративные операции отключены в настройках тенанта.')
+        effective_parameters = {
+            **(preset.parameters if preset else {}),
+            **(parameters or {}),
+        }
+        if set(normalized_operation_values) & GENERATIVE_OPERATIONS:
+            effective_parameters.pop('generation_prompt', None)
+            effective_parameters.pop('negative_prompt', None)
+            effective_parameters.update(build_product_media_prompt(
+                product_image.product,
+                str(effective_parameters.get('background_style') or 'white_studio'),
+            ))
+        return {
+            'product_image': product_image,
+            'preset': preset,
+            'operations': normalized_operations,
+            'parameters': effective_parameters,
+            'provider_id': provider_id,
+            'requested_by': requested_by,
+            'request_fingerprint': request_fingerprint,
+        }
+    if idempotency_key:
+        with transaction.atomic():
+            type(tenant).objects.select_for_update().only('pk').get(pk=tenant.pk)
+            existing_job = MediaProcessingJob.objects.filter(
+                tenant=tenant,
+                idempotency_key=str(idempotency_key),
+            ).first()
+            if existing_job is not None:
+                raise_on_fingerprint_conflict(
+                    existing_job.request_fingerprint,
+                    request_fingerprint,
+                )
+                cast(_CreationTrackedJob, existing_job)._created_for_request = False
+                return existing_job
+            defaults = build_defaults()
+            _preflight_provider_request(
+                tenant,
+                normalized_operation_values,
+                preset=preset,
+                provider_id=provider_id,
+            )
+            job, created = MediaProcessingJob.objects.get_or_create(
+                tenant=tenant,
+                idempotency_key=str(idempotency_key),
+                defaults=defaults,
+            )
+            if not created:
+                raise_on_fingerprint_conflict(
+                    job.request_fingerprint,
+                    request_fingerprint,
+                )
+                cast(_CreationTrackedJob, job)._created_for_request = False
+                return job
+            cast(_CreationTrackedJob, job)._created_for_request = True
+            return job
+
+    defaults = build_defaults()
     _preflight_provider_request(
         tenant,
         normalized_operation_values,
         preset=preset,
         provider_id=provider_id,
     )
-
-    effective_parameters = {**(preset.parameters if preset else {}), **(parameters or {})}
-    if set(normalized_operation_values) & GENERATIVE_OPERATIONS:
-        effective_parameters.pop('generation_prompt', None)
-        effective_parameters.pop('negative_prompt', None)
-        effective_parameters.update(build_product_media_prompt(
-            product_image.product,
-            str(effective_parameters.get('background_style') or 'white_studio'),
-        ))
-    defaults = {
-        'product_image': product_image,
-        'preset': preset,
-        'operations': normalized_operations,
-        'parameters': effective_parameters,
-        'provider_id': provider_id,
-        'requested_by': requested_by,
-    }
-    if idempotency_key:
-        job, created = MediaProcessingJob.objects.get_or_create(
-            tenant=tenant,
-            idempotency_key=idempotency_key,
-            defaults=defaults,
-        )
-        job._created_for_request = created
-        return job
     job = MediaProcessingJob.objects.create(tenant=tenant, **defaults)
-    job._created_for_request = True
+    cast(_CreationTrackedJob, job)._created_for_request = True
     return job
 
 
@@ -436,7 +552,436 @@ def _settle_job_credits(job: MediaProcessingJob) -> None:
         job.charged_credits = locked.charged_credits
 
 
+def _canonical_provider_checkpoint(payload: dict) -> bytes:
+    try:
+        return json.dumps(
+            payload,
+            allow_nan=False,
+            ensure_ascii=True,
+            separators=(',', ':'),
+            sort_keys=True,
+        ).encode('utf-8')
+    except (TypeError, ValueError) as exc:
+        raise MediaProviderCheckpointNotApplicable(
+            'Ответ провайдера нельзя безопасно сериализовать.',
+        ) from exc
+
+
+def _bounded_checkpoint_metadata(metadata: object) -> tuple[dict, bool]:
+    if not isinstance(metadata, dict):
+        return {}, bool(metadata)
+    try:
+        raw = _canonical_provider_checkpoint(metadata)
+    except MediaProviderCheckpointNotApplicable:
+        return {}, True
+    if len(raw) > _PROVIDER_RESPONSE_METADATA_MAX_BYTES:
+        return {}, True
+    normalized = json.loads(raw.decode('utf-8'))
+    return normalized if isinstance(normalized, dict) else {}, False
+
+
+def _bounded_checkpoint_text(value: object, max_chars: int) -> tuple[str, bool]:
+    normalized = str(value or '')
+    if len(normalized) > max_chars:
+        return '', True
+    return normalized, False
+
+
+def _serialize_provider_result_checkpoint(
+    result: MediaProviderResult,
+) -> tuple[dict, bytes, str]:
+    try:
+        status = MediaProviderResultStatus(result.status).value
+    except (TypeError, ValueError):
+        status = 'invalid'
+
+    provider_job_id, provider_job_id_omitted = _bounded_checkpoint_text(
+        result.provider_job_id,
+        _PROVIDER_RESPONSE_ID_MAX_CHARS,
+    )
+    output_url, output_url_omitted = _bounded_checkpoint_text(
+        result.output_url,
+        _PROVIDER_RESPONSE_URL_MAX_CHARS,
+    )
+    output_content_type, content_type_omitted = _bounded_checkpoint_text(
+        result.output_content_type,
+        255,
+    )
+    metadata, metadata_omitted = _bounded_checkpoint_metadata(result.metadata)
+
+    output_bytes = result.output_bytes
+    output_bytes_present = output_bytes is not None
+    output_bytes_omitted = False
+    output_bytes_b64 = ''
+    output_bytes_size = 0
+    output_bytes_sha256 = ''
+    if output_bytes_present:
+        if not isinstance(output_bytes, bytes):
+            output_bytes_omitted = True
+        else:
+            output_bytes_size = len(output_bytes)
+            output_bytes_sha256 = hashlib.sha256(output_bytes).hexdigest()
+            if output_bytes_size > min(
+                settings.MEDIA_PROVIDER_OUTPUT_MAX_BYTES,
+                _PROVIDER_RESPONSE_BINARY_MAX_BYTES,
+            ):
+                output_bytes_omitted = True
+            else:
+                output_bytes_b64 = base64.b64encode(output_bytes).decode('ascii')
+
+    actual_cost = ''
+    if result.actual_cost is not None:
+        try:
+            normalized_cost = Decimal(result.actual_cost)
+        except (InvalidOperation, TypeError, ValueError):
+            normalized_cost = Decimal('NaN')
+        if normalized_cost.is_finite() and normalized_cost >= 0:
+            actual_cost = str(normalized_cost)
+
+    payload = {
+        'version': _PROVIDER_RESPONSE_CHECKPOINT_VERSION,
+        'status': status,
+        'provider_job_id': provider_job_id,
+        'provider_job_id_omitted': provider_job_id_omitted,
+        # URLs may contain provider bearer tokens. The complete payload is
+        # encrypted before persistence and is never exposed via serializers.
+        'output_url': output_url,
+        'output_url_omitted': output_url_omitted,
+        'output_bytes_b64': output_bytes_b64,
+        'output_bytes_present': output_bytes_present,
+        'output_bytes_omitted': output_bytes_omitted,
+        'output_bytes_size': output_bytes_size,
+        'output_bytes_sha256': output_bytes_sha256,
+        'output_content_type': output_content_type,
+        'content_type_omitted': content_type_omitted,
+        'metadata': metadata,
+        'metadata_omitted': metadata_omitted,
+        'actual_cost': actual_cost,
+        'error_code': str(result.error_code or '')[:100],
+    }
+    canonical = _canonical_provider_checkpoint(payload)
+    if len(canonical) > _PROVIDER_RESPONSE_CHECKPOINT_MAX_BYTES:
+        raise MediaProviderCheckpointNotApplicable(
+            'Ответ провайдера превышает лимит durable checkpoint.',
+        )
+    return payload, canonical, hashlib.sha256(canonical).hexdigest()
+
+
+def _copy_provider_checkpoint_state(
+    target: MediaProcessingJob,
+    source: MediaProcessingJob,
+) -> None:
+    for field in (
+        'provider_job_id', 'provider_response_enc', 'provider_response_digest',
+        'provider_response_status', 'provider_response_state',
+        'provider_response_recorded_at', 'provider_response_apply_token',
+        'provider_response_apply_claimed_at',
+        'provider_response_resolved_at',
+    ):
+        setattr(target, field, getattr(source, field))
+
+
+def _checkpoint_provider_result(
+    job: MediaProcessingJob,
+    result: MediaProviderResult,
+) -> None:
+    """Persist the exact bounded response before accounting or local I/O."""
+    payload, _canonical, digest = _serialize_provider_result_checkpoint(result)
+    encrypted = encrypt(payload)
+    with transaction.atomic():
+        locked = MediaProcessingJob.objects.select_for_update().get(pk=job.pk)
+        if locked.provider_response_state:
+            if locked.provider_response_digest != digest:
+                raise MediaProviderOutcomeUncertain(
+                    'Для задачи уже сохранён другой ответ провайдера.',
+                )
+            _copy_provider_checkpoint_state(job, locked)
+            return
+
+        checkpointed_at = now()
+        locked.provider_response_enc = encrypted
+        locked.provider_response_digest = digest
+        locked.provider_response_status = (
+            payload['status']
+            if payload['status'] in MediaProcessingJob.ProviderResponseStatus.values
+            else ''
+        )
+        locked.provider_response_state = (
+            MediaProcessingJob.ProviderResponseState.RECORDED
+        )
+        locked.provider_response_recorded_at = checkpointed_at
+        locked.provider_response_apply_token = None
+        locked.provider_response_apply_claimed_at = None
+        locked.provider_response_resolved_at = None
+        provider_job_id = str(payload.get('provider_job_id') or '')
+        if provider_job_id:
+            locked.provider_job_id = provider_job_id[:255]
+        locked.save(update_fields=[
+            'provider_job_id', 'provider_response_enc',
+            'provider_response_digest', 'provider_response_status',
+            'provider_response_state', 'provider_response_recorded_at',
+            'provider_response_apply_token',
+            'provider_response_apply_claimed_at',
+            'provider_response_resolved_at', 'updated_at',
+        ])
+        _copy_provider_checkpoint_state(job, locked)
+
+
+def _provider_result_from_checkpoint(job: MediaProcessingJob) -> MediaProviderResult:
+    encrypted = job.provider_response_enc
+    if encrypted is None:
+        raise MediaProviderCheckpointNotApplicable(
+            'Durable checkpoint ответа провайдера отсутствует.',
+        )
+    try:
+        payload = decrypt(bytes(encrypted))
+        if not isinstance(payload, dict):
+            raise ValueError('checkpoint is not an object')
+        canonical = _canonical_provider_checkpoint(payload)
+    except Exception as exc:
+        raise MediaProviderCheckpointNotApplicable(
+            'Durable checkpoint ответа провайдера повреждён.',
+        ) from exc
+    if (
+        payload.get('version') != _PROVIDER_RESPONSE_CHECKPOINT_VERSION
+        or hashlib.sha256(canonical).hexdigest() != job.provider_response_digest
+    ):
+        raise MediaProviderCheckpointNotApplicable(
+            'Durable checkpoint ответа провайдера не прошёл проверку целостности.',
+        )
+    try:
+        status = MediaProviderResultStatus(str(payload.get('status') or ''))
+    except ValueError as exc:
+        raise MediaProviderCheckpointNotApplicable(
+            'Checkpoint содержит неизвестный статус провайдера.',
+        ) from exc
+
+    output_bytes = None
+    if payload.get('output_bytes_present'):
+        if payload.get('output_bytes_omitted'):
+            raise MediaProviderCheckpointNotApplicable(
+                'Бинарный ответ провайдера превышает лимит checkpoint.',
+            )
+        try:
+            output_bytes = base64.b64decode(
+                str(payload.get('output_bytes_b64') or ''),
+                validate=True,
+            )
+        except ValueError as exc:
+            raise MediaProviderCheckpointNotApplicable(
+                'Бинарный ответ в checkpoint повреждён.',
+            ) from exc
+        if (
+            len(output_bytes) != int(payload.get('output_bytes_size') or 0)
+            or hashlib.sha256(output_bytes).hexdigest()
+            != str(payload.get('output_bytes_sha256') or '')
+            or len(output_bytes) > min(
+                settings.MEDIA_PROVIDER_OUTPUT_MAX_BYTES,
+                _PROVIDER_RESPONSE_BINARY_MAX_BYTES,
+            )
+        ):
+            raise MediaProviderCheckpointNotApplicable(
+                'Бинарный ответ в checkpoint не прошёл проверку целостности.',
+            )
+    if payload.get('output_url_omitted') and output_bytes is None:
+        raise MediaProviderCheckpointNotApplicable(
+            'URL результата не поместился в checkpoint.',
+        )
+    if (
+        payload.get('provider_job_id_omitted')
+        and status == MediaProviderResultStatus.PENDING
+    ):
+        raise MediaProviderCheckpointNotApplicable(
+            'Идентификатор асинхронной задачи не поместился в checkpoint.',
+        )
+    metadata = payload.get('metadata')
+    if not isinstance(metadata, dict):
+        metadata = {}
+    actual_cost = None
+    if payload.get('actual_cost'):
+        try:
+            actual_cost = Decimal(str(payload['actual_cost']))
+        except (InvalidOperation, TypeError, ValueError):
+            actual_cost = None
+    return MediaProviderResult(
+        status=status,
+        provider_job_id=str(payload.get('provider_job_id') or ''),
+        output_url=str(payload.get('output_url') or ''),
+        output_bytes=output_bytes,
+        output_content_type=str(payload.get('output_content_type') or ''),
+        metadata=metadata,
+        actual_cost=actual_cost,
+        error_code=str(payload.get('error_code') or '')[:100],
+    )
+
+
+def _claim_provider_checkpoint_for_apply(
+    job: MediaProcessingJob,
+) -> tuple[MediaProcessingJob, uuid.UUID | None]:
+    claimed_at = now()
+    with transaction.atomic():
+        locked = MediaProcessingJob.objects.select_for_update().get(pk=job.pk)
+        if locked.provider_response_state in {
+            MediaProcessingJob.ProviderResponseState.APPLIED,
+            MediaProcessingJob.ProviderResponseState.ACCOUNTING_RESOLVED,
+        }:
+            _copy_provider_checkpoint_state(job, locked)
+            return locked, None
+        if (
+            locked.provider_response_state
+            == MediaProcessingJob.ProviderResponseState.APPLYING
+            and locked.provider_response_apply_claimed_at is not None
+            and locked.provider_response_apply_claimed_at
+            > claimed_at - _PROVIDER_RESPONSE_APPLY_LEASE
+        ):
+            raise MediaProviderCheckpointApplyInProgress(
+                'Durable provider response уже применяется другим worker.',
+            )
+        if locked.provider_response_state not in {
+            MediaProcessingJob.ProviderResponseState.RECORDED,
+            MediaProcessingJob.ProviderResponseState.APPLYING,
+        }:
+            raise MediaProviderCheckpointNotApplicable(
+                'Для задачи нет известного ответа провайдера.',
+            )
+
+        apply_token = uuid.uuid4()
+        locked.provider_response_state = (
+            MediaProcessingJob.ProviderResponseState.APPLYING
+        )
+        locked.provider_response_apply_token = apply_token
+        locked.provider_response_apply_claimed_at = claimed_at
+        locked.save(update_fields=[
+            'provider_response_state', 'provider_response_apply_token',
+            'provider_response_apply_claimed_at', 'updated_at',
+        ])
+        _copy_provider_checkpoint_state(job, locked)
+        return locked, apply_token
+
+
+def _release_provider_checkpoint_apply_claim(job_id: int, apply_token: uuid.UUID) -> None:
+    MediaProcessingJob.objects.filter(
+        pk=job_id,
+        provider_response_state=MediaProcessingJob.ProviderResponseState.APPLYING,
+        provider_response_apply_token=apply_token,
+    ).update(
+        provider_response_state=MediaProcessingJob.ProviderResponseState.RECORDED,
+        provider_response_apply_token=None,
+        provider_response_apply_claimed_at=None,
+        updated_at=now(),
+    )
+
+
+def _assert_checkpoint_accounting_compatible(
+    job: MediaProcessingJob,
+    result: MediaProviderResult,
+) -> None:
+    credit_state = _credit_state(job)
+    if (
+        result.status in {
+            MediaProviderResultStatus.PENDING,
+            MediaProviderResultStatus.SUCCEEDED,
+        }
+        and _reservation_from_state(credit_state) is not None
+        and credit_state.get('status') == 'released'
+    ):
+        raise MediaProviderOutcomeUncertain(
+            'Известный принятый ответ противоречит уже освобождённому резерву.',
+        )
+    if (
+        result.status == MediaProviderResultStatus.FAILED
+        and _reservation_from_state(credit_state) is not None
+        and credit_state.get('status') == 'settled'
+    ):
+        raise MediaProviderOutcomeUncertain(
+            'Известный отказ провайдера противоречит уже списанному резерву.',
+        )
+
+
+def apply_checkpointed_provider_result(job: MediaProcessingJob) -> MediaProcessingJob:
+    """Apply one claimed durable response without invoking the provider again."""
+    checkpoint, apply_token = _claim_provider_checkpoint_for_apply(job)
+    if apply_token is None:
+        job.refresh_from_db()
+        return job
+    try:
+        result = _provider_result_from_checkpoint(checkpoint)
+        _assert_checkpoint_accounting_compatible(checkpoint, result)
+        applied = apply_provider_result(job, result)
+    except Exception:
+        _release_provider_checkpoint_apply_claim(job.pk, apply_token)
+        raise
+
+    with transaction.atomic():
+        locked = MediaProcessingJob.objects.select_for_update().get(pk=job.pk)
+        if (
+            locked.provider_response_state
+            != MediaProcessingJob.ProviderResponseState.APPLYING
+            or locked.provider_response_apply_token != apply_token
+        ):
+            raise MediaProviderOutcomeUncertain(
+                'Claim применения checkpoint был потерян до фиксации результата.',
+            )
+        locked.provider_response_enc = None
+        locked.provider_response_state = (
+            MediaProcessingJob.ProviderResponseState.APPLIED
+        )
+        locked.provider_response_apply_token = None
+        locked.provider_response_apply_claimed_at = None
+        locked.provider_response_resolved_at = now()
+        locked.save(update_fields=[
+            'provider_response_enc', 'provider_response_state',
+            'provider_response_apply_token',
+            'provider_response_apply_claimed_at',
+            'provider_response_resolved_at', 'updated_at',
+        ])
+        _copy_provider_checkpoint_state(applied, locked)
+    return applied
+
+
+def mark_provider_checkpoint_accounting_resolved(job: MediaProcessingJob) -> None:
+    """Explicitly abandon local apply after an operator resolves accounting."""
+    with transaction.atomic():
+        locked = MediaProcessingJob.objects.select_for_update().get(pk=job.pk)
+        if (
+            locked.provider_response_state
+            == MediaProcessingJob.ProviderResponseState.APPLYING
+        ):
+            raise MediaProviderCheckpointApplyInProgress(
+                'Checkpoint сейчас применяется; accounting reconciliation запрещена.',
+            )
+        if (
+            locked.provider_response_state
+            == MediaProcessingJob.ProviderResponseState.RECORDED
+        ):
+            locked.provider_response_enc = None
+            locked.provider_response_state = (
+                MediaProcessingJob.ProviderResponseState.ACCOUNTING_RESOLVED
+            )
+            locked.provider_response_apply_token = None
+            locked.provider_response_apply_claimed_at = None
+            locked.provider_response_resolved_at = now()
+            locked.save(update_fields=[
+                'provider_response_enc', 'provider_response_state',
+                'provider_response_apply_token',
+                'provider_response_apply_claimed_at',
+                'provider_response_resolved_at', 'updated_at',
+            ])
+        _copy_provider_checkpoint_state(job, locked)
+
+
 def submit_job(job: MediaProcessingJob, callback_url: str = '') -> MediaProcessingJob:
+    checkpoint = MediaProcessingJob.objects.only(
+        'provider_job_id', 'provider_response_enc', 'provider_response_digest',
+        'provider_response_status', 'provider_response_state',
+        'provider_response_recorded_at', 'provider_response_apply_token',
+        'provider_response_apply_claimed_at',
+        'provider_response_resolved_at',
+    ).get(pk=job.pk)
+    _copy_provider_checkpoint_state(job, checkpoint)
+    if checkpoint.provider_response_state:
+        return apply_checkpointed_provider_result(job)
+
     operations = tuple(MediaOperation(operation) for operation in job.operations)
     resolution = resolve_provider_for_request(
         job.tenant,
@@ -460,6 +1005,12 @@ def submit_job(job: MediaProcessingJob, callback_url: str = '') -> MediaProcessi
         ])
 
         input_url = default_storage.url(job.product_image.s3_key)
+    except Exception:
+        # Nothing was sent to the provider, so releasing and retrying is safe.
+        _release_job_credits(job, reason='pre_provider_submission_failed')
+        raise
+
+    try:
         result = provider.process(MediaProviderRequest(
             input_url=input_url,
             operations=operations,
@@ -467,16 +1018,31 @@ def submit_job(job: MediaProcessingJob, callback_url: str = '') -> MediaProcessi
             callback_url=callback_url,
             idempotency_key=job.idempotency_key,
         ))
-    except Exception:
-        _release_job_credits(job, reason='provider_submission_failed')
-        raise
-    return apply_provider_result(job, result)
+    except Exception as exc:
+        # The provider may have accepted the operation before the response was
+        # lost. Keep credits reserved and require reconciliation; neither the
+        # worker nor an API retry may submit the operation again.
+        raise MediaProviderOutcomeUncertain(
+            'Результат отправки медиа-провайдеру неизвестен.',
+        ) from exc
+    try:
+        _checkpoint_provider_result(job, result)
+        return apply_checkpointed_provider_result(job)
+    except Exception as exc:
+        # The provider boundary has already been crossed.  A local S3, DB or
+        # wallet failure must never turn into another provider submission: the
+        # remote operation may have completed and been billed successfully.
+        raise MediaProviderOutcomeUncertain(
+            'Провайдер вернул ответ, но локальное сохранение '
+            'не завершилось; требуется сверка.',
+        ) from exc
 
 
 def apply_provider_result(
     job: MediaProcessingJob,
     result: MediaProviderResult,
 ) -> MediaProcessingJob:
+    _assert_checkpoint_accounting_compatible(job, result)
     job.provider_job_id = result.provider_job_id or job.provider_job_id
     job.provider_metadata = {**(job.provider_metadata or {}), **result.metadata}
     if result.actual_cost is not None:
@@ -485,9 +1051,11 @@ def apply_provider_result(
     if result.status == MediaProviderResultStatus.PENDING:
         _settle_job_credits(job)
         job.status = MediaProcessingJob.Status.SUBMITTED
+        job.error_code = ''
+        job.error_message = ''
         job.save(update_fields=[
             'provider_job_id', 'provider_metadata', 'charged_credits',
-            'status', 'updated_at',
+            'status', 'error_code', 'error_message', 'updated_at',
         ])
         return job
 
@@ -499,24 +1067,22 @@ def apply_provider_result(
             _GENERIC_PROVIDER_FAILURE,
         )
 
-    try:
-        raw_bytes, content_type = _provider_result_bytes(result)
-        variant = _store_variant(job, raw_bytes, content_type)
-    except Exception:
-        _release_job_credits(job, reason='invalid_provider_output')
-        return fail_job(
-            job,
-            'invalid_provider_output',
-            _GENERIC_PROVIDER_OUTPUT_FAILURE,
-        )
+    # A SUCCEEDED provider response is already beyond the billable boundary.
+    # Download, validation, S3 and DB failures are not proof that the provider
+    # rejected/refunded the operation, so let submit_job classify them as an
+    # uncertain outcome while keeping the tenant reservation held.
+    raw_bytes, content_type = _provider_result_bytes(result)
+    variant = _store_variant(job, raw_bytes, content_type)
 
     _settle_job_credits(job)
     job.status = MediaProcessingJob.Status.SUCCEEDED
     job.finished_at = now()
+    job.error_code = ''
+    job.error_message = ''
     job.provider_metadata = {**job.provider_metadata, 'variant_id': variant.pk}
     job.save(update_fields=[
         'provider_job_id', 'provider_metadata', 'charged_credits',
-        'status', 'finished_at', 'updated_at',
+        'status', 'finished_at', 'error_code', 'error_message', 'updated_at',
     ])
     return job
 
@@ -536,6 +1102,43 @@ def fail_job(job: MediaProcessingJob, error_code: str, error_message: str) -> Me
         'status', 'error_code', 'error_message', 'finished_at', 'updated_at',
     ])
     return job
+
+
+def fail_job_if_checkpoint_unresolved(
+    job: MediaProcessingJob,
+    error_code: str,
+    error_message: str,
+) -> bool:
+    """Mark failure only while no newer apply/accounting owner has won.
+
+    A stale worker may discover that its apply token was replaced after it has
+    completed local work. Re-reading without a row lock would let that loser
+    overwrite the winner's APPLIED/SUCCEEDED state.
+    """
+    with transaction.atomic():
+        locked = MediaProcessingJob.objects.select_for_update().get(pk=job.pk)
+        if (
+            locked.provider_response_state in {
+                MediaProcessingJob.ProviderResponseState.APPLYING,
+                MediaProcessingJob.ProviderResponseState.APPLIED,
+                MediaProcessingJob.ProviderResponseState.ACCOUNTING_RESOLVED,
+            }
+            or locked.status in {
+                MediaProcessingJob.Status.SUBMITTED,
+                MediaProcessingJob.Status.SUCCEEDED,
+                MediaProcessingJob.Status.CANCELLED,
+            }
+        ):
+            job.status = locked.status
+            job.error_code = locked.error_code
+            job.error_message = locked.error_message
+            _copy_provider_checkpoint_state(job, locked)
+            return False
+        fail_job(locked, error_code, error_message)
+        job.status = locked.status
+        job.error_code = locked.error_code
+        job.error_message = locked.error_message
+        return True
 
 
 def activate_variant(variant: ProductImageVariant) -> ProductImageVariant:
@@ -610,13 +1213,6 @@ def _store_variant(
         raise ValueError('Результат провайдера не удалось открыть как изображение.') from exc
 
     sha = hashlib.sha256(raw_bytes).hexdigest()
-    existing = ProductImageVariant.objects.filter(
-        product_image=job.product_image,
-        sha256=sha,
-    ).first()
-    if existing:
-        return existing
-
     extension = _extension_for_content_type(content_type, result_url='')
     original_path = PurePosixPath(job.product_image.s3_key)
     variant_key = str(
@@ -624,21 +1220,36 @@ def _store_variant(
             f'{original_path.stem}_variant_{job.pk}_{sha[:12]}{extension}',
         ),
     )
-    saved_key = default_storage.save(variant_key, io.BytesIO(raw_bytes))
-    return ProductImageVariant.objects.create(
-        tenant=job.tenant,
-        product_image=job.product_image,
-        job=job,
-        provider_id=job.provider_id,
-        operations=job.operations,
-        parameters=job.parameters,
-        s3_key=saved_key,
-        content_type=content_type,
-        width=image.width,
-        height=image.height,
-        file_size_kb=max(1, len(raw_bytes) // 1024),
-        sha256=sha,
-    )
+    with transaction.atomic():
+        locked_image = ProductImage.objects.select_for_update().get(
+            pk=job.product_image_id,
+        )
+        existing = ProductImageVariant.objects.filter(
+            product_image=locked_image,
+            sha256=sha,
+        ).first()
+        if existing:
+            return existing
+
+        saved_key = default_storage.save(variant_key, io.BytesIO(raw_bytes))
+        try:
+            return ProductImageVariant.objects.create(
+                tenant=job.tenant,
+                product_image=locked_image,
+                job=job,
+                provider_id=job.provider_id,
+                operations=job.operations,
+                parameters=job.parameters,
+                s3_key=saved_key,
+                content_type=content_type,
+                width=image.width,
+                height=image.height,
+                file_size_kb=max(1, len(raw_bytes) // 1024),
+                sha256=sha,
+            )
+        except Exception:
+            delete_storage_keys((saved_key,), storage=default_storage)
+            raise
 
 
 def _extension_for_content_type(content_type: str, result_url: str = '') -> str:

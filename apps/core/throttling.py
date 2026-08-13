@@ -5,6 +5,7 @@ import math
 from datetime import datetime, time, timedelta
 
 from django.core.cache import caches
+from django.db import transaction
 from django.utils import timezone
 from rest_framework.exceptions import APIException, Throttled
 from rest_framework.throttling import ScopedRateThrottle
@@ -123,3 +124,44 @@ def consume_tenant_daily_budget(
             detail='Дневной лимит платных запусков организации исчерпан.',
         )
     return total
+
+
+def consume_transactional_tenant_daily_budget(
+    *, tenant, scope: str, cost: int, limit: int,
+) -> int:
+    """Consume a daily budget in the caller's database transaction.
+
+    The caller must have opened the canonical domain transaction. Unlike the
+    Redis ingress throttle, this charge rolls back together with the domain
+    row and durable dispatch. The tenant lock is acquired here as a final
+    concurrency guard; callers should take the same lock first when they also
+    lock product/listing rows.
+    """
+    from apps.core.models import TenantDailyPaidUsage
+
+    if not transaction.get_connection().in_atomic_block:
+        raise RuntimeError(
+            'Transactional tenant budget requires an outer database transaction.'
+        )
+    cost = int(cost)
+    limit = int(limit)
+    if cost <= 0:
+        return 0
+    if limit <= 0:
+        raise ValueError('Daily budget limit must be positive.')
+    tenant = type(tenant).objects.select_for_update().only('pk').get(pk=tenant.pk)
+    usage, _ = TenantDailyPaidUsage.objects.get_or_create(
+        tenant=tenant,
+        scope=str(scope)[:80],
+        usage_date=timezone.localdate(),
+    )
+    usage = TenantDailyPaidUsage.objects.select_for_update().get(pk=usage.pk)
+    new_total = usage.units + cost
+    if new_total > limit:
+        raise Throttled(
+            wait=_seconds_until_next_local_day(),
+            detail='Дневной лимит платных запусков организации исчерпан.',
+        )
+    usage.units = new_total
+    usage.save(update_fields=['units', 'updated_at'])
+    return new_total

@@ -69,7 +69,7 @@ test:
 lint:
 	$(COMPOSE) exec django flake8 .
 
-# Инкрементальный честный mypy-baseline; scope перечислен в mypy.ini.
+# Application-wide mypy baseline; scope перечислен в mypy.ini.
 typecheck-backend:
 	$(COMPOSE) exec django mypy
 

@@ -4,11 +4,15 @@
 Покрывает: ListingService.approve, request_regenerate, update_content,
 а также API-эндпоинты detail / approve / regenerate / patch.
 """
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
+import uuid
 
 import pytest
+from django.conf import settings
+from django.db import close_old_connections
 
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
@@ -196,6 +200,287 @@ class TestListingServiceUpdateContent:
 
 @pytest.mark.django_db
 class TestListingDetailAPI:
+    def test_regenerate_requires_uuid_and_replays_same_durable_dispatch(
+        self,
+        django_capture_on_commit_callbacks,
+    ):
+        from django.test import Client
+
+        from apps.core.models import BackgroundJobDispatch, PaidIngressIntent
+        from apps.marketplaces.views import ListingRegenerateView
+
+        tenant = make_tenant('listing-regen-idempotency')
+        key = create_operator_key(tenant)
+        listing = make_listing(tenant, status=Listing.STATUS_DRAFT)
+        client = Client(HTTP_AUTHORIZATION=f'Bearer {key}')
+        missing = client.post(
+            f'/api/v1/listings/{listing.pk}/regenerate/',
+            data={},
+            content_type='application/json',
+        )
+        request_key = str(uuid.uuid4())
+        submission = {
+            'mode': 'generate',
+            'job_id': None,
+            'dispatch_id': None,
+        }
+
+        def submit(_listing_id, _tenant, *, durable_deduplication_key):
+            dispatch = BackgroundJobDispatch.objects.create(
+                task_name='apps.ai_agent.tasks.generate_description_task',
+                queue='ai_generate',
+                args=[listing.product_id],
+                deduplication_key=durable_deduplication_key,
+            )
+            submission['dispatch_id'] = str(dispatch.pk)
+            listing._regeneration_submission = dict(submission)
+            return listing
+
+        with patch.object(
+            ListingService, 'request_regenerate', side_effect=submit,
+        ) as service:
+            first = client.post(
+                f'/api/v1/listings/{listing.pk}/regenerate/',
+                data={'idempotency_key': request_key},
+                content_type='application/json',
+            )
+            dispatch = BackgroundJobDispatch.objects.get(
+                pk=first.json()['data']['dispatch_id'],
+            )
+            dispatch.status = BackgroundJobDispatch.Status.SUCCEEDED
+            dispatch.save(update_fields=['status', 'updated_at'])
+            retry = client.post(
+                f'/api/v1/listings/{listing.pk}/regenerate/',
+                data={'idempotency_key': request_key},
+                content_type='application/json',
+            )
+
+        assert missing.status_code == 400
+        assert first.status_code == 202
+        assert retry.status_code == 202
+        assert retry.json()['data']['dispatch_id'] == str(dispatch.pk)
+        assert retry.json()['data']['state'] == BackgroundJobDispatch.Status.SUCCEEDED
+        assert PaidIngressIntent.objects.filter(
+            tenant=tenant, operation='listing-regenerate',
+        ).count() == 1
+        assert service.call_count == 1
+        assert ListingRegenerateView.throttle_classes
+        assert ListingRegenerateView.expensive_throttle_methods == {'POST'}
+
+    def test_regenerate_same_key_rejects_raw_payload_conflict(self):
+        from django.test import Client
+
+        from apps.core.models import BackgroundJobDispatch, PaidIngressIntent
+
+        tenant = make_tenant('listing-regen-payload-conflict')
+        key = create_operator_key(tenant)
+        listing = make_listing(tenant, status=Listing.STATUS_DRAFT)
+        client = Client(HTTP_AUTHORIZATION=f'Bearer {key}')
+        request_key = str(uuid.uuid4())
+
+        def submit(_listing_id, _tenant, *, durable_deduplication_key):
+            dispatch = BackgroundJobDispatch.objects.create(
+                task_name='apps.ai_agent.tasks.generate_description_task',
+                queue='ai_generate',
+                args=[listing.product_id],
+                deduplication_key=durable_deduplication_key,
+            )
+            listing._regeneration_submission = {
+                'mode': 'generate',
+                'job_id': None,
+                'dispatch_id': str(dispatch.pk),
+            }
+            return listing
+
+        with patch.object(
+            ListingService, 'request_regenerate', side_effect=submit,
+        ) as service:
+            first = client.post(
+                f'/api/v1/listings/{listing.pk}/regenerate/',
+                data={'idempotency_key': request_key},
+                content_type='application/json',
+            )
+            conflict = client.post(
+                f'/api/v1/listings/{listing.pk}/regenerate/',
+                data={
+                    'idempotency_key': request_key,
+                    'unexpected': 'different raw intent',
+                },
+                content_type='application/json',
+            )
+
+        assert first.status_code == 202
+        # Strict ingress validation rejects changed raw bytes before a paid
+        # action, while the original canonical durable intent remains intact.
+        assert conflict.status_code == 400
+        assert service.call_count == 1
+        assert PaidIngressIntent.objects.filter(
+            tenant=tenant,
+            operation='listing-regenerate',
+        ).count() == 1
+
+    @pytest.mark.django_db(transaction=True)
+    def test_concurrent_regenerate_retries_create_one_dispatch_and_intent(self):
+        from django.test import Client
+
+        from apps.core.models import BackgroundJobDispatch, PaidIngressIntent
+
+        tenant = make_tenant('listing-regen-concurrent')
+        key = create_operator_key(tenant)
+        listing = make_listing(tenant, status=Listing.STATUS_DRAFT)
+        request_key = str(uuid.uuid4())
+
+        def submit_service(
+            _listing_id,
+            _tenant,
+            *,
+            durable_deduplication_key,
+        ):
+            dispatch = BackgroundJobDispatch.objects.create(
+                task_name='apps.ai_agent.tasks.generate_description_task',
+                queue='ai_generate',
+                args=[listing.product_id],
+                deduplication_key=durable_deduplication_key,
+            )
+            listing._regeneration_submission = {
+                'mode': 'generate',
+                'job_id': None,
+                'dispatch_id': str(dispatch.pk),
+            }
+            return listing
+
+        def submit():
+            close_old_connections()
+            try:
+                return Client(HTTP_AUTHORIZATION=f'Bearer {key}').post(
+                    f'/api/v1/listings/{listing.pk}/regenerate/',
+                    data={'idempotency_key': request_key},
+                    content_type='application/json',
+                ).status_code
+            finally:
+                close_old_connections()
+
+        with patch.object(
+            ListingService,
+            'request_regenerate',
+            side_effect=submit_service,
+        ) as service, patch(
+            'apps.core.tasks.execute_background_dispatch.apply_async',
+        ):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                statuses = list(pool.map(lambda _index: submit(), range(2)))
+
+        assert statuses == [202, 202]
+        assert service.call_count == 1
+        assert PaidIngressIntent.objects.filter(
+            tenant=tenant,
+            operation='listing-regenerate',
+        ).count() == 1
+        assert BackgroundJobDispatch.objects.filter(
+            task_name='apps.ai_agent.tasks.generate_description_task',
+        ).count() == 1
+
+    def test_regenerate_enrichment_charges_parse_budget_once(
+        self,
+    ):
+        from django.test import Client
+
+        from apps.core.models import BackgroundJobDispatch
+
+        tenant = make_tenant('listing-regen-parse-budget')
+        key = create_operator_key(tenant)
+        listing = make_listing(tenant, status=Listing.STATUS_DRAFT)
+        client = Client(HTTP_AUTHORIZATION=f'Bearer {key}')
+        request_key = str(uuid.uuid4())
+
+        def submit(_listing_id, _tenant, *, durable_deduplication_key):
+            dispatch = BackgroundJobDispatch.objects.create(
+                task_name=(
+                    'apps.products.tasks.'
+                    'parse_single_part_then_generate_description'
+                ),
+                queue='part_parsing',
+                args=[123],
+                deduplication_key=durable_deduplication_key,
+            )
+            listing._regeneration_submission = {
+                'mode': 'enrich_then_generate',
+                'job_id': 123,
+                'dispatch_id': str(dispatch.pk),
+            }
+            return listing
+
+        with patch.object(
+            ListingService, 'request_regenerate', side_effect=submit,
+        ), patch(
+            'apps.marketplaces.views.'
+            'consume_transactional_tenant_daily_budget',
+        ) as consume:
+            first = client.post(
+                f'/api/v1/listings/{listing.pk}/regenerate/',
+                data={'idempotency_key': request_key},
+                content_type='application/json',
+            )
+            retry = client.post(
+                f'/api/v1/listings/{listing.pk}/regenerate/',
+                data={'idempotency_key': request_key},
+                content_type='application/json',
+            )
+
+        assert first.status_code == retry.status_code == 202
+        assert retry.json() == first.json()
+        consume.assert_called_once_with(
+            tenant=tenant,
+            scope='product-parse-jobs',
+            cost=1,
+            limit=settings.PRODUCT_PARSE_TENANT_DAILY_JOBS,
+        )
+
+    def test_regenerate_parse_budget_exhaustion_rolls_back_dispatch(self):
+        from django.test import Client
+        from rest_framework.exceptions import Throttled
+
+        from apps.core.models import BackgroundJobDispatch, PaidIngressIntent
+
+        tenant = make_tenant('listing-regen-parse-exhausted')
+        key = create_operator_key(tenant)
+        listing = make_listing(tenant, status=Listing.STATUS_DRAFT)
+        client = Client(HTTP_AUTHORIZATION=f'Bearer {key}')
+
+        def submit(_listing_id, _tenant, *, durable_deduplication_key):
+            dispatch = BackgroundJobDispatch.objects.create(
+                task_name=(
+                    'apps.products.tasks.'
+                    'parse_single_part_then_generate_description'
+                ),
+                queue='part_parsing',
+                args=[456],
+                deduplication_key=durable_deduplication_key,
+            )
+            listing._regeneration_submission = {
+                'mode': 'enrich_then_generate',
+                'job_id': 456,
+                'dispatch_id': str(dispatch.pk),
+            }
+            return listing
+
+        with patch.object(
+            ListingService, 'request_regenerate', side_effect=submit,
+        ), patch(
+            'apps.marketplaces.views.'
+            'consume_transactional_tenant_daily_budget',
+            side_effect=Throttled(wait=60),
+        ):
+            response = client.post(
+                f'/api/v1/listings/{listing.pk}/regenerate/',
+                data={'idempotency_key': str(uuid.uuid4())},
+                content_type='application/json',
+            )
+
+        assert response.status_code == 429
+        assert not BackgroundJobDispatch.objects.exists()
+        assert not PaidIngressIntent.objects.filter(tenant=tenant).exists()
+
     def test_patch_changes_account_price_and_placement_address_together(self):
         from django.test import Client
 

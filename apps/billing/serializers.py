@@ -22,7 +22,7 @@ def _origin_identity(value: str) -> tuple[str, str, int] | None:
     return parsed.scheme.lower(), parsed.hostname.rstrip('.').lower(), port
 
 
-def validate_billing_return_url(value: str) -> str:
+def validate_billing_return_url(value: str) -> None:
     """Allow YooKassa redirects only to explicitly trusted application origins."""
     candidate = _origin_identity(value)
     allowed = {
@@ -37,7 +37,6 @@ def validate_billing_return_url(value: str) -> str:
         raise serializers.ValidationError(
             'return_url должен принадлежать доверенному frontend origin.',
         )
-    return value
 
 
 class CheckoutSerializer(serializers.Serializer):
@@ -105,3 +104,23 @@ class AITopupCheckoutSerializer(serializers.Serializer):
     idempotency_key = serializers.UUIDField()
     package_id = serializers.IntegerField(min_value=1)
     return_url = serializers.URLField(required=False, validators=[validate_billing_return_url])
+
+
+class BillingCheckoutErrorSerializer(serializers.Serializer):
+    """Common envelope for disabled, missing, conflicting and pending checkout."""
+
+    status = serializers.CharField(read_only=True)
+    code = serializers.CharField(read_only=True)
+    message = serializers.CharField(required=False, read_only=True)
+
+    def get_fields(self) -> dict[str, serializers.Field]:
+        # ``data`` is also a Serializer property, so declaring it as a class
+        # attribute conflicts with the typed descriptor. DRF explicitly
+        # supports constructing fields here and keeps the public key unchanged.
+        fields = super().get_fields()
+        fields['data'] = serializers.DictField(
+            child=serializers.JSONField(),
+            required=False,
+            read_only=True,
+        )
+        return fields

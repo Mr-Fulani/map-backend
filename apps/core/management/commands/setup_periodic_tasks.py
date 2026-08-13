@@ -21,6 +21,7 @@ class Command(BaseCommand):
         """Регистрирует все периодические задачи."""
         # Интервальные расписания
         every_1m = self._get_interval(1, IntervalSchedule.MINUTES)
+        every_10s = self._get_interval(10, IntervalSchedule.SECONDS)
         every_5m = self._get_interval(5, IntervalSchedule.MINUTES)
         every_10m = self._get_interval(10, IntervalSchedule.MINUTES)
         every_15m = self._get_interval(15, IntervalSchedule.MINUTES)
@@ -36,6 +37,12 @@ class Command(BaseCommand):
         daily_10 = self._get_crontab(minute=0, hour=10)
 
         tasks = [
+            {
+                'name': 'dispatch_due_background_jobs',
+                'task': 'apps.core.tasks.dispatch_due_background_jobs',
+                'schedule': every_10s,
+                'queue': 'notifications',
+            },
             {
                 'name': 'dispatch_due_product_bulk_jobs',
                 'task': 'apps.products.tasks.dispatch_due_product_bulk_jobs',
@@ -53,6 +60,24 @@ class Command(BaseCommand):
                 'task': 'apps.billing.tasks.dispatch_billing_outbox',
                 'schedule': every_1m,
                 'queue': 'billing',
+            },
+            {
+                'name': 'reconcile_stale_ai_provider_operations',
+                'task': (
+                    'apps.ai_agent.tasks.'
+                    'reconcile_stale_ai_provider_operations_task'
+                ),
+                'schedule': every_5m,
+                'queue': 'notifications',
+            },
+            {
+                'name': 'resume_stale_media_provider_checkpoints',
+                'task': (
+                    'apps.media_processing.tasks.'
+                    'resume_stale_media_provider_checkpoints'
+                ),
+                'schedule': every_5m,
+                'queue': 'media_processing',
             },
             {
                 'name': 'sync_all_tenants',

@@ -47,6 +47,55 @@ def test_jwt_login_schema_matches_response_payload(api_schema):
     assert refresh['summary'] == 'Обновить JWT access-токен'
 
 
+def test_browser_auth_schema_documents_csrf_and_signed_out_contracts(api_schema):
+    csrf = api_schema['paths']['/api/v1/auth/browser/csrf/']['get']
+    csrf_response = _resolve(
+        api_schema,
+        csrf['responses']['200']['content']['application/json']['schema'],
+    )
+    assert set(csrf_response['properties']) == {'status', 'csrf_token'}
+
+    refresh = api_schema['paths']['/api/v1/auth/browser/refresh/']['post']
+    assert {'200', '401', '403'} <= set(refresh['responses'])
+    unauthorized = _resolve(
+        api_schema,
+        refresh['responses']['401']['content']['application/json']['schema'],
+    )
+    csrf_failed = _resolve(
+        api_schema,
+        refresh['responses']['403']['content']['application/json']['schema'],
+    )
+    assert set(unauthorized['properties']) == {'status', 'code', 'message'}
+    assert set(csrf_failed['properties']) == {'status', 'code', 'message'}
+
+    description = api_schema['info']['description']
+    assert '/api/v1/auth/browser/csrf/' in description
+    assert 'X-CSRFToken' in description
+    assert '401 unauthorized' in description
+    assert '403 csrf_failed' in description
+
+
+def test_checkout_schema_documents_real_error_statuses_and_retry_header(api_schema):
+    for path_value in (
+        '/api/v1/billing/checkout/',
+        '/api/v1/billing/ai-topup/',
+    ):
+        operation = api_schema['paths'][path_value]['post']
+        assert {'200', '404', '409', '503'} <= set(operation['responses'])
+        for status_code in ('404', '409', '503'):
+            error_schema = _resolve(
+                api_schema,
+                operation['responses'][status_code]['content'][
+                    'application/json'
+                ]['schema'],
+            )
+            assert {'status', 'code'} <= set(error_schema['properties'])
+
+        retry_after = operation['responses']['503']['headers']['Retry-After']
+        assert retry_after['schema']['type'] == 'integer'
+        assert 'checkout_pending' in retry_after['description']
+
+
 def test_public_plans_and_operation_tags_are_explicit(api_schema):
     plans = api_schema['paths']['/api/v1/billing/plans/']['get']
     assert {} in plans['security']

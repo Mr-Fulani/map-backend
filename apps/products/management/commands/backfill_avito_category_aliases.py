@@ -55,10 +55,13 @@ class Command(BaseCommand):
                 root_domain=domain, external_source=AVITO_SOURCE,
             )
             for category in categories:
-                aliases = aliases_by_normalized_name.get(category.normalized_name)
-                if not aliases:
+                category_aliases = aliases_by_normalized_name.get(category.normalized_name)
+                if not category_aliases:
                     continue
-                missing = [alias for alias in aliases if alias not in category.aliases]
+                missing = [
+                    alias for alias in category_aliases
+                    if alias not in category.aliases
+                ]
                 if not missing:
                     continue
                 updated += 1

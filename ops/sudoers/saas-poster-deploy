@@ -1,0 +1,5 @@
+Cmnd_Alias SAAS_POSTER_RELEASE = /usr/local/sbin/saas-poster-release *
+Cmnd_Alias SAAS_POSTER_BACKUP_CHECK = /usr/bin/systemctl start --wait saas-poster-backup-check.service
+Cmnd_Alias SAAS_POSTER_TOPOLOGY = /usr/local/sbin/saas-poster-verify-topology
+Cmnd_Alias SAAS_POSTER_CAPACITY = /usr/local/sbin/saas-poster-check-capacity
+mapdeploy ALL=(root) NOPASSWD: SAAS_POSTER_RELEASE, SAAS_POSTER_BACKUP_CHECK, SAAS_POSTER_TOPOLOGY, SAAS_POSTER_CAPACITY

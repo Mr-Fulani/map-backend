@@ -56,10 +56,18 @@ def _claim_due_webhook_deliveries(
     *,
     now,
     batch_size: int,
-    event_id: str | None = None,
+    event_id: str | uuid.UUID | None = None,
 ) -> list[tuple[int, uuid.UUID]]:
     """Atomically reserve due rows before publishing their Celery messages."""
     from apps.tenants.models import WebhookDelivery
+
+    parsed_event_id = None
+    if event_id is not None:
+        try:
+            parsed_event_id = uuid.UUID(str(event_id))
+        except (TypeError, ValueError, AttributeError):
+            logger.warning('Ignoring webhook dispatch with invalid event UUID.')
+            return []
 
     with transaction.atomic():
         due = WebhookDelivery.objects.filter(
@@ -69,8 +77,8 @@ def _claim_due_webhook_deliveries(
                 next_attempt_at__lte=now,
             ),
         )
-        if event_id is not None:
-            due = due.filter(event_id=event_id)
+        if parsed_event_id is not None:
+            due = due.filter(event_id=parsed_event_id)
         deliveries = list(
             due.select_for_update(skip_locked=True)
             .order_by('created_at', 'pk')[:batch_size],

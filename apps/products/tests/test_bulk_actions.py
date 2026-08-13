@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 from django.utils.timezone import now
 
+from apps.core.models import BackgroundJobDispatch
 from apps.products.models import Product, ProductBulkActionJob, ProductCatalogClassification
 from apps.products.services import AutoPartsEnrichmentDisabled, ProductBulkActionService
 from apps.tenants.services import TenantService
@@ -44,18 +45,22 @@ def test_bulk_action_processes_first_batch_without_redis_countdown(
         pause_seconds=30,
     )
 
-    with patch('apps.products.tasks.parse_single_part.delay') as parse_delay:
-        with patch('apps.products.tasks.process_bulk_product_action.apply_async') as bulk_delay:
-            with django_capture_on_commit_callbacks(execute=True):
-                result = ProductBulkActionService.process_next_batch(job.pk)
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
+        with django_capture_on_commit_callbacks(execute=True):
+            result = ProductBulkActionService.process_next_batch(job.pk)
 
     job.refresh_from_db()
     assert result['status'] == ProductBulkActionJob.Status.COOLING_DOWN
     assert job.processed_count == 2
     assert job.queued_count == 2
     assert job.next_batch_at is not None
-    assert parse_delay.call_count == 2
-    bulk_delay.assert_not_called()
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.products.tasks.parse_single_part',
+    ).count() == 2
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.products.tasks.process_bulk_product_action',
+        available_at=job.next_batch_at,
+    ).count() == 1
 
 
 @pytest.mark.django_db
@@ -75,14 +80,13 @@ def test_bulk_action_does_not_run_before_cooldown_deadline(
     job.next_batch_at = now() + timedelta(minutes=5)
     job.save(update_fields=['status', 'next_batch_at', 'updated_at'])
 
-    with patch('apps.products.tasks.parse_single_part.delay') as parse_delay:
-        with django_capture_on_commit_callbacks(execute=True):
-            result = ProductBulkActionService.process_next_batch(job.pk)
+    with django_capture_on_commit_callbacks(execute=True):
+        result = ProductBulkActionService.process_next_batch(job.pk)
 
     job.refresh_from_db()
     assert result['status'] == ProductBulkActionJob.Status.COOLING_DOWN
     assert job.processed_count == 0
-    parse_delay.assert_not_called()
+    assert not BackgroundJobDispatch.objects.exists()
 
 
 @pytest.mark.django_db
@@ -111,7 +115,7 @@ def test_dispatcher_publishes_pending_and_due_jobs_only(
         next_batch_at=now() + timedelta(minutes=5),
     )
 
-    with patch('apps.products.tasks.process_bulk_product_action.delay') as delay:
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async') as publish:
         with django_capture_on_commit_callbacks(execute=True):
             result = dispatch_due_product_bulk_jobs()
 
@@ -119,14 +123,17 @@ def test_dispatcher_publishes_pending_and_due_jobs_only(
     due.refresh_from_db()
     future.refresh_from_db()
     assert result == {'selected': 2}
-    assert {call.args[0] for call in delay.call_args_list} == {pending.pk, due.pk}
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.products.tasks.process_bulk_product_action',
+    ).count() == 2
+    assert publish.call_count == 2
     assert pending.last_dispatched_at is not None
     assert due.last_dispatched_at is not None
     assert future.last_dispatched_at is None
 
 
 @pytest.mark.django_db
-def test_dispatcher_resets_lease_after_publish_failure(
+def test_dispatcher_keeps_durable_row_after_publish_failure(
     django_capture_on_commit_callbacks,
 ):
     from apps.products.tasks import dispatch_due_product_bulk_jobs
@@ -138,7 +145,7 @@ def test_dispatcher_resets_lease_after_publish_failure(
     )
 
     with patch(
-        'apps.products.tasks.process_bulk_product_action.delay',
+        'apps.core.tasks.execute_background_dispatch.apply_async',
         side_effect=RuntimeError('broker unavailable'),
     ):
         with django_capture_on_commit_callbacks(execute=True):
@@ -146,7 +153,9 @@ def test_dispatcher_resets_lease_after_publish_failure(
 
     job.refresh_from_db()
     assert result == {'selected': 1}
-    assert job.last_dispatched_at is None
+    dispatch = BackgroundJobDispatch.objects.get()
+    assert dispatch.status == BackgroundJobDispatch.Status.PENDING
+    assert job.last_dispatched_at is not None
 
 
 @pytest.mark.django_db
@@ -162,14 +171,16 @@ def test_bulk_action_does_not_process_other_tenant_products(django_capture_on_co
         batch_size=20,
     )
 
-    with patch('apps.products.tasks.parse_single_part.delay') as parse_delay:
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
         with django_capture_on_commit_callbacks(execute=True):
             ProductBulkActionService.process_next_batch(job.pk)
 
     job.refresh_from_db()
     assert job.product_ids == [product.pk]
     assert job.skipped_count == 1
-    assert parse_delay.call_count == 1
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.products.tasks.parse_single_part',
+    ).count() == 1
 
 
 @pytest.mark.django_db
@@ -182,13 +193,16 @@ def test_bulk_action_enrich_then_generate_uses_chained_task(django_capture_on_co
         product_ids=[product.pk],
     )
 
-    with patch('apps.products.tasks.parse_single_part.delay') as parse_delay:
-        with patch('apps.products.tasks.parse_single_part_then_generate_description.delay') as chained_delay:
-            with django_capture_on_commit_callbacks(execute=True):
-                ProductBulkActionService.process_next_batch(job.pk)
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
+        with django_capture_on_commit_callbacks(execute=True):
+            ProductBulkActionService.process_next_batch(job.pk)
 
-    parse_delay.assert_not_called()
-    chained_delay.assert_called_once()
+    assert not BackgroundJobDispatch.objects.filter(
+        task_name='apps.products.tasks.parse_single_part',
+    ).exists()
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.products.tasks.parse_single_part_then_generate_description',
+    ).count() == 1
 
 
 @pytest.mark.django_db
@@ -201,17 +215,20 @@ def test_bulk_generate_descriptions_uses_enrichment_aware_scheduler(django_captu
         product_ids=[product.pk],
     )
 
-    with patch('apps.products.tasks.parse_single_part_then_generate_description.delay') as chained_delay:
-        with patch('apps.ai_agent.tasks.generate_description_task.delay') as ai_delay:
-            with django_capture_on_commit_callbacks(execute=True):
-                result = ProductBulkActionService.process_next_batch(job.pk)
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
+        with django_capture_on_commit_callbacks(execute=True):
+            result = ProductBulkActionService.process_next_batch(job.pk)
 
     job.refresh_from_db()
     assert result['status'] == ProductBulkActionJob.Status.SUCCESS
     assert job.queued_count == 1
     assert tenant.product_parse_jobs.filter(product=product).count() == 1
-    chained_delay.assert_called_once()
-    ai_delay.assert_not_called()
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.products.tasks.parse_single_part_then_generate_description',
+    ).count() == 1
+    assert not BackgroundJobDispatch.objects.filter(
+        task_name='apps.ai_agent.tasks.generate_description_task',
+    ).exists()
 
 
 @pytest.mark.django_db
@@ -294,7 +311,7 @@ def test_bulk_find_images_queues_search_tasks(django_capture_on_commit_callbacks
         batch_size=20,
     )
 
-    with patch('apps.image_search.tasks.search_images_for_product.delay') as search_delay:
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
         with django_capture_on_commit_callbacks(execute=True):
             result = ProductBulkActionService.process_next_batch(job.pk)
 
@@ -302,4 +319,18 @@ def test_bulk_find_images_queues_search_tasks(django_capture_on_commit_callbacks
     assert result['status'] == ProductBulkActionJob.Status.SUCCESS
     assert job.queued_count == 2
     assert job.skipped_count == 0
-    assert search_delay.call_count == 2
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.image_search.tasks.search_images_for_product',
+    ).count() == 2
+    from apps.image_search.models import ImageSearchTask
+    assert ImageSearchTask.objects.filter(
+        tenant=tenant,
+        product__in=products,
+    ).count() == 2
+    assert all(
+        task.dispatch.args == [task.product_id, task.pk]
+        for task in ImageSearchTask.objects.filter(
+            tenant=tenant,
+            product__in=products,
+        ).select_related('dispatch')
+    )

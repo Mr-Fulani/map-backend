@@ -142,8 +142,12 @@ jobs:
       - name: Проверить линтером (flake8)
         run: flake8 .
 
-      - name: Проверить инкрементальный backend type baseline (mypy)
-        run: mypy
+      - name: Проверить application-wide backend type baseline (mypy)
+        run: |
+          mypy
+          mypy --check-untyped-defs \
+            --exclude '(^|/)(tests?|migrations)/' \
+            apps config backup
 
       - name: Проверить shell-скрипты
         run: >-
@@ -153,6 +157,14 @@ jobs:
           scripts/check_backup_freshness.sh scripts/production_backup.sh
           scripts/production_backup_check.sh scripts/production_restore.sh
           scripts/reload_production_nginx.sh
+          scripts/verify_production_topology.sh
+          scripts/check_production_capacity.sh
+          scripts/production_release.sh
+          scripts/bootstrap_production_host_contract.sh
+          scripts/production_deploy_gateway.sh
+          scripts/install_production_host_services.sh
+          scripts/validate_production_checkout.sh
+          scripts/rotate_backup_db_password.sh
 
       - name: Проверить runtime-контракты без запуска сервисов
         run: >-

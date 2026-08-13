@@ -4,11 +4,13 @@ import requests
 from django.conf import settings
 from django.utils.html import strip_tags
 
+from apps.core.provider_boundary import BRAVE_AUTHORITATIVE_REJECTION_STATUSES
 from apps.core.http_responses import (
     TrustedResponseError, bounded_http_request, trusted_api_max_bytes,
 )
 from apps.web_research.providers.base import (
     BaseWebSearchProvider, WebSearchProviderError, WebSearchResult,
+    provider_http_error, provider_response_error, provider_transport_error,
 )
 from apps.web_research.providers.registry import register_search_provider
 from apps.web_research.search_context import SearchContext
@@ -72,27 +74,20 @@ class BraveWebSearchProvider(BaseWebSearchProvider):
                 max_bytes=trusted_api_max_bytes(settings),
             )
         except TrustedResponseError as exc:
-            raise WebSearchProviderError(
-                f'Brave web search response rejected: {exc}',
-                retryable=False, code='invalid_response',
-            ) from exc
+            raise provider_response_error('Brave web search') from exc
         except requests.RequestException as exc:
-            raise WebSearchProviderError(
-                f'Brave web search connection error: {exc}',
-                retryable=True, code='connection_error',
-            ) from exc
-        if response.status_code >= 400:
-            raise WebSearchProviderError(
-                f'Brave web search HTTP {response.status_code}',
-                retryable=response.status_code == 429 or response.status_code >= 500,
-                code=f'http_{response.status_code}',
+            raise provider_transport_error('Brave web search', exc) from exc
+        if not 200 <= response.status_code < 300:
+            raise provider_http_error(
+                'Brave web search', response.status_code,
+                documented_rejections=BRAVE_AUTHORITATIVE_REJECTION_STATUSES,
             )
+        from apps.image_search.sources.brave import BraveImageSource
+        BraveImageSource._track_quota(response)
         try:
             data = response.json()
         except ValueError as exc:
-            raise WebSearchProviderError(
-                'Brave web search returned invalid JSON.', code='invalid_json',
-            ) from exc
+            raise provider_response_error('Brave web search', 'invalid JSON') from exc
 
         data = _response_object(data, 'Brave web search')
         web = _optional_object(data, 'web', 'Brave web search')
@@ -164,28 +159,18 @@ class BraveWebSearchProvider(BaseWebSearchProvider):
                 max_bytes=trusted_api_max_bytes(settings),
             )
         except TrustedResponseError as exc:
-            raise WebSearchProviderError(
-                f'Brave image search response rejected: {exc}',
-                retryable=False, code='invalid_response',
-            ) from exc
+            raise provider_response_error('Brave image search') from exc
         except requests.RequestException as exc:
-            raise WebSearchProviderError(
-                f'Brave image search connection error: {exc}',
-                retryable=True,
-                code='connection_error',
-            ) from exc
-        if response.status_code >= 400:
-            raise WebSearchProviderError(
-                f'Brave image search HTTP {response.status_code}',
-                retryable=response.status_code == 429 or response.status_code >= 500,
-                code=f'http_{response.status_code}',
+            raise provider_transport_error('Brave image search', exc) from exc
+        if not 200 <= response.status_code < 300:
+            raise provider_http_error(
+                'Brave image search', response.status_code,
+                documented_rejections=BRAVE_AUTHORITATIVE_REJECTION_STATUSES,
             )
         try:
             data = response.json()
         except ValueError as exc:
-            raise WebSearchProviderError(
-                'Brave image search returned invalid JSON.', code='invalid_json',
-            ) from exc
+            raise provider_response_error('Brave image search', 'invalid JSON') from exc
 
         data = _response_object(data, 'Brave image search')
         provider_results = _optional_list(data, 'results', 'Brave image search')
@@ -243,8 +228,4 @@ def _optional_string(container: dict, key: str, provider_name: str) -> str:
 
 
 def _invalid_response(provider_name: str, detail: str) -> None:
-    raise WebSearchProviderError(
-        f'{provider_name} returned an invalid response: {detail}.',
-        retryable=False,
-        code='invalid_response',
-    )
+    raise provider_response_error(provider_name, detail)

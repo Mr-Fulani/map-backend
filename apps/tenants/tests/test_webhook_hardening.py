@@ -319,6 +319,14 @@ def test_fanout_and_dispatchers_respect_configured_batch_limits(settings):
         assert delay.call_count == 2
 
 
+def test_event_dispatch_rejects_invalid_event_uuid_without_publishing():
+    with patch('apps.tenants.tasks.deliver_webhook_task.delay') as delay:
+        result = dispatch_webhook_event_task('not-a-uuid')
+
+    assert result == {'queued': 0, 'batch_limit': 100}
+    delay.assert_not_called()
+
+
 @pytest.mark.django_db(transaction=True)
 def test_stale_webhook_worker_cannot_adopt_or_overwrite_new_claim():
     tenant = Tenant.objects.create(name='Webhook claims', slug='webhook-claims')

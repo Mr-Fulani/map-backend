@@ -1,4 +1,3 @@
-from django.conf import settings
 from django.db import transaction
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
@@ -12,10 +11,15 @@ from rest_framework.response import Response
 from apps.tenants.api_views import ResearchAPIView as APIView
 
 from apps.core.pagination import MapPagination
+from apps.core.idempotency import (
+    IdempotencyConflict,
+    canonical_payload_fingerprint,
+    raise_on_fingerprint_conflict,
+)
+from apps.core.models import PaidIngressIntent
 from apps.core.throttling import (
     PrincipalScopedRateThrottle,
     TenantScopedRateThrottle,
-    consume_tenant_daily_budget,
 )
 from apps.products.models import Product
 from apps.marketplaces.models import Listing
@@ -31,19 +35,35 @@ from apps.web_research.serializers import (
     WebResearchRunSerializer,
 )
 from apps.web_research.search_context import get_tenant_research_settings
-from apps.web_research.services import WebResearchService, enrichment_coverage
+from apps.web_research.services import (
+    WebResearchReconciliationRequired,
+    WebResearchService,
+    enrichment_coverage,
+)
 from apps.web_research.providers.registry import registered_search_providers
 from apps.web_research.routing import search_provider_candidates
 
 
-class WebResearchStartRequestSerializer(serializers.Serializer):
+class _StrictRequestSerializer(serializers.Serializer):
+    def to_internal_value(self, data):
+        unknown = set(data) - set(self.fields)
+        if unknown:
+            raise serializers.ValidationError({
+                key: ['Неизвестное поле.'] for key in sorted(unknown)
+            })
+        return super().to_internal_value(data)
+
+
+class WebResearchStartRequestSerializer(_StrictRequestSerializer):
+    idempotency_key = serializers.UUIDField(required=True)
     search_provider = serializers.SlugField(
         required=False, allow_blank=True, max_length=50,
     )
     generate_after = serializers.BooleanField(required=False, default=False)
 
 
-class MarketResearchStartRequestSerializer(serializers.Serializer):
+class MarketResearchStartRequestSerializer(_StrictRequestSerializer):
+    idempotency_key = serializers.UUIDField(required=True)
     search_provider = serializers.SlugField(
         required=False, allow_blank=True, max_length=50,
     )
@@ -158,6 +178,52 @@ _MARKET_COMPARISON_RESPONSE = inline_serializer(
     },
 )
 
+_IDEMPOTENCY_ERROR_RESPONSE = inline_serializer(
+    name='WebResearchIdempotencyErrorResponse',
+    fields={
+        'status': serializers.CharField(),
+        'code': serializers.CharField(),
+        'message': serializers.CharField(),
+    },
+)
+
+
+def _idempotency_error(code: str, message: str) -> Response:
+    return Response(
+        {'status': 'error', 'code': code, 'message': message},
+        status=status.HTTP_409_CONFLICT,
+    )
+
+
+def _intent_run_or_error(
+    intent: PaidIngressIntent,
+    *,
+    product_id: int,
+    purposes: list[str],
+) -> tuple[WebResearchRun | None, Response | None]:
+    metadata = intent.result_metadata
+    if not isinstance(metadata, dict) or not metadata.get('has_run', False):
+        return None, None
+    try:
+        run_id = int(intent.result_id)
+    except (TypeError, ValueError):
+        return None, _idempotency_error(
+            'idempotency_incomplete',
+            'Исходный результат запроса недоступен.',
+        )
+    run = WebResearchRun.objects.filter(
+        pk=run_id,
+        tenant=intent.tenant,
+        product_id=product_id,
+        purpose__in=purposes,
+    ).first()
+    if run is None:
+        return None, _idempotency_error(
+            'idempotency_incomplete',
+            'Исходный результат запроса недоступен.',
+        )
+    return run, None
+
 
 @extend_schema(tags=['Web research'])
 class ProductWebResearchView(APIView):
@@ -177,7 +243,11 @@ class ProductWebResearchView(APIView):
 
     @extend_schema(
         request=WebResearchStartRequestSerializer,
-        responses={200: _RUN_RESPONSE, 201: _RUN_RESPONSE},
+        responses={
+            200: _RUN_RESPONSE,
+            201: _RUN_RESPONSE,
+            409: _IDEMPOTENCY_ERROR_RESPONSE,
+        },
     )
     def post(self, request, product_pk: int):
         request_serializer = WebResearchStartRequestSerializer(data=request.data)
@@ -193,36 +263,107 @@ class ProductWebResearchView(APIView):
                 'API Key требует scope listings:write '
                 'для последующей генерации.',
             )
-        product = get_object_or_404(
-            Product.objects.select_related('tenant', 'catalog_category'),
-            pk=product_pk,
-            tenant=request.tenant,
-        )
+        idempotency_key = request_serializer.validated_data['idempotency_key']
+        provider = request_serializer.validated_data.get('search_provider', '')
+        canonical_request = {
+            'generate_after': generate_after,
+            'product_id': product_pk,
+            'search_provider': provider,
+        }
+        fingerprint = canonical_payload_fingerprint(canonical_request)
+        raw_request = {
+            str(key): value
+            for key, value in request.data.items()
+            if key != 'idempotency_key'
+        }
+        raw_fingerprint = canonical_payload_fingerprint(raw_request)
         try:
-            ProductEnrichmentService.ensure_product_auto_parts_eligible(request.tenant, product)
+            with transaction.atomic():
+                type(request.tenant).objects.select_for_update().only('pk').get(
+                    pk=request.tenant.pk,
+                )
+                intent = PaidIngressIntent.objects.filter(
+                    tenant=request.tenant,
+                    operation='product-web-research',
+                    idempotency_key=idempotency_key,
+                ).first()
+                if intent is not None:
+                    raise_on_fingerprint_conflict(
+                        intent.request_fingerprint,
+                        fingerprint,
+                    )
+                    raise_on_fingerprint_conflict(
+                        intent.raw_payload_fingerprint,
+                        raw_fingerprint,
+                    )
+                    if (
+                        intent.resource_type != 'products.product'
+                        or intent.resource_id != str(product_pk)
+                    ):
+                        raise IdempotencyConflict(
+                            'Ключ идемпотентности уже использован для другого запроса.'
+                        )
+                    run, incomplete = _intent_run_or_error(
+                        intent,
+                        product_id=product_pk,
+                        purposes=[WebResearchRun.Purpose.ENRICHMENT],
+                    )
+                    if incomplete is not None:
+                        return incomplete
+                    if run is None:
+                        return _idempotency_error(
+                            'idempotency_incomplete',
+                            'Исходный результат запроса недоступен.',
+                        )
+                    created = bool(intent.result_metadata.get('created', False))
+                else:
+                    product = get_object_or_404(
+                        Product.objects.select_for_update().select_related('tenant'),
+                        pk=product_pk,
+                        tenant=request.tenant,
+                    )
+                    ProductEnrichmentService.ensure_product_auto_parts_eligible(
+                        request.tenant,
+                        product,
+                    )
+                    run, created = WebResearchService.create_run(
+                        product,
+                        trigger=WebResearchRun.Trigger.MANUAL,
+                        generate_after=generate_after,
+                        search_provider=provider,
+                        purpose=WebResearchRun.Purpose.ENRICHMENT,
+                    )
+                    from apps.web_research.tasks import enqueue_web_research_run
+                    dispatch = enqueue_web_research_run(run.pk)
+                    intent = PaidIngressIntent.objects.create(
+                        tenant=request.tenant,
+                        operation='product-web-research',
+                        idempotency_key=idempotency_key,
+                        request_fingerprint=fingerprint,
+                        raw_payload_fingerprint=raw_fingerprint,
+                        request_payload={
+                            'raw': raw_request,
+                            'canonical': canonical_request,
+                        },
+                        resource_type='products.product',
+                        resource_id=str(product.pk),
+                        result_type='web_research.web_research_run',
+                        result_id=str(run.pk),
+                        result_metadata={
+                            'created': created,
+                            'has_run': True,
+                        },
+                        dispatch=dispatch,
+                    )
         except (AutoPartsEnrichmentDisabled, ProductIsNotAutoPart) as exc:
             return Response(
                 {'status': 'error', 'code': 'web_research_unavailable', 'message': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        provider = request_serializer.validated_data.get('search_provider', '')
-        with transaction.atomic():
-            run, created = WebResearchService.create_run(
-                product,
-                trigger=WebResearchRun.Trigger.MANUAL,
-                generate_after=generate_after,
-                search_provider=provider,
-                purpose=WebResearchRun.Purpose.ENRICHMENT,
-            )
-            if created:
-                consume_tenant_daily_budget(
-                    tenant_id=request.tenant.pk,
-                    scope='web-research-starts',
-                    cost=1,
-                    limit=settings.WEB_RESEARCH_TENANT_DAILY_STARTS,
-                )
-                from apps.web_research.tasks import run_web_research
-                transaction.on_commit(lambda: run_web_research.delay(run.pk))
+        except IdempotencyConflict as exc:
+            return _idempotency_error('idempotency_conflict', str(exc))
+        except WebResearchReconciliationRequired as exc:
+            return _idempotency_error('provider_reconciliation_required', str(exc))
         return Response({
             'status': 'ok',
             'data': WebResearchRunSerializer(run).data,
@@ -414,60 +555,163 @@ class ProductMarketResearchView(APIView):
 
     @extend_schema(
         request=MarketResearchStartRequestSerializer,
-        responses={200: _MARKET_RESEARCH_RESPONSE, 201: _MARKET_RESEARCH_RESPONSE},
+        responses={
+            200: _MARKET_RESEARCH_RESPONSE,
+            201: _MARKET_RESEARCH_RESPONSE,
+            409: _IDEMPOTENCY_ERROR_RESPONSE,
+        },
     )
     def post(self, request, product_pk: int):
         request_serializer = MarketResearchStartRequestSerializer(data=request.data)
         request_serializer.is_valid(raise_exception=True)
-        product = get_object_or_404(
-            Product.objects.select_related('tenant', 'catalog_category'),
-            pk=product_pk, tenant=request.tenant,
-        )
-        research_settings = get_tenant_research_settings(request.tenant)
-        if not research_settings.market_research_enabled:
-            return Response(
-                {'status': 'error', 'code': 'market_research_disabled',
-                 'message': 'Исследование цен отключено в настройках организации.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        idempotency_key = request_serializer.validated_data['idempotency_key']
         force = request_serializer.validated_data['force']
-        fresh_verified = CompetitorOffer.objects.filter(
-            tenant=request.tenant,
-            product=product,
-            expires_at__gt=now(),
-            review_status=CompetitorOffer.ReviewStatus.VERIFIED,
-        ).count()
-        if not force and fresh_verified >= min(3, research_settings.result_limit):
-            latest = product.web_research_runs.filter(
-                purpose__in=[WebResearchRun.Purpose.PRICING, WebResearchRun.Purpose.COMBINED],
-            ).order_by('-created_at').first()
-            return Response({
-                'status': 'ok', 'reused': True,
-                'message': 'Использованы свежие предложения; платный поиск не запускался.',
-                'data': WebResearchRunSerializer(latest).data if latest else None,
-            })
-        with transaction.atomic():
-            run, created = WebResearchService.create_run(
-                product,
-                trigger=WebResearchRun.Trigger.MANUAL,
-                search_provider=request_serializer.validated_data.get(
-                    'search_provider', '',
-                ),
-                purpose=WebResearchRun.Purpose.PRICING,
-            )
-            if created:
-                consume_tenant_daily_budget(
-                    tenant_id=request.tenant.pk,
-                    scope='web-research-starts',
-                    cost=1,
-                    limit=settings.WEB_RESEARCH_TENANT_DAILY_STARTS,
+        provider = request_serializer.validated_data.get('search_provider', '')
+        canonical_request = {
+            'force': force,
+            'product_id': product_pk,
+            'search_provider': provider,
+        }
+        fingerprint = canonical_payload_fingerprint(canonical_request)
+        raw_request = {
+            str(key): value
+            for key, value in request.data.items()
+            if key != 'idempotency_key'
+        }
+        raw_fingerprint = canonical_payload_fingerprint(raw_request)
+        try:
+            with transaction.atomic():
+                type(request.tenant).objects.select_for_update().only('pk').get(
+                    pk=request.tenant.pk,
                 )
-                from apps.web_research.tasks import run_web_research
-                transaction.on_commit(lambda: run_web_research.delay(run.pk))
-        return Response({
-            'status': 'ok', 'reused': not created,
-            'data': WebResearchRunSerializer(run).data,
-        }, status=status.HTTP_201_CREATED if created else status.HTTP_200_OK)
+                intent = PaidIngressIntent.objects.filter(
+                    tenant=request.tenant,
+                    operation='product-market-research',
+                    idempotency_key=idempotency_key,
+                ).first()
+                if intent is not None:
+                    raise_on_fingerprint_conflict(
+                        intent.request_fingerprint,
+                        fingerprint,
+                    )
+                    raise_on_fingerprint_conflict(
+                        intent.raw_payload_fingerprint,
+                        raw_fingerprint,
+                    )
+                    if (
+                        intent.resource_type != 'products.product'
+                        or intent.resource_id != str(product_pk)
+                    ):
+                        raise IdempotencyConflict(
+                            'Ключ идемпотентности уже использован для другого запроса.'
+                        )
+                    run, incomplete = _intent_run_or_error(
+                        intent,
+                        product_id=product_pk,
+                        purposes=[
+                            WebResearchRun.Purpose.PRICING,
+                            WebResearchRun.Purpose.COMBINED,
+                        ],
+                    )
+                    if incomplete is not None:
+                        return incomplete
+                    metadata = intent.result_metadata
+                    reused = bool(metadata.get('reused', False))
+                    created = bool(metadata.get('created', False))
+                    message = str(metadata.get('message', ''))
+                else:
+                    product = get_object_or_404(
+                        Product.objects.select_for_update().select_related('tenant'),
+                        pk=product_pk,
+                        tenant=request.tenant,
+                    )
+                    research_settings = get_tenant_research_settings(request.tenant)
+                    if not research_settings.market_research_enabled:
+                        return Response(
+                            {
+                                'status': 'error',
+                                'code': 'market_research_disabled',
+                                'message': (
+                                    'Исследование цен отключено в настройках '
+                                    'организации.'
+                                ),
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    fresh_verified = CompetitorOffer.objects.filter(
+                        tenant=request.tenant,
+                        product=product,
+                        expires_at__gt=now(),
+                        review_status=CompetitorOffer.ReviewStatus.VERIFIED,
+                    ).count()
+                    message = ''
+                    dispatch = None
+                    if (
+                        not force
+                        and fresh_verified >= min(3, research_settings.result_limit)
+                    ):
+                        run = product.web_research_runs.filter(
+                            purpose__in=[
+                                WebResearchRun.Purpose.PRICING,
+                                WebResearchRun.Purpose.COMBINED,
+                            ],
+                        ).order_by('-created_at').first()
+                        created = False
+                        reused = True
+                        message = (
+                            'Использованы свежие предложения; '
+                            'платный поиск не запускался.'
+                        )
+                    else:
+                        run, created = WebResearchService.create_run(
+                            product,
+                            trigger=WebResearchRun.Trigger.MANUAL,
+                            search_provider=provider,
+                            purpose=WebResearchRun.Purpose.PRICING,
+                        )
+                        reused = not created
+                        from apps.web_research.tasks import enqueue_web_research_run
+                        dispatch = enqueue_web_research_run(run.pk)
+                    intent = PaidIngressIntent.objects.create(
+                        tenant=request.tenant,
+                        operation='product-market-research',
+                        idempotency_key=idempotency_key,
+                        request_fingerprint=fingerprint,
+                        raw_payload_fingerprint=raw_fingerprint,
+                        request_payload={
+                            'raw': raw_request,
+                            'canonical': canonical_request,
+                        },
+                        resource_type='products.product',
+                        resource_id=str(product.pk),
+                        result_type=(
+                            'web_research.web_research_run'
+                            if run is not None else 'fresh_verified_offers'
+                        ),
+                        result_id=str(run.pk) if run is not None else '',
+                        result_metadata={
+                            'created': created,
+                            'has_run': run is not None,
+                            'message': message,
+                            'reused': reused,
+                        },
+                        dispatch=dispatch,
+                    )
+        except IdempotencyConflict as exc:
+            return _idempotency_error('idempotency_conflict', str(exc))
+        except WebResearchReconciliationRequired as exc:
+            return _idempotency_error('provider_reconciliation_required', str(exc))
+        response_payload = {
+            'status': 'ok',
+            'reused': reused,
+            'data': WebResearchRunSerializer(run).data if run is not None else None,
+        }
+        if message:
+            response_payload['message'] = message
+        return Response(
+            response_payload,
+            status=status.HTTP_201_CREATED if created else status.HTTP_200_OK,
+        )
 
 
 @extend_schema(tags=['Web research'])

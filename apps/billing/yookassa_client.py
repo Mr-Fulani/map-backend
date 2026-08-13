@@ -410,6 +410,8 @@ def create_payment(
     ):
         raise YooKassaSnapshotError('В ответе YooKassa отсутствует redirect confirmation.')
     confirmation_url = confirmation.get('confirmation_url')
+    if not isinstance(confirmation_url, str) or not confirmation_url:
+        raise YooKassaSnapshotError('Некорректный confirmation URL YooKassa.')
     try:
         parsed_confirmation_url = urlsplit(confirmation_url)
         parsed_confirmation_url.port

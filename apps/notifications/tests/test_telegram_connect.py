@@ -33,7 +33,12 @@ def make_tenant(slug):
 
 
 def make_ns(tenant, **kwargs):
-    return TenantNotificationSettings.objects.create(tenant=tenant, **kwargs)
+    settings_row = tenant.notification_settings
+    for field, value in kwargs.items():
+        setattr(settings_row, field, value)
+    if kwargs:
+        settings_row.save(update_fields=list(kwargs))
+    return settings_row
 
 
 def auth(raw_key):
@@ -133,7 +138,7 @@ class TestConnectTokenModel:
 @pytest.mark.django_db
 class TestNotificationSettingsAPI:
     def test_get_returns_defaults_for_new_tenant(self, client):
-        """GET создаёт настройки если их нет и возвращает telegram_connected=False."""
+        """GET возвращает созданные при регистрации безопасные настройки."""
         tenant = make_tenant('ns-get')
         raw_key = owner_access_token(tenant)
 
@@ -144,6 +149,7 @@ class TestNotificationSettingsAPI:
         assert data['telegram_connected'] is False
         assert data['notify_on_error'] is True
         assert data['notify_on_critical'] is True
+        assert data['notify_email'] == 'ns-get@test.com'
 
     def test_get_shows_connected_when_chat_id_set(self, client):
         """GET возвращает telegram_connected=True если chat_id уже привязан."""
@@ -179,6 +185,67 @@ class TestNotificationSettingsAPI:
         assert data['notify_email'] == 'alerts@co.ru'
         assert data['notify_on_error'] is False
         assert data['telegram_connected'] is True  # не затронуто
+
+    def test_put_is_partial_and_parses_false_string(self, client):
+        tenant = make_tenant('ns-put-partial')
+        ns = make_ns(
+            tenant,
+            notify_email='keep@example.com',
+            notify_on_error=True,
+            notify_on_critical=True,
+        )
+        raw_key = owner_access_token(tenant)
+
+        resp = client.put(
+            '/api/v1/notifications/settings/',
+            data=json.dumps({'notify_on_error': 'false'}),
+            content_type='application/json',
+            **auth(raw_key),
+        )
+
+        assert resp.status_code == 200
+        ns.refresh_from_db()
+        assert ns.notify_on_error is False
+        assert ns.notify_on_critical is True
+        assert ns.notify_email == 'keep@example.com'
+
+    @pytest.mark.parametrize(
+        ('payload', 'field'),
+        [
+            ({'notify_email': 'not-an-email'}, 'notify_email'),
+            ({'notify_on_critical': 'not-a-boolean'}, 'notify_on_critical'),
+        ],
+    )
+    def test_put_rejects_invalid_types_without_mutating_settings(
+        self,
+        client,
+        payload,
+        field,
+    ):
+        tenant = make_tenant(f'ns-invalid-{field.replace("_", "-")}')
+        ns = TenantNotificationSettings.objects.get(tenant=tenant)
+        before = (
+            ns.notify_email,
+            ns.notify_on_error,
+            ns.notify_on_critical,
+        )
+        raw_key = owner_access_token(tenant)
+
+        resp = client.put(
+            '/api/v1/notifications/settings/',
+            data=json.dumps(payload),
+            content_type='application/json',
+            **auth(raw_key),
+        )
+
+        assert resp.status_code == 400
+        assert field in resp.json()['errors']
+        ns.refresh_from_db()
+        assert (
+            ns.notify_email,
+            ns.notify_on_error,
+            ns.notify_on_critical,
+        ) == before
 
     def test_unauthenticated_returns_401(self, client):
         """Без авторизации — 401."""

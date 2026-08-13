@@ -5,7 +5,7 @@ class ScopedAPIKeyAPIView(APIView):
     """Explicit machine-access opt-in; raw APIView remains API-key denied."""
 
     api_key_enabled = False
-    api_key_scopes = {}
+    api_key_scopes: dict[str, set[str]] = {}
 
 
 class CatalogAPIView(ScopedAPIKeyAPIView):

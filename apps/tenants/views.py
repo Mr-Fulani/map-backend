@@ -53,7 +53,9 @@ from apps.users.throttles import CredentialScopedRateThrottle
 
 
 def _success_response(name, data=None):
-    fields = {'status': serializers.CharField()}
+    fields: dict[str, serializers.Field] = {
+        'status': serializers.CharField(),
+    }
     if data is not None:
         fields['data'] = data
     return inline_serializer(name=name, fields=fields)

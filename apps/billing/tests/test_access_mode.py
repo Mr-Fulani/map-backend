@@ -4,7 +4,7 @@ from unittest.mock import patch
 import pytest
 from django.test import Client, override_settings
 
-from apps.billing.models import Subscription
+from apps.billing.models import Plan, Subscription
 from apps.tenants.services import TenantService
 from apps.tenants.tests.auth import owner_access_token
 
@@ -64,3 +64,27 @@ def test_expired_subscription_can_open_checkout():
     assert response.status_code == 200
     assert response.json()['data']['payment_url'] == 'https://payments.example/renew'
     create_payment.assert_called_once()
+
+
+@pytest.mark.django_db
+@override_settings(BILLING_RETURN_URL_ALLOWED_ORIGINS=['https://app.example'])
+def test_checkout_returns_stable_404_when_seeded_plan_is_missing():
+    tenant, _ = TenantService.create_tenant(
+        'Missing Plan', 'missing-plan-co', 'missing-plan@test.com', 'pass12345',
+    )
+    Plan.objects.filter(slug=Plan.SLUG_STARTER).delete()
+
+    response = Client().post(
+        '/api/v1/billing/checkout/',
+        {
+            'plan_slug': Plan.SLUG_STARTER,
+            'period': Subscription.PERIOD_MONTHLY,
+            'return_url': 'https://app.example/billing',
+            'idempotency_key': '00000000-0000-4000-8000-000000000004',
+        },
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {owner_access_token(tenant)}',
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {'status': 'error', 'code': 'plan_not_found'}

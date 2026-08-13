@@ -30,7 +30,7 @@ class TenantRolePermission(BasePermission):
 
     def has_permission(self, request, view):
         principal = getattr(request, 'user', None)
-        if getattr(principal, 'is_api_key', False):
+        if principal is not None and getattr(principal, 'is_api_key', False):
             tenant = getattr(request, 'tenant', None)
             if tenant is None or principal.tenant_id != tenant.pk:
                 return False

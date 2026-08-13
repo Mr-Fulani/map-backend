@@ -419,9 +419,9 @@ class ProductDetailSerializer(ProductSerializer):
     def get_attributes(self, obj) -> list[dict]:
         from apps.products.attribute_presentation import presented_attributes
 
-        result = []
+        result: list[dict] = []
         for item, name, value in presented_attributes(obj.attributes.all()):
-            payload = ProductAttributeSerializer(item).data
+            payload = dict(ProductAttributeSerializer(item).data)
             payload['name'] = name
             payload['value'] = value
             result.append(payload)

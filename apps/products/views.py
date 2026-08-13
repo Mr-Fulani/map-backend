@@ -1,9 +1,14 @@
 import uuid
+from datetime import datetime
+from typing import Any, TypedDict, cast
 
 from PIL import Image, UnidentifiedImageError
 from django.conf import settings
 from django.core.files.storage import default_storage
-from django.db.models import Case, Count, F, IntegerField, Prefetch, Q, Subquery, OuterRef, Value, When
+from django.db.models import (
+    Case, CharField, Count, F, IntegerField, OuterRef, Prefetch, Q, Subquery,
+    Value, When,
+)
 from django.db import transaction
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema
@@ -16,9 +21,19 @@ from apps.tenants.api_views import CatalogAPIView as APIView
 from apps.tenants.principals import human_user_or_none
 
 from apps.core.pagination import MapPagination
+from apps.core.idempotency import (
+    IdempotencyConflict,
+    canonical_payload_fingerprint,
+    raise_on_fingerprint_conflict,
+)
 from apps.core.image_security import validate_image_pixel_budget
+from apps.core.storage import delete_storage_keys, delete_storage_keys_on_commit
 from apps.products.enrichment import normalize_part_code
-from apps.core.throttling import PrincipalScopedRateThrottle, TenantScopedRateThrottle
+from apps.core.throttling import (
+    PrincipalScopedRateThrottle,
+    TenantScopedRateThrottle,
+    consume_transactional_tenant_daily_budget,
+)
 from apps.products.api_schema import (
     CatalogCategoryBranchToggleRequestSerializer,
     CatalogCategoryBranchToggleResponseSerializer,
@@ -49,7 +64,9 @@ from apps.products.api_schema import (
     ProductParseResponseSerializer,
     ProductPublishResponseSerializer,
     ProductRegenerateRequestSerializer,
+    ProductRegenerateErrorSerializer,
     ProductRegenerateResponseSerializer,
+    IdempotencyConflictResponseSerializer,
     ProductResponseSerializer,
     ReviewQueueActionResponseSerializer,
     ReviewQueueResponseSerializer,
@@ -59,7 +76,7 @@ from apps.products.api_schema import (
 )
 from apps.products.models import (
     Product, ProductBulkActionJob, ProductCatalogClassification, ProductEnrichmentFact,
-    ProductBrand, ProductParseJob, ReviewStatus,
+    ProductBrand, ProductParseIntent, ProductParseJob, ReviewStatus,
     TenantCatalogCategory, TenantCategoryMapping,
     VehicleFitment,
 )
@@ -71,15 +88,37 @@ from apps.products.serializers import (
     VehicleFitmentSerializer,
 )
 from apps.products.services import (
-    MAX_BULK_ACTION_PAUSE_SECONDS, MAX_BULK_ACTION_PRODUCT_IDS,
     AutoPartsEnrichmentDisabled, ProductBrandService, ProductBulkActionService,
     ProductCategorySeedService, ProductEnrichmentService, ProductIsNotAutoPart,
-    ProductKnowledgeGraphService, ProductService,
+    ProductKnowledgeGraphService,
 )
 from apps.marketplaces.models import Listing
 from apps.products.tasks import import_from_datasource, sync_product_listings_task
 from apps.products.source_policy import DEFAULT_PART_SOURCE, get_part_source_config, get_part_source_policies
+from apps.products.storage import media_storage_key
 from apps.tenants.models import CatalogDomain, TenantCatalogDomain
+
+
+class ReviewQueueItem(TypedDict):
+    id: str
+    type: str
+    record_id: int
+    product: dict[str, Any]
+    title: str
+    reason: str
+    source_id: str
+    confidence: Any
+    needs_review: bool
+    review_status: str
+    created_at: datetime
+    updated_at: datetime
+    payload: Any
+
+
+class ReviewQueueRef(TypedDict):
+    updated_at: datetime
+    item_type: str
+    record_id: int
 
 
 def _validate_tenant_catalog_category(request, serializer, instance=None):
@@ -491,7 +530,11 @@ class ProductBrandOptionsView(APIView):
                 'catalog_loaded': catalog_loaded,
                 'catalog_synced_at': catalog_synced_at.isoformat() if catalog_synced_at else None,
                 'catalog_stale': catalog_stale,
-                'category_scope': root_domain.name if domain_enabled else None,
+                'category_scope': (
+                    root_domain.name
+                    if domain_enabled and root_domain is not None
+                    else None
+                ),
             },
         })
 
@@ -563,32 +606,47 @@ class TenantCatalogCategoryListView(APIView):
             )
 
         categories = list(qs)
-        categories_by_id = {category.pk: category for category in categories}
-        category_paths = {}
+        categories_by_id: dict[int, TenantCatalogCategory] = {
+            category.pk: category
+            for category in categories
+            if category.pk is not None
+        }
+        category_paths: dict[int, list[str]] = {}
         category_parent_ids = {
             category.parent_id
             for category in categories
             if category.is_active and category.parent_id is not None
         }
-        category_margin_sources = {}
+        category_margin_sources: dict[int, TenantCatalogCategory] = {}
         for category in categories:
-            path = []
-            node = category
-            seen = set()
-            while node is not None and node.pk not in seen:
+            category_id = category.pk
+            if category_id is None:
+                continue
+            path: list[str] = []
+            node: TenantCatalogCategory | None = category
+            seen: set[int] = set()
+            while node is not None and node.pk is not None and node.pk not in seen:
                 seen.add(node.pk)
                 path.insert(0, node.name)
-                node = categories_by_id.get(node.parent_id)
-            category_paths[category.pk] = path
+                node = (
+                    categories_by_id.get(node.parent_id)
+                    if node.parent_id is not None
+                    else None
+                )
+            category_paths[category_id] = path
 
             node = category
             seen = set()
-            while node is not None and node.pk not in seen:
+            while node is not None and node.pk is not None and node.pk not in seen:
                 seen.add(node.pk)
                 if node.default_margin_pct is not None:
-                    category_margin_sources[category.pk] = node
+                    category_margin_sources[category_id] = node
                     break
-                node = categories_by_id.get(node.parent_id)
+                node = (
+                    categories_by_id.get(node.parent_id)
+                    if node.parent_id is not None
+                    else None
+                )
 
         return Response({
             'status': 'ok',
@@ -834,7 +892,10 @@ class TenantCatalogCategoryDefaultImageView(APIView):
 
         extension, canonical_content_type = supported_formats[image_format]
         image.content_type = canonical_content_type
-        s3_key = f'catalog-categories/{request.tenant.slug}/{category.pk}/{uuid.uuid4().hex}.{extension}'
+        s3_key = media_storage_key(
+            f'catalog-categories/{request.tenant.slug}/{category.pk}/'
+            f'{uuid.uuid4().hex}.{extension}',
+        )
         saved_key = default_storage.save(s3_key, image)
         try:
             with transaction.atomic():
@@ -848,26 +909,28 @@ class TenantCatalogCategoryDefaultImageView(APIView):
                 category.save(update_fields=[
                     'default_image_s3_key', 'default_image_source_name', 'updated_at',
                 ])
-                if previous_key:
-                    transaction.on_commit(
-                        lambda key=previous_key: default_storage.delete(key),
-                    )
+                delete_storage_keys_on_commit((previous_key,))
         except Exception:
-            default_storage.delete(saved_key)
+            delete_storage_keys((saved_key,))
             raise
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
 
     @extend_schema(request=None, responses=CatalogCategoryResponseSerializer)
     def delete(self, request, pk):
-        category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
-        if category.default_image_s3_key:
-            default_storage.delete(category.default_image_s3_key)
-        category.default_image_s3_key = ''
-        category.default_image_source_name = ''
-        category.save(update_fields=[
-            'default_image_s3_key', 'default_image_source_name', 'updated_at',
-        ])
+        with transaction.atomic():
+            category = get_object_or_404(
+                TenantCatalogCategory.objects.select_for_update(),
+                pk=pk,
+                tenant=request.tenant,
+            )
+            previous_key = category.default_image_s3_key
+            category.default_image_s3_key = ''
+            category.default_image_source_name = ''
+            category.save(update_fields=[
+                'default_image_s3_key', 'default_image_source_name', 'updated_at',
+            ])
+            delete_storage_keys_on_commit((previous_key,))
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
 
@@ -1146,11 +1209,26 @@ class ProductSearchView(APIView):
         return Response({'status': 'ok', 'data': ProductSerializer(product, context={'request': request}).data})
 
 
+def _idempotency_incomplete_response() -> Response:
+    return Response(
+        {
+            'status': 'error',
+            'code': 'idempotency_incomplete',
+            'message': 'Исходный результат запроса недоступен.',
+        },
+        status=status.HTTP_409_CONFLICT,
+    )
+
+
 @extend_schema(tags=['Products'])
 class ProductParseView(APIView):
     """POST /api/v1/products/parse/ — поставить enrichment job в очередь."""
 
     api_key_enabled = True
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'expensive_research_principal'
+    tenant_throttle_scope = 'expensive_research_tenant'
+    expensive_throttle_methods = {'POST'}
     api_key_scopes = {'POST': {
         'catalog:write', 'listings:write', 'ai:run',
         'research:run', 'media:write',
@@ -1158,14 +1236,69 @@ class ProductParseView(APIView):
 
     @extend_schema(
         request=ProductParseRequestSerializer,
-        responses={201: ProductParseResponseSerializer},
+        responses={
+            201: ProductParseResponseSerializer,
+            409: IdempotencyConflictResponseSerializer,
+        },
     )
     def post(self, request):
-        product_id = request.data.get('product_id')
-        brand = str(request.data.get('brand') or '').strip()
-        article = str(request.data.get('article') or '').strip()
-        explicit_source = str(request.data.get('source') or '').strip()
-        generate_after = bool(request.data.get('generate_after'))
+        request_serializer = ProductParseRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        request_data = request_serializer.validated_data
+        idempotency_key = request_data['idempotency_key']
+        product_id = request_data.get('product_id')
+        brand = str(request_data.get('brand') or '').strip()
+        article = str(request_data.get('article') or '').strip()
+        explicit_source = str(request_data.get('source') or '').strip()
+        generate_after = request_data['generate_after']
+
+        raw_intent = {
+            'article': article,
+            'brand': brand,
+            'generate_after': generate_after,
+            'product_id': product_id,
+            'source': explicit_source,
+        }
+        request_fingerprint = canonical_payload_fingerprint(raw_intent)
+        existing_intent = ProductParseIntent.objects.select_related(
+            'primary_job',
+        ).filter(
+            tenant=request.tenant,
+            idempotency_key=idempotency_key,
+        ).first()
+        if existing_intent is not None:
+            try:
+                raise_on_fingerprint_conflict(
+                    existing_intent.request_fingerprint,
+                    request_fingerprint,
+                )
+            except IdempotencyConflict as exc:
+                return Response(
+                    {
+                        'status': 'error',
+                        'code': 'idempotency_conflict',
+                        'message': str(exc),
+                    },
+                    status=status.HTTP_409_CONFLICT,
+                )
+            primary_job = existing_intent.primary_job
+            if primary_job is None:
+                return _idempotency_incomplete_response()
+            actual_job_ids = list(existing_intent.jobs.order_by('pk').values_list(
+                'pk',
+                flat=True,
+            ))
+            if sorted(actual_job_ids) != sorted(existing_intent.job_ids):
+                return _idempotency_incomplete_response()
+            return Response({
+                'status': 'ok',
+                'data': {
+                    'job_id': primary_job.pk,
+                    'job_ids': list(existing_intent.job_ids),
+                    'state': primary_job.status,
+                    'generate_after': existing_intent.generate_after,
+                },
+            }, status=status.HTTP_201_CREATED)
 
         if explicit_source:
             try:
@@ -1207,22 +1340,114 @@ class ProductParseView(APIView):
                 )
             product = qs.get()
 
-        from apps.products.tasks import (
-            parse_single_part, parse_single_part_then_generate_description,
-        )
-
-        jobs = []
+        resolved_payload = {
+            'article': article,
+            'brand': brand,
+            'generate_after': generate_after,
+            'product_id': product.pk,
+            'sources': sorted(sources),
+        }
         try:
-            for src in sources:
-                job = ProductEnrichmentService.create_parse_job(
-                    tenant=request.tenant,
-                    product=product,
-                    brand=brand,
-                    article=article,
-                    normalized_article=normalize_part_code(article),
-                    source_id=src,
+            # Classification is useful domain state even when this request is
+            # rejected as a non-auto-part. Persist it in autocommit before the
+            # idempotency transaction so a deliberate 400 response does not
+            # roll the classification back together with a not-created intent.
+            ProductEnrichmentService.ensure_product_auto_parts_eligible(
+                request.tenant,
+                product,
+            )
+            with transaction.atomic():
+                type(request.tenant).objects.select_for_update().only('pk').get(
+                    pk=request.tenant.pk,
                 )
-                jobs.append(job)
+                intent, created = ProductParseIntent.objects.get_or_create(
+                    tenant=request.tenant,
+                    idempotency_key=idempotency_key,
+                    defaults={
+                        'request_fingerprint': request_fingerprint,
+                        'request_payload': {
+                            'intent': raw_intent,
+                            'resolved': resolved_payload,
+                        },
+                        'product': product,
+                        'generate_after': generate_after,
+                    },
+                )
+                if created:
+                    jobs = [
+                        ProductEnrichmentService.create_parse_job(
+                            tenant=request.tenant,
+                            product=product,
+                            brand=brand,
+                            article=article,
+                            normalized_article=normalize_part_code(article),
+                            source_id=source,
+                            fallback_origin_key=(
+                                f'product-parse-intent:{intent.pk}'
+                            ),
+                        )
+                        for source in sources
+                    ]
+                    policies = get_part_source_policies()
+                    primary_job = max(
+                        jobs,
+                        key=lambda job: policies[job.source_id].priority,
+                    )
+                    from apps.core.dispatch import enqueue_durable_task
+                    for job in jobs:
+                        is_primary = job.pk == primary_job.pk
+                        task_name = (
+                            'apps.products.tasks.parse_single_part_then_generate_description'
+                            if (generate_after and is_primary)
+                            else 'apps.products.tasks.parse_single_part'
+                        )
+                        enqueue_durable_task(
+                            task_name,
+                            args=[job.pk],
+                            deduplication_key=f'product-parse-job:{job.pk}',
+                            max_run_attempts=4,
+                        )
+                    intent.primary_job = primary_job
+                    intent.job_ids = [job.pk for job in jobs]
+                    intent.save(update_fields=['primary_job', 'job_ids', 'updated_at'])
+                    ProductParseJob.objects.filter(
+                        pk__in=intent.job_ids,
+                    ).update(ingress_intent=intent)
+                    # Charge only the first canonical intent. The cost is the
+                    # exact number of external parse jobs created; a rejected
+                    # budget rolls all DB jobs/dispatch rows back together.
+                    consume_transactional_tenant_daily_budget(
+                        tenant=request.tenant,
+                        scope='product-parse-jobs',
+                        cost=len(jobs),
+                        limit=settings.PRODUCT_PARSE_TENANT_DAILY_JOBS,
+                    )
+                else:
+                    raise_on_fingerprint_conflict(
+                        intent.request_fingerprint,
+                        request_fingerprint,
+                    )
+                    if intent.primary_job_id is None:
+                        return _idempotency_incomplete_response()
+                    primary_job = ProductParseJob.objects.get(
+                        pk=intent.primary_job_id,
+                        tenant=request.tenant,
+                    )
+                    actual_job_ids = list(intent.jobs.order_by('pk').values_list(
+                        'pk',
+                        flat=True,
+                    ))
+                    if sorted(actual_job_ids) != sorted(intent.job_ids):
+                        return _idempotency_incomplete_response()
+        except IdempotencyConflict as exc:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'idempotency_conflict',
+                    'message': str(exc),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         except AutoPartsEnrichmentDisabled as exc:
             return Response(
                 {'status': 'error', 'code': 'auto_parts_enrichment_disabled', 'message': str(exc)},
@@ -1234,22 +1459,11 @@ class ProductParseView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        policies = get_part_source_policies()
-        primary_job = max(jobs, key=lambda j: policies[j.source_id].priority)
-
-        for job in jobs:
-            is_primary = job.pk == primary_job.pk
-            task = (
-                parse_single_part_then_generate_description
-                if (generate_after and is_primary) else parse_single_part
-            )
-            transaction.on_commit(lambda pk=job.pk, t=task: t.delay(pk))
-
         return Response({
             'status': 'ok',
             'data': {
                 'job_id': primary_job.pk,
-                'job_ids': [job.pk for job in jobs],
+                'job_ids': list(intent.job_ids),
                 'state': primary_job.status,
                 'generate_after': generate_after,
             },
@@ -1275,57 +1489,113 @@ class ProductBulkActionView(APIView):
     # Actions span catalog, AI and media domains. Keep machine access denied
     # until authorization can be selected from the validated action payload.
     api_key_scopes = {}
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    # A single request can fan out paid parsing, AI, or image-provider work.
+    # Use the stricter research ceiling for every bulk action; choosing a looser
+    # scope from unvalidated request data would make the throttle bypassable.
+    principal_throttle_scope = 'expensive_research_principal'
+    tenant_throttle_scope = 'expensive_research_tenant'
+    expensive_throttle_methods = {'POST'}
 
     @extend_schema(
         request=ProductBulkActionRequestSerializer,
-        responses={201: ProductBulkActionResponseSerializer},
+        responses={
+            201: ProductBulkActionResponseSerializer,
+            409: IdempotencyConflictResponseSerializer,
+        },
     )
     def post(self, request):
-        action = request.data.get('action')
-        product_ids = request.data.get('product_ids', [])
-        source = str(request.data.get('source') or DEFAULT_PART_SOURCE).strip()
-        raw_batch_size = request.data.get('batch_size', 20)
-        raw_pause_seconds = request.data.get('pause_seconds', 60)
+        request_serializer = ProductBulkActionRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        request_data = request_serializer.validated_data
+        action = request_data['action']
+        product_ids = sorted(set(request_data['product_ids']))
+        source = str(request_data.get('source') or DEFAULT_PART_SOURCE).strip()
+        batch_size = request_data['batch_size']
+        pause_seconds = request_data['pause_seconds']
+        idempotency_key = request_data['idempotency_key']
+        canonical_payload = {
+            'action': action,
+            'batch_size': batch_size,
+            'pause_seconds': pause_seconds,
+            'product_ids': product_ids,
+            'source': source,
+        }
+        request_fingerprint = canonical_payload_fingerprint(canonical_payload)
         try:
-            batch_size = int(20 if raw_batch_size in (None, '') else raw_batch_size)
-            pause_seconds = int(60 if raw_pause_seconds in (None, '') else raw_pause_seconds)
-        except (TypeError, ValueError):
+            with transaction.atomic():
+                type(request.tenant).objects.select_for_update().only('pk').get(
+                    pk=request.tenant.pk,
+                )
+                job = ProductBulkActionJob.objects.filter(
+                    tenant=request.tenant,
+                    idempotency_key=idempotency_key,
+                ).first()
+                if job is not None:
+                    raise_on_fingerprint_conflict(
+                        job.request_fingerprint,
+                        request_fingerprint,
+                    )
+                else:
+                    job = ProductBulkActionService.create_job(
+                        tenant=request.tenant,
+                        action=action,
+                        product_ids=product_ids,
+                        source_id=source,
+                        batch_size=batch_size,
+                        pause_seconds=pause_seconds,
+                        idempotency_key=idempotency_key,
+                        request_fingerprint=request_fingerprint,
+                        request_payload=canonical_payload,
+                    )
+                    if job.last_dispatched_at is None:
+                        from apps.core.dispatch import enqueue_durable_task
+                        enqueue_durable_task(
+                            'apps.products.tasks.process_bulk_product_action',
+                            args=[job.pk],
+                            deduplication_key=f'product-bulk:{job.pk}:batch-offset:0',
+                            max_run_attempts=4,
+                        )
+                        job.last_dispatched_at = now()
+                        job.save(update_fields=['last_dispatched_at', 'updated_at'])
+                    if action == ProductBulkActionJob.Action.FIND_IMAGES:
+                        # Charge only resolved tenant-owned products, and only
+                        # for the first canonical intent. A rejected budget
+                        # rolls the whole DB transaction back before publish.
+                        consume_transactional_tenant_daily_budget(
+                            tenant=request.tenant,
+                            scope='image-search-jobs',
+                            cost=job.total_count,
+                            limit=settings.IMAGE_SEARCH_TENANT_DAILY_JOBS,
+                        )
+                    if (
+                        action in {
+                            ProductBulkActionJob.Action.ENRICH_SELECTED,
+                            ProductBulkActionJob.Action.ENRICH_MISSING_DATA,
+                            ProductBulkActionJob.Action.ENRICH_THEN_GENERATE,
+                            ProductBulkActionJob.Action.GENERATE_DESCRIPTIONS,
+                        }
+                    ):
+                        # Tachka, Rossko, Euroauto and future parse-capable
+                        # sources all cross an external boundary. Description
+                        # generation may schedule enrichment later, after the
+                        # ingress transaction. Reserve the maximum starts up
+                        # front so a source alias or mutable fitment state can
+                        # never bypass the tenant ceiling.
+                        consume_transactional_tenant_daily_budget(
+                            tenant=request.tenant,
+                            scope='product-parse-jobs',
+                            cost=job.total_count,
+                            limit=settings.PRODUCT_PARSE_TENANT_DAILY_JOBS,
+                        )
+        except IdempotencyConflict as exc:
             return Response(
-                {'status': 'error', 'code': 'validation_error',
-                 'message': 'batch_size и pause_seconds должны быть целыми числами.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        if not isinstance(product_ids, list):
-            return Response(
-                {'status': 'error', 'code': 'validation_error',
-                 'errors': {'product_ids': ['Ожидается список ID.']}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if len(product_ids) > MAX_BULK_ACTION_PRODUCT_IDS:
-            return Response(
-                {'status': 'error', 'code': 'validation_error',
-                 'errors': {'product_ids': [
-                     f'Допустимо не более {MAX_BULK_ACTION_PRODUCT_IDS} ID.',
-                 ]}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not 0 <= pause_seconds <= MAX_BULK_ACTION_PAUSE_SECONDS:
-            return Response(
-                {'status': 'error', 'code': 'validation_error',
-                 'errors': {'pause_seconds': [
-                     f'Допустимое значение: 0–{MAX_BULK_ACTION_PAUSE_SECONDS}.',
-                 ]}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        try:
-            job = ProductBulkActionService.create_job(
-                tenant=request.tenant,
-                action=action,
-                product_ids=[int(pk) for pk in product_ids],
-                source_id=source,
-                batch_size=batch_size,
-                pause_seconds=pause_seconds,
+                {
+                    'status': 'error',
+                    'code': 'idempotency_conflict',
+                    'message': str(exc),
+                },
+                status=status.HTTP_409_CONFLICT,
             )
         except AutoPartsEnrichmentDisabled as exc:
             return Response(
@@ -1337,21 +1607,6 @@ class ProductBulkActionView(APIView):
                 {'status': 'error', 'code': 'validation_error', 'message': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-
-        from apps.products.tasks import process_bulk_product_action
-        job.last_dispatched_at = now()
-        job.save(update_fields=['last_dispatched_at', 'updated_at'])
-
-        def enqueue_initial_batch():
-            try:
-                process_bulk_product_action.delay(job.pk)
-            except Exception:
-                ProductBulkActionJob.objects.filter(pk=job.pk).update(
-                    last_dispatched_at=None,
-                )
-                raise
-
-        transaction.on_commit(enqueue_initial_batch)
 
         return Response({
             'status': 'ok',
@@ -1387,7 +1642,7 @@ def _sync_web_research_review(obj, review_status: str) -> None:
         WebResearchService.record_claim_review(obj, review_status)
 
 
-def _review_product_payload(product) -> dict:
+def _review_product_payload(product) -> dict[str, Any]:
     return {
         'id': product.pk,
         'article': product.article,
@@ -1398,7 +1653,7 @@ def _review_product_payload(product) -> dict:
     }
 
 
-def _serialize_review_item(item_type: str, obj) -> dict:
+def _serialize_review_item(item_type: str, obj: Any) -> ReviewQueueItem:
     product = obj.product
     if item_type == 'fitment':
         title = ' '.join(
@@ -1476,57 +1731,121 @@ class ProductReviewQueueView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        product_id = request.query_params.get('product_id', '').strip()
+        raw_product_id = request.query_params.get('product_id', '').strip()
+        product_id: int | None = None
+        if raw_product_id:
+            try:
+                product_id = int(raw_product_id)
+            except (TypeError, ValueError):
+                product_id = None
+            if product_id is None or product_id <= 0:
+                return Response(
+                    {'status': 'error', 'code': 'bad_product_id'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
         source_id = request.query_params.get('source_id', '').strip()
         search = request.query_params.get('search', '').strip()
 
-        items = []
+        ref_querysets: list[Any] = []
         if not item_type or item_type == 'fitment':
-            qs = VehicleFitment.objects.select_related('product').filter(
+            fitment_qs = VehicleFitment.objects.select_related('product').filter(
                 tenant=request.tenant,
                 needs_review=True,
                 review_status=ReviewStatus.PENDING,
             )
-            if product_id:
-                qs = qs.filter(product_id=product_id)
+            if product_id is not None:
+                fitment_qs = fitment_qs.filter(product_id=product_id)
             if source_id:
-                qs = qs.filter(source_id=source_id)
+                fitment_qs = fitment_qs.filter(source_id=source_id)
             if search:
-                qs = qs.filter(_review_queue_search_filter(search))
-            items.extend(_serialize_review_item('fitment', obj) for obj in qs)
+                fitment_qs = fitment_qs.filter(_review_queue_search_filter(search))
+            ref_querysets.append(fitment_qs.annotate(
+                item_type=Value('fitment', output_field=CharField()),
+                record_id=F('pk'),
+            ).values('updated_at', 'item_type', 'record_id'))
 
         if not item_type or item_type == 'fact':
-            qs = ProductEnrichmentFact.objects.select_related('product').filter(
+            fact_qs = ProductEnrichmentFact.objects.select_related('product').filter(
                 tenant=request.tenant,
                 needs_review=True,
                 review_status=ReviewStatus.PENDING,
             )
-            if product_id:
-                qs = qs.filter(product_id=product_id)
+            if product_id is not None:
+                fact_qs = fact_qs.filter(product_id=product_id)
             if source_id:
-                qs = qs.filter(source_id=source_id)
+                fact_qs = fact_qs.filter(source_id=source_id)
             if search:
-                qs = qs.filter(_review_queue_search_filter(search))
-            items.extend(_serialize_review_item('fact', obj) for obj in qs)
+                fact_qs = fact_qs.filter(_review_queue_search_filter(search))
+            ref_querysets.append(fact_qs.annotate(
+                item_type=Value('fact', output_field=CharField()),
+                record_id=F('pk'),
+            ).values('updated_at', 'item_type', 'record_id'))
 
         if not item_type or item_type == 'classification':
-            qs = ProductCatalogClassification.objects.select_related('product').filter(
+            classification_qs = ProductCatalogClassification.objects.select_related(
+                'product',
+            ).filter(
                 tenant=request.tenant,
                 needs_review=True,
                 review_status=ReviewStatus.PENDING,
             )
-            if product_id:
-                qs = qs.filter(product_id=product_id)
+            if product_id is not None:
+                classification_qs = classification_qs.filter(product_id=product_id)
             if source_id:
-                qs = qs.filter(source=source_id)
+                classification_qs = classification_qs.filter(source=source_id)
             if search:
-                qs = qs.filter(_review_queue_search_filter(search))
-            items.extend(_serialize_review_item('classification', obj) for obj in qs)
+                classification_qs = classification_qs.filter(
+                    _review_queue_search_filter(search),
+                )
+            ref_querysets.append(classification_qs.annotate(
+                item_type=Value('classification', output_field=CharField()),
+                record_id=F('pk'),
+            ).values('updated_at', 'item_type', 'record_id'))
 
-        items.sort(key=lambda item: item['updated_at'], reverse=True)
+        refs = ref_querysets[0]
+        if len(ref_querysets) > 1:
+            refs = refs.union(*ref_querysets[1:], all=True)
+        refs = refs.order_by('-updated_at', 'item_type', 'record_id')
         paginator = MapPagination()
-        page = paginator.paginate_queryset(items, request)
-        return paginator.get_paginated_response(page)
+        page_refs = cast(
+            list[ReviewQueueRef] | None,
+            paginator.paginate_queryset(refs, request),
+        ) or []
+
+        ids_by_type: dict[str, list[int]] = {
+            'fitment': [],
+            'fact': [],
+            'classification': [],
+        }
+        for ref in page_refs:
+            ids_by_type[ref['item_type']].append(ref['record_id'])
+
+        objects_by_ref: dict[tuple[str, int], Any] = {}
+        model_by_type: dict[str, Any] = {
+            'fitment': VehicleFitment,
+            'fact': ProductEnrichmentFact,
+            'classification': ProductCatalogClassification,
+        }
+        for ref_type, record_ids in ids_by_type.items():
+            if not record_ids:
+                continue
+            objects_by_ref.update({
+                (ref_type, obj.pk): obj
+                for obj in model_by_type[ref_type].objects.select_related('product').filter(
+                    tenant=request.tenant,
+                    pk__in=record_ids,
+                )
+            })
+
+        items = [
+            _serialize_review_item(
+                ref['item_type'],
+                objects_by_ref[(ref['item_type'], ref['record_id'])],
+            )
+            for ref in page_refs
+            if (ref['item_type'], ref['record_id']) in objects_by_ref
+        ]
+        return paginator.get_paginated_response(items)
 
 
 @extend_schema(tags=['Products'])
@@ -1540,23 +1859,29 @@ class ProductReviewQueueActionView(APIView):
         if action not in ['approve', 'reject']:
             return _bad_review_action_response()
         if item_type == 'fitment':
-            item = get_object_or_404(VehicleFitment, pk=record_id, tenant=request.tenant)
+            fitment = get_object_or_404(VehicleFitment, pk=record_id, tenant=request.tenant)
             review_status = ReviewStatus.APPROVED if action == 'approve' else ReviewStatus.REJECTED
-            _set_review_state(item, request, review_status)
+            _set_review_state(fitment, request, review_status)
             if review_status == ReviewStatus.APPROVED:
-                ProductKnowledgeGraphService.learn_approved_fitment(item.product, item)
-            ProductEnrichmentService.refresh_product_denormalized_enrichment(item.product)
-            item.product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability', 'updated_at'])
-            _sync_web_research_review(item, review_status)
-            return Response({'status': 'ok', 'data': _serialize_review_item(item_type, item)})
+                ProductKnowledgeGraphService.learn_approved_fitment(fitment.product, fitment)
+            ProductEnrichmentService.refresh_product_denormalized_enrichment(fitment.product)
+            fitment.product.save(
+                update_fields=['oem_numbers', 'cross_numbers', 'applicability', 'updated_at'],
+            )
+            _sync_web_research_review(fitment, review_status)
+            return Response({'status': 'ok', 'data': _serialize_review_item(item_type, fitment)})
         if item_type == 'fact':
-            item = get_object_or_404(ProductEnrichmentFact, pk=record_id, tenant=request.tenant)
+            fact = get_object_or_404(
+                ProductEnrichmentFact,
+                pk=record_id,
+                tenant=request.tenant,
+            )
             review_status = ReviewStatus.APPROVED if action == 'approve' else ReviewStatus.REJECTED
-            _set_review_state(item, request, review_status)
+            _set_review_state(fact, request, review_status)
             if review_status == ReviewStatus.APPROVED:
-                ProductEnrichmentService.apply_approved_fact(item.product, item)
-            _sync_web_research_review(item, review_status)
-            return Response({'status': 'ok', 'data': _serialize_review_item(item_type, item)})
+                ProductEnrichmentService.apply_approved_fact(fact.product, fact)
+            _sync_web_research_review(fact, review_status)
+            return Response({'status': 'ok', 'data': _serialize_review_item(item_type, fact)})
         if item_type == 'classification':
             product = get_object_or_404(
                 Product,
@@ -1770,48 +2095,190 @@ class ProductRegenerateView(APIView):
         'catalog:write', 'listings:write', 'ai:run',
         'research:run', 'media:write',
     }}
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'expensive_research_principal'
+    tenant_throttle_scope = 'expensive_research_tenant'
+    expensive_throttle_methods = {'POST'}
 
     @extend_schema(
         request=ProductRegenerateRequestSerializer,
-        responses={202: ProductRegenerateResponseSerializer},
+        responses={
+            202: ProductRegenerateResponseSerializer,
+            400: ProductRegenerateErrorSerializer,
+            402: ProductRegenerateErrorSerializer,
+            404: ProductRegenerateErrorSerializer,
+            409: ProductRegenerateErrorSerializer,
+        },
     )
     def post(self, request, pk):
         """Сначала обогащает товар, затем запускает генерацию описания."""
         from apps.billing.services import LimitChecker
+        from apps.core.dispatch import enqueue_durable_task
+        from apps.core.models import BackgroundJobDispatch
 
-        try:
-            product = Product.objects.get(pk=pk, tenant=request.tenant)
-        except Product.DoesNotExist:
-            return Response(
-                {'status': 'error', 'code': 'not_found'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
+        request_payload = ProductRegenerateRequestSerializer(data=request.data)
+        request_payload.is_valid(raise_exception=True)
+        request_data = request_payload.validated_data
 
-        can, reason = LimitChecker().can_generate_ai(request.tenant)
-        if not can:
-            return Response(
-                {'status': 'error', 'code': 'quota_exceeded', 'message': reason},
-                status=status.HTTP_402_PAYMENT_REQUIRED,
-            )
+        source = str(request_data.get('source') or DEFAULT_PART_SOURCE).strip()
+        intent_key = str(request_data['idempotency_key'])
 
-        source = str(request.data.get('source') or DEFAULT_PART_SOURCE).strip()
-        try:
-            get_part_source_config(source)
-        except ValueError as exc:
-            return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
+        with transaction.atomic():
+            type(request.tenant).objects.select_for_update().only('pk').get(
+                pk=request.tenant.pk,
             )
+            try:
+                product = Product.objects.select_for_update().get(
+                    pk=pk,
+                    tenant=request.tenant,
+                )
+            except Product.DoesNotExist:
+                return Response(
+                    {'status': 'error', 'code': 'not_found'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
 
-        product_needs_plain_ai = (
-            not request.tenant.supports_auto_parts_enrichment
-            or (
-                request.tenant.requires_product_auto_parts_check
-                and not ProductEnrichmentService.is_product_auto_part_candidate(product)
+            dispatch_prefix = (
+                f'product-regenerate:{request.tenant.pk}:{product.pk}:{intent_key}'
             )
-        )
+            canonical_intent = {
+                'product_id': product.pk,
+                'source': source,
+            }
+            intent_fingerprint = canonical_payload_fingerprint(canonical_intent)
+            dispatch_key = f'{dispatch_prefix}:{intent_fingerprint}'
+            existing_dispatch = BackgroundJobDispatch.objects.filter(
+                deduplication_key__startswith=f'{dispatch_prefix}:',
+            ).first()
+            if existing_dispatch is not None:
+                if existing_dispatch.deduplication_key != dispatch_key:
+                    return Response(
+                        {'status': 'error', 'code': 'idempotency_conflict'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+                if existing_dispatch.task_name == 'apps.ai_agent.tasks.generate_description_task':
+                    if existing_dispatch.args != [product.pk]:
+                        return Response(
+                            {'status': 'error', 'code': 'idempotency_conflict'},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    product_needs_plain_ai = True
+                    job = None
+                elif existing_dispatch.task_name == (
+                    'apps.products.tasks.parse_single_part_then_generate_description'
+                ):
+                    product_needs_plain_ai = False
+                    try:
+                        existing_job_id = int(existing_dispatch.args[0])
+                        job = request.tenant.product_parse_jobs.get(
+                            pk=existing_job_id,
+                            product=product,
+                            source_id=source,
+                        )
+                    except (
+                        IndexError,
+                        TypeError,
+                        ValueError,
+                        ProductParseJob.DoesNotExist,
+                    ):
+                        return Response(
+                            {'status': 'error', 'code': 'idempotency_conflict'},
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                else:
+                    return Response(
+                        {'status': 'error', 'code': 'idempotency_conflict'},
+                        status=status.HTTP_409_CONFLICT,
+                    )
+            else:
+                try:
+                    get_part_source_config(source)
+                except ValueError as exc:
+                    return Response(
+                        {
+                            'status': 'error',
+                            'code': 'validation_error',
+                            'message': str(exc),
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                product_needs_plain_ai = (
+                    not request.tenant.supports_auto_parts_enrichment
+                    or (
+                        request.tenant.requires_product_auto_parts_check
+                        and not ProductEnrichmentService.is_product_auto_part_candidate(product)
+                    )
+                )
+                expected_task_name = (
+                    'apps.ai_agent.tasks.generate_description_task'
+                    if product_needs_plain_ai
+                    else 'apps.products.tasks.parse_single_part_then_generate_description'
+                )
+                can, reason = LimitChecker().can_generate_ai(request.tenant)
+                if not can:
+                    return Response(
+                        {
+                            'status': 'error',
+                            'code': 'quota_exceeded',
+                            'message': reason,
+                        },
+                        status=status.HTTP_402_PAYMENT_REQUIRED,
+                    )
+                if product_needs_plain_ai:
+                    enqueue_durable_task(
+                        expected_task_name,
+                        args=[product.pk],
+                        deduplication_key=dispatch_key,
+                        max_run_attempts=4,
+                    )
+                    job = None
+                else:
+                    try:
+                        ProductEnrichmentService.ensure_product_auto_parts_eligible(
+                            request.tenant,
+                            product,
+                        )
+                    except AutoPartsEnrichmentDisabled as exc:
+                        return Response(
+                            {
+                                'status': 'error',
+                                'code': 'auto_parts_enrichment_disabled',
+                                'message': str(exc),
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    except ProductIsNotAutoPart as exc:
+                        return Response(
+                            {
+                                'status': 'error',
+                                'code': 'product_is_not_auto_part',
+                                'message': str(exc),
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+                    job = ProductEnrichmentService.create_parse_job(
+                        tenant=request.tenant,
+                        product=product,
+                        brand=product.brand,
+                        article=product.article,
+                        normalized_article=normalize_part_code(product.article),
+                        source_id=source,
+                        fallback_origin_key=dispatch_key,
+                    )
+                    enqueue_durable_task(
+                        expected_task_name,
+                        args=[job.pk],
+                        deduplication_key=dispatch_key,
+                        max_run_attempts=4,
+                    )
+                    consume_transactional_tenant_daily_budget(
+                        tenant=request.tenant,
+                        scope='product-parse-jobs',
+                        cost=1,
+                        limit=settings.PRODUCT_PARSE_TENANT_DAILY_JOBS,
+                    )
+
         if product_needs_plain_ai:
-            ProductService.schedule_ai_generation(product, request.tenant)
             return Response({
                 'status': 'ok',
                 'message': 'Запущена генерация описания без автозапчастного обогащения',
@@ -1822,29 +2289,8 @@ class ProductRegenerateView(APIView):
                 },
             }, status=status.HTTP_202_ACCEPTED)
 
-        try:
-            job = ProductEnrichmentService.create_parse_job(
-                tenant=request.tenant,
-                product=product,
-                brand=product.brand,
-                article=product.article,
-                normalized_article=normalize_part_code(product.article),
-                source_id=source,
-            )
-        except AutoPartsEnrichmentDisabled as exc:
-            return Response(
-                {'status': 'error', 'code': 'auto_parts_enrichment_disabled', 'message': str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        except ProductIsNotAutoPart as exc:
-            return Response(
-                {'status': 'error', 'code': 'product_is_not_auto_part', 'message': str(exc)},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        from apps.products.tasks import parse_single_part_then_generate_description
-        transaction.on_commit(lambda: parse_single_part_then_generate_description.delay(job.pk))
-
+        if job is None:
+            raise RuntimeError('Parse job is required for enrichment regeneration.')
         return Response({
             'status': 'ok',
             'message': 'Запущено обогащение, затем генерация описания',

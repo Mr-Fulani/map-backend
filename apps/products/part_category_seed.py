@@ -4,7 +4,28 @@ This is our own compact market taxonomy. It is intentionally not a verbatim
 copy of TecDoc, Autodoc, Exist, HELLA, Bosch or any other supplier catalog.
 """
 
-BASE_PART_CATEGORY_TREE = [
+from collections.abc import Iterator
+from typing import NotRequired, TypedDict
+
+
+PartCategoryChild = tuple[str, list[str], bool]
+
+
+class BasePartCategory(TypedDict):
+    name: str
+    aliases: list[str]
+    children: list[PartCategoryChild]
+    fitment_required: NotRequired[bool]
+
+
+class FlatPartCategory(TypedDict):
+    name: str
+    parent: str
+    aliases: list[str]
+    fitment_required: bool
+
+
+BASE_PART_CATEGORY_TREE: list[BasePartCategory] = [
     {
         'name': 'Тормозная система',
         'aliases': ['Brakes', 'Тормоза', 'Тормоз'],
@@ -229,7 +250,7 @@ def normalize_category_name(name: str) -> str:
     return ''.join(char for char in name.lower() if char.isalnum())
 
 
-def iter_base_part_categories():
+def iter_base_part_categories() -> Iterator[FlatPartCategory]:
     for root in BASE_PART_CATEGORY_TREE:
         yield {
             'name': root['name'],

@@ -2,6 +2,7 @@ import datetime
 import logging
 from decimal import Decimal
 
+from django.conf import settings
 from django.db import transaction
 from django.db.models import Sum
 from drf_spectacular.utils import (
@@ -23,6 +24,12 @@ from apps.marketplaces.models import (
     MarketplaceAccount,
     MarketplacePlacementAddress,
 )
+from apps.core.idempotency import (
+    IdempotencyConflict,
+    canonical_payload_fingerprint,
+    raise_on_fingerprint_conflict,
+)
+from apps.core.models import BackgroundJobDispatch, PaidIngressIntent
 from apps.marketplaces.serializers import (
     CategoryMappingSerializer,
     CategoryMappingWriteSerializer,
@@ -39,6 +46,11 @@ from apps.marketplaces.serializers import (
     MarketplacePlacementAddressSerializer,
 )
 from apps.core.pagination import MapPagination
+from apps.core.throttling import (
+    PrincipalScopedRateThrottle,
+    TenantScopedRateThrottle,
+    consume_transactional_tenant_daily_budget,
+)
 from apps.marketplaces.services import (
     AccountAlreadyExists,
     AvitoAccountStatusService,
@@ -105,6 +117,50 @@ LISTING_UPDATE_REQUEST = inline_serializer(
         'contact_phone_override': serializers.CharField(
             max_length=50, required=False, allow_blank=True,
         ),
+    },
+)
+
+
+class ListingRegenerateRequestSerializer(serializers.Serializer):
+    idempotency_key = serializers.UUIDField(required=True)
+
+    def to_internal_value(self, data):
+        unknown = set(data) - set(self.fields)
+        if unknown:
+            raise serializers.ValidationError({
+                key: ['Неизвестное поле.'] for key in sorted(unknown)
+            })
+        return super().to_internal_value(data)
+
+
+LISTING_REGENERATE_DATA = inline_serializer(
+    name='MarketplaceListingRegenerateData',
+    fields={
+        'intent_id': serializers.IntegerField(read_only=True),
+        'dispatch_id': serializers.UUIDField(read_only=True),
+        'state': serializers.CharField(read_only=True),
+        'mode': serializers.CharField(read_only=True),
+        'job_id': serializers.IntegerField(read_only=True, allow_null=True),
+    },
+)
+
+
+LISTING_REGENERATE_RESPONSE = inline_serializer(
+    name='MarketplaceListingRegenerateResponse',
+    fields={
+        'status': serializers.CharField(read_only=True),
+        'message': serializers.CharField(read_only=True),
+        'data': LISTING_REGENERATE_DATA,
+    },
+)
+
+
+LISTING_IDEMPOTENCY_CONFLICT_RESPONSE = inline_serializer(
+    name='MarketplaceListingIdempotencyConflictResponse',
+    fields={
+        'status': serializers.CharField(read_only=True),
+        'code': serializers.CharField(read_only=True),
+        'message': serializers.CharField(read_only=True),
     },
 )
 
@@ -937,35 +993,150 @@ class ListingRegenerateView(APIView):
         'catalog:write', 'listings:write', 'ai:run',
         'research:run', 'media:write',
     }}
+    throttle_classes = [PrincipalScopedRateThrottle, TenantScopedRateThrottle]
+    principal_throttle_scope = 'expensive_research_principal'
+    tenant_throttle_scope = 'expensive_research_tenant'
+    expensive_throttle_methods = {'POST'}
 
     @extend_schema(
         operation_id='marketplace_listing_regenerate',
-        request=None,
-        responses=inline_serializer(
-            name='MarketplaceListingRegenerateResponse',
-            fields={
-                'status': serializers.CharField(read_only=True),
-                'message': serializers.CharField(read_only=True),
-            },
-        ),
+        request=ListingRegenerateRequestSerializer,
+        responses={
+            202: LISTING_REGENERATE_RESPONSE,
+            409: LISTING_IDEMPOTENCY_CONFLICT_RESPONSE,
+        },
     )
     def post(self, request, pk):
         """Ставит задачу генерации AI-описания для товара в очередь Celery."""
-        from apps.billing.services import LimitChecker
-        can, reason = LimitChecker().can_generate_ai(request.tenant)
-        if not can:
-            return Response(
-                {'status': 'error', 'code': 'quota_exceeded', 'message': reason},
-                status=status.HTTP_402_PAYMENT_REQUIRED,
-            )
+        from apps.products.services import QuotaExceeded
+
+        request_serializer = ListingRegenerateRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        idempotency_key = request_serializer.validated_data['idempotency_key']
+        canonical_request = {
+            'listing_id': int(pk),
+            'payload': {},
+        }
+        fingerprint = canonical_payload_fingerprint(canonical_request)
+        raw_request = {
+            str(key): value
+            for key, value in request.data.items()
+            if key != 'idempotency_key'
+        }
+        raw_fingerprint = canonical_payload_fingerprint(raw_request)
         try:
-            ListingService.request_regenerate(pk, request.tenant)
+            with transaction.atomic():
+                type(request.tenant).objects.select_for_update().only('pk').get(
+                    pk=request.tenant.pk,
+                )
+                intent = PaidIngressIntent.objects.select_related('dispatch').filter(
+                    tenant=request.tenant,
+                    operation='listing-regenerate',
+                    idempotency_key=idempotency_key,
+                ).first()
+                if intent is not None:
+                    raise_on_fingerprint_conflict(
+                        intent.request_fingerprint,
+                        fingerprint,
+                    )
+                    raise_on_fingerprint_conflict(
+                        intent.raw_payload_fingerprint,
+                        raw_fingerprint,
+                    )
+                    if (
+                        intent.resource_type != 'marketplaces.listing'
+                        or intent.resource_id != str(pk)
+                        or intent.dispatch is None
+                    ):
+                        return Response(
+                            {
+                                'status': 'error',
+                                'code': 'idempotency_incomplete',
+                                'message': 'Исходный результат запроса недоступен.',
+                            },
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    dispatch = intent.dispatch
+                    submission = intent.result_metadata
+                else:
+                    # Lock the canonical resource as well as the tenant so a
+                    # concurrent status mutation cannot race the validation.
+                    Listing.objects.select_for_update().filter(
+                        pk=pk,
+                        tenant=request.tenant,
+                    ).exists()
+                    deduplication_key = (
+                        f'listing-regenerate:{request.tenant.pk}:'
+                        f'{idempotency_key}:{fingerprint}'
+                    )
+                    listing = ListingService.request_regenerate(
+                        pk,
+                        request.tenant,
+                        durable_deduplication_key=deduplication_key,
+                    )
+                    submission = listing.__dict__['_regeneration_submission']
+                    dispatch = BackgroundJobDispatch.objects.get(
+                        pk=submission['dispatch_id'],
+                        deduplication_key=deduplication_key,
+                    )
+                    if submission.get('mode') == 'enrich_then_generate':
+                        consume_transactional_tenant_daily_budget(
+                            tenant=request.tenant,
+                            scope='product-parse-jobs',
+                            cost=1,
+                            limit=settings.PRODUCT_PARSE_TENANT_DAILY_JOBS,
+                        )
+                    intent = PaidIngressIntent.objects.create(
+                        tenant=request.tenant,
+                        operation='listing-regenerate',
+                        idempotency_key=idempotency_key,
+                        request_fingerprint=fingerprint,
+                        raw_payload_fingerprint=raw_fingerprint,
+                        request_payload={
+                            'raw': raw_request,
+                            'canonical': canonical_request,
+                        },
+                        resource_type='marketplaces.listing',
+                        resource_id=str(pk),
+                        result_type='core.background_job_dispatch',
+                        result_id=str(dispatch.pk),
+                        result_metadata=submission,
+                        dispatch=dispatch,
+                    )
+        except IdempotencyConflict as exc:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'idempotency_conflict',
+                    'message': str(exc),
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         except ListingNotFound:
             return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
         except InvalidListingStatus as exc:
             return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
                             status=status.HTTP_400_BAD_REQUEST)
-        return Response({'status': 'ok', 'message': 'Задача генерации поставлена в очередь'})
+        except QuotaExceeded as exc:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'quota_exceeded',
+                    'message': str(exc),
+                },
+                status=status.HTTP_402_PAYMENT_REQUIRED,
+            )
+        return Response({
+            'status': 'ok',
+            'message': 'Задача генерации поставлена в очередь',
+            'data': {
+                'intent_id': intent.pk,
+                'dispatch_id': str(dispatch.pk),
+                'state': dispatch.status,
+                'mode': submission['mode'],
+                'job_id': submission['job_id'],
+            },
+        }, status=status.HTTP_202_ACCEPTED)
 
 
 @extend_schema(tags=['Analytics'])

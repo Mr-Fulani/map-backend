@@ -1,6 +1,9 @@
 """Fail-closed redaction for error telemetry."""
 
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
+
+from sentry_sdk.types import Event
 
 
 _SENSITIVE_KEY_PARTS = (
@@ -68,7 +71,10 @@ def _redact(value, *, parent_key: str = ''):
     return value
 
 
-def scrub_sentry_event(event: dict, _hint=None) -> dict:
+def scrub_sentry_event(
+    event: Event,
+    _hint: dict[str, Any] | None = None,
+) -> Event:
     """Remove request secrets even if an integration adds unexpected fields."""
     request = event.get('request')
     if isinstance(request, dict):

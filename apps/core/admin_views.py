@@ -61,7 +61,7 @@ def _get_celery_queue_depths() -> dict:
         inspect = current_app.control.inspect(timeout=2)
         reserved = inspect.reserved() or {}
 
-        counts = {}
+        counts: dict[str, int] = {}
         for worker_tasks in reserved.values():
             for task in worker_tasks:
                 queue = task.get('delivery_info', {}).get('routing_key', 'unknown')

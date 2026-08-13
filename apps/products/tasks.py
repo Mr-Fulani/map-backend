@@ -9,7 +9,7 @@ from django.utils.timezone import now
 
 from apps.datasources.models import DataSourceConnection
 from apps.datasources.registry import get_adapter
-from apps.products.models import Product, ProductBulkActionJob
+from apps.products.models import Product, ProductBulkActionJob, ProductParseJob
 from apps.products.services import (
     ProductBulkActionService, ProductEnrichmentService, ProductService,
 )
@@ -227,31 +227,45 @@ def sync_product_listings_task(self, product_id: int, change_type: str):
 @shared_task(bind=True, max_retries=3, default_retry_delay=60,
              retry_backoff=True, queue='part_parsing')
 def parse_single_part(self, job_id: int):
-    try:
-        result = ProductEnrichmentService.run_parse_job(job_id)
-        _save_enrichment_images(result)
-        product_id = result.get('product_id')
-        if product_id:
-            from apps.web_research.tasks import schedule_web_research_fallback
-            schedule_web_research_fallback.delay(product_id, False)
-        return result
-    except Exception as exc:
-        raise self.retry(exc=exc)
+    result = ProductEnrichmentService.run_parse_job(job_id)
+    _save_enrichment_images(result)
+    product_id = result.get('product_id')
+    if product_id:
+        from apps.core.dispatch import enqueue_durable_task
+        job = ProductParseJob.objects.only('fallback_origin_key').get(pk=job_id)
+        origin_key = job.fallback_origin_key or f'parse-job:{job_id}'
+        enqueue_durable_task(
+            'apps.web_research.tasks.schedule_web_research_fallback',
+            args=[product_id, False, origin_key],
+            deduplication_key=f'{origin_key}:web-research-fallback',
+            max_run_attempts=13,
+        )
+    return result
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60,
              retry_backoff=True, queue='part_parsing')
 def parse_single_part_then_generate_description(self, job_id: int):
-    try:
-        result = ProductEnrichmentService.run_parse_job(job_id)
-        _save_enrichment_images(result)
-        product_id = result.get('product_id')
-        if product_id:
-            from apps.web_research.tasks import schedule_web_research_fallback
-            schedule_web_research_fallback.delay(product_id, True)
-        return result
-    except Exception as exc:
-        raise self.retry(exc=exc)
+    result = ProductEnrichmentService.run_parse_job(job_id)
+    _save_enrichment_images(result)
+    product_id = result.get('product_id')
+    if product_id:
+        from apps.core.dispatch import enqueue_durable_task
+        job = ProductParseJob.objects.only('fallback_origin_key').get(pk=job_id)
+        origin_key = job.fallback_origin_key or f'parse-job:{job_id}'
+        enqueue_durable_task(
+            'apps.web_research.tasks.schedule_web_research_fallback',
+            args=[product_id, True, origin_key],
+            # Keep the upgrade-to-generate signal distinct from sibling
+            # non-generating fallbacks. Both carry the same origin_key, so
+            # WebResearchRun coalesces the paid search while preserving the
+            # stronger generate_after intent.
+            deduplication_key=(
+                f'{origin_key}:web-research-fallback:generate-after'
+            ),
+            max_run_attempts=13,
+        )
+    return result
 
 
 @shared_task(
@@ -264,10 +278,7 @@ def parse_single_part_then_generate_description(self, job_id: int):
     reject_on_worker_lost=True,
 )
 def process_bulk_product_action(self, bulk_job_id: int):
-    try:
-        return ProductBulkActionService.process_next_batch(bulk_job_id)
-    except Exception as exc:
-        raise self.retry(exc=exc)
+    return ProductBulkActionService.process_next_batch(bulk_job_id)
 
 
 @shared_task(
@@ -277,9 +288,8 @@ def process_bulk_product_action(self, bulk_job_id: int):
     ignore_result=True,
 )
 def dispatch_due_product_bulk_jobs(limit: int = 100):
-    """Recover PENDING/due bulk jobs from PostgreSQL instead of Redis ETA."""
+    """Reconcile PENDING/due bulk jobs into the durable dispatch outbox."""
     dispatch_time = now()
-    retry_before = dispatch_time - timedelta(minutes=5)
     batch_limit = max(1, min(int(limit), 500))
 
     due_state = (
@@ -289,37 +299,30 @@ def dispatch_due_product_bulk_jobs(limit: int = 100):
             next_batch_at__lte=dispatch_time,
         )
     )
-    retryable_dispatch = (
-        Q(last_dispatched_at__isnull=True)
-        | Q(last_dispatched_at__lte=retry_before)
-    )
-
     with transaction.atomic():
-        job_ids = list(
+        jobs = list(
             ProductBulkActionJob.objects
             .select_for_update(skip_locked=True)
-            .filter(due_state, retryable_dispatch)
+            .filter(due_state)
             .order_by('next_batch_at', 'created_at')
-            .values_list('pk', flat=True)[:batch_limit]
+            [:batch_limit]
         )
-        ProductBulkActionJob.objects.filter(pk__in=job_ids).update(
+        ProductBulkActionJob.objects.filter(pk__in=[job.pk for job in jobs]).update(
             last_dispatched_at=dispatch_time,
         )
+        from apps.core.dispatch import enqueue_durable_task
+        for job in jobs:
+            enqueue_durable_task(
+                'apps.products.tasks.process_bulk_product_action',
+                args=[job.pk],
+                deduplication_key=(
+                    f'product-bulk:{job.pk}:batch-offset:{job.processed_count}'
+                ),
+                available_at=dispatch_time,
+                max_run_attempts=4,
+            )
 
-        def publish_selected_jobs():
-            for job_id in job_ids:
-                try:
-                    process_bulk_product_action.delay(job_id)
-                except Exception:
-                    logger.exception('Не удалось поставить bulk job=%s в очередь.', job_id)
-                    ProductBulkActionJob.objects.filter(
-                        pk=job_id,
-                        last_dispatched_at=dispatch_time,
-                    ).update(last_dispatched_at=None)
-
-        transaction.on_commit(publish_selected_jobs)
-
-    return {'selected': len(job_ids)}
+    return {'selected': len(jobs)}
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60,

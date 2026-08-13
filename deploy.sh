@@ -1,14 +1,59 @@
 #!/usr/bin/env bash
 # Production deploy for one immutable commit that has already passed CI.
 set -Eeuo pipefail
+export COMPOSE_PARALLEL_LIMIT=1
 
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$ROOT_DIR"
+PROD_LOCK_DIR="/run/lock/saas-poster"
+DEPLOY_LOCK_FILE="$PROD_LOCK_DIR/deploy.lock"
+HOST_CONTRACT_PENDING_FILE="$PROD_LOCK_DIR/host-contract-pending"
 
 fail() {
   echo "ОШИБКА: $*" >&2
   return 1
 }
+
+TARGET_SHA="${1:-}"
+PREVIOUS_SHA="${PREVIOUS_SHA:-}"
+
+# The release launcher has already checked out TARGET_SHA. Keep this small
+# fail-safe active while lock and config are validated; the runtime-aware trap
+# below replaces it before any Docker mutation.
+restore_checkout_before_runtime() {
+  local exit_code="$1"
+  trap - ERR HUP INT TERM
+  set +e
+  if [[ "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ \
+    && "$TARGET_SHA" =~ ^[0-9a-f]{40}$ \
+    && "$PREVIOUS_SHA" != "$TARGET_SHA" ]] \
+    && git cat-file -e "${PREVIOUS_SHA}^{commit}" 2>/dev/null; then
+    git checkout --detach "$PREVIOUS_SHA" >/dev/null || \
+      echo "КРИТИЧЕСКАЯ ОШИБКА: checkout $PREVIOUS_SHA не восстановлен." >&2
+  fi
+  exit "$exit_code"
+}
+trap 'restore_checkout_before_runtime $?' ERR
+trap 'restore_checkout_before_runtime 129' HUP
+trap 'restore_checkout_before_runtime 130' INT
+trap 'restore_checkout_before_runtime 143' TERM
+
+[[ "$EUID" -eq 0 ]] || fail "production deploy должен выполняться как root."
+[[ "$ROOT_DIR" == "/opt/saas_poster" ]] \
+  || fail "production deploy разрешён только из canonical checkout."
+/usr/local/sbin/saas-poster-validate-checkout >/dev/null \
+  || fail "canonical checkout имеет небезопасного владельца или права."
+[[ -d "$PROD_LOCK_DIR" && ! -L "$PROD_LOCK_DIR" && -O "$PROD_LOCK_DIR" ]] \
+  || fail "$PROD_LOCK_DIR должен быть обычным каталогом владельца deploy user."
+[[ "$(stat -c '%a' "$PROD_LOCK_DIR")" == "700" ]] \
+  || fail "$PROD_LOCK_DIR должен иметь права 700."
+if [[ "${DEPLOY_LOCK_FD:-}" == "9" ]]; then
+  [[ "$(readlink -f "/proc/$$/fd/9" 2>/dev/null || true)" == "$DEPLOY_LOCK_FILE" ]] \
+    || fail "унаследованный deploy lock недействителен."
+else
+  exec 9>"$DEPLOY_LOCK_FILE"
+fi
+flock -n 9 || fail "другой deploy уже выполняется."
 
 validate_private_regular_file() {
   local secret_file="$1"
@@ -72,7 +117,59 @@ load_deploy_env() {
   done < "$deploy_env_file"
 }
 
-TARGET_SHA="${1:-}"
+verify_installed_host_contract() {
+  local pair source_file target_file expected_mode target_mode
+  local pairs=(
+    'scripts/validate_production_checkout.sh:/usr/local/sbin/saas-poster-validate-checkout:755'
+    'scripts/production_release.sh:/usr/local/sbin/saas-poster-release:755'
+    'scripts/production_deploy_gateway.sh:/usr/local/sbin/saas-poster-deploy-gateway:755'
+    'scripts/verify_production_topology.sh:/usr/local/sbin/saas-poster-verify-topology:755'
+    'scripts/check_production_capacity.sh:/usr/local/sbin/saas-poster-check-capacity:755'
+    'scripts/production_backup.sh:/usr/local/sbin/saas-poster-backup:755'
+    'scripts/production_backup_check.sh:/usr/local/sbin/saas-poster-backup-check:755'
+    'scripts/reload_production_nginx.sh:/usr/local/sbin/saas-poster-reload-nginx:755'
+    'scripts/rotate_backup_db_password.sh:/usr/local/sbin/saas-poster-rotate-backup-db-password:755'
+    'ops/ssh/90-saas-poster-mapdeploy.conf:/etc/ssh/sshd_config.d/90-saas-poster-mapdeploy.conf:644'
+    'ops/sudoers/saas-poster-deploy:/etc/sudoers.d/saas-poster-deploy:440'
+    'ops/systemd/saas-poster-backup.service:/etc/systemd/system/saas-poster-backup.service:644'
+    'ops/systemd/saas-poster-backup.timer:/etc/systemd/system/saas-poster-backup.timer:644'
+    'ops/systemd/saas-poster-backup-check.service:/etc/systemd/system/saas-poster-backup-check.service:644'
+    'ops/systemd/saas-poster-backup-check.timer:/etc/systemd/system/saas-poster-backup-check.timer:644'
+    'ops/tmpfiles/saas-poster.conf:/etc/tmpfiles.d/saas-poster.conf:644'
+  )
+
+  for pair in "${pairs[@]}"; do
+    IFS=: read -r source_file target_file expected_mode <<<"$pair"
+    [[ -f "$target_file" && ! -L "$target_file" && -O "$target_file" ]] \
+      || fail "host contract file ${target_file} не установлен безопасно."
+    target_mode="$(stat -c '%a' "$target_file")" \
+      || fail "не удалось проверить ${target_file}."
+    [[ "$target_mode" == "$expected_mode" ]] \
+      || fail "host contract file ${target_file} имеет небезопасный mode ${target_mode}."
+    cmp -s "$source_file" "$target_file" \
+      || fail "host contract file ${target_file} не совпадает с TARGET_SHA; выполните bootstrap."
+  done
+  [[ -L /etc/letsencrypt/renewal-hooks/deploy/saas-poster-nginx-reload ]] \
+    || fail "Certbot nginx reload hook не установлен."
+  [[ "$(readlink -f /etc/letsencrypt/renewal-hooks/deploy/saas-poster-nginx-reload)" \
+    == "/usr/local/sbin/saas-poster-reload-nginx" ]] \
+    || fail "Certbot nginx reload hook указывает на неверный target."
+}
+
+validate_pending_host_contract() {
+  local pending_sha
+  [[ -e "$HOST_CONTRACT_PENDING_FILE" || -L "$HOST_CONTRACT_PENDING_FILE" ]] \
+    || return 0
+  [[ -f "$HOST_CONTRACT_PENDING_FILE" && ! -L "$HOST_CONTRACT_PENDING_FILE" \
+    && -O "$HOST_CONTRACT_PENDING_FILE" ]] \
+    || fail "host-contract pending marker небезопасен."
+  [[ "$(stat -c '%a' "$HOST_CONTRACT_PENDING_FILE")" == "600" ]] \
+    || fail "host-contract pending marker должен иметь mode 600."
+  pending_sha="$(<"$HOST_CONTRACT_PENDING_FILE")"
+  [[ "$pending_sha" == "$TARGET_SHA" ]] \
+    || fail "host contract ожидает другой target SHA."
+}
+
 DEPLOY_ENV_FILE="${DEPLOY_ENV_FILE:-$ROOT_DIR/.deploy.env}"
 if [[ -e "$DEPLOY_ENV_FILE" || -L "$DEPLOY_ENV_FILE" ]]; then
   command -v stat >/dev/null 2>&1 || fail "команда stat не установлена."
@@ -81,8 +178,6 @@ if [[ -e "$DEPLOY_ENV_FILE" || -L "$DEPLOY_ENV_FILE" ]]; then
 fi
 
 COMPOSE_FILE="$ROOT_DIR/docker-compose.prod.yml"
-PROD_LOCK_DIR="/run/lock/saas-poster"
-DEPLOY_LOCK_FILE="$PROD_LOCK_DIR/deploy.lock"
 COMPOSE=(
   docker compose
   --project-name saas_poster
@@ -91,7 +186,8 @@ COMPOSE=(
 )
 BUILD_SERVICES=(django celery_worker celery_beat celery_worker_images frontend backup)
 ROLLBACK_SERVICES=(egress_proxy "${BUILD_SERVICES[@]}")
-APPLICATION_SERVICES=(egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
+ROLLBACK_INFRASTRUCTURE_SERVICES=(db redis redis_broker egress_proxy)
+ROLLBACK_APPLICATION_SERVICES=(django celery_worker celery_beat celery_worker_images frontend nginx)
 DRAIN_SERVICES=(celery_beat celery_worker celery_worker_images django frontend)
 HEALTH_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
 LOG_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
@@ -99,14 +195,12 @@ LOG_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_bea
 PROD_HEALTH_RETRIES="${PROD_HEALTH_RETRIES:-40}"
 PROD_HEALTH_INTERVAL_SECONDS="${PROD_HEALTH_INTERVAL_SECONDS:-3}"
 PROD_LOG_TAIL="${PROD_LOG_TAIL:-200}"
-PROD_MIN_FREE_DISK_MB="${PROD_MIN_FREE_DISK_MB:-2048}"
+PROD_MIN_FREE_DISK_MB="${PROD_MIN_FREE_DISK_MB:-16384}"
 PROD_ROLLBACK_ENABLED="${PROD_ROLLBACK_ENABLED:-true}"
 PROD_BROKER_MIGRATION_CONFIRMED="${PROD_BROKER_MIGRATION_CONFIRMED:-false}"
 PROD_BACKUP_TIMEOUT_SECONDS="${PROD_BACKUP_TIMEOUT_SECONDS:-7200}"
 PROD_DRAIN_TIMEOUT_SECONDS="${PROD_DRAIN_TIMEOUT_SECONDS:-3700}"
 PROD_SMOKE_URL="${PROD_SMOKE_URL:-}"
-PREVIOUS_SHA="${PREVIOUS_SHA:-}"
-
 DEPLOY_PHASE="initialization"
 SERVICES_CHANGED=false
 MIGRATIONS_APPLIED=false
@@ -147,6 +241,27 @@ wait_for_service() {
   fail "сервис ${service} не стал готов за отведённое время."
 }
 
+ensure_current_infrastructure() {
+  local service container_id
+  local existing=0
+  local infrastructure=(db redis redis_broker egress_proxy)
+
+  for service in "${infrastructure[@]}"; do
+    container_id="$("${COMPOSE[@]}" ps -q "$service" 2>/dev/null || true)"
+    [[ -z "$container_id" ]] || existing=$((existing + 1))
+  done
+  if (( existing == 0 )); then
+    echo "==> Первичный запуск инфраструктуры..."
+    SERVICES_CHANGED=true
+    "${COMPOSE[@]}" up -d --no-build "${infrastructure[@]}"
+  elif (( existing != ${#infrastructure[@]} )); then
+    fail "инфраструктура запущена частично; автоматическое recreate до drain запрещено."
+  fi
+  for service in "${infrastructure[@]}"; do
+    wait_for_service "$service"
+  done
+}
+
 capture_rollback_images() {
   local service container_id image_id image_name
 
@@ -163,6 +278,21 @@ capture_rollback_images() {
   done
 }
 
+probe_redis_writes_after_rollback() {
+  # shellcheck disable=SC2016  # Expand credentials inside each container.
+  "${COMPOSE[@]}" exec -T redis sh -ec '
+    probe="saas-poster:rollback-probe:$$"
+    test "$(REDISCLI_AUTH="$CACHE_REDIS_PASSWORD" redis-cli SET "$probe" 1 EX 10 NX)" = OK
+    test "$(REDISCLI_AUTH="$CACHE_REDIS_PASSWORD" redis-cli DEL "$probe")" = 1
+  '
+  # shellcheck disable=SC2016  # Expand credentials inside each container.
+  "${COMPOSE[@]}" exec -T redis_broker sh -ec '
+    probe="saas-poster:rollback-probe:$$"
+    test "$(REDISCLI_AUTH="$CELERY_REDIS_PASSWORD" redis-cli SET "$probe" 1 EX 10 NX)" = OK
+    test "$(REDISCLI_AUTH="$CELERY_REDIS_PASSWORD" redis-cli DEL "$probe")" = 1
+  '
+}
+
 rollback_deployment() {
   local exit_code="$1"
   local service rollback_failed=false
@@ -174,6 +304,12 @@ rollback_deployment() {
   show_logs
 
   if [[ "$MIGRATIONS_STARTED" == "true" ]]; then
+    # A failure may happen after the new writers were already started (for
+    # example during topology or external smoke validation).  Fail closed:
+    # never leave a partially verified release accepting traffic or jobs.
+    "${COMPOSE[@]}" stop -t 30 nginx || true
+    "${COMPOSE[@]}" stop -t "$PROD_DRAIN_TIMEOUT_SECONDS" \
+      "${DRAIN_SERVICES[@]}" || true
     echo "КРИТИЧЕСКАЯ ОШИБКА: миграция БД уже началась; старый application release автоматически не запускается." >&2
     echo "Оставьте writers остановленными, проверьте django_migrations/backup и выполните forward recovery по runbook." >&2
   elif [[ "$SERVICES_CHANGED" == "true" && "$PROD_ROLLBACK_ENABLED" == "true" && "$PREVIOUS_SHA" != "$TARGET_SHA" && "$PREVIOUS_SHA" =~ ^[0-9a-f]{40}$ ]]; then
@@ -186,11 +322,27 @@ rollback_deployment() {
 
     git checkout --detach "$PREVIOUS_SHA" || rollback_failed=true
     "${COMPOSE[@]}" config --quiet || rollback_failed=true
-    "${COMPOSE[@]}" up -d --no-build --force-recreate "${APPLICATION_SERVICES[@]}" || rollback_failed=true
-    for service in "${APPLICATION_SERVICES[@]}"; do
+    # Target resource-policy changes may already have recreated persistent
+    # infrastructure. Restore the old Compose contract and prove Redis writes
+    # before any old application writer is allowed to start.
+    "${COMPOSE[@]}" up -d --no-build --no-deps --force-recreate \
+      "${ROLLBACK_INFRASTRUCTURE_SERVICES[@]}" || rollback_failed=true
+    for service in "${ROLLBACK_INFRASTRUCTURE_SERVICES[@]}"; do
       wait_for_service "$service" || rollback_failed=true
     done
-    smoke_check || rollback_failed=true
+    probe_redis_writes_after_rollback || rollback_failed=true
+    if [[ "$rollback_failed" == "false" ]]; then
+      "${COMPOSE[@]}" up -d --no-build --no-deps --force-recreate \
+        "${ROLLBACK_APPLICATION_SERVICES[@]}" || rollback_failed=true
+      if [[ "$rollback_failed" == "false" ]]; then
+        for service in "${ROLLBACK_APPLICATION_SERVICES[@]}"; do
+          wait_for_service "$service" || rollback_failed=true
+        done
+      fi
+    fi
+    if [[ "$rollback_failed" == "false" ]]; then
+      smoke_check || rollback_failed=true
+    fi
 
     if [[ "$MIGRATIONS_APPLIED" == "true" ]]; then
       echo "ВНИМАНИЕ: миграции БД не откатывались; deploy-миграции обязаны быть backward-compatible." >&2
@@ -225,7 +377,7 @@ preflight() {
   local command_name available_kb required_kb
 
   DEPLOY_PHASE="preflight"
-  for command_name in git docker curl flock df awk stat timeout; do
+  for command_name in git docker curl flock df awk stat timeout cmp; do
     command -v "$command_name" >/dev/null 2>&1 || fail "команда ${command_name} не установлена."
   done
 
@@ -233,6 +385,8 @@ preflight() {
   validate_integer_setting PROD_HEALTH_INTERVAL_SECONDS "$PROD_HEALTH_INTERVAL_SECONDS"
   validate_integer_setting PROD_LOG_TAIL "$PROD_LOG_TAIL"
   validate_integer_setting PROD_MIN_FREE_DISK_MB "$PROD_MIN_FREE_DISK_MB"
+  (( PROD_MIN_FREE_DISK_MB >= 8192 )) \
+    || fail "PROD_MIN_FREE_DISK_MB нельзя задавать ниже 8192 MiB."
   validate_integer_setting PROD_BACKUP_TIMEOUT_SECONDS "$PROD_BACKUP_TIMEOUT_SECONDS"
   validate_integer_setting PROD_DRAIN_TIMEOUT_SECONDS "$PROD_DRAIN_TIMEOUT_SECONDS"
   [[ "$PROD_ROLLBACK_ENABLED" == "true" || "$PROD_ROLLBACK_ENABLED" == "false" ]] \
@@ -258,6 +412,11 @@ preflight() {
   git merge-base --is-ancestor "$TARGET_SHA" origin/main \
     || fail "commit ${TARGET_SHA} не принадлежит актуальной ветке origin/main."
 
+  if [[ "$ROOT_DIR" == "/opt/saas_poster" ]]; then
+    verify_installed_host_contract
+    validate_pending_host_contract
+  fi
+
   validate_private_regular_file "$ROOT_DIR/.env"
   validate_private_regular_file "$ROOT_DIR/.backup.env"
   if [[ -e "$DEPLOY_ENV_FILE" || -L "$DEPLOY_ENV_FILE" ]]; then
@@ -265,13 +424,6 @@ preflight() {
   fi
   [[ "$PROD_SMOKE_URL" =~ ^https://[^[:space:]]+$ ]] \
     || fail "PROD_SMOKE_URL обязателен и должен быть публичным HTTPS URL."
-
-  [[ -d "$PROD_LOCK_DIR" && ! -L "$PROD_LOCK_DIR" && -O "$PROD_LOCK_DIR" ]] \
-    || fail "$PROD_LOCK_DIR должен быть обычным каталогом владельца deploy user."
-  [[ "$(stat -c '%a' "$PROD_LOCK_DIR")" == "700" ]] \
-    || fail "$PROD_LOCK_DIR должен иметь права 700."
-  exec 9>"$DEPLOY_LOCK_FILE"
-  flock -n 9 || fail "другой deploy уже выполняется."
 
   docker info >/dev/null
   "${COMPOSE[@]}" version >/dev/null
@@ -310,19 +462,19 @@ smoke_check() {
 echo "==> Preflight для commit ${TARGET_SHA}..."
 preflight
 
+if [[ "$ROOT_DIR" == "/opt/saas_poster" ]]; then
+  DEPLOY_PHASE="host capacity"
+  "$ROOT_DIR/scripts/check_production_capacity.sh"
+fi
+
 echo "==> Сохранение образов текущего release для rollback..."
 capture_rollback_images
 
 DEPLOY_PHASE="infrastructure readiness"
 echo "==> Сборка patched egress proxy до изменения работающих сервисов..."
 "${COMPOSE[@]}" build --pull egress_proxy
-SERVICES_CHANGED=true
-echo "==> Запуск инфраструктурных зависимостей..."
-"${COMPOSE[@]}" up -d --no-build db redis redis_broker egress_proxy
-wait_for_service db
-wait_for_service redis
-wait_for_service redis_broker
-wait_for_service egress_proxy
+echo "==> Проверка работающих инфраструктурных зависимостей..."
+ensure_current_infrastructure
 
 DEPLOY_PHASE="application build"
 echo "==> Сборка application-образов до изменения работающих сервисов..."
@@ -350,7 +502,34 @@ timeout --foreground --signal=TERM --kill-after=5s 60s \
   "${COMPOSE[@]}" run --rm --no-deps django \
     python manage.py check_public_http_connectivity
 
+# The first stop is already a runtime mutation.  Set the rollback guard before
+# entering the drain function so ERR/HUP/INT/TERM at either stop cannot leave a
+# partially drained previous release down while claiming that runtime was
+# untouched.
+SERVICES_CHANGED=true
 drain_application_writers
+
+DEPLOY_PHASE="egress proxy rollout"
+echo "==> Переключение egress proxy после graceful drain writers..."
+"${COMPOSE[@]}" up -d --no-build db redis redis_broker egress_proxy
+wait_for_service db
+wait_for_service redis
+wait_for_service redis_broker
+wait_for_service egress_proxy
+
+DEPLOY_PHASE="target egress connectivity"
+echo "==> Проверка writable Redis и target memory limits после recreate..."
+timeout --foreground --signal=TERM --kill-after=5s 60s \
+  "${COMPOSE[@]}" run --rm --no-deps django \
+    python manage.py check_redis_connectivity --require-target-limits
+echo "==> Проверка SMTP через новый egress proxy до миграций..."
+timeout --foreground --signal=TERM --kill-after=5s 60s \
+  "${COMPOSE[@]}" run --rm --no-deps django \
+    python manage.py check_email_connectivity
+echo "==> Проверка public HTTPS через новый egress proxy до миграций..."
+timeout --foreground --signal=TERM --kill-after=5s 60s \
+  "${COMPOSE[@]}" run --rm --no-deps django \
+    python manage.py check_public_http_connectivity
 
 DEPLOY_PHASE="pre-migration database backup"
 echo "==> Создание зашифрованного backup перед миграциями..."
@@ -367,6 +546,7 @@ MIGRATIONS_APPLIED=true
 
 DEPLOY_PHASE="release data preparation"
 echo "==> Подготовка статики и служебных данных..."
+"${COMPOSE[@]}" run --rm --no-deps django python manage.py seed_plans
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py collectstatic --noinput
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py setup_periodic_tasks
 "${COMPOSE[@]}" run --rm --no-deps django python manage.py seed_tenant_categories
@@ -381,7 +561,20 @@ for service in "${HEALTH_SERVICES[@]}"; do
   wait_for_service "$service"
 done
 
+DEPLOY_PHASE="runtime topology verification"
+"$ROOT_DIR/scripts/verify_production_topology.sh"
+
 smoke_check
+
+if [[ "$ROOT_DIR" == "/opt/saas_poster" ]]; then
+  DEPLOY_PHASE="backup timer activation"
+  systemctl enable --now saas-poster-backup.timer \
+    saas-poster-backup-check.timer
+  systemctl is-active --quiet saas-poster-backup.timer \
+    saas-poster-backup-check.timer \
+    || fail "backup timers не перешли в active после rollout."
+  rm -f -- "$HOST_CONTRACT_PENDING_FILE"
+fi
 
 trap - ERR HUP INT TERM
 echo ""

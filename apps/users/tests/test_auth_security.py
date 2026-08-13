@@ -14,10 +14,21 @@ from apps.tenants.models import TenantUser
 from apps.tenants.services import TenantService
 from apps.users.models import User
 from apps.users.tasks import send_password_reset_email
+from apps.users.tokens import current_password_reset_timestamp
 
 
 PASSWORD = 'CorrectHorse-123'
 NEW_PASSWORD = 'AnotherHorse-456'
+
+
+@pytest.fixture(autouse=True)
+def _isolate_auth_throttle_state():
+    """Keep Redis-backed auth limits deterministic across full-suite reruns."""
+    cache.clear()
+    try:
+        yield
+    finally:
+        cache.clear()
 
 
 def _human_session(slug='profile', email='profile@example.com'):
@@ -154,12 +165,17 @@ def test_password_reset_request_is_uniform_and_confirmation_is_one_time():
         }, content_type='application/json')
         assert unknown.status_code == 202
         assert unknown.json() == existing_body
-        assert enqueue.call_args_list[0].args == (user.pk,)
-        assert enqueue.call_args_list[1].args == (None,)
+        assert enqueue.call_args_list[0].args[0] == user.pk
+        queued_timestamp = enqueue.call_args_list[0].args[1]
+        assert isinstance(queued_timestamp, int)
+        assert enqueue.call_args_list[1].args == (None, None)
 
-    result = send_password_reset_email(user.pk)
+    result = send_password_reset_email(user.pk, queued_timestamp)
     assert result == {'sent': True}
     assert len(mail.outbox) == 1
+    assert mail.outbox[0].extra_headers['Resend-Idempotency-Key'].startswith(
+        'map-password-reset/',
+    )
 
     reset_url = mail.outbox[0].body.splitlines()[2]
     parsed = urlparse(reset_url)
@@ -216,6 +232,9 @@ def test_email_change_requires_password_and_confirmation_revokes_sessions():
     }, content_type='application/json')
     assert requested.status_code == 200
     assert len(mail.outbox) == 1
+    assert mail.outbox[0].extra_headers['Resend-Idempotency-Key'].startswith(
+        'map-email-change/',
+    )
     confirm_url = mail.outbox[0].body.splitlines()[2]
     token = parse_qs(urlparse(confirm_url).fragment)['token'][0]
 
@@ -234,6 +253,53 @@ def test_email_change_requires_password_and_confirmation_revokes_sessions():
         content_type='application/json',
     ).status_code == 400
     assert client.get('/api/v1/auth/me/').status_code == 401
+
+
+@pytest.mark.django_db
+@override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+def test_password_reset_retry_reuses_exact_payload_and_provider_key():
+    _, user, _ = _human_session(
+        slug='reset-idempotent',
+        email='reset-idempotent@example.com',
+    )
+    token_timestamp = current_password_reset_timestamp()
+
+    assert send_password_reset_email(user.pk, token_timestamp) == {'sent': True}
+    assert send_password_reset_email(user.pk, token_timestamp) == {'sent': True}
+
+    assert len(mail.outbox) == 2
+    assert mail.outbox[0].body == mail.outbox[1].body
+    first_key = mail.outbox[0].extra_headers['Resend-Idempotency-Key']
+    second_key = mail.outbox[1].extra_headers['Resend-Idempotency-Key']
+    assert first_key == second_key
+
+
+@pytest.mark.django_db
+@override_settings(EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend')
+def test_email_change_ambiguous_http_retry_reuses_payload_and_provider_key():
+    _, user, tokens = _human_session(
+        slug='email-change-idempotent',
+        email='email-change-before@example.com',
+    )
+    client = Client(HTTP_AUTHORIZATION=f"Bearer {tokens['access']}")
+    payload = {
+        'new_email': 'email-change-after@example.com',
+        'current_password': PASSWORD,
+    }
+
+    assert client.post(
+        '/api/v1/auth/change-email/', payload, content_type='application/json',
+    ).status_code == 200
+    assert client.post(
+        '/api/v1/auth/change-email/', payload, content_type='application/json',
+    ).status_code == 200
+
+    assert len(mail.outbox) == 2
+    assert mail.outbox[0].body == mail.outbox[1].body
+    assert (
+        mail.outbox[0].extra_headers['Resend-Idempotency-Key']
+        == mail.outbox[1].extra_headers['Resend-Idempotency-Key']
+    )
 
 
 @pytest.mark.django_db

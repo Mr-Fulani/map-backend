@@ -4,12 +4,16 @@ from urllib.parse import urlencode
 
 from celery import shared_task
 from django.conf import settings
-from django.contrib.auth.tokens import default_token_generator
-from django.core.mail import send_mail
 from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 
+from apps.notifications.email import EmailNotifier
 from apps.users.models import User
+from apps.users.tokens import (
+    current_password_reset_timestamp,
+    make_password_reset_token_at,
+    password_reset_datetime,
+)
 
 
 @shared_task(
@@ -19,8 +23,14 @@ from apps.users.models import User
     retry_backoff=True,
     retry_jitter=True,
     retry_kwargs={'max_retries': 5},
+    acks_late=True,
+    reject_on_worker_lost=True,
 )
-def send_password_reset_email(self, user_id: int | None):
+def send_password_reset_email(
+    self,
+    user_id: int | None,
+    token_timestamp: int | None = None,
+):
     """Generate the one-time token in the worker and send it when user still exists."""
     if user_id is None:
         return {'sent': False}
@@ -29,20 +39,28 @@ def send_password_reset_email(self, user_id: int | None):
         return {'sent': False}
 
     uid = urlsafe_base64_encode(force_bytes(user.pk))
-    token = default_token_generator.make_token(user)
+    stable_timestamp = (
+        int(token_timestamp)
+        if token_timestamp is not None
+        else current_password_reset_timestamp()
+    )
+    token = make_password_reset_token_at(user, stable_timestamp)
     fragment = urlencode({'uid': uid, 'token': token})
     frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000').rstrip('/')
     # URL fragments никогда не передаются серверу и поэтому не попадают в
     # HTTP access logs или Referer при загрузке страницы восстановления.
     reset_url = f'{frontend_url}/reset-password#{fragment}'
-    send_mail(
-        subject='Восстановление пароля — MAP',
-        message=(
+    sent = EmailNotifier().send(
+        user.email,
+        'Восстановление пароля — MAP',
+        (
             'Для установки нового пароля перейдите по ссылке:\n\n'
             f'{reset_url}\n\n'
             'Если вы не запрашивали восстановление, проигнорируйте письмо.'
         ),
-        from_email=settings.DEFAULT_FROM_EMAIL,
-        recipient_list=[user.email],
+        idempotency_key=f'map-password-reset/{user.pk}-{stable_timestamp}',
+        message_date=password_reset_datetime(stable_timestamp),
     )
+    if not sent:
+        raise RuntimeError('Password reset email delivery failed.')
     return {'sent': True}
