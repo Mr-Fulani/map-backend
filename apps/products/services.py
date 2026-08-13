@@ -1,11 +1,15 @@
 import hashlib
 import json
 import re
+from collections.abc import Mapping
 from decimal import Decimal
+from typing import Any, NotRequired, SupportsInt, TypeAlias, TypedDict, cast
 
 from django.conf import settings
+from django.db import transaction
 from django.utils.timezone import now
 
+from apps.core.idempotency import raise_on_fingerprint_conflict
 from apps.products.attribute_presentation import normalize_attribute_text
 from apps.products.catalog_category_seed import BASE_CATEGORY_TEMPLATE_TREE
 from apps.products.enrichment import make_value_hash, normalize_part_code
@@ -32,6 +36,25 @@ MAX_BULK_ACTION_PAUSE_SECONDS = 3600
 MAX_BULK_ACTION_PRODUCT_IDS = settings.API_BULK_MAX_ITEMS
 
 
+class _PlatformCategorySeed(TypedDict):
+    name: str
+    aliases: NotRequired[list[str]]
+    children: NotRequired[list[tuple[str, list[str], bool]]]
+    fitment_required: NotRequired[bool]
+
+
+_TenantCategoryChild: TypeAlias = (
+    str | tuple[str, list[str]] | tuple[str, list[str], bool]
+)
+
+
+class _TenantCategorySeed(TypedDict):
+    name: str
+    aliases: NotRequired[list[str]]
+    children: NotRequired[list[_TenantCategoryChild]]
+    fitment_required: NotRequired[bool]
+
+
 # Латинские буквы-двойники → кириллица. В источниках (1С/CSV) названия часто
 # приходят с подменой: «Oпopa шapoвaя» = латинские O/o/p/a. Для матчинга категорий
 # приводим к кириллице (на отображение товара не влияет).
@@ -48,7 +71,7 @@ def dehomoglyph(text: str) -> str:
     return (text or '').translate(_HOMOGLYPHS)
 
 
-def _compute_hash(data: dict) -> str:
+def _compute_hash(data: Mapping[str, object]) -> str:
     """SHA256-хэш ключевых полей товара — используется для обнаружения изменений."""
     payload = {
         'name': data.get('name', ''),
@@ -60,6 +83,15 @@ def _compute_hash(data: dict) -> str:
         'description': data.get('description', ''),
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+
+
+def _parse_integer(value: object) -> int:
+    """Convert integer-shaped values accepted from product import payloads."""
+    if value is None:
+        return 0
+    if isinstance(value, (str, bytes, bytearray, SupportsInt)):
+        return int(value)
+    raise TypeError(f'Unsupported integer value: {type(value).__name__}')
 
 
 class ProductCategorySeedService:
@@ -83,7 +115,8 @@ class ProductCategorySeedService:
     @classmethod
     def seed_platform_categories(cls) -> int:
         created_count = 0
-        for root in BASE_PART_CATEGORY_TREE:
+        category_tree = cast(list[_PlatformCategorySeed], BASE_PART_CATEGORY_TREE)
+        for root in category_tree:
             category, created = PartCategory.objects.update_or_create(
                 normalized_name=normalize_category_name(root['name']),
                 defaults={
@@ -139,7 +172,10 @@ class ProductCategorySeedService:
         ).first()
         if root_domain is None:
             return 0
-        category_tree = BASE_CATEGORY_TEMPLATE_TREE.get(root_domain.slug, [])
+        category_tree = cast(
+            list[_TenantCategorySeed],
+            BASE_CATEGORY_TEMPLATE_TREE.get(root_domain.slug, []),
+        )
         if not category_tree:
             return 0
         seed_source = f'platform_{root_domain.slug}_seed'
@@ -379,6 +415,7 @@ class ProductService:
                 'category': data.get('category', ''),
                 'description': data.get('description', ''),
             }
+            assert old_data is not None
             change_type = ProductService.detect_change_type(old_data, new_data)
             if change_type is None:
                 return product, 'unchanged', None
@@ -388,6 +425,7 @@ class ProductService:
     @staticmethod
     def schedule_ai_generation(
         product, tenant, source_id: str = DEFAULT_PART_SOURCE,
+        deduplication_key: str | None = None,
     ) -> dict:
         """
         Проверяет лимит AI-кредитов и ставит генерацию описания в очередь.
@@ -399,7 +437,7 @@ class ProductService:
             QuotaExceeded: превышен лимит AI-генераций тенанта.
         """
         from apps.billing.services import LimitChecker
-        from django.db import transaction
+        from apps.core.dispatch import enqueue_durable_task
 
         can, reason = LimitChecker().can_generate_ai(tenant)
         if not can:
@@ -412,22 +450,39 @@ class ProductService:
                 article=product.article,
                 normalized_article=normalize_cross_code(product.article),
                 source_id=source_id,
+                fallback_origin_key=deduplication_key or '',
             )
-            from apps.products.tasks import parse_single_part_then_generate_description
-            transaction.on_commit(lambda: parse_single_part_then_generate_description.delay(job.pk))
+            dispatch = enqueue_durable_task(
+                'apps.products.tasks.parse_single_part_then_generate_description',
+                args=[job.pk],
+                deduplication_key=(
+                    deduplication_key
+                    or f'product-parse-job:{job.pk}:generate-after'
+                ),
+                max_run_attempts=4,
+            )
             return {
                 'mode': 'enrich_then_generate',
                 'job_id': job.pk,
+                'dispatch_id': str(dispatch.pk),
             }
-        product_id = product.pk
-        transaction.on_commit(lambda: _enqueue_ai_generation(product_id))
+        dispatch = enqueue_durable_task(
+            'apps.ai_agent.tasks.generate_description_task',
+            args=[product.pk],
+            deduplication_key=deduplication_key,
+            max_run_attempts=4,
+        )
         return {
             'mode': 'generate',
             'job_id': None,
+            'dispatch_id': str(dispatch.pk),
         }
 
     @staticmethod
-    def detect_change_type(old_data: dict, new_data: dict) -> str | None:
+    def detect_change_type(
+        old_data: Mapping[str, object],
+        new_data: Mapping[str, object],
+    ) -> str | None:
         """
         Определяет тип изменения товара.
 
@@ -441,8 +496,8 @@ class ProductService:
         except (ValueError, TypeError):
             price_changed = str(old_data.get('price')) != str(new_data.get('price'))
         try:
-            stock_changed = int(old_data.get('stock_qty') or 0) != int(
-                new_data.get('stock_qty') or 0
+            stock_changed = _parse_integer(old_data.get('stock_qty')) != _parse_integer(
+                new_data.get('stock_qty')
             )
         except (ValueError, TypeError):
             stock_changed = old_data.get('stock_qty') != new_data.get('stock_qty')
@@ -745,6 +800,7 @@ class ProductEnrichmentService:
         # доступен, Avito-категории не участвуют в автоматическом матчинге.
         has_internal_auto_parts_tree = any(
             category.root_domain_id
+            and category.root_domain is not None
             and category.root_domain.slug == TenantCatalogCategory.Domain.AUTO_PARTS
             and category.external_source == ProductCategorySeedService.SEED_SOURCE
             and category.external_id
@@ -756,6 +812,7 @@ class ProductEnrichmentService:
                 for category in categories
                 if not (
                     category.root_domain_id
+                    and category.root_domain is not None
                     and category.root_domain.slug == TenantCatalogCategory.Domain.AUTO_PARTS
                     and category.external_source == 'avito'
                 )
@@ -932,10 +989,13 @@ class ProductEnrichmentService:
 
         if fact.fact_type != ProductEnrichmentFact.FactType.OEM:
             return
-        payload = {}
+        payload: dict[str, object] = {}
         try:
             raw = json.loads(fact.raw_text or '{}')
-            payload = raw.get('claim_payload') or {}
+            if isinstance(raw, dict):
+                claim_payload = raw.get('claim_payload')
+                if isinstance(claim_payload, dict):
+                    payload = claim_payload
         except (TypeError, ValueError):
             pass
         code = str(payload.get('code') or fact.value or '').strip()[:100]
@@ -962,6 +1022,7 @@ class ProductEnrichmentService:
     def create_parse_job(
         cls, tenant, product: Product | None, brand: str, article: str,
         normalized_article: str, source_id: str = DEFAULT_PART_SOURCE,
+        fallback_origin_key: str = '',
     ) -> ProductParseJob:
         cls.ensure_product_auto_parts_eligible(tenant, product)
         if product is not None:
@@ -973,6 +1034,7 @@ class ProductEnrichmentService:
             article=article,
             normalized_article=normalized_article,
             source_id=source_id,
+            fallback_origin_key=str(fallback_origin_key or '')[:200],
         )
 
     @classmethod
@@ -1213,16 +1275,15 @@ class ProductEnrichmentService:
         the current AI context and therefore must be updated instead of appended
         whenever a catalogue changes its description.
         """
-        lookup = {
-            'tenant': incoming.tenant,
-            'product': incoming.product,
-            'source_id': incoming.source_id,
-            'fact_type': incoming.fact_type,
-            'name': incoming.name,
-        }
-        current = ProductEnrichmentFact.objects.filter(**lookup).order_by('-updated_at').first()
+        current = ProductEnrichmentFact.objects.filter(
+            tenant=incoming.tenant,
+            product=incoming.product,
+            source_id=incoming.source_id,
+            fact_type=incoming.fact_type,
+            name=incoming.name,
+        ).order_by('-updated_at').first()
         value_changed = current is not None and current.value_hash != incoming.value_hash
-        defaults = {
+        defaults: dict[str, Any] = {
             'source_url': incoming.source_url,
             'value': incoming.value,
             'value_hash': incoming.value_hash,
@@ -1238,15 +1299,19 @@ class ProductEnrichmentService:
                 'reviewed_by': None,
             })
         fact, _ = ProductEnrichmentFact.objects.update_or_create(
-            **lookup,
+            tenant=incoming.tenant,
+            product=incoming.product,
+            source_id=incoming.source_id,
+            fact_type=incoming.fact_type,
+            name=incoming.name,
             defaults=defaults,
         )
         return fact
 
     @staticmethod
     def refresh_product_denormalized_enrichment(product: Product) -> None:
-        oem_numbers = []
-        cross_numbers = []
+        oem_numbers: list[str] = []
+        cross_numbers: list[str] = []
         for cross in product.cross_codes.order_by('source_id', 'manufacturer', 'code'):
             target = oem_numbers if cross.code_type == ProductCrossCode.CodeType.OEM else cross_numbers
             if cross.normalized_code and cross.normalized_code not in target:
@@ -1282,35 +1347,235 @@ class ProductEnrichmentService:
 
     @classmethod
     def run_parse_job(cls, job_id: int) -> dict:
-        job = ProductParseJob.objects.select_related('tenant', 'product').get(pk=job_id)
-        job.status = ProductParseJob.Status.RUNNING
-        job.started_at = now()
-        job.error_message = ''
-        job.save(update_fields=['status', 'started_at', 'error_message'])
+        from apps.core.advisory_lock import try_session_advisory_lock
+        from apps.core.dispatch import SafeRetryableDispatchError
 
+        with try_session_advisory_lock(
+            f'product-parse-job:{job_id}',
+        ) as acquired:
+            if not acquired:
+                raise SafeRetryableDispatchError(
+                    'Product parse workflow is already owned by another worker.',
+                )
+            return cls._run_parse_job_owned(job_id)
+
+    @classmethod
+    def _run_parse_job_owned(cls, job_id: int) -> dict:
+        job = ProductParseJob.objects.select_related('tenant', 'product').get(pk=job_id)
+        if job.source_id == 'euroauto':
+            from apps.web_research.models import WebSearchWorkflow
+            existing_workflow = WebSearchWorkflow.objects.filter(
+                tenant=job.tenant,
+                operation='euroauto',
+                workflow_key=f'product-parse-job:{job.pk}',
+                status=WebSearchWorkflow.Status.APPLIED,
+            ).first()
+            if (
+                existing_workflow is not None
+                and job.status in {
+                    ProductParseJob.Status.SUCCESS,
+                    ProductParseJob.Status.FAILED,
+                    ProductParseJob.Status.NOT_FOUND,
+                    ProductParseJob.Status.NEED_REVIEW,
+                }
+            ):
+                # ACK and the durable job payload already committed. A worker
+                # kill before dispatch CAS must be a local no-op: downstream
+                # image/fallback dispatchers consume this persisted result and
+                # use their own idempotency keys.
+                parsed_data = (
+                    dict(job.parsed_data)
+                    if isinstance(job.parsed_data, dict)
+                    else {}
+                )
+                applied_knowledge = parsed_data.get('applied_knowledge')
+                if not isinstance(applied_knowledge, dict):
+                    applied_knowledge = {}
+                source_offer = parsed_data.get('source_offer')
+                if not isinstance(source_offer, dict):
+                    source_offer = {
+                        'price': (
+                            str(job.source_price)
+                            if job.source_price is not None
+                            else None
+                        ),
+                        'currency': job.source_currency,
+                        'price_is_from': job.source_price_is_from,
+                        'availability': job.source_availability,
+                        'availability_text': job.source_availability_text,
+                        'quantity': job.source_quantity,
+                    }
+                return {
+                    'job_id': job.pk,
+                    'product_id': job.product_id,
+                    'status': job.status,
+                    'source_id': job.source_id,
+                    'image_urls': list(parsed_data.get('image_urls') or [])[:10],
+                    'source_offer': source_offer,
+                    'relations_count': int(
+                        applied_knowledge.get('relations_count') or 0,
+                    ),
+                    'fitments_count': int(
+                        applied_knowledge.get('fitments_count') or 0,
+                    ),
+                    'resumed': True,
+                }
+        web_search_workflow = None
+        parser = None
+        product = None
         try:
-            product = job.product or cls._find_single_product_for_job(job)
+            if job.source_id == 'euroauto':
+                from apps.web_research.accounting import (
+                    acquire_web_search_workflow,
+                    resume_web_search_workflow,
+                )
+                from apps.web_research.models import WebSearchWorkflow
+
+                workflow_key = f'product-parse-job:{job.pk}'
+                # The first paid workflow acquisition and its persisted owner
+                # share one Tenant -> job lock transaction with delete guards.
+                with transaction.atomic():
+                    type(job.tenant).objects.select_for_update().only('pk').get(
+                        pk=job.tenant_id,
+                    )
+                    job = (
+                        ProductParseJob.objects.select_for_update(of=('self',))
+                        .select_related('tenant', 'product')
+                        .get(pk=job.pk, tenant_id=job.tenant_id)
+                    )
+                    product = job.product or cls._find_single_product_for_job(job)
+                    if job.product_id is None:
+                        job.product = product
+                    try:
+                        web_search_workflow = resume_web_search_workflow(
+                            tenant=job.tenant,
+                            operation='euroauto',
+                            workflow_key=workflow_key,
+                        )
+                    except WebSearchWorkflow.DoesNotExist:
+                        from apps.products.part_fetchers import (
+                            build_euroauto_workflow_snapshot,
+                        )
+                        hint = ' '.join(filter(None, [
+                            getattr(product, 'name', ''),
+                            job.brand,
+                        ])).strip()
+                        input_snapshot = build_euroauto_workflow_snapshot(
+                            job.tenant,
+                            article=job.article,
+                            hint=hint,
+                            brand=job.brand,
+                        )
+                        web_search_workflow = acquire_web_search_workflow(
+                            tenant=job.tenant,
+                            operation='euroauto',
+                            domain_reference=(
+                                f'product:{job.tenant_id}:{product.pk}'
+                            ),
+                            workflow_key=workflow_key,
+                            input_snapshot=input_snapshot,
+                            product=product,
+                        )
+                    job.status = ProductParseJob.Status.RUNNING
+                    job.started_at = now()
+                    job.error_message = ''
+                    job.save(update_fields=[
+                        'product', 'status', 'started_at', 'error_message',
+                        'updated_at',
+                    ])
+            else:
+                job.status = ProductParseJob.Status.RUNNING
+                job.started_at = now()
+                job.error_message = ''
+                job.save(update_fields=[
+                    'status', 'started_at', 'error_message',
+                ])
+
+            product = product or job.product or cls._find_single_product_for_job(job)
+            if job.product_id is None:
+                job.product = product
+                job.save(update_fields=['product', 'updated_at'])
             applied_knowledge = ProductKnowledgeGraphService.apply_known_knowledge_to_product(product)
 
             parser = get_part_parser(job.source_id)
             if hasattr(parser, 'set_tenant'):
                 parser.set_tenant(job.tenant)
+            if hasattr(parser, 'set_domain_reference'):
+                parser.set_domain_reference(
+                    f'product:{job.tenant_id}:{product.pk}'
+                )
+            if hasattr(parser, 'set_web_search_workflow'):
+                if web_search_workflow is None:
+                    raise RuntimeError(
+                        'Durable paid-search workflow is required for parser.',
+                    )
+                parser.set_web_search_workflow(web_search_workflow)
+            parse_brand = job.brand
+            parse_article = job.article
+            search_hint = ' '.join(filter(None, [
+                getattr(product, 'name', ''),
+                job.brand,
+            ])).strip()
+            if web_search_workflow is not None:
+                snapshot = web_search_workflow.input_snapshot
+                parse_brand = str(snapshot.get('brand') or '')
+                parse_article = str(snapshot.get('article') or '')
+                search_hint = str(snapshot.get('hint') or '')
             try:
-                html, source_url = parser.fetch(job.brand, job.article)
-                parsed = parser.parse_html(html, job.brand, job.article, source_url=source_url)
+                html, source_url = parser.fetch(parse_brand, parse_article)
+                parsed = parser.parse_html(
+                    html,
+                    parse_brand,
+                    parse_article,
+                    source_url=source_url,
+                )
             except PartNotFound:
                 if not hasattr(parser, 'fetch_search'):
                     raise
-                # Название товара помогает выбрать нужный товар, когда один
-                # артикул принадлежит разным брендам/деталям.
-                hint = ' '.join(filter(None, [getattr(product, 'name', ''), job.brand])).strip()
-                html, source_url = parser.fetch_search(job.article, hint=hint)
-                parsed = parser.parse_search_html(
-                    html, job.brand, job.article, source_url=source_url,
+                html, source_url = parser.fetch_search(
+                    parse_article,
+                    hint=search_hint,
                 )
-            cls.save_parsed_part(job.tenant, product, parsed, source_id=job.source_id)
+                parsed = parser.parse_search_html(
+                    html,
+                    parse_brand,
+                    parse_article,
+                    source_url=source_url,
+                )
+        except ProductParseJob.DoesNotExist:
+            # A hard delete won the Tenant -> job lock race before any paid
+            # workflow existed. Never save the stale Python instance back and
+            # accidentally resurrect its primary key.
+            raise
         except PartNotFound as exc:
-            cls._finish_job(job, ProductParseJob.Status.NOT_FOUND, error_message=str(exc))
+            with transaction.atomic():
+                cls._finish_job(
+                    job,
+                    ProductParseJob.Status.NOT_FOUND,
+                    error_message=str(exc),
+                )
+                if web_search_workflow is not None:
+                    from apps.web_research.accounting import (
+                        acknowledge_web_search_workflow,
+                        release_empty_web_search_workflow,
+                    )
+                    consumed_attempt_ids = (
+                        parser.get_web_search_consumed_attempt_ids()
+                        if parser is not None and hasattr(
+                            parser,
+                            'get_web_search_consumed_attempt_ids',
+                        )
+                        else set()
+                    )
+                    if consumed_attempt_ids:
+                        acknowledge_web_search_workflow(
+                            web_search_workflow.pk,
+                            consumed_attempt_ids=consumed_attempt_ids,
+                        )
+                    else:
+                        release_empty_web_search_workflow(
+                            web_search_workflow.pk,
+                        )
             return {
                 'job_id': job_id,
                 'product_id': product.pk if product else None,
@@ -1319,7 +1584,45 @@ class ProductEnrichmentService:
                 'image_urls': [],
             }
         except Exception as exc:
-            cls._finish_job(job, ProductParseJob.Status.FAILED, error_message=str(exc))
+            from apps.web_research.providers.base import WebSearchProviderError
+            with transaction.atomic():
+                cls._finish_job(
+                    job,
+                    ProductParseJob.Status.FAILED,
+                    error_message=str(exc),
+                )
+                # A proven provider rejection/pre-send failure is itself the
+                # durable domain result. Parsing/apply failures after a valid
+                # paid response deliberately leave the workflow unacknowledged
+                # so the same parse job can replay its checkpoint.
+                if (
+                    web_search_workflow is not None
+                ):
+                    from apps.web_research.accounting import (
+                        acknowledge_web_search_workflow,
+                        release_empty_web_search_workflow,
+                    )
+                    consumed_attempt_ids = (
+                        parser.get_web_search_consumed_attempt_ids()
+                        if parser is not None and hasattr(
+                            parser,
+                            'get_web_search_consumed_attempt_ids',
+                        )
+                        else set()
+                    )
+                    if not consumed_attempt_ids:
+                        # Configuration/routing failed before provider I/O.
+                        release_empty_web_search_workflow(
+                            web_search_workflow.pk,
+                        )
+                    elif (
+                        isinstance(exc, WebSearchProviderError)
+                        and not exc.outcome_uncertain
+                    ):
+                        acknowledge_web_search_workflow(
+                            web_search_workflow.pk,
+                            consumed_attempt_ids=consumed_attempt_ids,
+                        )
             raise
 
         status = (
@@ -1327,20 +1630,63 @@ class ProductEnrichmentService:
             if parsed.fitments or applied_knowledge['fitments_count']
             else ProductParseJob.Status.NEED_REVIEW
         )
-        job.product = product
-        job.source_url = source_url
-        job.raw_html = html[:5_000_000]
-        job.raw_text = parsed.raw_text
-        job.parsed_data = parsed.to_dict()
-        if applied_knowledge['relations_count'] or applied_knowledge['fitments_count']:
-            job.parsed_data['applied_knowledge'] = applied_knowledge
-        job.source_price = parsed.source_offer.price
-        job.source_currency = parsed.source_offer.currency or 'RUB'
-        job.source_price_is_from = parsed.source_offer.price_is_from
-        job.source_availability = parsed.source_offer.availability
-        job.source_availability_text = parsed.source_offer.availability_text[:200]
-        job.source_quantity = parsed.source_offer.quantity
-        cls._finish_job(job, status)
+        try:
+            with transaction.atomic():
+                cls.save_parsed_part(
+                    job.tenant,
+                    product,
+                    parsed,
+                    source_id=job.source_id,
+                )
+                job.product = product
+                job.source_url = source_url
+                job.raw_html = html[:5_000_000]
+                job.raw_text = parsed.raw_text
+                job.parsed_data = parsed.to_dict()
+                if (
+                    applied_knowledge['relations_count']
+                    or applied_knowledge['fitments_count']
+                ):
+                    job.parsed_data['applied_knowledge'] = applied_knowledge
+                job.source_price = parsed.source_offer.price
+                job.source_currency = parsed.source_offer.currency or 'RUB'
+                job.source_price_is_from = parsed.source_offer.price_is_from
+                job.source_availability = parsed.source_offer.availability
+                job.source_availability_text = (
+                    parsed.source_offer.availability_text[:200]
+                )
+                job.source_quantity = parsed.source_offer.quantity
+                cls._finish_job(job, status)
+                if web_search_workflow is not None:
+                    from apps.web_research.accounting import (
+                        acknowledge_web_search_workflow,
+                    )
+                    consumed_attempt_ids = (
+                        parser.get_web_search_consumed_attempt_ids()
+                        if parser is not None and hasattr(
+                            parser,
+                            'get_web_search_consumed_attempt_ids',
+                        )
+                        else set()
+                    )
+                    if not consumed_attempt_ids:
+                        raise RuntimeError(
+                            'Paid Euroauto workflow produced no consumed evidence.',
+                        )
+                    acknowledge_web_search_workflow(
+                        web_search_workflow.pk,
+                        consumed_attempt_ids=consumed_attempt_ids,
+                    )
+        except Exception as exc:
+            # The domain transaction (including ACK) rolled back. Keep the job
+            # visibly failed while the workflow/checkpoint remains available
+            # for an explicit retry of this exact parse job.
+            cls._finish_job(
+                job,
+                ProductParseJob.Status.FAILED,
+                error_message=str(exc),
+            )
+            raise
         return {
             'job_id': job_id,
             'product_id': product.pk,
@@ -1394,6 +1740,8 @@ class ProductBulkActionService:
     def create_job(
         tenant, action: str, product_ids: list[int], source_id: str = DEFAULT_PART_SOURCE,
         batch_size: int = 20, pause_seconds: int = 60,
+        idempotency_key=None, request_fingerprint: str = '',
+        request_payload: dict | None = None,
     ) -> ProductBulkActionJob:
         if action not in ProductBulkActionService.ALLOWED_ACTIONS:
             raise ValueError('Unknown bulk action')
@@ -1420,15 +1768,20 @@ class ProductBulkActionService:
             ]
         valid_ids = [product.pk for product in products]
         skipped_count = max(len(set(product_ids)) - len(valid_ids), 0)
-        return ProductBulkActionJob.objects.create(
-            tenant=tenant,
-            action=action,
-            source_id=source_id,
-            product_ids=valid_ids,
-            total_count=len(valid_ids),
-            skipped_count=skipped_count,
-            batch_size=max(1, min(batch_size or source_config['batch_size'], source_config['batch_size'])),
-            pause_seconds=min(
+        defaults = {
+            'action': action,
+            'source_id': source_id,
+            'product_ids': valid_ids,
+            'total_count': len(valid_ids),
+            'skipped_count': skipped_count,
+            'batch_size': max(
+                1,
+                min(
+                    batch_size or source_config['batch_size'],
+                    source_config['batch_size'],
+                ),
+            ),
+            'pause_seconds': min(
                 MAX_BULK_ACTION_PAUSE_SECONDS,
                 max(
                     source_config['min_pause_seconds'],
@@ -1439,7 +1792,22 @@ class ProductBulkActionService:
                     ),
                 ),
             ),
+            'request_fingerprint': request_fingerprint,
+            'request_payload': request_payload or {},
+        }
+        if idempotency_key is None:
+            return ProductBulkActionJob.objects.create(tenant=tenant, **defaults)
+        job, created = ProductBulkActionJob.objects.get_or_create(
+            tenant=tenant,
+            idempotency_key=idempotency_key,
+            defaults=defaults,
         )
+        if not created:
+            raise_on_fingerprint_conflict(
+                job.request_fingerprint,
+                request_fingerprint,
+            )
+        return job
 
     @staticmethod
     def process_next_batch(job_id: int) -> dict:
@@ -1508,23 +1876,36 @@ class ProductBulkActionService:
                             article=product.article,
                             normalized_article=normalize_cross_code(product.article),
                             source_id=job.source_id,
+                            fallback_origin_key=(
+                                f'product-bulk:{job.pk}:product:{product.pk}'
+                            ),
                         )
                     except ProductIsNotAutoPart:
                         job.skipped_count += 1
                         continue
-                    from apps.products.tasks import (
-                        parse_single_part, parse_single_part_then_generate_description,
-                    )
-                    task = (
-                        parse_single_part_then_generate_description
+                    task_name = (
+                        'apps.products.tasks.parse_single_part_then_generate_description'
                         if job.action == ProductBulkActionJob.Action.ENRICH_THEN_GENERATE
-                        else parse_single_part
+                        else 'apps.products.tasks.parse_single_part'
                     )
-                    transaction.on_commit(lambda pk=parse_job.pk, celery_task=task: celery_task.delay(pk))
+                    from apps.core.dispatch import enqueue_durable_task
+                    enqueue_durable_task(
+                        task_name,
+                        args=[parse_job.pk],
+                        deduplication_key=f'product-parse-job:{parse_job.pk}',
+                        max_run_attempts=4,
+                    )
                     queued += 1
                 elif job.action == ProductBulkActionJob.Action.GENERATE_DESCRIPTIONS:
                     try:
-                        ProductService.schedule_ai_generation(product, job.tenant, source_id=job.source_id)
+                        ProductService.schedule_ai_generation(
+                            product,
+                            job.tenant,
+                            source_id=job.source_id,
+                            deduplication_key=(
+                                f'product-bulk:{job.pk}:ai-description:{product.pk}'
+                            ),
+                        )
                     except QuotaExceeded:
                         job.skipped_count += 1
                         continue
@@ -1533,9 +1914,16 @@ class ProductBulkActionService:
                     ProductEnrichmentService.classify_product_catalog_domain(product)
                     queued += 1
                 elif job.action == ProductBulkActionJob.Action.FIND_IMAGES:
-                    from apps.image_search.tasks import search_images_for_product
-                    transaction.on_commit(
-                        lambda pk=product.pk: search_images_for_product.delay(pk),
+                    from apps.image_search.services.dispatch import (
+                        create_image_search_task,
+                    )
+                    # Every paid image search owns a durable tracking record.
+                    # Its immutable task ID is the provider-workflow identity;
+                    # direct product-only dispatches cannot safely distinguish
+                    # crash recovery from a new paid intent.
+                    create_image_search_task(
+                        tenant=job.tenant,
+                        product=product,
                     )
                     queued += 1
                 else:
@@ -1553,12 +1941,23 @@ class ProductBulkActionService:
                 from datetime import timedelta
                 job.status = ProductBulkActionJob.Status.COOLING_DOWN
                 job.next_batch_at = now() + timedelta(seconds=job.pause_seconds)
-            job.last_dispatched_at = None
+            job.last_dispatched_at = now()
             job.save(update_fields=[
                 'status', 'started_at', 'processed_count', 'queued_count',
                 'success_count', 'skipped_count', 'finished_at', 'next_batch_at', 'updated_at',
                 'last_dispatched_at',
             ])
+            if job.status == ProductBulkActionJob.Status.COOLING_DOWN:
+                from apps.core.dispatch import enqueue_durable_task
+                enqueue_durable_task(
+                    'apps.products.tasks.process_bulk_product_action',
+                    args=[job.pk],
+                    deduplication_key=(
+                        f'product-bulk:{job.pk}:batch-offset:{job.processed_count}'
+                    ),
+                    available_at=job.next_batch_at,
+                    max_run_attempts=4,
+                )
             return {
                 'job_id': job_id,
                 'status': job.status,
@@ -1702,7 +2101,7 @@ class VehicleKnowledgeService:
 class ProductKnowledgeGraphService:
     """Platform-level граф артикулов: OEM, аналоги, заменители и trade-связи."""
 
-    CROSS_TO_RELATION = {
+    CROSS_TO_RELATION: dict[str, str] = {
         ProductCrossCode.CodeType.OEM: GlobalPartRelation.RelationType.OEM,
         ProductCrossCode.CodeType.CROSS: GlobalPartRelation.RelationType.CROSS,
         ProductCrossCode.CodeType.TRADE: GlobalPartRelation.RelationType.TRADE,
@@ -2126,6 +2525,10 @@ class ProductKnowledgeGraphService:
 
 
 def _enqueue_ai_generation(product_id: int) -> None:
-    """Ставит задачу генерации AI-описания в Celery."""
-    from apps.ai_agent.tasks import generate_description_task
-    generate_description_task.delay(product_id)
+    """Persistently schedules AI description generation."""
+    from apps.core.dispatch import enqueue_durable_task
+    enqueue_durable_task(
+        'apps.ai_agent.tasks.generate_description_task',
+        args=[product_id],
+        max_run_attempts=4,
+    )

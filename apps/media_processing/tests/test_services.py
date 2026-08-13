@@ -28,8 +28,10 @@ from apps.media_processing.providers.registry import (
     register_media_provider,
 )
 from apps.media_processing.services import (
-    MediaProviderRateLimitExceeded,
+    MediaProviderOutcomeUncertain, MediaProviderRateLimitExceeded,
+    _checkpoint_provider_result,
     _provider_result_bytes,
+    _serialize_provider_result_checkpoint,
     activate_variant,
     apply_provider_result,
     create_processing_job,
@@ -270,6 +272,63 @@ def test_external_result_creates_immutable_variant(
 
 
 @pytest.mark.django_db
+def test_variant_create_failure_removes_saved_object(
+    product_image,
+    configured_media_provider,
+):
+    job = create_processing_job(product_image=product_image, operations=['resize'])
+
+    with (
+        patch('apps.media_processing.services.default_storage.url', return_value='https://s3/source.jpg'),
+        patch(
+            'apps.media_processing.services.default_storage.save',
+            return_value='products/media/unreferenced.png',
+        ),
+        patch('apps.media_processing.services.default_storage.delete') as storage_delete,
+        patch.object(
+            ProductImageVariant.objects,
+            'create',
+            side_effect=RuntimeError('db failed'),
+        ),
+        pytest.raises(MediaProviderOutcomeUncertain, match='сверка'),
+    ):
+        submit_job(job)
+
+    job.refresh_from_db()
+    assert (
+        job.provider_response_state
+        == MediaProcessingJob.ProviderResponseState.RECORDED
+    )
+    assert job.provider_response_enc is not None
+    storage_delete.assert_called_once_with('products/media/unreferenced.png')
+    assert not ProductImageVariant.objects.filter(job=job).exists()
+
+
+@pytest.mark.django_db
+def test_same_variant_sha_is_not_reuploaded(
+    product_image,
+    configured_media_provider,
+):
+    first = create_processing_job(product_image=product_image, operations=['resize'])
+    second = create_processing_job(product_image=product_image, operations=['resize'])
+
+    with (
+        patch('apps.media_processing.services.default_storage.url', return_value='https://s3/source.jpg'),
+        patch(
+            'apps.media_processing.services.default_storage.save',
+            return_value='products/media/once.png',
+        ) as storage_save,
+    ):
+        submit_job(first)
+        submit_job(second)
+
+    first.refresh_from_db()
+    second.refresh_from_db()
+    assert first.provider_metadata['variant_id'] == second.provider_metadata['variant_id']
+    storage_save.assert_called_once()
+
+
+@pytest.mark.django_db
 @pytest.mark.parametrize('preference_source', ['preset', 'tenant'])
 def test_denied_preference_cannot_bypass_policy_and_falls_back(
     product_image,
@@ -435,7 +494,10 @@ def test_policy_credit_cost_is_reserved_and_charged_atomically(
 
 
 @pytest.mark.django_db
-def test_provider_failure_releases_reserved_policy_credits(product_image, isolated_registry):
+def test_provider_transport_failure_keeps_reserved_credits_for_reconciliation(
+    product_image,
+    isolated_registry,
+):
     register_media_provider(FailingProvider)
     MediaProviderPolicy.objects.create(
         provider_id=FailingProvider.provider_id,
@@ -452,13 +514,222 @@ def test_provider_failure_releases_reserved_policy_credits(product_image, isolat
             'apps.media_processing.services.default_storage.url',
             return_value='https://s3/source.jpg',
         ),
-        pytest.raises(RuntimeError, match='provider unavailable'),
+        pytest.raises(MediaProviderOutcomeUncertain, match='неизвестен'),
     ):
         submit_job(job)
 
     wallet = AIWalletService.summary(tenant)
-    assert wallet['available'] == available_before
-    assert wallet['reserved'] == 0
+    assert wallet['available'] == available_before - Decimal('2')
+    assert wallet['reserved'] == Decimal('2')
+
+
+@pytest.mark.django_db
+def test_post_provider_persistence_failure_is_uncertain_and_never_releases(
+    product_image,
+    configured_media_provider,
+):
+    configured_media_provider.operation_credit_costs = {'resize': '2'}
+    configured_media_provider.save(update_fields=[
+        'operation_credit_costs', 'updated_at',
+    ])
+    tenant = product_image.product.tenant
+    available_before = AIWalletService.summary(tenant)['available']
+    job = create_processing_job(product_image=product_image, operations=['resize'])
+
+    with (
+        patch(
+            'apps.media_processing.services.default_storage.url',
+            return_value='https://s3/source.jpg',
+        ),
+        patch(
+            'apps.media_processing.services.apply_provider_result',
+            side_effect=RuntimeError('database write failed'),
+        ),
+        pytest.raises(MediaProviderOutcomeUncertain, match='сверка'),
+    ):
+        submit_job(job)
+
+    wallet = AIWalletService.summary(tenant)
+    assert wallet['available'] == available_before - Decimal('2')
+    assert wallet['reserved'] == Decimal('2')
+
+
+@pytest.mark.django_db
+def test_checkpoint_survives_kill_point_and_resume_never_resubmits_provider(
+    product_image,
+    configured_media_provider,
+):
+    configured_media_provider.operation_credit_costs = {'resize': '2'}
+    configured_media_provider.save(update_fields=[
+        'operation_credit_costs', 'updated_at',
+    ])
+    tenant = product_image.product.tenant
+    available_before = AIWalletService.summary(tenant)['available']
+    job = create_processing_job(product_image=product_image, operations=['resize'])
+
+    with (
+        patch(
+            'apps.media_processing.services.default_storage.url',
+            return_value='https://s3/source.jpg',
+        ),
+        patch(
+            'apps.media_processing.services.apply_checkpointed_provider_result',
+            side_effect=RuntimeError('worker killed after checkpoint'),
+        ),
+        pytest.raises(MediaProviderOutcomeUncertain, match='сверка'),
+    ):
+        submit_job(job)
+
+    job.refresh_from_db()
+    assert (
+        job.provider_response_state
+        == MediaProcessingJob.ProviderResponseState.RECORDED
+    )
+    assert job.provider_response_enc is not None
+    assert AIWalletService.summary(tenant)['reserved'] == Decimal('2')
+
+    with (
+        patch.object(
+            FakeExternalProvider,
+            'process',
+            side_effect=AssertionError('provider must not be called on resume'),
+        ) as provider_call,
+        patch(
+            'apps.media_processing.services.default_storage.save',
+            return_value='products/media/resumed.png',
+        ),
+    ):
+        submit_job(job)
+
+    job.refresh_from_db()
+    assert job.status == MediaProcessingJob.Status.SUCCEEDED
+    assert (
+        job.provider_response_state
+        == MediaProcessingJob.ProviderResponseState.APPLIED
+    )
+    assert job.provider_response_enc is None
+    assert job.provider_response_resolved_at is not None
+    assert AIWalletService.summary(tenant)['reserved'] == Decimal('0')
+    assert AIWalletService.summary(tenant)['available'] == available_before - Decimal('2')
+    provider_call.assert_not_called()
+
+
+def test_provider_response_checkpoint_is_bounded_when_binary_is_oversized(settings):
+    settings.MEDIA_PROVIDER_OUTPUT_MAX_BYTES = 25 * 1024 * 1024
+    oversized = b'x' * (2 * 1024 * 1024 + 1)
+
+    payload, canonical, digest = _serialize_provider_result_checkpoint(
+        MediaProviderResult(
+            status=MediaProviderResultStatus.SUCCEEDED,
+            output_bytes=oversized,
+            output_content_type='image/png',
+        ),
+    )
+
+    assert payload['output_bytes_omitted'] is True
+    assert payload['output_bytes_b64'] == ''
+    assert payload['output_bytes_size'] == len(oversized)
+    assert len(canonical) < 128 * 1024
+    assert len(digest) == 64
+
+
+@pytest.mark.django_db
+def test_signed_provider_url_is_encrypted_in_durable_checkpoint(
+    product_image,
+    configured_media_provider,
+):
+    job = create_processing_job(product_image=product_image, operations=['resize'])
+    signed_url = 'https://cdn.example.com/result.png?token=checkpoint-secret'
+
+    _checkpoint_provider_result(job, MediaProviderResult(
+        status=MediaProviderResultStatus.SUCCEEDED,
+        output_url=signed_url,
+    ))
+
+    job.refresh_from_db()
+    assert job.provider_response_enc is not None
+    assert b'checkpoint-secret' not in bytes(job.provider_response_enc)
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize('failure_point', ['download', 's3'])
+def test_successful_provider_local_failure_keeps_reservation_for_reconciliation(
+    product_image,
+    configured_media_provider,
+    failure_point,
+):
+    configured_media_provider.operation_credit_costs = {'resize': '2'}
+    configured_media_provider.save(update_fields=[
+        'operation_credit_costs', 'updated_at',
+    ])
+    tenant = product_image.product.tenant
+    available_before = AIWalletService.summary(tenant)['available']
+    job = create_processing_job(product_image=product_image, operations=['resize'])
+    patches = [patch(
+        'apps.media_processing.services.default_storage.url',
+        return_value='https://s3/source.jpg',
+    )]
+    if failure_point == 'download':
+        patches.append(patch(
+            'apps.media_processing.services._provider_result_bytes',
+            side_effect=RuntimeError('output download failed'),
+        ))
+    else:
+        patches.append(patch(
+            'apps.media_processing.services._store_variant',
+            side_effect=RuntimeError('S3 save failed'),
+        ))
+
+    with patches[0], patches[1], pytest.raises(
+        MediaProviderOutcomeUncertain,
+        match='сверка',
+    ):
+        submit_job(job)
+
+    job.refresh_from_db()
+    wallet = AIWalletService.summary(tenant)
+    assert job.error_code != 'invalid_provider_output'
+    assert wallet['available'] == available_before - Decimal('2')
+    assert wallet['reserved'] == Decimal('2')
+
+
+@pytest.mark.django_db
+def test_task_never_resubmits_after_post_provider_persistence_failure(
+    product_image,
+    configured_media_provider,
+):
+    job = create_processing_job(product_image=product_image, operations=['resize'])
+    provider_result = MediaProviderResult(
+        status=MediaProviderResultStatus.PENDING,
+        provider_job_id='remote-job-accepted',
+    )
+
+    with (
+        patch(
+            'apps.media_processing.services.default_storage.url',
+            return_value='https://s3/source.jpg',
+        ),
+        patch.object(
+            FakeExternalProvider,
+            'process',
+            return_value=provider_result,
+        ) as provider_call,
+        patch(
+            'apps.media_processing.services.apply_provider_result',
+            side_effect=RuntimeError('database write failed'),
+        ),
+        pytest.raises(RuntimeError, match='требуется сверка'),
+    ):
+        process_media_job.run(job.pk)
+
+    job.refresh_from_db()
+    assert job.status == MediaProcessingJob.Status.FAILED
+    assert job.error_code == 'outcome_uncertain'
+    assert (
+        process_media_job.run(job.pk)['status']
+        == MediaProcessingJob.Status.SUBMITTED
+    )
+    provider_call.assert_called_once()
 
 
 @pytest.mark.django_db

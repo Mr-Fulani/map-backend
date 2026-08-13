@@ -32,15 +32,16 @@ class AvitoRateLimiter:
         config = RATE_LIMITS.get(operation, {'rate': 10, 'per': 60})
         key = f'avito:rl:{account.pk}:{operation}'
 
-        count = cache.get(key, 0)
-        if count >= config['rate']:
+        try:
+            count = cache.incr(key)
+        except ValueError:
+            # ``add`` creates the fixed window together with its TTL. If a
+            # concurrent request won the race, increment that existing window.
+            count = 1 if cache.add(key, 1, timeout=config['per']) else cache.incr(key)
+
+        if count > config['rate']:
             self._log_rate_limit(account, operation)
             raise RateLimitError(retry_after=config['per'])
-
-        pipe_count = cache.get_or_set(key, 0, timeout=config['per'])
-        cache.incr(key)
-        if pipe_count == 0:
-            cache.expire(key, config['per'])
 
     def handle_response_headers(self, headers: dict, account) -> None:
         """Обновляет slow-down флаг если Avito сообщил о близком исчерпании лимита."""

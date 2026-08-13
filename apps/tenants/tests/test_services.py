@@ -6,6 +6,7 @@ from django.utils import timezone
 
 from apps.tenants.models import APIKey, TenantUser
 from apps.tenants.services import APIKeyService, TenantService
+from apps.notifications.models import TenantNotificationSettings
 
 User = get_user_model()
 
@@ -29,6 +30,17 @@ class TestTenantService:
         )
 
         assert tenant.catalog_domain == 'unknown'
+
+    def test_create_tenant_creates_notification_settings_with_owner_email(self):
+        tenant, _ = TenantService.create_tenant(
+            name='Notify Co', slug='notify-co',
+            owner_email='notify-owner@test.com', owner_password='pass12345',
+        )
+
+        settings_row = TenantNotificationSettings.objects.get(tenant=tenant)
+        assert settings_row.notify_email == 'notify-owner@test.com'
+        assert settings_row.notify_on_error is True
+        assert settings_row.notify_on_critical is True
 
     def test_create_tenant_returns_api_key(self):
         """При создании тенанта возвращается plaintext API Key."""

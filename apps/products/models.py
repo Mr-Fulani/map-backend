@@ -1,3 +1,5 @@
+import uuid
+
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
 
@@ -85,8 +87,9 @@ class TenantCatalogCategory(TimestampedModel):
 
     def save(self, *args, **kwargs):
         self.normalized_name = ''.join(char for char in self.name.lower() if char.isalnum())
-        if self.root_domain_id:
-            self.domain = self.root_domain.slug
+        root_domain = self.root_domain
+        if root_domain is not None:
+            self.domain = root_domain.slug
         super().save(*args, **kwargs)
 
 
@@ -347,6 +350,10 @@ class ProductCatalogClassification(TimestampedModel):
         indexes = [
             models.Index(fields=['tenant', 'domain']),
             models.Index(fields=['tenant', 'needs_review']),
+            models.Index(
+                fields=['tenant', 'needs_review', 'review_status', '-updated_at', 'id'],
+                name='prd_class_review_queue_idx',
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -786,6 +793,10 @@ class VehicleFitment(TimestampedModel):
             models.Index(fields=['tenant', 'make', 'model']),
             models.Index(fields=['tenant', 'product']),
             models.Index(fields=['product', 'needs_review']),
+            models.Index(
+                fields=['tenant', 'needs_review', 'review_status', '-updated_at', 'id'],
+                name='vehicle_review_queue_idx',
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -907,6 +918,10 @@ class ProductEnrichmentFact(TimestampedModel):
             models.Index(fields=['tenant', 'product']),
             models.Index(fields=['tenant', 'fact_type']),
             models.Index(fields=['product', 'needs_review']),
+            models.Index(
+                fields=['tenant', 'needs_review', 'review_status', '-updated_at', 'id'],
+                name='prd_fact_review_queue_idx',
+            ),
         ]
         constraints = [
             models.UniqueConstraint(
@@ -951,6 +966,21 @@ class ProductParseJob(TimestampedModel):
     product = models.ForeignKey(
         Product, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='parse_jobs', verbose_name='Товар',
+    )
+    ingress_intent = models.ForeignKey(
+        'products.ProductParseIntent',
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='jobs',
+        verbose_name='Ingress intent',
+    )
+    fallback_origin_key = models.CharField(
+        max_length=200,
+        blank=True,
+        db_index=True,
+        editable=False,
+        verbose_name='Ключ единственного web-research fallback',
     )
     brand = models.CharField(max_length=100, verbose_name='Бренд')
     article = models.CharField(max_length=100, verbose_name='Артикул')
@@ -1032,6 +1062,24 @@ class ProductBulkActionJob(TimestampedModel):
         Tenant, on_delete=models.CASCADE, related_name='product_bulk_action_jobs',
         verbose_name='Тенант',
     )
+    idempotency_key = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Ключ идемпотентности',
+    )
+    request_fingerprint = models.CharField(
+        max_length=64,
+        blank=True,
+        editable=False,
+        verbose_name='Отпечаток входного запроса',
+    )
+    request_payload = models.JSONField(
+        default=dict,
+        blank=True,
+        editable=False,
+        verbose_name='Канонический входной запрос',
+    )
     action = models.CharField(max_length=50, choices=Action.choices, verbose_name='Действие')
     source_id = models.CharField(max_length=50, default='tachka', verbose_name='Источник')
     product_ids = models.JSONField(default=list, verbose_name='ID товаров')
@@ -1070,6 +1118,55 @@ class ProductBulkActionJob(TimestampedModel):
                 fields=['status', 'last_dispatched_at'], name='prod_bulk_dispatch_idx',
             ),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'idempotency_key'],
+                condition=models.Q(idempotency_key__isnull=False),
+                name='unique_tenant_product_bulk_intent',
+            ),
+        ]
 
     def __str__(self):
         return f'{self.action} [{self.status}] — {self.total_count}'
+
+
+class ProductParseIntent(TimestampedModel):
+    """Canonical ingress request owning every parse job created for one retry key."""
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='product_parse_intents',
+    )
+    idempotency_key = models.UUIDField(default=uuid.uuid4, editable=False)
+    request_fingerprint = models.CharField(max_length=64, editable=False)
+    request_payload = models.JSONField(default=dict, editable=False)
+    product = models.ForeignKey(
+        'products.Product',
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name='parse_intents',
+    )
+    primary_job = models.ForeignKey(
+        'products.ProductParseJob',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='primary_for_intents',
+    )
+    job_ids = models.JSONField(default=list, editable=False)
+    generate_after = models.BooleanField(default=False, editable=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'idempotency_key'],
+                name='unique_tenant_product_parse_intent',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['tenant', '-created_at'],
+                name='prod_parse_intent_created_idx',
+            ),
+        ]

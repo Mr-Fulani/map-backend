@@ -30,13 +30,30 @@ checksum зафиксированы, но это пока не схема «buil
    административный SSH из доверенных сетей. PostgreSQL и Redis наружу не
    публикуются production Compose-файлом.
 3. Установите Git, Docker Engine, Docker Compose v2, `curl`, `flock`, `df`, `awk`,
-   `stat` и GNU `timeout`. Стандартный deploy/backup operator — `saas-poster`: он
-   должен владеть checkout вместе с `.git`, иметь право записи для fetch/checkout
-   и rollback, а также доступ к Docker daemon.
+   `stat` и GNU `timeout`. Canonical checkout, `.git`, secret-файлы и Docker
+   operations принадлежат `root`. GitHub подключается отдельным public-key-only
+   пользователем `mapdeploy`: его ключ имеет SSH `ForcedCommand`, а sudoers
+   разрешает только проверенный release entrypoint, backup freshness и topology
+   check. Не добавляйте `mapdeploy` в группу `docker` и не давайте ему доступ к
+   checkout или secret-файлам.
+   Поддерживаемый минимальный размер текущего single-host контура — 2 vCPU и
+   3584 MiB RAM. Compose ограничивает обычный runtime суммарно 2816 MiB, а
+   одноразовый backup — ещё 384 MiB, оставляя память ядру/Docker. Уменьшать
+   host ниже этого tier или повышать отдельные `mem_limit` можно только вместе
+   с пересчётом aggregate budget и нагрузочным тестом. Deploy собирает образы
+   последовательно (`COMPOSE_PARALLEL_LIMIT=1`), чтобы не создавать параллельный
+   build peak на небольшом host.
+   Pre-deploy capacity gate требует не менее 1024 MiB `MemAvailable`
+   перед сборкой; при меньшем запасе deploy останавливается до
+   изменения runtime.
 4. Создайте checkout `/opt/saas_poster` с remote `origin`, указывающим на этот
    репозиторий. Рабочая копия на сервере не должна содержать ни tracked,
    ни untracked-изменений: `Dockerfile` копирует checkout в image, поэтому
-   любой Git drift нарушает соответствие `TARGET_SHA`.
+   любой Git drift нарушает соответствие `TARGET_SHA`. Сам `/opt`, checkout,
+   `.git` и каждый путь внутри checkout должны принадлежать `root`, не быть
+   symlink и не иметь group/world-write. Установленный root-owned validator
+   проверяет это перед release, backup, topology/capacity check и Certbot reload;
+   нарушение блокирует операцию до исполнения Compose из checkout.
 5. Выпустите TLS-сертификат и включите timer автоматического продления до запуска
    production Nginx. Reload deploy-hook устанавливается и проверяется после
    первого успешного старта Nginx по разделу 6. Оба каталога ниже должны
@@ -48,22 +65,21 @@ checksum зафиксированы, но это пока не схема «buil
    sudo test -r /etc/letsencrypt/live/dodugir.com/privkey.pem
    sudo test -d /etc/letsencrypt/archive/dodugir.com
    ```
-6. Создайте принадлежащий deploy user каталог блокировок с mode `0700`.
+6. Создайте принадлежащий `root` каталог блокировок с mode `0700`.
    `deploy.sh` намеренно не использует предсказуемый файл в `/tmp` и завершится
    до любых изменений runtime, если каталог отсутствует, является symlink или
    принадлежит другому пользователю. Для стандартного пользователя:
 
    ```bash
-   sudo install -d -o saas-poster -g saas-poster -m 0700 /run/lock/saas-poster
+   sudo install -d -o root -g root -m 0700 /run/lock/saas-poster
    ```
 
    `/run` очищается после reboot. Чтобы каталог создавался автоматически,
    добавьте управляемый конфигурацией хоста файл
-   `/etc/tmpfiles.d/saas-poster.conf` (замените пользователя и группу на
-   фактические):
+   `/etc/tmpfiles.d/saas-poster.conf`:
 
    ```text
-   d /run/lock/saas-poster 0700 saas-poster saas-poster -
+   d /run/lock/saas-poster 0700 root root -
    ```
 
    Затем примените его один раз:
@@ -155,6 +171,8 @@ SMTP login. Resend key должен иметь только Sending access и б
 этому platform-домену. Другой SMTP host, proxy URL, пустой/невалидный key или
 чужой sender domain останавливают production settings. Deploy дополнительно
 проверяет CONNECT, greeting, STARTTLS и login из нового image без отправки письма.
+Каждое реальное platform-письмо содержит стабильный `Resend-Idempotency-Key`;
+автоматические повторы ограничены 23 часами, что короче 24-часового окна Resend.
 
 Этот SMTP channel предназначен только для security/transactional писем самой
 платформы. Будущие письма от имени тенантов должны использовать отдельные
@@ -189,7 +207,7 @@ lifecycle и restore drill по
 
 ```dotenv
 PROD_SMOKE_URL=https://dodugir.com/api/v1/ready/
-PROD_MIN_FREE_DISK_MB=2048
+PROD_MIN_FREE_DISK_MB=16384
 PROD_HEALTH_RETRIES=40
 PROD_HEALTH_INTERVAL_SECONDS=3
 PROD_LOG_TAIL=200
@@ -206,7 +224,7 @@ PROD_BROKER_MIGRATION_CONFIRMED=false
 runtime-изменений.
 
 Защитите все три файла. Каждый должен быть обычным файлом, а не
-symlink, принадлежать deploy user и иметь mode `600` или `400`:
+symlink, принадлежать `root` и иметь mode `600` или `400`:
 
 ```bash
 chmod 600 /opt/saas_poster/.env \
@@ -231,7 +249,61 @@ drain legacy Celery queues. Для чистой установки без legacy
 Fingerprint берётся по доверенному административному каналу, а не из результата
 того же `ssh-keyscan`, который затем проверяется. Deploy workflow сверяет
 полученный host key с этим fingerprint и использует отдельный временный
-`known_hosts`.
+`known_hosts`. Четыре SSH secrets храните на repository-level: их также
+использует неинтерактивный hourly monitor; environment `production` ограничивает
+только deploy job.
+
+`PROD_USER` должен быть равен `mapdeploy`, а `PROD_SSH_KEY` — отдельному Ed25519
+ключу только этого репозитория. Перед включением workflow установите host
+контракт из canonical checkout, передав публичную часть ключа:
+
+```bash
+cd /opt/saas_poster
+sudo ./scripts/install_production_host_services.sh /secure/path/mapdeploy.pub
+sudo -u mapdeploy test ! -r /opt/saas_poster/.env
+sudo -u mapdeploy test ! -r /var/run/docker.sock
+```
+
+Installer создаёт public-key-only account, forced-command `authorized_keys`,
+отдельный `sshd_config.d` Match contract, минимальный sudoers allowlist,
+root-owned backup/freshness units, tmpfiles-конфигурацию и Certbot reload hook.
+Закрытый ключ не копируется на production host.
+
+Release/gateway, checkout validator, backup/freshness, topology/capacity и
+Certbot reload entrypoints устанавливаются root-owned копиями в
+`/usr/local/sbin`, а
+SSH/sudoers/systemd/tmpfiles — в `/etc`. Поэтому PR, меняющий любую
+часть host-контракта, требует повторного bootstrap после зелёного CI, но
+до обычного deploy. Нельзя просто оставить checkout на target: тогда release
+ошибочно сохранит target как `PREVIOUS_SHA` и лишится rollback. Канонический
+bootstrap держит общий release lock, временно проверяет target как
+точный `origin/main`, устанавливает контракт и возвращает checkout на
+фактически работающий SHA:
+
+```bash
+target_sha=0123456789abcdef0123456789abcdef01234567
+previous_sha="$(git rev-parse HEAD)"
+sudo ./scripts/bootstrap_production_host_contract.sh \
+  "$target_sha" /secure/path/mapdeploy.pub
+test "$(git rev-parse HEAD)" = "$previous_sha"
+```
+
+Bootstrap также отключает backup/freshness timers и ждёт завершения уже
+запущенных legacy units до смены checkout. После установки он оставляет
+root-only marker точного target SHA; таймеры остаются отключёнными и включаются
+только самим успешным deploy после topology/external smoke. Если deploy не
+завершился, это намеренное fail-closed состояние: устраните причину и повторите
+тот же target, не включая timers вручную на старом checkout.
+
+Для самого первого rollout, когда bootstrap-script ещё нет в текущем
+release, администратор извлекает **только этот script** из прошедшего CI
+target, передаёт его по защищённому root SSH-каналу в
+`/root/bootstrap_production_host_contract.sh`, затем сверяет SHA-256 с
+локальным `git show TARGET_SHA:scripts/bootstrap_production_host_contract.sh` и
+запускает переданную root-owned копию. Не переключайте production
+checkout вручную: script сам проверит target и вернёт previous SHA. Preflight
+обычного deploy побайтно проверяет весь установленный host-контракт и
+останавливается до Docker-изменений при drift.
 
 ## 5. Автоматический deploy
 
@@ -240,11 +312,11 @@ Fingerprint берётся по доверенному администрати�
 
 1. получает `workflow_run.head_sha` и проверяет, что это полный SHA успешного
    `push` в `main`;
-2. подключается по SSH с проверкой host fingerprint;
-3. на сервере выполняет `git fetch --no-tags origin main` и пропускает устаревший
-   deploy, если `main` уже указывает на другой commit;
-4. переключает checkout в detached HEAD на точный SHA и передаёт его в
-   `deploy.sh`.
+2. подключается как `mapdeploy` по SSH с проверкой host fingerprint;
+3. передаёт forced-command протоколу только `deploy <40-char-sha>`;
+4. root-owned release entrypoint выполняет `git fetch --no-tags origin main`,
+   пропускает устаревший SHA, проверяет ancestry, сохраняет предыдущий SHA,
+   переключает checkout в detached HEAD и запускает `deploy.sh`.
 
 `deploy.sh` затем:
 
@@ -263,8 +335,10 @@ Fingerprint берётся по доверенному администрати�
 4. останавливает ingress, Beat, web и workers с graceful drain;
 5. создаёт обязательный зашифрованный и подписанный S3 backup;
 6. только после успешного backup применяет миграции;
-7. собирает static data, обновляет periodic tasks и tenant categories;
-8. запускает release, ждёт healthchecks всех сервисов и проверяет публичный
+7. идемпотентно создаёт canonical plans, собирает static data, обновляет periodic
+   tasks и tenant categories;
+8. запускает release, ждёт healthchecks всех сервисов, проверяет точное сетевое
+   членство каждого контейнера и host bindings Nginx, затем проверяет публичный
    `PROD_SMOKE_URL`.
 
 Ручной запуск `deploy.sh` не является способом обойти CI или protected
@@ -274,6 +348,7 @@ environment: он допустим только по отдельной incident
 rollback до начала миграций невозможен.
 
 ```bash
+sudo -i
 cd /opt/saas_poster
 previous_sha="$(git rev-parse HEAD)"
 git fetch --no-tags origin main
@@ -306,7 +381,7 @@ Nginx подключён одновременно к внутренней `backe
 делает graceful reload:
 
 ```bash
-sudo ln -sfn /opt/saas_poster/scripts/reload_production_nginx.sh \
+sudo ln -sfn /usr/local/sbin/saas-poster-reload-nginx \
   /etc/letsencrypt/renewal-hooks/deploy/saas-poster-nginx-reload
 sudo test -x /etc/letsencrypt/renewal-hooks/deploy/saas-poster-nginx-reload
 sudo certbot renew --dry-run --run-deploy-hooks
@@ -314,10 +389,11 @@ sudo certbot renew --dry-run --run-deploy-hooks
 
 Dry-run должен завершиться успешно при работающем production Nginx. Дополнительно
 проверьте с внешнего узла, что `https://dodugir.com` отдаёт ожидаемый актуальный
-сертификат. После изменения checkout path обновите symlink и задайте в скрипте
-новый фиксированный абсолютный `ROOT_DIR` отдельным reviewed изменением. Hook
-намеренно не принимает checkout path из окружения, так как Certbot запускает его
-с повышенными привилегиями.
+сертификат. После изменения checkout path обновите установленный host contract
+отдельным reviewed bootstrap. Hook указывает только на root-owned копию из
+`/usr/local/sbin`, перед чтением Compose проверяет владельца/права checkout и не
+принимает checkout path из окружения, так как Certbot запускает его с повышенными
+привилегиями.
 
 `/api/v1/live/` подтверждает только жизнь HTTP-процесса. Readiness дополнительно
 проверяет PostgreSQL и cache, но не заменяет бизнес smoke-тест.

@@ -1,11 +1,11 @@
 from django.contrib import admin
-from unfold.admin import ModelAdmin
 
-from apps.notifications.models import TenantNotificationSettings
+from apps.core.admin import TenantScopedAdminMixin, TenantScopedReadOnlyAdminMixin
+from apps.notifications.models import NotificationDelivery, TenantNotificationSettings
 
 
 @admin.register(TenantNotificationSettings)
-class TenantNotificationSettingsAdmin(ModelAdmin):
+class TenantNotificationSettingsAdmin(TenantScopedAdminMixin):
     """Администрирование настроек уведомлений тенантов."""
 
     list_display = [
@@ -32,3 +32,15 @@ class TenantNotificationSettingsAdmin(ModelAdmin):
             'classes': ['collapse'],
         }),
     ]
+
+
+@admin.register(NotificationDelivery)
+class NotificationDeliveryAdmin(TenantScopedReadOnlyAdminMixin):
+    """Read-only audit of per-channel external deliveries."""
+
+    list_display = [
+        'id', 'tenant', 'event_key', 'channel', 'status', 'attempts', 'updated_at',
+    ]
+    list_filter = ['channel', 'status']
+    search_fields = ['id', 'tenant__slug', 'event_key']
+    readonly_fields = [field.name for field in NotificationDelivery._meta.fields]

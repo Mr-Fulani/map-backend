@@ -63,10 +63,18 @@
 - Grace period 7 дней при просроченной оплате
 - Автоматическая блокировка новых публикаций при превышении лимитов
 
+Платёжный код реализован, но production checkout включается только явным
+`BILLING_ENABLED=true` после настройки credentials и webhook YooKassa. Без этого
+флага тарифы, текущая подписка, лимиты и история остаются доступны только для чтения.
+
 ### Уведомления
 - Telegram-уведомления об ошибках публикации и критических событиях
 - Email-уведомления о платёжных событиях
 - Настройка порогов уведомлений в личном кабинете
+
+Текущий email-канал отправляет только транзакционные письма платформы с
+проверенного platform-домена. Письма от бренда конкретного tenant-а — будущий
+отдельный контур с verified sender identity, quotas, audit и domain-scoped/BYOK key.
 
 ### Dashboard (Next.js)
 - Главная страница с KPI: активные листинги, синхронизации, ошибки, AI-кредиты
@@ -110,7 +118,7 @@ Trial: 14 дней бесплатно на плане Business. Скидка 20%
 - **django-unfold** — кастомизированная Django Admin с тёмной темой
 - **drf-spectacular** — автогенерация OpenAPI/Swagger
 - **Yandex Cloud S3** — хранение изображений товаров
-- **Sentry** — мониторинг ошибок
+- **Sentry SDK** — опциональный мониторинг ошибок при настроенном `SENTRY_DSN`
 - **OpenAI / Anthropic / Gemini / DeepSeek / Kimi** — маршрутизируемая AI-генерация
 
 ### Frontend
@@ -124,8 +132,9 @@ Trial: 14 дней бесплатно на плане Business. Скидка 20%
   Celery workers/Beat, Next.js, Nginx, ограничивающий egress proxy и backup job
 - **Nginx** — reverse proxy, rate limiting
 - **GitHub Actions** — CI (backend/frontend тесты, OpenAPI, dependency/OCI
-  vulnerability gates, SBOM) + deploy точного commit SHA только после успешного CI
-- **Timeweb Cloud** — хостинг
+  vulnerability gates, SBOM) и gated deploy workflow; автоматический production
+  deploy требует отдельно настроенных GitHub environment, variable и secrets
+- **Hetzner Cloud** — текущий production host
 
 ---
 
@@ -259,7 +268,7 @@ API-ключ имеет префикс `map_sk_`.
 | `GET` | `/logs/` | Логи синхронизаций |
 | `GET` | `/billing/plans/` | Тарифные планы |
 | `GET` | `/billing/subscription/` | Текущая подписка тенанта |
-| `POST` | `/billing/checkout/` | Создать платёж (ЮKassa) |
+| `POST` | `/billing/checkout/` | Создать платёж (ЮKassa; только при включённом billing) |
 | `GET` | `/billing/invoices/` | История платежей |
 | `GET` | `/analytics/` | KPI: CTR, просмотры, конверсия |
 | `GET/POST` | `/tenant/api-keys/` | Управление API-ключами |
@@ -331,9 +340,19 @@ saas_poster/
 - [x] Управление webhook endpoint-ами и безопасная тестовая отправка
 - [x] Transactional webhook outbox, HMAC-подпись, retry и аудит доставок
 - [x] Soft-delete и автоматическая retention-очистка критичных сущностей
-- [x] CI/CD: GitHub Actions (lint + тесты + OpenAPI без предупреждений + gated deploy проверенного commit SHA)
-- [x] Зашифрованные backup PostgreSQL: pre-migration gate, S3 retention,
-      freshness-monitor и проверяемый restore drill
+- [x] CI и deploy-контракт: GitHub Actions (lint + тесты + OpenAPI без
+      предупреждений + gated workflow для проверенного commit SHA)
+- [x] Backup/restore tooling: зашифрованный pre-migration backup, проверка
+      подписи/VersionId/freshness, lifecycle policy и изолированный restore drill
+
+### ⚠️ Требует production-настройки и регулярной проверки
+
+- [ ] Настроить GitHub environment `production`, deploy variable/secrets и
+      отдельный ограниченный deploy account; до этого workflow будет пропущен.
+- [ ] Включить ежедневный backup timer и hourly freshness timer, применить S3
+      lifecycle и ежемесячно фиксировать успешный restore drill/RTO.
+- [ ] Настроить `SENTRY_DSN`, внешний uptime/dead-man monitoring и алерты на 5xx,
+      очередь, workers, диск и backup freshness.
 
 ### 🚧 В планах (Phase 3)
 

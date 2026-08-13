@@ -41,7 +41,7 @@ LOCAL_APPS = [
     'apps.datasources',
     'apps.products',
     'apps.marketplaces',
-    'apps.ai_agent',
+    'apps.ai_agent.apps.AiAgentConfig',
     'apps.anti_ban',
     'apps.sync',
     'apps.notifications',
@@ -342,7 +342,7 @@ CELERY_TIMEZONE = 'Europe/Moscow'
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 # Единственный источник расписания — management command setup_periodic_tasks.
 # Смешивание beat_schedule и DatabaseScheduler создавало дубли одних и тех же задач.
-CELERY_BEAT_SCHEDULE = {}
+CELERY_BEAT_SCHEDULE: dict[str, dict] = {}
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 3600
 CELERY_TASK_SOFT_TIME_LIMIT = 3300
@@ -357,6 +357,17 @@ CELERY_TASK_PUBLISH_RETRY_POLICY = {
     'interval_max': 3,
 }
 CELERY_WORKER_PREFETCH_MULTIPLIER = 1
+# Paid AI calls use a durable pre-call accounting record. Calls have a 120s
+# HTTP timeout, so ten minutes is a conservative hard-crash recovery window;
+# reservations that never crossed the network boundary can be released sooner.
+AI_PROVIDER_STARTED_STALE_SECONDS = max(
+    300,
+    int(os.environ.get('AI_PROVIDER_STARTED_STALE_SECONDS', '600')),
+)
+AI_PROVIDER_NEVER_STARTED_STALE_SECONDS = max(
+    60,
+    int(os.environ.get('AI_PROVIDER_NEVER_STARTED_STALE_SECONDS', '300')),
+)
 CELERY_BROKER_TRANSPORT_OPTIONS = {
     'visibility_timeout': 14400,
     'global_keyprefix': 'map_broker_',
@@ -452,6 +463,7 @@ CSRF_TRUSTED_ORIGINS = [
     for origin in os.environ.get('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000').split(',')
     if origin.strip()
 ]
+CSRF_FAILURE_VIEW = 'apps.tenants.csrf.csrf_failure'
 
 # Refresh token браузерной сессии никогда не доступен JavaScript-коду.
 AUTH_REFRESH_COOKIE_NAME = os.environ.get('AUTH_REFRESH_COOKIE_NAME', 'map_refresh')
@@ -495,7 +507,17 @@ SPECTACULAR_SETTINGS = {
         '**JWT Token** (для веб-приложений):\n'
         '```\nAuthorization: Bearer <access_token>\n```\n\n'
         'Получить JWT: `POST /api/v1/auth/token/`  \n'
-        'Создать API Key: `POST /api/v1/tenant/api-keys/`'
+        'Создать API Key: `POST /api/v1/tenant/api-keys/`\n\n'
+        '### Browser session flow\n\n'
+        '1. `GET /api/v1/auth/browser/csrf/`, затем передавайте значение '
+        '`csrf_token` в `X-CSRFToken` для каждого browser POST.\n'
+        '2. `POST /api/v1/auth/browser/login/`: access token возвращается в JSON, '
+        'refresh хранится только в HttpOnly cookie.\n'
+        '3. Передавайте access token как Bearer; при его истечении вызывайте '
+        '`POST /api/v1/auth/browser/refresh/` с cookie и CSRF header.\n'
+        '4. `401 unauthorized` означает завершённую сессию и требует входа; '
+        '`403 csrf_failed` означает неверную CSRF cookie/header pair.\n'
+        'Refresh cookie нельзя читать или копировать в JavaScript storage.'
     ),
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
@@ -520,7 +542,10 @@ SPECTACULAR_SETTINGS = {
         {'name': 'Auth', 'description': 'Регистрация, JWT, информация о текущем пользователе'},
         {
             'name': 'Browser Auth',
-            'description': 'CSRF-защищённая браузерная сессия с HttpOnly refresh cookie',
+            'description': (
+                'CSRF-защищённая браузерная сессия с HttpOnly refresh cookie. '
+                'Сначала получите CSRF token, затем передавайте X-CSRFToken во все POST.'
+            ),
         },
         {'name': 'Tenant', 'description': 'Организация и её пользователи'},
         {'name': 'Profile', 'description': 'Профиль и настройки текущего пользователя'},
@@ -716,6 +741,60 @@ BILLING_AUDIT_RETENTION_DAYS = min(
 SYNC_LOG_RETENTION_DAYS = min(
     3650, max(1, int(os.environ.get('SYNC_LOG_RETENTION_DAYS', '90'))),
 )
+NOTIFICATION_DELIVERY_RETENTION_DAYS = min(
+    3650,
+    max(30, int(os.environ.get('NOTIFICATION_DELIVERY_RETENTION_DAYS', '180'))),
+)
+NOTIFICATION_DELIVERY_CLAIM_TIMEOUT_SECONDS = min(
+    3600,
+    max(30, int(os.environ.get('NOTIFICATION_DELIVERY_CLAIM_TIMEOUT_SECONDS', '120'))),
+)
+PRODUCT_PARSE_RAW_HTML_RETENTION_DAYS = min(
+    365, max(1, int(os.environ.get('PRODUCT_PARSE_RAW_HTML_RETENTION_DAYS', '14'))),
+)
+PRODUCT_PARSE_JOB_RETENTION_DAYS = min(
+    3650, max(1, int(os.environ.get('PRODUCT_PARSE_JOB_RETENTION_DAYS', '180'))),
+)
+IMAGE_SEARCH_LOG_RETENTION_DAYS = min(
+    3650, max(1, int(os.environ.get('IMAGE_SEARCH_LOG_RETENTION_DAYS', '90'))),
+)
+IMAGE_SEARCH_TASK_RETENTION_DAYS = min(
+    3650, max(1, int(os.environ.get('IMAGE_SEARCH_TASK_RETENTION_DAYS', '30'))),
+)
+PRODUCT_BULK_ACTION_JOB_RETENTION_DAYS = min(
+    3650, max(1, int(os.environ.get('PRODUCT_BULK_ACTION_JOB_RETENTION_DAYS', '90'))),
+)
+MEDIA_PROCESSING_JOB_RETENTION_DAYS = min(
+    3650, max(1, int(os.environ.get('MEDIA_PROCESSING_JOB_RETENTION_DAYS', '180'))),
+)
+BACKGROUND_JOB_RETENTION_DAYS = min(
+    3650, max(1, int(os.environ.get('BACKGROUND_JOB_RETENTION_DAYS', '30'))),
+)
+AI_PROVIDER_OPERATION_RETENTION_DAYS = min(
+    3650,
+    max(30, int(os.environ.get('AI_PROVIDER_OPERATION_RETENTION_DAYS', '730'))),
+)
+WEB_SEARCH_ATTEMPT_RETENTION_DAYS = min(
+    3650,
+    max(30, int(os.environ.get('WEB_SEARCH_ATTEMPT_RETENTION_DAYS', '730'))),
+)
+WEB_SEARCH_STARTED_STALE_SECONDS = min(
+    86400,
+    # Must exceed the longest durable worker lease. Resolving a younger row
+    # could release its domain fence while the original HTTP call is alive.
+    max(3700, int(os.environ.get('WEB_SEARCH_STARTED_STALE_SECONDS', '7200'))),
+)
+WEB_SEARCH_CHECKPOINT_MAX_BYTES = min(
+    4 * 1024 * 1024,
+    max(64 * 1024, int(os.environ.get('WEB_SEARCH_CHECKPOINT_MAX_BYTES', str(1024 * 1024)))),
+)
+WEB_SEARCH_WORKFLOW_INPUT_MAX_BYTES = min(
+    512 * 1024,
+    max(8 * 1024, int(os.environ.get('WEB_SEARCH_WORKFLOW_INPUT_MAX_BYTES', str(128 * 1024)))),
+)
+RETENTION_PURGE_BATCH_SIZE = min(
+    10000, max(1, int(os.environ.get('RETENTION_PURGE_BATCH_SIZE', '1000'))),
+)
 
 # --- AI ---
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
@@ -727,6 +806,22 @@ MOONSHOT_API_KEY = os.environ.get('MOONSHOT_API_KEY', '')
 # --- Image Search ---
 BRAVE_SEARCH_API_KEY = os.environ.get('BRAVE_SEARCH_API_KEY', '')
 TAVILY_API_KEY = os.environ.get('TAVILY_API_KEY', '')
+WEB_SEARCH_GLOBAL_REQUESTS_PER_MINUTE = min(
+    10000,
+    max(1, int(os.environ.get('WEB_SEARCH_GLOBAL_REQUESTS_PER_MINUTE', '60'))),
+)
+WEB_SEARCH_GLOBAL_MONTHLY_REQUEST_LIMIT = min(
+    1000000,
+    max(1, int(os.environ.get('WEB_SEARCH_GLOBAL_MONTHLY_REQUEST_LIMIT', '1000'))),
+)
+BRAVE_SEARCH_GLOBAL_MONTHLY_REQUEST_LIMIT = min(
+    1000000,
+    max(1, int(os.environ.get('BRAVE_SEARCH_GLOBAL_MONTHLY_REQUEST_LIMIT', '800'))),
+)
+TAVILY_SEARCH_GLOBAL_MONTHLY_REQUEST_LIMIT = min(
+    1000000,
+    max(1, int(os.environ.get('TAVILY_SEARCH_GLOBAL_MONTHLY_REQUEST_LIMIT', '1000'))),
+)
 IMAGE_SEARCH_BULK_MAX_PRODUCTS = min(
     25,
     max(1, int(os.environ.get('IMAGE_SEARCH_BULK_MAX_PRODUCTS', '25'))),
@@ -734,6 +829,10 @@ IMAGE_SEARCH_BULK_MAX_PRODUCTS = min(
 IMAGE_SEARCH_TENANT_DAILY_JOBS = min(
     1000,
     max(1, int(os.environ.get('IMAGE_SEARCH_TENANT_DAILY_JOBS', '100'))),
+)
+PRODUCT_PARSE_TENANT_DAILY_JOBS = min(
+    1000,
+    max(1, int(os.environ.get('PRODUCT_PARSE_TENANT_DAILY_JOBS', '100'))),
 )
 WEB_RESEARCH_TENANT_DAILY_STARTS = min(
     300,
@@ -764,7 +863,7 @@ AVITO_CLIENT_ID = os.environ.get('AVITO_CLIENT_ID', '')
 AVITO_CLIENT_SECRET = os.environ.get('AVITO_CLIENT_SECRET', '')
 
 # --- Биллинг ---
-BILLING_ENABLED = os.environ.get('BILLING_ENABLED', 'true').strip().lower() in {
+BILLING_ENABLED = os.environ.get('BILLING_ENABLED', 'false').strip().lower() in {
     '1', 'true', 'yes',
 }
 YOOKASSA_SHOP_ID = os.environ.get('YOOKASSA_SHOP_ID', '')

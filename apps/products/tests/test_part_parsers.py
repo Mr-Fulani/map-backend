@@ -1,11 +1,14 @@
 import json
 from decimal import Decimal
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
+from apps.core.models import BackgroundJobDispatch
+from apps.core.paid_search_recovery import resume_euroauto_checkpoint
 from apps.products.models import (
     GlobalPart, GlobalPartFitment, GlobalPartRelation, Product, ProductCrossCode,
+    ProductParseJob,
 )
 from apps.products.part_fetchers import FetchedPage
 from apps.products.part_parsers import (
@@ -14,6 +17,15 @@ from apps.products.part_parsers import (
 )
 from apps.products.services import ProductEnrichmentService, ProductService
 from apps.tenants.services import TenantService
+from apps.web_research.models import (
+    WebSearchAttempt,
+    WebSearchConnection,
+    WebSearchWorkflow,
+)
+from apps.web_research.providers.base import (
+    WebSearchProviderError,
+    WebSearchResult,
+)
 
 
 SAMPLE_HTML = """
@@ -124,6 +136,53 @@ def make_product(tenant):
         price=Decimal('1234.00'),
         stock_qty=7,
         warehouse='Основной',
+    )
+
+
+def make_euroauto_workflow_case(slug):
+    from apps.web_research.routing import SearchProviderCandidate
+
+    tenant = make_tenant(slug)
+    product = Product.objects.create(
+        tenant=tenant,
+        article='8940-289',
+        brand='METACO',
+        name='Фонарь задний наружный левый 8940-289',
+        price=Decimal('1000.00'),
+        stock_qty=1,
+    )
+    job = ProductEnrichmentService.create_parse_job(
+        tenant=tenant,
+        product=product,
+        brand=product.brand,
+        article=product.article,
+        normalized_article='8940289',
+        source_id='euroauto',
+    )
+    connection = WebSearchConnection.objects.create(
+        provider_id='brave',
+        display_name=f'Brave Euroauto {slug}',
+        is_active=True,
+        priority=10,
+        requests_per_minute=100,
+        monthly_request_limit=1000,
+    )
+    connection.set_credentials({'api_key': 'test-key'})
+    connection.save(update_fields=['credentials_enc', 'updated_at'])
+    provider = Mock()
+    provider.provider_id = 'brave'
+    provider.parameters = {}
+    candidate = SearchProviderCandidate(provider=provider, connection=connection)
+    return tenant, product, job, provider, candidate
+
+
+def euroauto_result():
+    return WebSearchResult(
+        url='https://rostov-na-donu.euroauto.ru/firms/metaco/8940289',
+        title='8940-289 Metaco Фонарь задний наружный левый',
+        snippet='8940-289 Metaco HYUNDAI SOLARIS (2017>)',
+        rank=1,
+        score=0.91,
     )
 
 
@@ -413,16 +472,20 @@ def test_schedule_ai_generation_enriches_auto_part_without_fitments(
     tenant = make_tenant('ai-enrich-before-generate')
     product = make_product(tenant)
 
-    with patch('apps.products.tasks.parse_single_part_then_generate_description.delay') as parse_delay:
-        with patch('apps.ai_agent.tasks.generate_description_task.delay') as ai_delay:
-            with django_capture_on_commit_callbacks(execute=True):
-                result = ProductService.schedule_ai_generation(product, tenant)
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
+        with django_capture_on_commit_callbacks(execute=True):
+            result = ProductService.schedule_ai_generation(product, tenant)
 
     assert result['mode'] == 'enrich_then_generate'
     assert result['job_id'] is not None
     assert tenant.product_parse_jobs.filter(product=product).count() == 1
-    parse_delay.assert_called_once_with(result['job_id'])
-    ai_delay.assert_not_called()
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.products.tasks.parse_single_part_then_generate_description',
+        args=[result['job_id']],
+    ).count() == 1
+    assert not BackgroundJobDispatch.objects.filter(
+        task_name='apps.ai_agent.tasks.generate_description_task',
+    ).exists()
 
 
 @pytest.mark.django_db
@@ -440,16 +503,20 @@ def test_schedule_ai_generation_uses_plain_ai_when_fitments_are_already_trusted(
         confidence=0.95,
     )
 
-    with patch('apps.products.tasks.parse_single_part_then_generate_description.delay') as parse_delay:
-        with patch('apps.ai_agent.tasks.generate_description_task.delay') as ai_delay:
-            with django_capture_on_commit_callbacks(execute=True):
-                result = ProductService.schedule_ai_generation(product, tenant)
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
+        with django_capture_on_commit_callbacks(execute=True):
+            result = ProductService.schedule_ai_generation(product, tenant)
 
     assert result['mode'] == 'generate'
     assert result['job_id'] is None
     assert tenant.product_parse_jobs.count() == 0
-    parse_delay.assert_not_called()
-    ai_delay.assert_called_once_with(product.pk)
+    assert not BackgroundJobDispatch.objects.filter(
+        task_name='apps.products.tasks.parse_single_part_then_generate_description',
+    ).exists()
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.ai_agent.tasks.generate_description_task',
+        args=[product.pk],
+    ).count() == 1
 
 
 @pytest.mark.django_db
@@ -539,7 +606,7 @@ def test_parse_task_saves_enrichment_images_before_finishing():
 
     result = {
         'job_id': 1,
-        'product_id': 10,
+        'product_id': None,
         'status': 'success',
         'source_id': 'tachka',
         'image_urls': ['https://tachka.ru/images/p50136.jpg'],
@@ -552,6 +619,48 @@ def test_parse_task_saves_enrichment_images_before_finishing():
         assert parse_single_part.run(1) == result
 
     save_images.assert_called_once_with(result)
+
+
+@pytest.mark.django_db
+def test_parse_then_generate_replay_keeps_one_durable_downstream_intent():
+    from apps.products.tasks import parse_single_part_then_generate_description
+
+    tenant = make_tenant('parse-generate-replay-dedupe')
+    product = make_product(tenant)
+    job = ProductEnrichmentService.create_parse_job(
+        tenant=tenant,
+        product=product,
+        brand=product.brand,
+        article=product.article,
+        normalized_article=product.article,
+        source_id='euroauto',
+        fallback_origin_key='parse-generate-replay-origin',
+    )
+    result = {
+        'job_id': job.pk,
+        'product_id': product.pk,
+        'status': ProductParseJob.Status.SUCCESS,
+        'source_id': 'euroauto',
+        'image_urls': [],
+    }
+
+    with patch(
+        'apps.products.tasks.ProductEnrichmentService.run_parse_job',
+        return_value=result,
+    ) as parse, patch(
+        'apps.products.tasks._save_enrichment_images',
+    ), patch(
+        'apps.core.tasks.execute_background_dispatch.apply_async',
+    ):
+        first = parse_single_part_then_generate_description.run(job.pk)
+        second = parse_single_part_then_generate_description.run(job.pk)
+
+    assert first == second == result
+    assert parse.call_count == 2
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.web_research.tasks.schedule_web_research_fallback',
+        args=[product.pk, True, 'parse-generate-replay-origin'],
+    ).count() == 1
 
 
 @pytest.mark.django_db
@@ -1113,3 +1222,180 @@ def test_euroauto_fitments_and_analogues_are_learned_by_platform_graph():
         relation_type=GlobalPartRelation.RelationType.ANALOGUE,
         needs_review=False,
     ).exists()
+
+
+@pytest.mark.django_db
+def test_euroauto_text_and_image_checkpoints_replay_after_apply_crash():
+    tenant, product, job, provider, candidate = make_euroauto_workflow_case(
+        'euroauto-checkpoint-replay',
+    )
+    dispatch = BackgroundJobDispatch.objects.create(
+        task_name='apps.products.tasks.parse_single_part',
+        queue='part_parsing',
+        args=[job.pk],
+        deduplication_key=f'product-parse-job:{job.pk}',
+        max_run_attempts=4,
+    )
+    provider.search.return_value = [euroauto_result()]
+    provider.search_images.return_value = []
+
+    with patch(
+        'apps.web_research.routing.search_provider_candidates',
+        return_value=[candidate],
+    ), patch(
+        'apps.products.services.get_part_parser',
+        side_effect=lambda source_id: EuroautoPartParser(),
+    ), patch.object(
+        ProductEnrichmentService,
+        'save_parsed_part',
+        side_effect=RuntimeError('worker killed before parse apply'),
+    ), pytest.raises(RuntimeError, match='before parse apply'):
+        ProductEnrichmentService.run_parse_job(job.pk)
+
+    provider.search.assert_called_once()
+    provider.search_images.assert_called_once()
+    workflow = WebSearchWorkflow.objects.get(
+        workflow_key=f'product-parse-job:{job.pk}',
+    )
+    attempts = list(workflow.attempts.order_by('pk'))
+    assert workflow.status == WebSearchWorkflow.Status.APPLY_PENDING
+    assert len(attempts) == 2
+    assert {attempt.status for attempt in attempts} == {
+        WebSearchAttempt.Status.SUCCESS,
+        WebSearchAttempt.Status.EMPTY,
+    }
+    assert {attempt.apply_state for attempt in attempts} == {
+        WebSearchAttempt.ApplyState.PENDING,
+    }
+
+    BackgroundJobDispatch.objects.filter(pk=dispatch.pk).update(
+        status=BackgroundJobDispatch.Status.FAILED,
+        run_attempts=dispatch.max_run_attempts,
+    )
+    job.refresh_from_db()
+    assert job.status == ProductParseJob.Status.FAILED
+
+    from apps.web_research.accounting import (
+        WebSearchReconciliationRequired,
+        acquire_web_search_workflow,
+    )
+    with pytest.raises(WebSearchReconciliationRequired):
+        acquire_web_search_workflow(
+            tenant=tenant,
+            operation='euroauto',
+            domain_reference=f'product:{tenant.pk}:{product.pk}',
+            workflow_key='product-parse-job:distinct-blocked-intent',
+            input_snapshot=workflow.input_snapshot,
+            product=product,
+        )
+    provider.search.assert_called_once()
+    provider.search_images.assert_called_once()
+
+    recovered = resume_euroauto_checkpoint(job.pk)
+    assert recovered.pk == dispatch.pk
+    assert recovered.status == BackgroundJobDispatch.Status.PENDING
+    job.refresh_from_db()
+    assert job.status == ProductParseJob.Status.PENDING
+
+    with patch(
+        'apps.web_research.routing.search_provider_candidates',
+        side_effect=AssertionError('checkpoint replay resolved a provider'),
+    ), patch(
+        'apps.products.services.get_part_parser',
+        side_effect=lambda source_id: EuroautoPartParser(),
+    ):
+        result = ProductEnrichmentService.run_parse_job(job.pk)
+
+    provider.search.assert_called_once()
+    provider.search_images.assert_called_once()
+    workflow.refresh_from_db()
+    job.refresh_from_db()
+    assert workflow.status == WebSearchWorkflow.Status.APPLIED
+    assert not workflow.attempts.exclude(
+        apply_state=WebSearchAttempt.ApplyState.APPLIED,
+    ).exists()
+    assert job.status in {
+        ProductParseJob.Status.SUCCESS,
+        ProductParseJob.Status.NEED_REVIEW,
+    }
+    assert result['product_id'] == product.pk
+
+    # A worker loss after domain+ACK commit but before dispatch CAS re-enters
+    # the exact job and must return its durable payload without parser/provider.
+    with patch(
+        'apps.products.services.get_part_parser',
+        side_effect=AssertionError('applied workflow replayed the parser'),
+    ):
+        resumed = ProductEnrichmentService.run_parse_job(job.pk)
+    assert resumed['resumed'] is True
+    provider.search.assert_called_once()
+    provider.search_images.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_euroauto_not_found_acknowledges_all_empty_paid_slots():
+    _, _, job, provider, candidate = make_euroauto_workflow_case(
+        'euroauto-empty-ack',
+    )
+    provider.search.return_value = []
+    provider.search_images.return_value = []
+
+    with patch(
+        'apps.web_research.routing.search_provider_candidates',
+        return_value=[candidate],
+    ), patch(
+        'apps.products.services.get_part_parser',
+        side_effect=lambda source_id: EuroautoPartParser(),
+    ):
+        result = ProductEnrichmentService.run_parse_job(job.pk)
+
+    workflow = WebSearchWorkflow.objects.get(
+        workflow_key=f'product-parse-job:{job.pk}',
+    )
+    attempts = list(workflow.attempts.order_by('pk'))
+    job.refresh_from_db()
+    assert result['status'] == ProductParseJob.Status.NOT_FOUND
+    assert job.status == ProductParseJob.Status.NOT_FOUND
+    assert workflow.status == WebSearchWorkflow.Status.APPLIED
+    assert len(attempts) == 2
+    assert {attempt.status for attempt in attempts} == {
+        WebSearchAttempt.Status.EMPTY,
+    }
+    assert {attempt.apply_state for attempt in attempts} == {
+        WebSearchAttempt.ApplyState.APPLIED,
+    }
+
+
+@pytest.mark.django_db
+def test_euroauto_safe_provider_failure_is_durable_and_exactly_acked():
+    _, _, job, provider, candidate = make_euroauto_workflow_case(
+        'euroauto-safe-failure-ack',
+    )
+    provider.search.side_effect = WebSearchProviderError(
+        'provider rejected credentials before paid work',
+        code='authentication_error',
+        retryable=False,
+    )
+
+    with patch(
+        'apps.web_research.routing.search_provider_candidates',
+        return_value=[candidate],
+    ), patch(
+        'apps.products.services.get_part_parser',
+        side_effect=lambda source_id: EuroautoPartParser(),
+    ), pytest.raises(WebSearchProviderError, match='rejected credentials'):
+        ProductEnrichmentService.run_parse_job(job.pk)
+
+    workflow = WebSearchWorkflow.objects.get(
+        workflow_key=f'product-parse-job:{job.pk}',
+    )
+    attempt = workflow.attempts.get()
+    job.refresh_from_db()
+    assert job.status == ProductParseJob.Status.FAILED
+    assert workflow.status == WebSearchWorkflow.Status.APPLIED
+    assert attempt.status == WebSearchAttempt.Status.FAILED
+    assert attempt.reconciliation_state == (
+        WebSearchAttempt.ReconciliationState.NOT_REQUIRED
+    )
+    assert attempt.apply_state == WebSearchAttempt.ApplyState.APPLIED
+    provider.search_images.assert_not_called()

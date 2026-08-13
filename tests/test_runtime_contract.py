@@ -454,9 +454,9 @@ def test_deploy_uses_native_ssh_with_verified_host_key_and_bounded_runtime():
     assert 'timeout --foreground --signal=TERM --kill-after=30s 140m' in (
         DEPLOY_WORKFLOW
     )
-    assert "bash -se -- \"$DEPLOY_SHA\" <<'REMOTE'" in DEPLOY_WORKFLOW
-    assert 'main_sha="$(git rev-parse FETCH_HEAD)"' in DEPLOY_WORKFLOW
-    assert '"$target_sha" != "$main_sha"' in DEPLOY_WORKFLOW
+    assert 'deploy "$DEPLOY_SHA"' in DEPLOY_WORKFLOW
+    assert "bash -se -- \"$DEPLOY_SHA\" <<'REMOTE'" not in DEPLOY_WORKFLOW
+    assert 'test "$PROD_USER" = mapdeploy' in DEPLOY_WORKFLOW
     assert 'git merge-base --is-ancestor' not in DEPLOY_WORKFLOW
 
 
@@ -661,6 +661,14 @@ def test_make_bootstrap_prepares_database_before_application_rollout():
     assert 'run --rm --no-deps --build django' in bootstrap
 
 
+def test_billing_is_fail_closed_in_base_settings_and_env_example():
+    base_settings = (ROOT / 'config/settings/base.py').read_text()
+    env_example = (ROOT / '.env.example').read_text()
+
+    assert "os.environ.get('BILLING_ENABLED', 'false')" in base_settings
+    assert '\nBILLING_ENABLED=false\n' in env_example
+
+
 def test_dev_script_never_kills_foreign_processes_or_prunes_host_docker():
     script = (ROOT / 'dev.sh').read_text()
 
@@ -777,3 +785,26 @@ def test_versioned_backup_lifecycle_expires_noncurrent_objects():
         coverage['NoncurrentVersionExpiration']['NoncurrentDays']
         >= coverage['Expiration']['Days']
     )
+
+
+def test_media_lifecycle_preserves_current_objects_and_retains_old_versions():
+    lifecycle = json.loads((ROOT / 'ops/s3/media-lifecycle.json').read_text())
+    rules = lifecycle['Rules']
+
+    assert len(rules) == 1
+    rule = rules[0]
+    assert rule['Status'] == 'Enabled'
+    assert 'Expiration' not in rule
+    assert rule['NoncurrentVersionExpiration']['NoncurrentDays'] >= 365
+    assert rule['AbortIncompleteMultipartUpload']['DaysAfterInitiation'] <= 7
+
+
+def test_every_production_service_has_cpu_memory_and_pid_guardrails():
+    for name, service in COMPOSE['services'].items():
+        assert float(service['cpus']) > 0, name
+        assert service['mem_limit'], name
+        assert 1 <= int(service['pids_limit']) <= 512, name
+
+    assert '--concurrency=2' in COMPOSE['services']['celery_worker']['command']
+    assert '--concurrency=1' in COMPOSE['services']['celery_worker_images']['command']
+    assert '-w 2' in COMPOSE['services']['django']['command']

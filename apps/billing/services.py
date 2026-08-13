@@ -959,6 +959,8 @@ class BillingService:
 
         now = timezone.now()
         manual_reason = ''
+        manual_invoice_id: int | None = None
+        manual_tenant_id: int | None = None
         with transaction.atomic():
             invoice = Invoice.objects.select_for_update().get(pk=invoice_id)
             if (
@@ -1085,6 +1087,8 @@ class BillingService:
                     return_url = invoice.checkout_return_url
 
         if manual_invoice_id is not None:
+            if manual_tenant_id is None:
+                raise RuntimeError('Manual-review invoice не содержит tenant_id.')
             BillingService._audit_checkout_manual_review(
                 manual_invoice_id,
                 manual_tenant_id,
@@ -1498,7 +1502,7 @@ class BillingService:
         if snapshot:
             try:
                 snapshot_amount = Decimal(str(snapshot.get('amount')))
-                snapshot_plan_id = int(plan_snapshot.get('id'))
+                snapshot_plan_id = int(str(plan_snapshot.get('id') or ''))
             except (InvalidOperation, TypeError, ValueError):
                 BillingService._mark_invoice_manual_review_locked(
                     invoice,

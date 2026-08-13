@@ -1,16 +1,27 @@
 from decimal import Decimal
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
 from django.core.cache.backends.locmem import LocMemCache
+from django.db import close_old_connections
 from django.test import Client, override_settings
 
+from apps.core.models import (
+    BackgroundJobDispatch, PaidIngressIntent, TenantDailyPaidUsage,
+)
 from apps.products.models import Product
 from apps.tenants.tests.auth import (
     create_operator_key,
     create_tenant_with_operator_key,
 )
-from apps.web_research.models import WebResearchRun
+from apps.web_research.accounting import (
+    acquire_web_search_workflow, fingerprint_web_search_request,
+    reserve_web_search_attempt,
+)
+from apps.web_research.models import WebResearchRun, WebSearchAttempt
+from apps.web_research.services import web_research_domain_reference
 
 
 @pytest.fixture(autouse=True)
@@ -52,17 +63,182 @@ def test_tenant_can_start_manual_web_research(django_capture_on_commit_callbacks
     product = make_product(tenant)
     client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
 
-    with patch('apps.web_research.tasks.run_web_research.delay') as delay:
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
         with django_capture_on_commit_callbacks(execute=True):
             response = client.post(
                 f'/api/v1/products/{product.pk}/web-research/',
+                data={'idempotency_key': str(uuid.uuid4())},
                 content_type='application/json',
             )
 
     assert response.status_code == 201
     run = WebResearchRun.objects.get(product=product)
     assert run.trigger == WebResearchRun.Trigger.MANUAL
-    delay.assert_called_once_with(run.pk)
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.web_research.tasks.run_web_research',
+        args=[run.pk],
+    ).count() == 1
+
+
+@pytest.mark.django_db
+def test_manual_web_research_requires_uuid_idempotency_key():
+    tenant, api_key = make_tenant('web-api-key-required')
+    product = make_product(tenant)
+
+    response = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}').post(
+        f'/api/v1/products/{product.pk}/web-research/',
+        data={},
+        content_type='application/json',
+    )
+
+    assert response.status_code == 400
+    assert not WebResearchRun.objects.filter(product=product).exists()
+
+
+@pytest.mark.django_db
+def test_manual_web_research_ambiguous_retry_returns_terminal_canonical_run(
+    django_capture_on_commit_callbacks,
+):
+    tenant, api_key = make_tenant('web-api-replay')
+    product = make_product(tenant)
+    client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
+    key = str(uuid.uuid4())
+
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
+        with django_capture_on_commit_callbacks(execute=True):
+            first = client.post(
+                f'/api/v1/products/{product.pk}/web-research/',
+                data={'idempotency_key': key},
+                content_type='application/json',
+            )
+    run = WebResearchRun.objects.get(product=product)
+    run.status = WebResearchRun.Status.NO_RESULTS
+    run.save(update_fields=['status', 'updated_at'])
+
+    retry = client.post(
+        f'/api/v1/products/{product.pk}/web-research/',
+        data={'idempotency_key': key},
+        content_type='application/json',
+    )
+
+    assert first.status_code == 201
+    assert retry.status_code == 201
+    assert retry.json()['data']['id'] == run.pk
+    assert retry.json()['data']['status'] == WebResearchRun.Status.NO_RESULTS
+    assert PaidIngressIntent.objects.filter(
+        tenant=tenant, operation='product-web-research',
+    ).count() == 1
+    assert TenantDailyPaidUsage.objects.get(
+        tenant=tenant, scope='web-research-starts',
+    ).units == 1
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.web_research.tasks.run_web_research',
+    ).count() == 1
+
+
+@pytest.mark.django_db
+def test_manual_web_research_rejects_same_key_with_conflicting_payload(
+    django_capture_on_commit_callbacks,
+):
+    tenant, api_key = make_tenant('web-api-conflict')
+    product = make_product(tenant)
+    client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
+    key = str(uuid.uuid4())
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
+        with django_capture_on_commit_callbacks(execute=True):
+            first = client.post(
+                f'/api/v1/products/{product.pk}/web-research/',
+                data={'idempotency_key': key, 'generate_after': False},
+                content_type='application/json',
+            )
+    conflict = client.post(
+        f'/api/v1/products/{product.pk}/web-research/',
+        data={'idempotency_key': key, 'generate_after': True},
+        content_type='application/json',
+    )
+
+    assert first.status_code == 201
+    assert conflict.status_code == 409
+    assert conflict.json()['code'] == 'idempotency_conflict'
+    assert WebResearchRun.objects.filter(product=product).count() == 1
+
+
+@pytest.mark.django_db
+def test_unresolved_search_attempt_blocks_new_http_intent_before_budget_or_dispatch():
+    tenant, api_key = make_tenant('web-api-search-fence')
+    product = make_product(tenant)
+    domain_reference = web_research_domain_reference(
+        product, WebResearchRun.Purpose.ENRICHMENT,
+    )
+    workflow = acquire_web_search_workflow(
+        tenant=tenant,
+        product=product,
+        operation='web_research',
+        domain_reference=domain_reference,
+        workflow_key='legacy-unresolved-http-test',
+        input_snapshot={'version': 1, 'query': 'unknown old request'},
+    )
+    attempt, _ = reserve_web_search_attempt(
+        workflow=workflow,
+        provider_id='brave',
+        query='unknown old request',
+        call_key='brave:text:query:0',
+        request_fingerprint=fingerprint_web_search_request({
+            'query': 'unknown old request',
+        }),
+    )
+    WebSearchAttempt.objects.filter(pk=attempt.pk).update(
+        status=WebSearchAttempt.Status.OUTCOME_UNCERTAIN,
+    )
+
+    response = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}').post(
+        f'/api/v1/products/{product.pk}/web-research/',
+        data={'idempotency_key': str(uuid.uuid4())},
+        content_type='application/json',
+    )
+
+    assert response.status_code == 409
+    assert response.json()['code'] == 'provider_reconciliation_required'
+    assert not WebResearchRun.objects.filter(product=product).exists()
+    assert not TenantDailyPaidUsage.objects.filter(tenant=tenant).exists()
+    assert not PaidIngressIntent.objects.filter(tenant=tenant).exists()
+    assert not BackgroundJobDispatch.objects.filter(
+        task_name='apps.web_research.tasks.run_web_research',
+    ).exists()
+
+
+@pytest.mark.django_db(transaction=True)
+def test_concurrent_manual_retries_create_one_run_budget_and_dispatch():
+    tenant, api_key = make_tenant('web-api-concurrent-retry')
+    product = make_product(tenant)
+    key = str(uuid.uuid4())
+
+    def submit():
+        close_old_connections()
+        try:
+            return Client(HTTP_AUTHORIZATION=f'Bearer {api_key}').post(
+                f'/api/v1/products/{product.pk}/web-research/',
+                data={'idempotency_key': key},
+                content_type='application/json',
+            ).status_code
+        finally:
+            close_old_connections()
+
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            statuses = list(pool.map(lambda _index: submit(), range(2)))
+
+    assert statuses == [201, 201]
+    assert WebResearchRun.objects.filter(product=product).count() == 1
+    assert PaidIngressIntent.objects.filter(
+        tenant=tenant, operation='product-web-research',
+    ).count() == 1
+    assert TenantDailyPaidUsage.objects.get(
+        tenant=tenant, scope='web-research-starts',
+    ).units == 1
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.web_research.tasks.run_web_research',
+    ).count() == 1
 
 
 @pytest.mark.django_db
@@ -94,16 +270,22 @@ def test_generate_after_requires_full_effect_scope(
 
     denied = Client(HTTP_AUTHORIZATION=f'Bearer {insufficient}').post(
         f'/api/v1/products/{product.pk}/web-research/',
-        data={'generate_after': True},
+        data={
+            'generate_after': True,
+            'idempotency_key': str(uuid.uuid4()),
+        },
         content_type='application/json',
     )
-    with patch('apps.web_research.tasks.run_web_research.delay'):
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
         with django_capture_on_commit_callbacks(execute=True):
             allowed = Client(
                 HTTP_AUTHORIZATION=f'Bearer {sufficient}',
             ).post(
                 f'/api/v1/products/{product.pk}/web-research/',
-                data={'generate_after': True},
+                data={
+                    'generate_after': True,
+                    'idempotency_key': str(uuid.uuid4()),
+                },
                 content_type='application/json',
             )
 
@@ -124,6 +306,7 @@ def test_web_research_requires_ai_scope_even_without_generation():
 
     response = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}').post(
         f'/api/v1/products/{product.pk}/web-research/',
+        data={'idempotency_key': str(uuid.uuid4())},
         content_type='application/json',
     )
 
@@ -139,11 +322,14 @@ def test_generate_after_false_string_is_not_treated_as_true(
     product = make_product(tenant)
     client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
 
-    with patch('apps.web_research.tasks.run_web_research.delay'):
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
         with django_capture_on_commit_callbacks(execute=True):
             response = client.post(
                 f'/api/v1/products/{product.pk}/web-research/',
-                data={'generate_after': 'false'},
+                data={
+                    'generate_after': 'false',
+                    'idempotency_key': str(uuid.uuid4()),
+                },
                 content_type='application/json',
             )
 
@@ -161,16 +347,18 @@ def test_daily_budget_is_shared_by_enrichment_and_market_research(
     pricing_product = make_product(tenant, article='OEM-PRICING')
     client = Client(HTTP_AUTHORIZATION=f'Bearer {api_key}')
 
-    with patch('apps.web_research.tasks.run_web_research.delay') as delay:
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
         with django_capture_on_commit_callbacks(execute=True):
             first = client.post(
                 f'/api/v1/products/{enrichment_product.pk}/web-research/',
-                data={}, content_type='application/json',
+                data={'idempotency_key': str(uuid.uuid4())},
+                content_type='application/json',
             )
         with django_capture_on_commit_callbacks(execute=True):
             second = client.post(
                 f'/api/v1/products/{pricing_product.pk}/market-research/',
-                data={}, content_type='application/json',
+                data={'idempotency_key': str(uuid.uuid4())},
+                content_type='application/json',
             )
 
     assert first.status_code == 201
@@ -183,7 +371,9 @@ def test_daily_budget_is_shared_by_enrichment_and_market_research(
         tenant=tenant,
         purpose=WebResearchRun.Purpose.PRICING,
     ).exists()
-    delay.assert_called_once()
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.web_research.tasks.run_web_research',
+    ).count() == 1
 
 
 @pytest.mark.django_db

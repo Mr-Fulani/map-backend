@@ -1,28 +1,62 @@
-import logging
+"""Signal receivers owned by image-search live in this module.
 
-from django.db.models.signals import post_delete
+Product media lifecycle receivers are registered by ``apps.products`` because
+those files must also be cleaned when image-search is disabled or removed.
+"""
+
+from django.db.models.deletion import ProtectedError
+from django.db.models.signals import pre_delete
 from django.dispatch import receiver
 
-from apps.products.models import ProductImage
-
-logger = logging.getLogger(__name__)
+from apps.image_search.models import ImageSearchIntent, ImageSearchTask
 
 
-@receiver(post_delete, sender=ProductImage)
-def delete_image_from_s3(sender, instance, **kwargs):
-    """Удаляет все версии файла из S3 при удалении ProductImage.
+def _active_workflow_queryset_for_task_ids(task_ids, *, using):
+    from apps.web_research.models import WebSearchWorkflow
 
-    Срабатывает автоматически при:
-    - Удалении через Admin (включая bulk delete, если переопределён delete_queryset)
-    - Каскадном удалении Product
-    - Прямом вызове instance.delete()
-    """
-    from django.core.files.storage import default_storage
+    keys = [f'image-search-task:{task_id}' for task_id in task_ids]
+    return WebSearchWorkflow.objects.using(using).select_for_update().filter(
+        workflow_key__in=keys,
+        operation='image_search',
+        status__in=WebSearchWorkflow.ACTIVE_STATUSES,
+    )
 
-    for key_field in ('s3_key', 's3_key_preview', 's3_key_thumb'):
-        key = getattr(instance, key_field, '')
-        if key:
-            try:
-                default_storage.delete(key)
-            except Exception:
-                logger.warning(f'S3 delete failed: {key}', exc_info=True)
+
+@receiver(pre_delete, sender=ImageSearchTask)
+def protect_image_task_with_active_paid_workflow(sender, instance, using, **kwargs):
+    from apps.tenants.models import Tenant
+
+    Tenant.objects.using(using).select_for_update().only('pk').get(
+        pk=instance.tenant_id,
+    )
+    sender.objects.using(using).select_for_update().only('pk').get(pk=instance.pk)
+    workflows = _active_workflow_queryset_for_task_ids(
+        [instance.pk],
+        using=using,
+    )
+    if workflows.exists():
+        raise ProtectedError(
+            'Image search task has an active paid provider workflow.',
+            set(workflows[:10]),
+        )
+
+
+@receiver(pre_delete, sender=ImageSearchIntent)
+def protect_image_intent_with_active_paid_workflow(sender, instance, using, **kwargs):
+    from apps.tenants.models import Tenant
+
+    Tenant.objects.using(using).select_for_update().only('pk').get(
+        pk=instance.tenant_id,
+    )
+    task_ids = list(
+        instance.tasks.using(using).select_for_update().values_list('pk', flat=True)
+    )
+    workflows = _active_workflow_queryset_for_task_ids(
+        task_ids,
+        using=using,
+    )
+    if workflows.exists():
+        raise ProtectedError(
+            'Image search intent owns an active paid provider workflow.',
+            set(workflows[:10]),
+        )

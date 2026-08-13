@@ -70,13 +70,15 @@ class WebSearchAttemptSerializer(serializers.ModelSerializer):
     class Meta:
         model = WebSearchAttempt
         fields = [
-            'id', 'provider_id', 'query', 'status', 'result_count',
-            'duration_ms', 'retryable', 'error_code', 'error_message', 'created_at',
+            'id', 'provider_id', 'operation', 'call_kind', 'domain_reference', 'query',
+            'status', 'result_count',
+            'duration_ms', 'retryable', 'error_code', 'error_message',
+            'apply_state', 'reconciliation_state', 'created_at',
         ]
 
 
 class WebResearchClaimSerializer(serializers.ModelSerializer):
-    evidence_ids = serializers.PrimaryKeyRelatedField(
+    evidence_ids: serializers.PrimaryKeyRelatedField = serializers.PrimaryKeyRelatedField(
         source='evidence', many=True, read_only=True,
     )
 
@@ -118,7 +120,7 @@ class WebResearchRunSerializer(serializers.ModelSerializer):
         model = WebResearchRun
         fields = [
             'id', 'product_id', 'status', 'trigger', 'purpose', 'settings_snapshot',
-            'search_provider',
+            'search_provider', 'origin_key',
             'ai_provider', 'ai_model', 'queries', 'coverage_before',
             'coverage_after', 'result_count', 'claim_count', 'offer_count', 'generate_after',
             'error_message', 'started_at', 'finished_at', 'created_at',
@@ -197,7 +199,7 @@ class MarketStatisticsSerializer(serializers.Serializer):
 
 class MarketRegionSerializer(serializers.Serializer):
     preset = serializers.CharField()
-    label = serializers.CharField()
+    label = serializers.CharField()  # type: ignore[assignment]
     country_codes = serializers.ListField(child=serializers.CharField(max_length=2))
 
 

@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models
 from django.utils import timezone
 
@@ -11,6 +13,12 @@ class ImageSearchLog(TimestampedModel):
     Хранит информацию о запросе, результатах и ошибках.
     Используется для мониторинга hit rate и здоровья источников.
     """
+
+    class Outcome(models.TextChoices):
+        UNKNOWN = 'unknown', 'Не классифицировано (legacy)'
+        COMPLETED = 'completed', 'Завершено'
+        SAFE_FAILURE = 'safe_failure', 'Безопасный отказ'
+        OUTCOME_UNCERTAIN = 'outcome_uncertain', 'Результат провайдера неизвестен'
 
     tenant = models.ForeignKey(
         Tenant, on_delete=models.CASCADE,
@@ -26,6 +34,17 @@ class ImageSearchLog(TimestampedModel):
     results_count = models.PositiveIntegerField(default=0, verbose_name='Найдено кандидатов')
     accepted_count = models.PositiveSmallIntegerField(default=0, verbose_name='Принято')
     duration_ms = models.PositiveIntegerField(default=0, verbose_name='Длительность (мс)')
+    outcome = models.CharField(
+        max_length=20,
+        choices=Outcome.choices,
+        default=Outcome.UNKNOWN,
+        verbose_name='Результат запроса к провайдеру',
+    )
+    error_code = models.CharField(
+        max_length=80,
+        blank=True,
+        verbose_name='Код ошибки',
+    )
     error = models.TextField(blank=True, verbose_name='Ошибка')
     query_metrics = models.JSONField(
         default=list, blank=True, verbose_name='Метрики запросов',
@@ -33,22 +52,88 @@ class ImageSearchLog(TimestampedModel):
     query_builder_version = models.CharField(
         max_length=20, blank=True, verbose_name='Версия построителя запросов',
     )
+    workflow_key = models.CharField(
+        max_length=160,
+        blank=True,
+        editable=False,
+        verbose_name='Ключ durable workflow',
+    )
+    workflow_slot = models.CharField(
+        max_length=160,
+        blank=True,
+        editable=False,
+        verbose_name='Логический слот durable workflow',
+    )
 
     class Meta:
         verbose_name = 'Лог поиска изображений'
         verbose_name_plural = 'Логи поиска изображений'
         indexes = [
+            models.Index(fields=['created_at'], name='img_log_created_idx'),
             models.Index(fields=['tenant', '-created_at']),
             models.Index(fields=['product', 'created_at']),
             models.Index(fields=['source_id', 'created_at']),
+            models.Index(
+                fields=['workflow_key', 'workflow_slot'],
+                name='img_log_workflow_slot_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workflow_key', 'workflow_slot'],
+                condition=~models.Q(workflow_key=''),
+                name='uniq_image_log_workflow_slot',
+            ),
         ]
 
     def __str__(self):
         return f'[{self.source_id}] {self.product_id} — {self.results_count} results'
 
 
+class ImageSearchIntent(TimestampedModel):
+    """Canonical tenant request owning one single or bulk search submission."""
+
+    class Operation(models.TextChoices):
+        SINGLE = 'single', 'Одиночный поиск'
+        BULK = 'bulk', 'Массовый поиск'
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='image_search_intents',
+    )
+    operation = models.CharField(max_length=20, choices=Operation.choices)
+    idempotency_key = models.UUIDField(default=uuid.uuid4, editable=False)
+    request_fingerprint = models.CharField(max_length=64, editable=False)
+    request_payload = models.JSONField(default=dict, editable=False)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'operation', 'idempotency_key'],
+                name='unique_tenant_image_search_intent',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['tenant', '-created_at'],
+                name='img_intent_tenant_created_idx',
+            ),
+        ]
+
+
 class ImageSearchTask(TimestampedModel):
-    """Tenant/product ownership record for a Celery image-search result."""
+    """Tenant/product ownership record for a durable image-search result."""
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Ожидает'
+        RUNNING = 'running', 'В работе'
+        SUCCEEDED = 'succeeded', 'Завершено'
+        FAILED = 'failed', 'Ошибка'
+        RECONCILIATION_REQUIRED = (
+            'reconciliation_required',
+            'Требует сверки провайдера',
+        )
 
     tenant = models.ForeignKey(
         Tenant,
@@ -61,9 +146,34 @@ class ImageSearchTask(TimestampedModel):
         related_name='image_search_tasks',
     )
     task_id = models.CharField(max_length=255, unique=True)
+    dispatch = models.ForeignKey(
+        'core.BackgroundJobDispatch',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='image_search_requests',
+    )
+    intent = models.ForeignKey(
+        ImageSearchIntent,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='tasks',
+    )
+    status = models.CharField(
+        max_length=30,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    result = models.JSONField(null=True, blank=True, editable=False)
+    error_code = models.CharField(max_length=80, blank=True, editable=False)
+    error_message = models.CharField(max_length=500, blank=True, editable=False)
+    finished_at = models.DateTimeField(null=True, blank=True, editable=False)
 
     class Meta:
         indexes = [
+            models.Index(fields=['created_at'], name='img_task_created_idx'),
             models.Index(
                 fields=['tenant', '-created_at'],
                 name='img_task_tenant_created_idx',
@@ -71,6 +181,10 @@ class ImageSearchTask(TimestampedModel):
             models.Index(
                 fields=['product', '-created_at'],
                 name='img_task_product_created_idx',
+            ),
+            models.Index(
+                fields=['status', '-updated_at'],
+                name='img_task_status_updated_idx',
             ),
         ]
 
@@ -97,6 +211,9 @@ class ImageSearchCache(TimestampedModel):
     class Meta:
         verbose_name = 'Кеш поиска изображений'
         verbose_name_plural = 'Кеш поиска изображений'
+        indexes = [
+            models.Index(fields=['expires_at'], name='img_cache_expires_idx'),
+        ]
 
     def __str__(self):
         return self.cache_key

@@ -1,0 +1,11 @@
+{
+  "Rules": [
+    {
+      "ID": "retain-current-media-and-expire-old-versions",
+      "Status": "Enabled",
+      "Filter": {"Prefix": ""},
+      "NoncurrentVersionExpiration": {"NoncurrentDays": 365},
+      "AbortIncompleteMultipartUpload": {"DaysAfterInitiation": 7}
+    }
+  ]
+}

@@ -11,13 +11,30 @@ from apps.ai_agent.provider_registry import ProviderDefinition, get_provider
 
 
 class AIProviderError(RuntimeError):
-    def __init__(self, message: str, *, code: str = 'provider_error', retryable: bool = False):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = 'provider_error',
+        retryable: bool = False,
+        outcome_uncertain: bool = False,
+        request_not_accepted: bool = False,
+    ):
         super().__init__(message)
         self.code = code
         self.retryable = retryable
+        self.outcome_uncertain = outcome_uncertain
+        # True only when the platform has authoritative evidence that the
+        # provider did not accept a billable request (local preflight or a
+        # provider-documented rejection). All other post-boundary failures are
+        # treated conservatively as requiring reconciliation.
+        self.request_not_accepted = request_not_accepted
 
 
 _MAX_AI_RESPONSE_ITEMS = 256
+_AUTHORITATIVE_NOT_ACCEPTED_HTTP_STATUSES = {
+    400, 401, 403, 404, 405, 413, 415, 422,
+}
 
 
 @dataclass(frozen=True)
@@ -41,11 +58,13 @@ def call_model(
         raise AIProviderError(
             f'Неизвестный AI-провайдер: {model.provider}',
             code='unknown_provider',
+            request_not_accepted=True,
         )
     if not provider.api_key:
         raise AIProviderError(
             f'{provider.api_key_setting} не настроен.',
             code='missing_api_key',
+            request_not_accepted=True,
         )
     if provider.api_style == 'openai_responses':
         return _call_openai(
@@ -60,6 +79,7 @@ def call_model(
     raise AIProviderError(
         f'Неподдерживаемый формат API: {provider.api_style}',
         code='unknown_provider_api',
+        request_not_accepted=True,
     )
 
 
@@ -106,12 +126,14 @@ def _call_openai(
             f'OpenAI вернул небезопасный ответ: {exc}',
             code='invalid_provider_response',
             retryable=False,
+            outcome_uncertain=True,
         ) from exc
     except requests.RequestException as exc:
         raise AIProviderError(
             f'Ошибка соединения с OpenAI: {exc}',
             code='connection_error',
             retryable=True,
+            outcome_uncertain=True,
         ) from exc
     data = _checked_json(response, 'OpenAI')
     output_text = data.get('output_text')
@@ -121,7 +143,11 @@ def _call_openai(
     usage = _optional_object(data, 'usage', 'OpenAI')
     input_details = _optional_object(usage, 'input_tokens_details', 'OpenAI')
     if not text:
-        raise AIProviderError('OpenAI вернул пустой ответ.', code='empty_response')
+        raise AIProviderError(
+            'OpenAI вернул пустой ответ.',
+            code='empty_response',
+            outcome_uncertain=True,
+        )
     return AIProviderResult(
         text=text,
         input_tokens=_token_count(usage.get('input_tokens'), 'OpenAI', 'input_tokens'),
@@ -162,12 +188,14 @@ def _call_anthropic(
             f'Anthropic вернул небезопасный ответ: {exc}',
             code='invalid_provider_response',
             retryable=False,
+            outcome_uncertain=True,
         ) from exc
     except requests.RequestException as exc:
         raise AIProviderError(
             f'Ошибка соединения с Anthropic: {exc}',
             code='connection_error',
             retryable=True,
+            outcome_uncertain=True,
         ) from exc
     data = _checked_json(response, 'Anthropic')
     content = _optional_list(data, 'content', 'Anthropic')
@@ -184,7 +212,11 @@ def _call_anthropic(
     text = ''.join(chunks)
     usage = _optional_object(data, 'usage', 'Anthropic')
     if not text:
-        raise AIProviderError('Anthropic вернул пустой ответ.', code='empty_response')
+        raise AIProviderError(
+            'Anthropic вернул пустой ответ.',
+            code='empty_response',
+            outcome_uncertain=True,
+        )
     return AIProviderResult(
         text=text,
         input_tokens=_token_count(usage.get('input_tokens'), 'Anthropic', 'input_tokens'),
@@ -227,12 +259,14 @@ def _call_openai_compatible_chat(
             f'{provider.display_name} вернул небезопасный ответ: {exc}',
             code='invalid_provider_response',
             retryable=False,
+            outcome_uncertain=True,
         ) from exc
     except requests.RequestException as exc:
         raise AIProviderError(
             f'Ошибка соединения с {provider.display_name}: {exc}',
             code='connection_error',
             retryable=True,
+            outcome_uncertain=True,
         ) from exc
     data = _checked_json(response, provider.display_name)
     choices = _optional_list(data, 'choices', provider.display_name)
@@ -259,6 +293,7 @@ def _call_openai_compatible_chat(
         raise AIProviderError(
             f'{provider.display_name} вернул пустой ответ.',
             code='empty_response',
+            outcome_uncertain=True,
         )
     return AIProviderResult(
         text=text,
@@ -287,6 +322,7 @@ def _checked_json(response, provider_name: str) -> dict:
             f'{provider_name} вернул не-JSON ответ.',
             code='invalid_provider_response',
             retryable=response.status_code >= 500,
+            outcome_uncertain=True,
         ) from exc
     if not isinstance(data, dict):
         _invalid_provider_response(
@@ -301,6 +337,12 @@ def _checked_json(response, provider_name: str) -> dict:
             f'{provider_name}: {message or response.status_code}',
             code=f'http_{response.status_code}',
             retryable=response.status_code == 429 or response.status_code >= 500,
+            outcome_uncertain=(
+                response.status_code not in _AUTHORITATIVE_NOT_ACCEPTED_HTTP_STATUSES
+            ),
+            request_not_accepted=(
+                response.status_code in _AUTHORITATIVE_NOT_ACCEPTED_HTTP_STATUSES
+            ),
         )
     return data
 
@@ -396,4 +438,5 @@ def _invalid_provider_response(
         f'{provider_name} вернул некорректный ответ: {detail}.',
         code='invalid_provider_response',
         retryable=retryable,
+        outcome_uncertain=True,
     )

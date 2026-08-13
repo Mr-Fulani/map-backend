@@ -2,6 +2,7 @@ import logging
 import uuid
 from dataclasses import asdict, dataclass
 from datetime import timedelta
+from functools import partial
 
 from django.conf import settings
 from django.db import transaction
@@ -119,7 +120,7 @@ def _enqueue(
         )
     if created:
         transaction.on_commit(
-            lambda event_id=event.pk: _kick_dispatcher_safely(event_id),
+            partial(_kick_dispatcher_safely, event.pk),
             robust=True,
         )
     return event
@@ -269,6 +270,7 @@ def _publish_event(event: BillingOutboxEvent) -> None:
                 payload['level'],
                 payload['message'],
                 payload['payload'],
+                f'billing-outbox:{event.pk}',
             ],
             task_id=task_id,
         )

@@ -292,7 +292,10 @@ def exported_snapshot(database_url: str):
         connection.execute(
             'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY'
         )
-        snapshot_id = connection.execute('SELECT pg_export_snapshot()').fetchone()[0]
+        snapshot_row = connection.execute('SELECT pg_export_snapshot()').fetchone()
+        if snapshot_row is None or not snapshot_row[0]:
+            raise RuntimeError('PostgreSQL did not return an exported snapshot identifier.')
+        snapshot_id = str(snapshot_row[0])
         yield connection, snapshot_id
     finally:
         try:

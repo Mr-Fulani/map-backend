@@ -2,10 +2,33 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+import requests
+
+from apps.core.http_responses import TrustedResponseTooLarge
 from apps.image_search.sources.brave import BraveImageSource
+from apps.image_search.sources.base import ImageSearchOutcomeUncertain
+from apps.image_search.sources.connection import ImageSourceConnection
 
 # Патч _track_quota для всех тестов, которые не проверяют квоту напрямую
 _patch_quota = patch('apps.image_search.sources.brave.BraveImageSource._track_quota')
+
+
+@pytest.fixture(autouse=True)
+def _unit_image_provider_without_shared_ledger():
+    """Adapter unit tests isolate HTTP parsing from DB accounting integration."""
+    connection = ImageSourceConnection(enabled=True, priority=100)
+    with patch(
+        'apps.image_search.sources.brave.image_source_connection',
+        return_value=connection,
+    ), patch(
+        'apps.image_search.sources.connection.image_source_connection',
+        return_value=connection,
+    ), patch(
+        'apps.image_search.sources.brave.execute_recorded_image_search',
+        side_effect=lambda source, query, call, **kwargs: call(),
+    ) as recorded_call:
+        yield recorded_call
 
 
 class FakeProduct:
@@ -68,6 +91,26 @@ class TestBraveImageSource:
         assert results[0].width == 800
         assert results[0].height == 600
 
+    def test_each_http_query_uses_shared_accounting_ledger(
+        self,
+        _unit_image_provider_without_shared_ledger,
+    ):
+        response = MagicMock(status_code=200)
+        response.json.return_value = {'results': []}
+        source = _make_source()
+        source.max_queries = 1
+
+        with patch(
+            'apps.image_search.sources.brave.image_source_api_key',
+            return_value='test-key',
+        ), patch(
+            'apps.image_search.sources.brave.bounded_http_request',
+            return_value=response,
+        ), _patch_quota:
+            source.search()
+
+        _unit_image_provider_without_shared_ledger.assert_called_once()
+
     def test_search_дедуплицирует_url(self):
         dup_url = 'https://img.example.com/same.jpg'
         mock_resp = MagicMock()
@@ -108,13 +151,25 @@ class TestBraveImageSource:
 
         assert results == []
 
-    def test_search_возвращает_пустой_список_при_сетевой_ошибке(self):
+    def test_connect_timeout_before_send_allows_safe_fallback(self):
         with patch('apps.image_search.sources.brave.settings') as s, \
-             patch('apps.image_search.sources.brave.requests.get', side_effect=Exception('timeout')):
+             patch(
+                 'apps.image_search.sources.brave.requests.get',
+                 side_effect=requests.ConnectTimeout('not sent'),
+             ):
             s.BRAVE_SEARCH_API_KEY = 'test-key'
             results = _make_source().search()
 
         assert results == []
+
+    def test_paid_transport_timeout_is_not_hidden_or_retried(self):
+        with patch('apps.image_search.sources.brave.settings') as s, patch(
+            'apps.image_search.sources.brave.requests.get',
+            side_effect=requests.ReadTimeout('unknown outcome'),
+        ):
+            s.BRAVE_SEARCH_API_KEY = 'test-key'
+            with pytest.raises(ImageSearchOutcomeUncertain):
+                _make_source().search()
 
     def test_search_rejects_malformed_nested_json(self):
         mock_resp = MagicMock(status_code=200)
@@ -127,10 +182,40 @@ class TestBraveImageSource:
             'apps.image_search.sources.brave.image_source_api_key', return_value='test-key',
         ), patch(
             'apps.image_search.sources.brave.requests.get', return_value=mock_resp,
-        ), _patch_quota:
-            results = source.search()
+        ) as get, _patch_quota, pytest.raises(ImageSearchOutcomeUncertain):
+            source.search()
 
-        assert results == []
+        assert source.last_error_code == 'invalid_response'
+        get.assert_called_once()
+
+    @pytest.mark.parametrize(
+        'status_code',
+        [402, 408, 409, 424, 429, 451, 500, 503],
+    )
+    def test_non_authoritative_http_response_stops_all_queries(self, status_code):
+        response = MagicMock(status_code=status_code)
+        source = _make_source()
+
+        with patch(
+            'apps.image_search.sources.brave.image_source_api_key', return_value='test-key',
+        ), patch(
+            'apps.image_search.sources.brave.requests.get', return_value=response,
+        ) as get, pytest.raises(ImageSearchOutcomeUncertain):
+            source.search()
+
+        assert source.last_error_code == f'http_{status_code}'
+        get.assert_called_once()
+
+    def test_trusted_response_limit_failure_is_uncertain(self):
+        source = _make_source()
+        with patch(
+            'apps.image_search.sources.brave.image_source_api_key', return_value='test-key',
+        ), patch(
+            'apps.image_search.sources.brave.bounded_http_request',
+            side_effect=TrustedResponseTooLarge('too large'),
+        ), pytest.raises(ImageSearchOutcomeUncertain):
+            source.search()
+
         assert source.last_error_code == 'invalid_response'
 
     def test_search_materializes_at_most_requested_results_per_query(self):

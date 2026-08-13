@@ -37,18 +37,18 @@ class ProductListMetaSerializer(PaginationMetaSerializer):
 
 class ProductListResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ProductSerializer(many=True)
+    data = ProductSerializer(many=True)  # type: ignore[assignment]
     meta = ProductListMetaSerializer()
 
 
 class ProductResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ProductSerializer()
+    data = ProductSerializer()  # type: ignore[assignment]
 
 
 class ProductDetailResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ProductDetailSerializer()
+    data = ProductDetailSerializer()  # type: ignore[assignment]
 
 
 class ProductBrandUpdateRequestSerializer(serializers.Serializer):
@@ -57,7 +57,9 @@ class ProductBrandUpdateRequestSerializer(serializers.Serializer):
 
 class BrandOptionSerializer(serializers.Serializer):
     name = serializers.CharField()
-    source = serializers.ChoiceField(choices=['category', 'avito', 'current'])
+    source = serializers.ChoiceField(  # type: ignore[assignment]
+        choices=['category', 'avito', 'current'],
+    )
 
 
 class ProductBrandOptionsDataSerializer(serializers.Serializer):
@@ -70,7 +72,7 @@ class ProductBrandOptionsDataSerializer(serializers.Serializer):
 
 class ProductBrandOptionsResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ProductBrandOptionsDataSerializer()
+    data = ProductBrandOptionsDataSerializer()  # type: ignore[assignment]
 
 
 class TaskDataSerializer(serializers.Serializer):
@@ -79,17 +81,17 @@ class TaskDataSerializer(serializers.Serializer):
 
 class TaskResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = TaskDataSerializer()
+    data = TaskDataSerializer()  # type: ignore[assignment]
 
 
 class CatalogCategoryListResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = TenantCatalogCategorySerializer(many=True)
+    data = TenantCatalogCategorySerializer(many=True)  # type: ignore[assignment]
 
 
 class CatalogCategoryResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = TenantCatalogCategorySerializer()
+    data = TenantCatalogCategorySerializer()  # type: ignore[assignment]
 
 
 class CatalogCategoryBranchToggleRequestSerializer(serializers.Serializer):
@@ -104,7 +106,7 @@ class CatalogCategoryBranchToggleDataSerializer(serializers.Serializer):
 
 class CatalogCategoryBranchToggleResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = CatalogCategoryBranchToggleDataSerializer()
+    data = CatalogCategoryBranchToggleDataSerializer()  # type: ignore[assignment]
 
 
 class CatalogCategoryImageRequestSerializer(serializers.Serializer):
@@ -115,12 +117,12 @@ class CatalogCategoryImageRequestSerializer(serializers.Serializer):
 
 class CategoryMappingListResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = TenantCategoryMappingSerializer(many=True)
+    data = TenantCategoryMappingSerializer(many=True)  # type: ignore[assignment]
 
 
 class CategoryMappingResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = TenantCategoryMappingSerializer()
+    data = TenantCategoryMappingSerializer()  # type: ignore[assignment]
 
 
 class TenantSourceCategorySerializer(serializers.Serializer):
@@ -130,7 +132,7 @@ class TenantSourceCategorySerializer(serializers.Serializer):
 
 class TenantSourceCategoryListResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = TenantSourceCategorySerializer(many=True)
+    data = TenantSourceCategorySerializer(many=True)  # type: ignore[assignment]
 
 
 class ProductCategoryAssignRequestSerializer(serializers.Serializer):
@@ -155,7 +157,7 @@ class ProductCategoryAssignDataSerializer(serializers.Serializer):
 
 class ProductCategoryAssignResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ProductCategoryAssignDataSerializer()
+    data = ProductCategoryAssignDataSerializer()  # type: ignore[assignment]
 
 
 class ProductExcludeRequestSerializer(serializers.Serializer):
@@ -181,7 +183,7 @@ class UpdatedCountDataSerializer(serializers.Serializer):
 
 class UpdatedCountResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = UpdatedCountDataSerializer()
+    data = UpdatedCountDataSerializer()  # type: ignore[assignment]
 
 
 class DeletedCountDataSerializer(serializers.Serializer):
@@ -190,14 +192,18 @@ class DeletedCountDataSerializer(serializers.Serializer):
 
 class DeletedCountResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = DeletedCountDataSerializer()
+    data = DeletedCountDataSerializer()  # type: ignore[assignment]
 
 
 class ProductParseRequestSerializer(serializers.Serializer):
+    idempotency_key = serializers.UUIDField(required=True)
     product_id = serializers.IntegerField(min_value=1, required=False)
     brand = serializers.CharField(required=False, allow_blank=True)
     article = serializers.CharField(required=False, allow_blank=True)
-    source = serializers.CharField(required=False, allow_blank=True)
+    source = serializers.CharField(  # type: ignore[assignment]
+        required=False,
+        allow_blank=True,
+    )
     generate_after = serializers.BooleanField(default=False, required=False)
 
 
@@ -210,22 +216,23 @@ class ProductParseDataSerializer(serializers.Serializer):
 
 class ProductParseResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ProductParseDataSerializer()
+    data = ProductParseDataSerializer()  # type: ignore[assignment]
 
 
 class ProductParseJobResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ProductParseJobSerializer()
+    data = ProductParseJobSerializer()  # type: ignore[assignment]
 
 
 class ProductBulkActionRequestSerializer(serializers.Serializer):
+    idempotency_key = serializers.UUIDField(required=True)
     action = serializers.CharField()
     product_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         max_length=settings.API_BULK_MAX_ITEMS,
         allow_empty=False,
     )
-    source = serializers.CharField(required=False)
+    source = serializers.CharField(required=False)  # type: ignore[assignment]
     batch_size = serializers.IntegerField(min_value=1, default=20, required=False)
     pause_seconds = serializers.IntegerField(
         min_value=0, max_value=3600, default=60, required=False,
@@ -234,7 +241,13 @@ class ProductBulkActionRequestSerializer(serializers.Serializer):
 
 class ProductBulkActionResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ProductBulkActionJobSerializer()
+    data = ProductBulkActionJobSerializer()  # type: ignore[assignment]
+
+
+class IdempotencyConflictResponseSerializer(serializers.Serializer):
+    status = serializers.CharField(default='error')
+    code = serializers.CharField(default='idempotency_conflict')
+    message = serializers.CharField()
 
 
 class ReviewProductSerializer(serializers.Serializer):
@@ -264,40 +277,40 @@ class ReviewQueueItemSerializer(serializers.Serializer):
 
 class ReviewQueueResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ReviewQueueItemSerializer(many=True)
+    data = ReviewQueueItemSerializer(many=True)  # type: ignore[assignment]
     meta = PaginationMetaSerializer()
 
 
 class ReviewQueueActionResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = serializers.JSONField(
+    data = serializers.JSONField(  # type: ignore[assignment]
         help_text='Updated review item, or product details for a classification review.',
     )
 
 
 class FitmentListResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = VehicleFitmentSerializer(many=True)
+    data = VehicleFitmentSerializer(many=True)  # type: ignore[assignment]
 
 
 class FitmentResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = VehicleFitmentSerializer()
+    data = VehicleFitmentSerializer()  # type: ignore[assignment]
 
 
 class EnrichmentFactListResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ProductEnrichmentFactSerializer(many=True)
+    data = ProductEnrichmentFactSerializer(many=True)  # type: ignore[assignment]
 
 
 class EnrichmentFactResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ProductEnrichmentFactSerializer()
+    data = ProductEnrichmentFactSerializer()  # type: ignore[assignment]
 
 
 class CrossCodeListResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ProductCrossCodeSerializer(many=True)
+    data = ProductCrossCodeSerializer(many=True)  # type: ignore[assignment]
 
 
 class ListingIdsDataSerializer(serializers.Serializer):
@@ -306,7 +319,7 @@ class ListingIdsDataSerializer(serializers.Serializer):
 
 class ProductPublishResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ListingIdsDataSerializer()
+    data = ListingIdsDataSerializer()  # type: ignore[assignment]
 
 
 class ArchivedCountDataSerializer(serializers.Serializer):
@@ -315,11 +328,18 @@ class ArchivedCountDataSerializer(serializers.Serializer):
 
 class ProductArchiveResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
-    data = ArchivedCountDataSerializer()
+    data = ArchivedCountDataSerializer()  # type: ignore[assignment]
 
 
 class ProductRegenerateRequestSerializer(serializers.Serializer):
-    source = serializers.CharField(required=False)
+    source = serializers.CharField(required=False)  # type: ignore[assignment]
+    idempotency_key = serializers.UUIDField(required=True)  # type: ignore[assignment]
+
+
+class ProductRegenerateErrorSerializer(serializers.Serializer):
+    status = serializers.CharField(default='error')
+    code = serializers.CharField()
+    message = serializers.CharField(required=False)
 
 
 class ProductRegenerateDataSerializer(serializers.Serializer):
@@ -331,4 +351,4 @@ class ProductRegenerateDataSerializer(serializers.Serializer):
 class ProductRegenerateResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
     message = serializers.CharField()
-    data = ProductRegenerateDataSerializer()
+    data = ProductRegenerateDataSerializer()  # type: ignore[assignment]

@@ -1,5 +1,7 @@
 import datetime
 from decimal import Decimal, InvalidOperation
+from functools import partial
+from typing import Any, TypedDict
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
@@ -95,6 +97,20 @@ class AccountAlreadyExists(Exception):
 
 class InvalidMarketplaceCredentials(Exception):
     """Credentials маркетплейса не прошли проверку через API."""
+
+
+class BulkActionItem(TypedDict):
+    id: int
+    status: str
+    message: str
+
+
+class BulkActionResult(TypedDict):
+    total: int
+    success: int
+    skipped: int
+    errors: int
+    items: list[BulkActionItem]
 
 
 class ListingService:
@@ -216,7 +232,12 @@ class ListingService:
         return listing
 
     @staticmethod
-    def request_regenerate(listing_id: int, tenant) -> Listing:
+    def request_regenerate(
+        listing_id: int,
+        tenant,
+        *,
+        durable_deduplication_key: str | None = None,
+    ) -> Listing:
         """
         Инициирует перегенерацию AI-описания.
 
@@ -239,7 +260,22 @@ class ListingService:
                 f'Перегенерация недоступна для статуса {listing.status}'
             )
         product_id = listing.product_id
-        transaction.on_commit(lambda: _enqueue_ai_generation(product_id))
+        if durable_deduplication_key:
+            from apps.products.models import Product
+            from apps.products.services import ProductService
+
+            product = Product.objects.select_related('tenant').get(pk=product_id)
+            submission = ProductService.schedule_ai_generation(
+                product,
+                tenant,
+                deduplication_key=durable_deduplication_key,
+            )
+            # The API transaction persists this exact durable result on its
+            # paid-ingress intent.  Keeping it transient avoids changing the
+            # public Listing model solely for response plumbing.
+            listing.__dict__['_regeneration_submission'] = submission
+        else:
+            transaction.on_commit(lambda: _enqueue_ai_generation(product_id))
         return listing
 
     @staticmethod
@@ -383,7 +419,7 @@ class ListingService:
             'manager_name_override': 'bulk_manager_name',
             'contact_phone_override': 'bulk_contact_phone',
         }
-        updates = {}
+        updates: dict[str, Any] = {}
         for input_field, model_field in field_map.items():
             if input_field in data:
                 updates[model_field] = str(data[input_field] or '').strip()
@@ -411,7 +447,7 @@ class ListingService:
         return qs.filter(pk__in=target_ids).update(**updates)
 
     @staticmethod
-    def bulk_action(tenant, data: dict) -> dict:
+    def bulk_action(tenant, data: dict) -> BulkActionResult:
         """Выполняет массовое действие над tenant-scoped листингами."""
         action = data['action']
         listings = list(
@@ -423,7 +459,7 @@ class ListingService:
             raise ListingBulkLimitExceeded(
                 f'Массовая операция допускает не более {settings.API_BULK_MAX_ITEMS} листингов.',
             )
-        result = {
+        result: BulkActionResult = {
             'total': len(listings),
             'success': 0,
             'skipped': 0,
@@ -489,7 +525,11 @@ class ListingService:
         return qs
 
     @staticmethod
-    def _write_bulk_log(tenant, action: str, result: dict) -> None:
+    def _write_bulk_log(
+        tenant,
+        action: str,
+        result: BulkActionResult,
+    ) -> None:
         """Пишет общий SyncLog по массовому действию."""
         try:
             from apps.sync.models import SyncLog
@@ -550,8 +590,8 @@ class ListingService:
         )
         count = 0
         for listing in listings:
-            lid = listing.pk
-            transaction.on_commit(lambda pk=lid: _enqueue_unpublish(pk))
+            lid = int(listing.pk)
+            transaction.on_commit(partial(_enqueue_unpublish, lid))
             count += 1
         return count
 
@@ -630,14 +670,15 @@ class MarketplaceAccountService:
     """Сервис управления аккаунтами маркетплейсов: создание, обновление credentials."""
 
     @staticmethod
-    def _fetch_avito_user_id(credentials_enc: str) -> str:
+    def _fetch_avito_user_id(credentials_enc: bytes) -> str:
         """Получает числовой user_id из Avito API по credentials."""
         import requests as req
         from apps.core.http_responses import bounded_http_request
         from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 
         class _Tmp:
-            pk = None
+            pk: None = None
+            credentials_enc: bytes
 
         tmp = _Tmp()
         tmp.credentials_enc = credentials_enc

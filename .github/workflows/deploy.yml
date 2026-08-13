@@ -58,6 +58,7 @@ jobs:
               exit 1
               ;;
           esac
+          test "$PROD_USER" = mapdeploy
           case "$PROD_HOST_FINGERPRINT" in
             SHA256:?*) ;;
             *)
@@ -132,18 +133,4 @@ jobs:
               -o UserKnownHostsFile="$ssh_dir/known_hosts" \
               -o VerifyHostKeyDNS=no \
               "$PROD_USER@$PROD_HOST" \
-              bash -se -- "$DEPLOY_SHA" <<'REMOTE'
-          set -euo pipefail
-          cd /opt/saas_poster
-          target_sha=$1
-          previous_sha="$(git rev-parse HEAD)"
-          git fetch --no-tags origin main
-          git cat-file -e "${target_sha}^{commit}"
-          main_sha="$(git rev-parse FETCH_HEAD)"
-          if [ "$target_sha" != "$main_sha" ]; then
-            echo "Пропуск устаревшего deploy: main уже указывает на другой commit."
-            exit 0
-          fi
-          git checkout --detach "$target_sha"
-          PREVIOUS_SHA="$previous_sha" ./deploy.sh "$target_sha"
-          REMOTE
+              deploy "$DEPLOY_SHA"

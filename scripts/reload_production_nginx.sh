@@ -6,6 +6,10 @@ set -Eeuo pipefail
 # attacker-controlled file. Changing the production layout requires a reviewed
 # script change together with the hook path.
 ROOT_DIR="/opt/saas_poster"
+/usr/local/sbin/saas-poster-validate-checkout >/dev/null || {
+  echo "Production checkout ownership or permissions are unsafe" >&2
+  exit 1
+}
 [[ -f "$ROOT_DIR/docker-compose.prod.yml" ]] || {
   echo "Production Compose file is missing under $ROOT_DIR" >&2
   exit 1

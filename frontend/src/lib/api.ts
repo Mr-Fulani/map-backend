@@ -710,9 +710,42 @@ export const tenantApi = {
 
 // Billing
 const BILLING_ATTEMPT_PREFIX = 'map:billing-attempt:';
+const INGRESS_ATTEMPT_PREFIX = 'map:ingress-attempt:';
+const INGRESS_COMPLETED_GRACE_MS = 5 * 60 * 1000;
+type IngressAttemptRecord = {
+  version: 1;
+  idempotencyKey: string;
+  state: 'pending' | 'completed' | 'ambiguous';
+  completedAt?: number;
+};
 type BillingPaymentResponse = {
   status: string;
   data?: { payment_url?: string };
+};
+type ApiEnvelope<T> = {
+  status: string;
+  data: T;
+  message?: string;
+};
+type ProductParseStartData = {
+  job_id: number;
+  job_ids: number[];
+  state: string;
+  generate_after: boolean;
+};
+type ProductBulkActionData = {
+  id: number;
+  action: string;
+  status: string;
+  total_count: number;
+  queued_count: number;
+  processed_count: number;
+  success_count: number;
+  failed_count: number;
+  skipped_count: number;
+  batch_size: number;
+  pause_seconds: number;
+  next_batch_at: string | null;
 };
 
 function createIdempotencyUuid(): string {
@@ -769,7 +802,10 @@ function clearAllBillingAttempts() {
   try {
     for (let index = window.localStorage.length - 1; index >= 0; index -= 1) {
       const key = window.localStorage.key(index);
-      if (key?.startsWith(BILLING_ATTEMPT_PREFIX)) {
+      if (
+        key?.startsWith(BILLING_ATTEMPT_PREFIX)
+        || key?.startsWith(INGRESS_ATTEMPT_PREFIX)
+      ) {
         window.localStorage.removeItem(key);
       }
     }
@@ -779,12 +815,186 @@ function clearAllBillingAttempts() {
   try {
     for (let index = window.sessionStorage.length - 1; index >= 0; index -= 1) {
       const key = window.sessionStorage.key(index);
-      if (key?.startsWith(BILLING_ATTEMPT_PREFIX)) {
+      if (
+        key?.startsWith(BILLING_ATTEMPT_PREFIX)
+        || key?.startsWith(INGRESS_ATTEMPT_PREFIX)
+      ) {
         window.sessionStorage.removeItem(key);
       }
     }
   } catch {
     // Legacy per-tab keys are best-effort cleanup only.
+  }
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => (
+      `${JSON.stringify(key)}:${stableJson(record[key])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+async function ingressAttemptStorageKey(
+  operation: string,
+  payload: Record<string, unknown>,
+  revision: number,
+): Promise<string> {
+  if (typeof crypto === 'undefined' || !crypto.subtle) {
+    throw new Error('Secure request fingerprinting is unavailable in this browser');
+  }
+  const input = new TextEncoder().encode(stableJson(payload));
+  const digest = await crypto.subtle.digest('SHA-256', input);
+  const fingerprint = Array.from(new Uint8Array(digest), (byte) => (
+    byte.toString(16).padStart(2, '0')
+  )).join('');
+  return `${INGRESS_ATTEMPT_PREFIX}r${revision}:${operation}:${fingerprint}`;
+}
+
+async function getOrCreateIngressAttempt(storageKey: string, revision: number) {
+  return withBrowserSessionLock(async (guard) => {
+    assertSessionRevision(revision, guard);
+    const storage = requireBrowserSessionStorage();
+    const stored = parseIngressAttempt(storage.getItem(storageKey));
+    if (
+      stored
+      && !(
+        stored.state === 'completed'
+        && Date.now() - (stored.completedAt ?? 0) >= INGRESS_COMPLETED_GRACE_MS
+      )
+    ) {
+      return stored.idempotencyKey;
+    }
+    if (stored) storage.removeItem(storageKey);
+    const idempotencyKey = createIdempotencyUuid();
+    writeIngressAttempt(storage, storageKey, {
+      version: 1,
+      idempotencyKey,
+      state: 'pending',
+    });
+    if (
+      parseIngressAttempt(storage.getItem(storageKey))?.idempotencyKey
+      !== idempotencyKey
+    ) {
+      throw new Error('Ingress attempt could not be persisted');
+    }
+    assertSessionRevision(revision, guard);
+    return idempotencyKey;
+  });
+}
+
+function parseIngressAttempt(raw: string | null): IngressAttemptRecord | null {
+  if (isUuid(raw)) {
+    return { version: 1, idempotencyKey: raw, state: 'pending' };
+  }
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<IngressAttemptRecord>;
+    if (
+      value.version === 1
+      && isUuid(value.idempotencyKey ?? null)
+      && ['pending', 'completed', 'ambiguous'].includes(value.state ?? '')
+    ) {
+      return value as IngressAttemptRecord;
+    }
+  } catch {
+    // Corrupt browser state is replaced under the session lock.
+  }
+  return null;
+}
+
+function writeIngressAttempt(
+  storage: Storage,
+  storageKey: string,
+  record: IngressAttemptRecord,
+) {
+  storage.setItem(storageKey, JSON.stringify(record));
+}
+
+async function settleIngressAttempt(
+  storageKey: string,
+  idempotencyKey: string,
+  revision: number,
+  outcome: 'completed' | 'ambiguous' | 'authoritative',
+) {
+  return withBrowserSessionLock(async (guard) => {
+    assertSessionRevision(revision, guard);
+    const storage = requireBrowserSessionStorage();
+    const current = parseIngressAttempt(storage.getItem(storageKey));
+    if (current && current.idempotencyKey !== idempotencyKey) return;
+    if (outcome === 'ambiguous') {
+      writeIngressAttempt(storage, storageKey, {
+        version: 1,
+        idempotencyKey,
+        state: 'ambiguous',
+      });
+    } else if (outcome === 'completed' && current?.state !== 'ambiguous') {
+      writeIngressAttempt(storage, storageKey, {
+        version: 1,
+        idempotencyKey,
+        state: 'completed',
+        completedAt: Date.now(),
+      });
+    } else if (current?.state === 'pending') {
+      storage.removeItem(storageKey);
+      window.sessionStorage.removeItem(storageKey);
+    }
+    assertSessionRevision(revision, guard);
+  });
+}
+
+function isAmbiguousIngressFailure(error: unknown): boolean {
+  if (!axios.isAxiosError(error) || !error.response) return true;
+  const status = error.response.status;
+  if (status === 408 || status === 425 || status === 429 || status >= 500) {
+    return true;
+  }
+  return (
+    status === 409
+    && error.response.data?.code === 'idempotency_incomplete'
+  );
+}
+
+async function postIngressAttempt<T>(
+  operation: string,
+  path: string,
+  payload: Record<string, unknown>,
+  explicitKey?: string,
+) {
+  if (explicitKey) {
+    return api.post<T>(path, { ...payload, idempotency_key: explicitKey });
+  }
+  const revision = sessionVersion.revision;
+  const storageKey = await ingressAttemptStorageKey(operation, payload, revision);
+  const idempotencyKey = await getOrCreateIngressAttempt(storageKey, revision);
+  try {
+    const requestConfig: AxiosRequestConfig & SessionRequestConfig = {
+      _browserSessionRevision: revision,
+    };
+    const response = await api.post<T>(path, {
+      ...payload,
+      idempotency_key: idempotencyKey,
+    }, requestConfig);
+    await settleIngressAttempt(
+      storageKey, idempotencyKey, revision, 'completed',
+    );
+    return response;
+  } catch (error) {
+    // Missing responses and transient gateway/rate-limit statuses do not prove
+    // that the server failed before committing the mutation. Preserve the
+    // intent key so a manual retry cannot create a second paid operation.
+    await settleIngressAttempt(
+      storageKey,
+      idempotencyKey,
+      revision,
+      isAmbiguousIngressFailure(error) ? 'ambiguous' : 'authoritative',
+    );
+    throw error;
   }
 }
 
@@ -885,12 +1095,36 @@ export const productApi = {
     api.get('/products/brand-options/', { params: { product_id: productId, q } }),
   publish: (id: number) => api.post(`/products/${id}/publish/`),
   archive: (id: number) => api.post(`/products/${id}/archive/`),
-  regenerate: (id: number) => api.post(`/products/${id}/regenerate/`),
-  parse: (id: number, source = '', generateAfter = false) =>
-    api.post('/products/parse/', { product_id: id, source: source || undefined, generate_after: generateAfter }),
+  regenerate: (id: number, idempotencyKey?: string) =>
+    postIngressAttempt(
+      `product-regenerate:${id}`,
+      `/products/${id}/regenerate/`,
+      {},
+      idempotencyKey,
+    ),
+  parse: (
+    id: number,
+    source = '',
+    generateAfter = false,
+    idempotencyKey?: string,
+  ) => postIngressAttempt<ApiEnvelope<ProductParseStartData>>(
+    `product-parse:${id}`,
+    '/products/parse/',
+    {
+      product_id: id,
+      source: source || undefined,
+      generate_after: generateAfter,
+    },
+    idempotencyKey,
+  ),
   parseJobStatus: (id: number) => api.get(`/products/parse-jobs/${id}/`),
-  startWebResearch: (id: number, generateAfter = false) =>
-    api.post(`/products/${id}/web-research/`, { generate_after: generateAfter }),
+  startWebResearch: (id: number, generateAfter = false, idempotencyKey?: string) =>
+    postIngressAttempt<ApiEnvelope<unknown>>(
+      `product-web-research:${id}`,
+      `/products/${id}/web-research/`,
+      { generate_after: generateAfter },
+      idempotencyKey,
+    ),
   latestWebResearch: (id: number) => api.get(`/products/${id}/web-research/`),
   webResearchStatus: (runId: number) => api.get(`/web-research/runs/${runId}/`),
   bulkAction: (data: {
@@ -899,7 +1133,20 @@ export const productApi = {
     source?: string;
     batch_size?: number;
     pause_seconds?: number;
-  }) => api.post('/products/bulk-actions/', data),
+    idempotency_key?: string;
+  }) => {
+    const { idempotency_key: idempotencyKey, ...payload } = data;
+    const normalizedPayload = {
+      ...payload,
+      product_ids: [...new Set(payload.product_ids)].sort((left, right) => left - right),
+    };
+    return postIngressAttempt<ApiEnvelope<ProductBulkActionData>>(
+      'product-bulk-action',
+      '/products/bulk-actions/',
+      normalizedPayload,
+      idempotencyKey,
+    );
+  },
   bulkActionStatus: (id: number) => api.get(`/products/bulk-actions/${id}/`),
   catalogCategories: (params?: { assignable?: boolean }) =>
     api.get('/products/catalog-categories/', { params }),
@@ -951,8 +1198,16 @@ export const webResearchApi = {
   providers: () => api.get('/web-research/providers/'),
   settings: () => api.get('/web-research/settings/'),
   updateSettings: (data: object) => api.put('/web-research/settings/', data),
-  startMarketResearch: (productId: number, force = false) =>
-    api.post(`/products/${productId}/market-research/`, { force }),
+  startMarketResearch: (
+    productId: number,
+    force = false,
+    idempotencyKey?: string,
+  ) => postIngressAttempt<ApiEnvelope<unknown>>(
+    `product-market-research:${productId}`,
+    `/products/${productId}/market-research/`,
+    { force },
+    idempotencyKey,
+  ),
   marketOffers: (productId: number, params?: Record<string, unknown>) =>
     api.get(`/products/${productId}/market-offers/`, { params }),
 };
@@ -994,7 +1249,12 @@ export const listingApi = {
   archive: (id: number) => api.post(`/listings/${id}/archive/`),
   delete: (id: number) => api.post(`/listings/${id}/delete/`),
   checkStatus: (id: number) => api.post(`/listings/${id}/check-status/`),
-  regenerate: (id: number) => api.post(`/listings/${id}/regenerate/`),
+  regenerate: (id: number, idempotencyKey?: string) => postIngressAttempt(
+    `listing-regenerate:${id}`,
+    `/listings/${id}/regenerate/`,
+    {},
+    idempotencyKey,
+  ),
   updateContent: (id: number, data: {
     title?: string;
     description_ai?: string;
@@ -1038,8 +1298,16 @@ export const notificationApi = {
 export const imageApi = {
   list: (productId: number) =>
     api.get(`/products/${productId}/images/`),
-  search: (productId: number) =>
-    api.post(`/products/${productId}/images/search/`),
+  search: (
+    productId: number,
+    idempotencyKey?: string,
+    force = false,
+  ) => postIngressAttempt<ApiEnvelope<{ task_id: string }>>(
+    `image-search:${productId}`,
+    `/products/${productId}/images/search/`,
+    { force },
+    idempotencyKey,
+  ),
   searchStatus: (productId: number, taskId: string) =>
     api.get(`/products/${productId}/images/search/${taskId}/`),
   approve: (productId: number, imageId: number) =>
@@ -1057,8 +1325,15 @@ export const imageApi = {
       headers: { 'Content-Type': 'multipart/form-data' },
     });
   },
-  bulkSearch: (productIds: number[]) =>
-    api.post('/images/bulk-search/', { product_ids: productIds }),
+  bulkSearch: (
+    productIds: number[],
+    idempotencyKey?: string,
+  ) => postIngressAttempt(
+    'image-bulk-search',
+    '/images/bulk-search/',
+    { product_ids: [...new Set(productIds)].sort((left, right) => left - right) },
+    idempotencyKey,
+  ),
   getQuota: () => api.get('/images/quota/'),
 };
 
@@ -1082,7 +1357,15 @@ export const mediaApi = {
       provider_id?: string;
       idempotency_key?: string;
     },
-  ) => api.post(`/products/${productId}/images/${imageId}/process/`, data),
+  ) => {
+    const { idempotency_key: idempotencyKey, ...payload } = data;
+    return postIngressAttempt(
+      `media-process:${productId}:${imageId}`,
+      `/products/${productId}/images/${imageId}/process/`,
+      payload,
+      idempotencyKey,
+    );
+  },
   activateVariant: (variantId: number) =>
     api.post(`/media/variants/${variantId}/activate/`),
 };

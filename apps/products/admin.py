@@ -1,4 +1,5 @@
 from django.contrib import admin
+from django.db import transaction
 from unfold.admin import ModelAdmin, TabularInline
 
 from apps.products.models import (
@@ -228,18 +229,24 @@ class ProductAdmin(ModelAdmin):
         """Ставит tenant-scoped задачи обогащения для выбранных товаров."""
         from apps.products.enrichment import normalize_part_code
         from apps.products.services import ProductEnrichmentService
-        from apps.products.tasks import parse_single_part
+        from apps.core.dispatch import enqueue_durable_task
 
         queued = 0
         for product in queryset.select_related('tenant'):
-            job = ProductEnrichmentService.create_parse_job(
-                tenant=product.tenant,
-                product=product,
-                brand=product.brand,
-                article=product.article,
-                normalized_article=normalize_part_code(product.article),
-            )
-            parse_single_part.delay(job.pk)
+            with transaction.atomic():
+                job = ProductEnrichmentService.create_parse_job(
+                    tenant=product.tenant,
+                    product=product,
+                    brand=product.brand,
+                    article=product.article,
+                    normalized_article=normalize_part_code(product.article),
+                )
+                enqueue_durable_task(
+                    'apps.products.tasks.parse_single_part',
+                    args=[job.pk],
+                    deduplication_key=f'product-parse-job:{job.pk}',
+                    max_run_attempts=4,
+                )
             queued += 1
         self.message_user(request, f'Задачи обогащения поставлены в очередь: {queued}.')
 

@@ -6,9 +6,14 @@ from decimal import Decimal
 from django.db.models import F
 
 from apps.ai_agent.enrichment_context import ProductAIEnrichmentContextBuilder
-from apps.ai_agent.models import AIRequestLog, AITaskType
+from apps.ai_agent.models import AIProviderOperation, AIRequestLog, AITaskType
 from apps.ai_agent.prompting import PromptSelection, resolve_description_prompt
 from apps.ai_agent.providers import AIProviderError, call_model
+from apps.ai_agent.reconciliation import (
+    begin_ai_provider_operation, mark_ai_provider_network_started,
+    mark_ai_provider_operation_uncertain, release_ai_provider_operation,
+    settle_ai_provider_operation,
+)
 from apps.ai_agent.routing import AIModelRouter
 from apps.ai_agent.validators import (
     BannedWordsError,
@@ -16,7 +21,7 @@ from apps.ai_agent.validators import (
     ValidationError,
     validate_json_response,
 )
-from apps.billing.ai_wallet import AIWalletService, InsufficientAICredits
+from apps.billing.ai_wallet import InsufficientAICredits
 from apps.billing.services import LimitChecker
 
 MAX_VALIDATION_RETRIES = 2
@@ -38,6 +43,14 @@ class DescriptionAgent:
             raise AICreditsExhausted(reason)
 
         candidates = AIModelRouter.candidates(tenant, self.task_type)
+        if not candidates:
+            # No reservation/provider boundary exists yet. Let the durable
+            # dispatch retry configuration recovery without misclassifying
+            # this as an unknown paid outcome.
+            from apps.core.dispatch import SafeRetryableDispatchError
+            raise SafeRetryableDispatchError(
+                'No configured AI model is currently available.',
+            )
         last_error = None
         previous_validation_error = ''
         prompt = resolve_description_prompt(product)
@@ -55,10 +68,15 @@ class DescriptionAgent:
                     model.max_output_tokens,
                 )
                 try:
-                    reservation = AIWalletService.reserve(
-                        tenant,
-                        estimated_credits,
-                        details={
+                    operation = begin_ai_provider_operation(
+                        tenant=tenant,
+                        task_type=self.task_type,
+                        provider=model.provider,
+                        model_id=model.external_id,
+                        reserved_amount=estimated_credits,
+                        domain_type=AIProviderOperation.DomainType.PRODUCT,
+                        domain_reference=str(product.pk),
+                        reservation_details={
                             'task_type': self.task_type,
                             'provider': model.provider,
                             'model': model.external_id,
@@ -69,6 +87,7 @@ class DescriptionAgent:
                     continue
 
                 started = time.monotonic()
+                mark_ai_provider_network_started(operation.pk)
                 try:
                     provider_result = call_model(
                         model,
@@ -85,14 +104,56 @@ class DescriptionAgent:
                     self._validate_required_cross_codes(product, result)
                     self._validate_rich_description(product, result)
                 except (BannedWordsError, VagueFitmentError, ValidationError) as exc:
-                    AIWalletService.release(
-                        tenant, reservation, reason='validation_rejected',
-                    )
+                    try:
+                        actual_credits = model.calculate_credits(
+                            input_tokens=provider_result.input_tokens,
+                            cached_input_tokens=provider_result.cached_input_tokens,
+                            output_tokens=provider_result.output_tokens,
+                        )
+                        operation, charged = settle_ai_provider_operation(
+                            operation.pk,
+                            actual_amount=actual_credits,
+                            terminal_reason='validation_rejected',
+                            details={
+                                'task_type': self.task_type,
+                                'provider': model.provider,
+                                'model': model.external_id,
+                                'input_tokens': provider_result.input_tokens,
+                                'cached_input_tokens': provider_result.cached_input_tokens,
+                                'output_tokens': provider_result.output_tokens,
+                                'validation_rejected': True,
+                            },
+                        )
+                    except Exception as settlement_exc:
+                        mark_ai_provider_operation_uncertain(
+                            operation.pk,
+                            error_code='settlement_failed',
+                        )
+                        self._log_request(
+                            tenant=tenant,
+                            model=model,
+                            status=AIRequestLog.STATUS_ERROR,
+                            duration_ms=self._duration_ms(started),
+                            input_tokens=provider_result.input_tokens,
+                            cached_input_tokens=provider_result.cached_input_tokens,
+                            output_tokens=provider_result.output_tokens,
+                            error_code='provider_settlement_uncertain',
+                            error_message=str(settlement_exc),
+                            prompt_selection=prompt,
+                        )
+                        raise RuntimeError(
+                            'Не удалось подтвердить списание AI-кредитов; '
+                            'операция передана на сверку.',
+                        ) from settlement_exc
                     self._log_request(
                         tenant=tenant,
                         model=model,
                         status=AIRequestLog.STATUS_REJECTED,
                         duration_ms=self._duration_ms(started),
+                        input_tokens=provider_result.input_tokens,
+                        cached_input_tokens=provider_result.cached_input_tokens,
+                        output_tokens=provider_result.output_tokens,
+                        charged_credits=charged,
                         error_code='validation_rejected',
                         error_message=str(exc),
                         prompt_selection=prompt,
@@ -102,54 +163,105 @@ class DescriptionAgent:
                     last_error = str(exc)
                     continue
                 except AIProviderError as exc:
-                    AIWalletService.release(
-                        tenant, reservation, reason=exc.code,
-                    )
-                    self._log_request(
-                        tenant=tenant,
-                        model=model,
-                        status=AIRequestLog.STATUS_ERROR,
-                        duration_ms=self._duration_ms(started),
+                    if exc.request_not_accepted:
+                        release_ai_provider_operation(
+                            operation.pk, reason=exc.code,
+                        )
+                        self._log_request(
+                            tenant=tenant,
+                            model=model,
+                            status=AIRequestLog.STATUS_ERROR,
+                            duration_ms=self._duration_ms(started),
+                            error_code=exc.code,
+                            error_message=str(exc),
+                            prompt_selection=prompt,
+                        )
+                        last_error = str(exc)
+                        break
+                    mark_ai_provider_operation_uncertain(
+                        operation.pk,
                         error_code=exc.code,
-                        error_message=str(exc),
-                        prompt_selection=prompt,
-                    )
-                    last_error = str(exc)
-                    break
-                except Exception as exc:
-                    AIWalletService.release(
-                        tenant, reservation, reason='unexpected_error',
                     )
                     self._log_request(
                         tenant=tenant,
                         model=model,
                         status=AIRequestLog.STATUS_ERROR,
                         duration_ms=self._duration_ms(started),
-                        error_code='unexpected_error',
+                        error_code='provider_outcome_uncertain',
                         error_message=str(exc),
                         prompt_selection=prompt,
                     )
-                    last_error = str(exc)
-                    break
+                    # Once the network boundary has been crossed, fallback is
+                    # allowed only with authoritative non-acceptance evidence.
+                    raise RuntimeError(
+                        'Результат AI-провайдера неизвестен; автоматический '
+                        'повтор запрещён.',
+                    ) from exc
+                except Exception as exc:
+                    mark_ai_provider_operation_uncertain(
+                        operation.pk,
+                        error_code='post_provider_failure',
+                    )
+                    self._log_request(
+                        tenant=tenant,
+                        model=model,
+                        status=AIRequestLog.STATUS_ERROR,
+                        duration_ms=self._duration_ms(started),
+                        error_code='provider_outcome_uncertain',
+                        error_message=str(exc),
+                        prompt_selection=prompt,
+                    )
+                    raise RuntimeError(
+                        'Ошибка после начала AI-запроса; операция передана на '
+                        'сверку, автоматический повтор запрещён.',
+                    ) from exc
 
-                actual_credits = model.calculate_credits(
-                    input_tokens=provider_result.input_tokens,
-                    cached_input_tokens=provider_result.cached_input_tokens,
-                    output_tokens=provider_result.output_tokens,
-                )
-                charged = AIWalletService.settle(
-                    tenant,
-                    reservation,
-                    actual_credits,
-                    details={
-                        'task_type': self.task_type,
-                        'provider': model.provider,
-                        'model': model.external_id,
-                        'input_tokens': provider_result.input_tokens,
-                        'cached_input_tokens': provider_result.cached_input_tokens,
-                        'output_tokens': provider_result.output_tokens,
-                    },
-                )
+                try:
+                    result['model_confidence'] = result['confidence']
+                    result['confidence'] = self.calculate_grounding_confidence(product)
+                    result['provider'] = model.provider
+                    result['model'] = model.external_id
+                    result['prompt_version'] = prompt.version
+                    actual_credits = model.calculate_credits(
+                        input_tokens=provider_result.input_tokens,
+                        cached_input_tokens=provider_result.cached_input_tokens,
+                        output_tokens=provider_result.output_tokens,
+                    )
+                    operation, charged = settle_ai_provider_operation(
+                        operation.pk,
+                        actual_amount=actual_credits,
+                        details={
+                            'task_type': self.task_type,
+                            'provider': model.provider,
+                            'model': model.external_id,
+                            'input_tokens': provider_result.input_tokens,
+                            'cached_input_tokens': provider_result.cached_input_tokens,
+                            'output_tokens': provider_result.output_tokens,
+                        },
+                        validated_result=result,
+                        apply_required=True,
+                    )
+                except Exception as exc:
+                    mark_ai_provider_operation_uncertain(
+                        operation.pk,
+                        error_code='settlement_failed',
+                    )
+                    self._log_request(
+                        tenant=tenant,
+                        model=model,
+                        status=AIRequestLog.STATUS_ERROR,
+                        duration_ms=self._duration_ms(started),
+                        input_tokens=provider_result.input_tokens,
+                        cached_input_tokens=provider_result.cached_input_tokens,
+                        output_tokens=provider_result.output_tokens,
+                        error_code='provider_settlement_uncertain',
+                        error_message=str(exc),
+                        prompt_selection=prompt,
+                    )
+                    raise RuntimeError(
+                        'Не удалось подтвердить списание AI-кредитов; '
+                        'операция передана на сверку.',
+                    ) from exc
                 self._increment_credits(tenant)
                 self._log_request(
                     tenant=tenant,
@@ -162,12 +274,8 @@ class DescriptionAgent:
                     charged_credits=charged,
                     prompt_selection=prompt,
                 )
-                result['model_confidence'] = result['confidence']
-                result['confidence'] = self.calculate_grounding_confidence(product)
-                result['provider'] = model.provider
-                result['model'] = model.external_id
-                result['prompt_version'] = prompt.version
                 result['charged_credits'] = str(charged)
+                result['_provider_operation_id'] = str(operation.pk)
                 return result
 
         if last_error and 'Недостаточно AI-кредитов' in last_error:

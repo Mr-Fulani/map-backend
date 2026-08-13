@@ -15,6 +15,6 @@ flake8==7.1.0
 flake8-bugbear==24.4.26
 
 # Type checking
-mypy==1.10.1
-django-stubs==5.0.2
-djangorestframework-stubs==3.15.0
+mypy==1.19.1
+django-stubs==5.2.9
+djangorestframework-stubs==3.16.9

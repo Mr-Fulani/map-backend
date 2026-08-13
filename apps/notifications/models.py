@@ -1,6 +1,11 @@
 import secrets
+import uuid
+from datetime import timedelta
 
 from django.db import models, transaction
+from django.db.models.deletion import ProtectedError
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 from django.utils import timezone
 
 from apps.tenants.models import Tenant
@@ -63,7 +68,7 @@ class TenantNotificationSettings(models.Model):
         token = secrets.token_urlsafe(32)
         self.connect_token = token
         self.connect_token_expires_at = (
-            timezone.now() + timezone.timedelta(minutes=CONNECT_TOKEN_TTL_MINUTES)
+            timezone.now() + timedelta(minutes=CONNECT_TOKEN_TTL_MINUTES)
         )
         self.save(update_fields=['connect_token', 'connect_token_expires_at'])
         return token
@@ -122,3 +127,86 @@ class TenantNotificationSettings(models.Model):
             'telegram_chat_id', 'telegram_username',
             'connect_token', 'connect_token_expires_at',
         ])
+
+
+class NotificationDelivery(models.Model):
+    """Durable, per-channel delivery state for one logical notification.
+
+    Email retries reuse ``id`` as the Resend idempotency key. Telegram does
+    not expose an idempotency primitive, so a lost response is retained as an
+    explicit uncertain outcome instead of being sent a second time.
+    """
+
+    class Channel(models.TextChoices):
+        EMAIL = 'email', 'Email'
+        TELEGRAM = 'telegram', 'Telegram'
+
+    class Status(models.TextChoices):
+        PENDING = 'pending', 'Ожидает отправки'
+        SENDING = 'sending', 'Отправляется'
+        SENT = 'sent', 'Отправлено'
+        SKIPPED = 'skipped', 'Пропущено'
+        FAILED = 'failed', 'Не отправлено'
+        OUTCOME_UNCERTAIN = 'outcome_uncertain', 'Требует сверки'
+
+    TERMINAL_RETENTION_STATUSES = (
+        Status.SENT,
+        Status.SKIPPED,
+        Status.FAILED,
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='notification_deliveries',
+    )
+    event_key = models.CharField(max_length=200)
+    channel = models.CharField(max_length=20, choices=Channel.choices)
+    payload_fingerprint = models.CharField(max_length=64)
+    status = models.CharField(
+        max_length=24,
+        choices=Status.choices,
+        default=Status.PENDING,
+        db_index=True,
+    )
+    attempts = models.PositiveSmallIntegerField(default=0)
+    claimed_at = models.DateTimeField(null=True, blank=True)
+    finished_at = models.DateTimeField(null=True, blank=True)
+    error_code = models.CharField(max_length=80, blank=True)
+    reconciliation_action = models.CharField(max_length=20, blank=True)
+    reconciliation_note = models.TextField(blank=True)
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at', 'id']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'event_key', 'channel'],
+                name='uniq_notification_event_channel',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['status', 'updated_at'],
+                name='notif_delivery_status_idx',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.event_key}:{self.channel} [{self.status}]'
+
+
+@receiver(pre_delete, sender=NotificationDelivery)
+def protect_unresolved_notification_delivery(sender, instance, **kwargs):
+    if instance.status in {
+        NotificationDelivery.Status.PENDING,
+        NotificationDelivery.Status.SENDING,
+        NotificationDelivery.Status.OUTCOME_UNCERTAIN,
+    }:
+        raise ProtectedError(
+            'Unresolved notification delivery cannot be deleted.',
+            {instance},
+        )

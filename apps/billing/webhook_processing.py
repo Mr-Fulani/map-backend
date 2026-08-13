@@ -11,6 +11,8 @@ from django.utils import timezone
 from apps.billing.models import BillingWebhookEvent, Invoice, PaymentReversal
 from apps.billing.services import BillingService, reconciliation_delay_seconds
 from apps.billing.yookassa_client import (
+    PaymentSnapshot,
+    RefundSnapshot,
     YooKassaAPIError,
     YooKassaSnapshotError,
     fetch_payment,
@@ -265,13 +267,15 @@ def process_claimed_yookassa_event(
         )
         return WebhookProcessResult(True)
 
+    refund_snapshot: RefundSnapshot | None = None
     try:
         if event == 'refund.succeeded':
-            snapshot = fetch_refund(object_id)
-            payment_snapshot = fetch_payment(snapshot.payment_id)
+            refund_snapshot = fetch_refund(object_id)
+            provider_snapshot: PaymentSnapshot | RefundSnapshot = refund_snapshot
+            payment_snapshot = fetch_payment(refund_snapshot.payment_id)
         else:
-            snapshot = fetch_payment(object_id)
-            payment_snapshot = snapshot
+            payment_snapshot = fetch_payment(object_id)
+            provider_snapshot = payment_snapshot
     except (YooKassaAPIError, YooKassaSnapshotError):
         logger.warning(
             'Не удалось подтвердить YooKassa %s %s.',
@@ -297,20 +301,24 @@ def process_claimed_yookassa_event(
         return _final_result(actual, 'provider_unavailable')
 
     expected_status = event.partition('.')[2]
-    payment_id = snapshot.payment_id if event == 'refund.succeeded' else snapshot.id
-    if snapshot.status != expected_status:
+    payment_id = (
+        refund_snapshot.payment_id
+        if refund_snapshot is not None
+        else payment_snapshot.id
+    )
+    if provider_snapshot.status != expected_status:
         return _finalize_status_mismatch(
             webhook_event=webhook_event,
             processing_token=processing_token,
-            observed_status=snapshot.status,
+            observed_status=provider_snapshot.status,
             transient_statuses=(
                 _TRANSIENT_REFUND_STATUSES
                 if event == 'refund.succeeded'
                 else _TRANSIENT_PAYMENT_STATUSES
             ),
             payment_id=payment_id,
-            amount=snapshot.amount,
-            currency=snapshot.currency,
+            amount=provider_snapshot.amount,
+            currency=provider_snapshot.currency,
             subject='объекта',
             retry_code='provider_state_mismatch',
         )
@@ -321,8 +329,8 @@ def process_claimed_yookassa_event(
             observed_status=payment_snapshot.status,
             transient_statuses=_TRANSIENT_PAYMENT_STATUSES,
             payment_id=payment_id,
-            amount=snapshot.amount,
-            currency=snapshot.currency,
+            amount=provider_snapshot.amount,
+            currency=provider_snapshot.currency,
             subject='связанного платежа',
             retry_code='linked_payment_state_mismatch',
         )
@@ -338,8 +346,8 @@ def process_claimed_yookassa_event(
             decision=BillingWebhookEvent.DECISION_ERROR,
             reason='Invoice для подтверждённого платежа пока не найден.',
             payment_id=payment_id,
-            amount=snapshot.amount,
-            currency=snapshot.currency,
+            amount=provider_snapshot.amount,
+            currency=provider_snapshot.currency,
         )
         return _final_result(actual, 'invoice_not_ready')
     except Invoice.MultipleObjectsReturned:
@@ -349,8 +357,8 @@ def process_claimed_yookassa_event(
             decision=BillingWebhookEvent.DECISION_ERROR,
             reason='Платёж связан более чем с одним Invoice.',
             payment_id=payment_id,
-            amount=snapshot.amount,
-            currency=snapshot.currency,
+            amount=provider_snapshot.amount,
+            currency=provider_snapshot.currency,
         )
         return _final_result(actual, 'ambiguous_invoice')
 
@@ -367,8 +375,8 @@ def process_claimed_yookassa_event(
                 reason='Ошибка фиксации тестового платежа.',
                 invoice=invoice,
                 payment_id=payment_id,
-                amount=snapshot.amount,
-                currency=snapshot.currency,
+                amount=provider_snapshot.amount,
+                currency=provider_snapshot.currency,
             )
             return _final_result(actual, 'manual_review_write_failed')
         finalize_webhook_event(
@@ -378,16 +386,16 @@ def process_claimed_yookassa_event(
             reason=reason,
             invoice=invoice,
             payment_id=payment_id,
-            amount=snapshot.amount,
-            currency=snapshot.currency,
+            amount=provider_snapshot.amount,
+            currency=provider_snapshot.currency,
         )
         return WebhookProcessResult(True)
 
     if (
-        snapshot.currency != invoice.currency
+        provider_snapshot.currency != invoice.currency
         or payment_snapshot.currency != invoice.currency
         or payment_snapshot.amount != invoice.amount
-        or (event.startswith('payment.') and snapshot.amount != invoice.amount)
+        or (event.startswith('payment.') and provider_snapshot.amount != invoice.amount)
     ):
         reason = 'Сумма или валюта авторитетного объекта не совпадает с Invoice.'
         try:
@@ -405,8 +413,8 @@ def process_claimed_yookassa_event(
                 reason='Ошибка фиксации financial mismatch.',
                 invoice=invoice,
                 payment_id=payment_id,
-                amount=snapshot.amount,
-                currency=snapshot.currency,
+                amount=provider_snapshot.amount,
+                currency=provider_snapshot.currency,
             )
             return _final_result(actual, 'manual_review_write_failed')
         finalize_webhook_event(
@@ -416,8 +424,8 @@ def process_claimed_yookassa_event(
             reason=reason,
             invoice=invoice,
             payment_id=payment_id,
-            amount=snapshot.amount,
-            currency=snapshot.currency,
+            amount=provider_snapshot.amount,
+            currency=provider_snapshot.currency,
         )
         return WebhookProcessResult(True)
 
@@ -426,9 +434,9 @@ def process_claimed_yookassa_event(
         if event == 'payment.succeeded':
             processed = BillingService.handle_payment_success_webhook(
                 invoice.pk,
-                payment_id=snapshot.id,
-                amount=snapshot.amount,
-                currency=snapshot.currency,
+                payment_id=payment_snapshot.id,
+                amount=payment_snapshot.amount,
+                currency=payment_snapshot.currency,
             )
             if processed:
                 decision = BillingWebhookEvent.DECISION_APPLIED
@@ -447,7 +455,7 @@ def process_claimed_yookassa_event(
         elif event == 'payment.canceled':
             processed = BillingService.handle_payment_failed_webhook(
                 invoice.pk,
-                payment_id=snapshot.id,
+                payment_id=payment_snapshot.id,
             )
             if processed:
                 decision = BillingWebhookEvent.DECISION_APPLIED
@@ -461,12 +469,14 @@ def process_claimed_yookassa_event(
                     )
                 decision = BillingWebhookEvent.DECISION_MANUAL_REVIEW
         else:
+            if refund_snapshot is None:
+                raise RuntimeError('Refund webhook не содержит refund snapshot.')
             reversal = BillingService.handle_reversal_success(
                 invoice_id=invoice.pk,
-                provider_reference=snapshot.id,
-                payment_id=snapshot.payment_id,
-                amount=snapshot.amount,
-                currency=snapshot.currency,
+                provider_reference=refund_snapshot.id,
+                payment_id=refund_snapshot.payment_id,
+                amount=refund_snapshot.amount,
+                currency=refund_snapshot.currency,
             )
             if reversal is None:
                 reason = 'Подтверждённый возврат не удалось применить.'
@@ -492,8 +502,8 @@ def process_claimed_yookassa_event(
             reason='Временная ошибка применения подтверждённого события.',
             invoice=invoice,
             payment_id=payment_id,
-            amount=snapshot.amount,
-            currency=snapshot.currency,
+            amount=provider_snapshot.amount,
+            currency=provider_snapshot.currency,
         )
         return _final_result(actual, 'processing_error')
 
@@ -504,7 +514,7 @@ def process_claimed_yookassa_event(
         reason=reason,
         invoice=invoice,
         payment_id=payment_id,
-        amount=snapshot.amount,
-        currency=snapshot.currency,
+        amount=provider_snapshot.amount,
+        currency=provider_snapshot.currency,
     )
     return _final_result(actual, 'claim_lost')

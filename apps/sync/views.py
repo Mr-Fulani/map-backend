@@ -1,8 +1,15 @@
+from typing import Protocol, cast
+
 from drf_spectacular.utils import extend_schema
 from rest_framework.generics import ListAPIView
 
 from apps.sync.models import SyncLog
 from apps.sync.serializers import SyncLogSerializer
+from apps.tenants.models import Tenant
+
+
+class _TenantRequest(Protocol):
+    tenant: Tenant
 
 
 @extend_schema(tags=['Logs'], summary='Журнал синхронизации')
@@ -23,7 +30,8 @@ class SyncLogListView(ListAPIView):
     }
 
     def get_queryset(self):
-        qs = SyncLog.objects.filter(tenant=self.request.tenant).order_by('-created_at')
+        tenant = cast(_TenantRequest, self.request).tenant
+        qs = SyncLog.objects.filter(tenant=tenant).order_by('-created_at')
 
         event_type = self.request.query_params.get('event_type')
         if event_type:

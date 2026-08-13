@@ -1,4 +1,7 @@
 from django.db import models
+from django.db.models.deletion import ProtectedError
+from django.db.models.signals import pre_delete
+from django.dispatch import receiver
 from django.utils.timezone import now
 
 from apps.core.models import TimestampedModel
@@ -123,6 +126,12 @@ class WebResearchRun(TimestampedModel):
     generate_after = models.BooleanField(
         default=False, verbose_name='Сгенерировать описание после завершения',
     )
+    origin_key = models.CharField(
+        max_length=160,
+        blank=True,
+        editable=False,
+        verbose_name='Ключ происхождения запуска',
+    )
     error_message = models.TextField(blank=True, verbose_name='Ошибка')
     started_at = models.DateTimeField(null=True, blank=True, verbose_name='Начато')
     finished_at = models.DateTimeField(null=True, blank=True, verbose_name='Завершено')
@@ -152,6 +161,11 @@ class WebResearchRun(TimestampedModel):
                     & models.Q(purpose__in=['pricing', 'combined'])
                 ),
                 name='unique_active_pricing_research_per_product',
+            ),
+            models.UniqueConstraint(
+                fields=['tenant', 'origin_key'],
+                condition=~models.Q(origin_key=''),
+                name='unique_tenant_web_research_origin',
             ),
         ]
 
@@ -373,17 +387,150 @@ class WebSearchConnection(TimestampedModel):
         ])
 
 
+class WebSearchWorkflow(TimestampedModel):
+    """Durable business execution owning one or more paid search calls.
+
+    A workflow stays active after the provider responds.  The caller closes it
+    only in the same database transaction that persists the corresponding
+    domain result.  This makes a worker kill between the HTTP response and the
+    domain write replay the encrypted checkpoint instead of paying again.
+    """
+
+    class Status(models.TextChoices):
+        IN_PROGRESS = 'in_progress', 'Выполняется'
+        APPLY_PENDING = 'apply_pending', 'Ожидает применения'
+        UNCERTAIN = 'uncertain', 'Требует сверки'
+        APPLIED = 'applied', 'Применено'
+        RECONCILED = 'reconciled', 'Сверено вручную'
+
+    ACTIVE_STATUSES = (
+        Status.IN_PROGRESS,
+        Status.APPLY_PENDING,
+        Status.UNCERTAIN,
+    )
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.PROTECT,
+        related_name='web_search_workflows',
+        verbose_name='Тенант',
+    )
+    product = models.ForeignKey(
+        'products.Product',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='web_search_workflows',
+        verbose_name='Товар',
+    )
+    run = models.ForeignKey(
+        WebResearchRun,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='search_workflows',
+        verbose_name='Исследование',
+    )
+    operation = models.SlugField(max_length=50, verbose_name='Операция')
+    domain_reference = models.CharField(
+        max_length=160,
+        verbose_name='Стабильная доменная ссылка',
+    )
+    workflow_key = models.CharField(
+        max_length=160,
+        verbose_name='Ключ бизнес-выполнения',
+    )
+    input_fingerprint = models.CharField(
+        max_length=64,
+        verbose_name='Отпечаток неизменяемого плана',
+    )
+    input_snapshot = models.JSONField(
+        default=dict,
+        editable=False,
+        verbose_name='Неизменяемый нормализованный план',
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.IN_PROGRESS,
+        db_index=True,
+        verbose_name='Статус',
+    )
+    applied_at = models.DateTimeField(null=True, blank=True)
+    reconciliation_action = models.CharField(max_length=40, blank=True)
+    reconciliation_note = models.TextField(blank=True)
+    reconciled_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Рабочий процесс платного интернет-поиска'
+        verbose_name_plural = 'Рабочие процессы платного интернет-поиска'
+        ordering = ['created_at', 'id']
+        indexes = [
+            models.Index(
+                fields=['tenant', 'operation', 'domain_reference'],
+                name='webflow_domain_idx',
+            ),
+            models.Index(
+                fields=['tenant', '-updated_at'],
+                name='webflow_tenant_recent_idx',
+            ),
+            models.Index(
+                fields=['status', 'updated_at'],
+                name='webflow_retention_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'operation', 'workflow_key'],
+                name='uniq_websearch_workflow_key',
+            ),
+            models.UniqueConstraint(
+                fields=['tenant', 'operation', 'domain_reference'],
+                condition=models.Q(status__in=[
+                    'in_progress', 'apply_pending', 'uncertain',
+                ]),
+                name='uniq_active_websearch_domain',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.operation}:{self.workflow_key} [{self.status}]'
+
+
 class WebSearchAttempt(TimestampedModel):
     """One provider request within a research run, including fallback failures."""
 
     class Status(models.TextChoices):
+        STARTED = 'started', 'Запрос начат'
         SUCCESS = 'success', 'Успешно'
         EMPTY = 'empty', 'Нет результатов'
         FAILED = 'failed', 'Ошибка'
+        OUTCOME_UNCERTAIN = 'outcome_uncertain', 'Результат провайдера неизвестен'
         SKIPPED = 'skipped', 'Пропущено'
 
+    class ReconciliationState(models.TextChoices):
+        NOT_REQUIRED = 'not_required', 'Не требуется'
+        PENDING = 'pending', 'Требует сверки'
+        RESOLVED = 'resolved', 'Сверено'
+
+    class ApplyState(models.TextChoices):
+        PENDING = 'pending', 'Ожидает применения'
+        APPLIED = 'applied', 'Применено или сверено'
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.PROTECT,
+        related_name='web_search_attempts',
+        verbose_name='Тенант',
+    )
+    workflow = models.ForeignKey(
+        WebSearchWorkflow,
+        on_delete=models.PROTECT,
+        related_name='attempts',
+        verbose_name='Рабочий процесс',
+    )
     run = models.ForeignKey(
-        WebResearchRun, on_delete=models.CASCADE,
+        WebResearchRun, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='search_attempts', verbose_name='Исследование',
     )
     connection = models.ForeignKey(
@@ -391,6 +538,29 @@ class WebSearchAttempt(TimestampedModel):
         related_name='attempts', verbose_name='Подключение',
     )
     provider_id = models.SlugField(max_length=50, verbose_name='Провайдер')
+    operation = models.SlugField(
+        max_length=50,
+        default='web_research',
+        verbose_name='Операция',
+    )
+    call_kind = models.SlugField(
+        max_length=30,
+        default='search',
+        verbose_name='Вид вызова',
+    )
+    domain_reference = models.CharField(
+        max_length=160,
+        blank=True,
+        verbose_name='Доменная ссылка',
+    )
+    call_key = models.CharField(
+        max_length=160,
+        verbose_name='Детерминированный ключ вызова',
+    )
+    request_fingerprint = models.CharField(
+        max_length=64,
+        verbose_name='Отпечаток запроса',
+    )
     query = models.CharField(max_length=500, verbose_name='Запрос')
     status = models.CharField(max_length=20, choices=Status.choices, verbose_name='Статус')
     result_count = models.PositiveSmallIntegerField(default=0, verbose_name='Результатов')
@@ -398,6 +568,29 @@ class WebSearchAttempt(TimestampedModel):
     retryable = models.BooleanField(default=False, verbose_name='Можно повторить')
     error_code = models.CharField(max_length=80, blank=True, verbose_name='Код ошибки')
     error_message = models.CharField(max_length=500, blank=True, verbose_name='Ошибка')
+    apply_state = models.CharField(
+        max_length=20,
+        choices=ApplyState.choices,
+        default=ApplyState.PENDING,
+        db_index=True,
+        verbose_name='Применение результата',
+    )
+    checkpoint_enc = models.BinaryField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Зашифрованный нормализованный результат',
+    )
+    reconciliation_state = models.CharField(
+        max_length=20,
+        choices=ReconciliationState.choices,
+        default=ReconciliationState.NOT_REQUIRED,
+        db_index=True,
+        verbose_name='Состояние сверки',
+    )
+    reconciliation_action = models.CharField(max_length=40, blank=True)
+    reconciliation_note = models.TextField(blank=True)
+    reconciled_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         verbose_name = 'Попытка интернет-поиска'
@@ -411,10 +604,213 @@ class WebSearchAttempt(TimestampedModel):
             models.Index(
                 fields=['run', 'created_at'], name='websearch_run_created_idx',
             ),
+            models.Index(
+                fields=['tenant', '-created_at'],
+                name='websearch_tenant_recent_idx',
+            ),
+            models.Index(
+                fields=['tenant', 'operation', 'domain_reference'],
+                name='websearch_domain_fence_idx',
+            ),
+            models.Index(
+                fields=['workflow', 'created_at'],
+                name='websearch_workflow_call_idx',
+            ),
+            models.Index(
+                fields=['reconciliation_state', 'apply_state', 'updated_at'],
+                name='websearch_retention_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['workflow', 'call_key'],
+                name='uniq_websearch_workflow_call',
+            ),
         ]
 
     def __str__(self):
         return f'{self.provider_id}: {self.get_status_display()}'
+
+
+class WebSearchUsageGate(models.Model):
+    """One row per provider used only to serialize quota reservations."""
+
+    provider_id = models.SlugField(max_length=50, unique=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.provider_id
+
+
+@receiver(pre_delete, sender=WebSearchAttempt)
+def protect_unresolved_web_search_attempt(sender, instance, using, **kwargs):
+    """Unapplied paid outcomes remain durable until apply or reconciliation."""
+    Tenant.objects.using(using).select_for_update().only('pk').get(
+        pk=instance.tenant_id,
+    )
+    WebSearchWorkflow.objects.using(using).select_for_update().only('pk').get(
+        pk=instance.workflow_id,
+    )
+    locked = sender.objects.using(using).select_for_update().get(pk=instance.pk)
+    if (
+        locked.reconciliation_state
+        == WebSearchAttempt.ReconciliationState.PENDING
+        or locked.apply_state == WebSearchAttempt.ApplyState.PENDING
+    ):
+        raise ProtectedError(
+            'Unapplied web-search attempt cannot be deleted.',
+            {locked},
+        )
+
+
+@receiver(pre_delete, sender=WebSearchWorkflow)
+def protect_active_web_search_workflow(sender, instance, using, **kwargs):
+    Tenant.objects.using(using).select_for_update().only('pk').get(
+        pk=instance.tenant_id,
+    )
+    locked = sender.objects.using(using).select_for_update().get(pk=instance.pk)
+    unfinished_local_apply = False
+    if (
+        locked.status == WebSearchWorkflow.Status.APPLIED
+        and locked.operation == 'web_research'
+        and locked.run_id is not None
+    ):
+        run = WebResearchRun.objects.using(using).select_for_update().only(
+            'pk', 'status',
+        ).get(pk=locked.run_id)
+        unfinished_local_apply = run.status in {
+            WebResearchRun.Status.QUEUED,
+            WebResearchRun.Status.RUNNING,
+        }
+        if run.status == WebResearchRun.Status.FAILED:
+            unfinished_local_apply = locked.attempts.using(
+                using,
+            ).select_for_update().filter(
+                status__in=[
+                    WebSearchAttempt.Status.SUCCESS,
+                    WebSearchAttempt.Status.EMPTY,
+                ],
+                checkpoint_enc__isnull=False,
+            ).exists()
+    if locked.status in WebSearchWorkflow.ACTIVE_STATUSES or unfinished_local_apply:
+        raise ProtectedError(
+            'Active or locally unfinished web-search workflow cannot be deleted.',
+            {locked},
+        )
+
+
+@receiver(pre_delete, sender=WebResearchRun)
+def protect_web_research_run_with_active_search_workflow(
+    sender, instance, using, **kwargs,
+):
+    """A paid checkpoint cannot be resumed without its canonical run."""
+    Tenant.objects.using(using).select_for_update().only('pk').get(
+        pk=instance.tenant_id,
+    )
+    sender.objects.using(using).select_for_update().only('pk').get(
+        pk=instance.pk,
+    )
+    workflows = WebSearchWorkflow.objects.using(using).select_for_update().filter(
+        run_id=instance.pk,
+    )
+    protected = []
+    for workflow in workflows:
+        if workflow.status in WebSearchWorkflow.ACTIVE_STATUSES:
+            protected.append(workflow)
+            continue
+        if (
+            workflow.status != WebSearchWorkflow.Status.APPLIED
+            or instance.status not in {
+                WebResearchRun.Status.QUEUED,
+                WebResearchRun.Status.RUNNING,
+                WebResearchRun.Status.FAILED,
+            }
+        ):
+            continue
+        attempts = workflow.attempts.using(using).select_for_update()
+        if (
+            not attempts.exists()
+            and instance.status in {
+                WebResearchRun.Status.QUEUED,
+                WebResearchRun.Status.RUNNING,
+            }
+        ) or attempts.filter(
+            status__in=[
+                WebSearchAttempt.Status.SUCCESS,
+                WebSearchAttempt.Status.EMPTY,
+            ],
+            checkpoint_enc__isnull=False,
+        ).exists():
+            protected.append(workflow)
+    if protected:
+        raise ProtectedError(
+            'Web research run has paid search work awaiting local completion.',
+            set(protected[:10]),
+        )
+
+
+@receiver(pre_delete, sender='products.Product')
+def protect_product_with_active_web_search_workflow(
+    sender, instance, using, **kwargs,
+):
+    """Do not orphan the business identity needed to resume a checkpoint."""
+    # Acquisition takes the same tenant lock before creating its workflow.
+    # This makes hard deletion and first acquisition serializable instead of a
+    # check-then-delete race around the SET_NULL product relationship.
+    Tenant.objects.using(using).select_for_update().only('pk').get(
+        pk=instance.tenant_id,
+    )
+    sender.all_objects.using(using).select_for_update().only('pk').get(
+        pk=instance.pk,
+    )
+    runs = list(
+        WebResearchRun.objects.using(using).select_for_update()
+        .only('pk', 'status')
+        .filter(product_id=instance.pk)
+        .order_by('pk')
+    )
+    run_statuses = {run.pk: run.status for run in runs}
+    workflows = WebSearchWorkflow.objects.using(using).select_for_update().filter(
+        models.Q(product_id=instance.pk)
+        | models.Q(run_id__in=run_statuses),
+    ).order_by('pk')
+    protected = []
+    for workflow in workflows:
+        if workflow.status in WebSearchWorkflow.ACTIVE_STATUSES:
+            protected.append(workflow)
+            continue
+        if workflow.status != WebSearchWorkflow.Status.APPLIED:
+            continue
+        if workflow.run_id is None:
+            continue
+        if (
+            run_statuses.get(workflow.run_id) not in {
+                WebResearchRun.Status.QUEUED,
+                WebResearchRun.Status.RUNNING,
+                WebResearchRun.Status.FAILED,
+            }
+        ):
+            continue
+        attempts = workflow.attempts.using(using).select_for_update()
+        if (
+            not attempts.exists()
+            and run_statuses.get(workflow.run_id) in {
+                WebResearchRun.Status.QUEUED,
+                WebResearchRun.Status.RUNNING,
+            }
+        ) or attempts.filter(
+            status__in=[
+                WebSearchAttempt.Status.SUCCESS,
+                WebSearchAttempt.Status.EMPTY,
+            ],
+            checkpoint_enc__isnull=False,
+        ).exists():
+            protected.append(workflow)
+    if protected:
+        raise ProtectedError(
+            'Product has paid web-search work awaiting completion.',
+            set(protected[:10]),
+        )
 
 
 class WebResearchClaim(TimestampedModel):

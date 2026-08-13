@@ -1,5 +1,5 @@
 from dataclasses import asdict, dataclass
-from types import SimpleNamespace
+from typing import Protocol
 from urllib.parse import urlparse
 
 from apps.web_research.models import TenantWebResearchSettings
@@ -42,6 +42,38 @@ class SearchContext:
         return payload
 
 
+class ResearchSettings(Protocol):
+    """Structural subset shared by the DB model and immutable snapshots."""
+
+    @property
+    def region_preset(self) -> str: ...
+
+    @property
+    def country_codes(self) -> list[str]: ...
+
+    @property
+    def search_language(self) -> str: ...
+
+    @property
+    def preferred_domains(self) -> list[str]: ...
+
+    @property
+    def excluded_domains(self) -> list[str]: ...
+
+    @property
+    def result_limit(self) -> int: ...
+
+
+@dataclass(frozen=True)
+class SnapshotResearchSettings:
+    region_preset: str
+    country_codes: list[str]
+    search_language: str
+    preferred_domains: list[str]
+    excluded_domains: list[str]
+    result_limit: int
+
+
 def normalize_country_codes(values) -> list[str]:
     result = []
     for value in values or []:
@@ -67,7 +99,7 @@ def get_tenant_research_settings(tenant) -> TenantWebResearchSettings:
     return settings
 
 
-def country_codes_for_settings(settings: TenantWebResearchSettings) -> list[str]:
+def country_codes_for_settings(settings: ResearchSettings) -> list[str]:
     selected = normalize_country_codes(settings.country_codes)
     if settings.region_preset == TenantWebResearchSettings.RegionPreset.RUSSIA:
         return ['RU']
@@ -78,7 +110,7 @@ def country_codes_for_settings(settings: TenantWebResearchSettings) -> list[str]
     return ['']
 
 
-def build_search_contexts(settings: TenantWebResearchSettings, *, purpose: str) -> list[SearchContext]:
+def build_search_contexts(settings: ResearchSettings, *, purpose: str) -> list[SearchContext]:
     include_domains = normalized_domains(settings.preferred_domains)
     exclude_domains = normalized_domains(settings.excluded_domains)
     country_codes = country_codes_for_settings(settings) or ['']
@@ -97,8 +129,27 @@ def build_search_contexts(settings: TenantWebResearchSettings, *, purpose: str) 
     ]
 
 
+def _snapshot_string_list(value: object) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return []
+    return [item for item in value if isinstance(item, str)]
+
+
+def _snapshot_result_limit(value: object) -> int:
+    if isinstance(value, bool):
+        return 30
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    return 30
+
+
 def search_contexts_from_snapshot(snapshot: dict, *, purpose: str) -> list[SearchContext]:
-    defaults = {
+    defaults: dict[str, object] = {
         'region_preset': TenantWebResearchSettings.RegionPreset.RUSSIA,
         'country_codes': [],
         'search_language': 'ru',
@@ -107,7 +158,17 @@ def search_contexts_from_snapshot(snapshot: dict, *, purpose: str) -> list[Searc
         'result_limit': 30,
     }
     defaults.update(snapshot or {})
-    return build_search_contexts(SimpleNamespace(**defaults), purpose=purpose)
+    settings = SnapshotResearchSettings(
+        region_preset=str(defaults['region_preset']),
+        country_codes=normalize_country_codes(
+            _snapshot_string_list(defaults['country_codes']),
+        ),
+        search_language=str(defaults['search_language'] or 'ru'),
+        preferred_domains=_snapshot_string_list(defaults['preferred_domains']),
+        excluded_domains=_snapshot_string_list(defaults['excluded_domains']),
+        result_limit=_snapshot_result_limit(defaults['result_limit']),
+    )
+    return build_search_contexts(settings, purpose=purpose)
 
 
 def localize_query(query: str, context: SearchContext) -> str:

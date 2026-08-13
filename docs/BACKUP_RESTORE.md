@@ -164,15 +164,29 @@ Backup-контейнер не получает application `.env`, поэтом
 Django-секреты в него не попадают. Private age identity там быть не должно.
 
 Создайте отдельный login без прав записи (команды выполняет DBA, пароль передайте
-через secret manager, не через shell history):
+через secret manager, не через shell history). Role не должна совпадать с
+`POSTGRES_USER`, владеть DB/schema/objects, получать другие memberships или
+write grants, включая default privileges:
 
 ```sql
-CREATE ROLE map_backup LOGIN PASSWORD '<generated-secret>';
+CREATE ROLE map_backup LOGIN PASSWORD '<generated-secret>'
+  NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS;
 GRANT CONNECT ON DATABASE map_db TO map_backup;
 GRANT pg_read_all_data TO map_backup;
 ```
 
-После изменения схемы проверяйте, что backup role всё ещё читает все объекты.
+`/usr/local/sbin/saas-poster-rotate-backup-db-password` перед каждой ротацией
+fail-closed проверяет
+эти атрибуты, единственную membership `pg_read_all_data`, object ownership,
+effective DML/DDL grants, опасные default ACL и доступные `SECURITY DEFINER`
+functions. После изменения схемы проверяйте, что backup role всё ещё читает все
+объекты и что новая функция/grant не нарушила этот контракт.
+
+Ротация публикует durable root-only marker
+`.backup-db-rotation-uncertain` до `psql \password`. Если marker остался после
+ошибки/reboot, не повторяйте ротацию и не удаляйте указанный recovery env.
+Порядок безопасной сверки credentials и снятия marker приведён в
+[`PRODUCTION_SECURITY.md`](PRODUCTION_SECURITY.md).
 Защита restore использует отдельное `RESTORE_PRODUCTION_DATABASE_NAME`: любое
 совпадение имени target database с production будет отклонено даже при другом
 host/DNS alias или user. Для drill всегда используйте отдельное имя.
@@ -203,20 +217,15 @@ production_compose=(
 
 ## 4. Расписание и мониторинг
 
-Готовые units используют `User=saas-poster`, `Group=docker` и checkout
-`/opt/saas_poster`, то есть тот же стандартный operator contract, что deploy.
-Если ваш layout отличается, сначала измените управляемые копии units, владельца
-checkout и mode/owner `.env`/`.backup.env`; только затем устанавливайте и включайте
-timer-ы:
+Готовые units используют root-owned checkout `/opt/saas_poster`. Это соответствует
+фактическому owner secret-файлов и не выдаёт отдельному пользователю фиктивную
+«ограниченную» привилегию через root-equivalent группу `docker`. Units имеют
+systemd hardening и запускают только фиксированные reviewed scripts. Канонический
+installer одновременно ставит units, tmpfiles, Certbot hook и ограниченный CI
+gateway:
 
 ```bash
-sudo install -o root -g root -m 0644 ops/systemd/saas-poster-backup.service \
-  ops/systemd/saas-poster-backup.timer \
-  ops/systemd/saas-poster-backup-check.service \
-  ops/systemd/saas-poster-backup-check.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now saas-poster-backup.timer \
-  saas-poster-backup-check.timer
+sudo ./scripts/install_production_host_services.sh /secure/path/mapdeploy.pub
 systemctl list-timers 'saas-poster-backup*'
 ```
 
@@ -224,6 +233,15 @@ systemctl list-timers 'saas-poster-backup*'
 проверяется каждый час. Для независимого dead-man monitor задайте URL в
 `.backup.env`; недоступность monitor не превращает уже загруженный архив в
 ошибочный, но фиксируется в journal.
+
+Оба production backup wrapper берут тот же root-owned
+`/run/lock/saas-poster/deploy.lock`, что и release. Поэтому таймер не читает
+checkout и не запускает backup параллельно с build/rollout. Freshness check
+никогда не создаёт и не пересоздаёт egress proxy: он требует уже запущенный
+healthy proxy и завершается с ошибкой при нарушении этого условия.
+Ротация backup DB credential также сериализована этим lock на всём участке
+`ALTER ROLE` + atomic env replace; проверочный backup берёт lock отдельным
+запуском уже после завершения credential cutover.
 
 Контроль оператора:
 
@@ -235,6 +253,22 @@ systemctl --failed
 
 CI/CD сам выполняет одноразовый зашифрованный backup после Django pre-checks и
 до `migrate`. Ошибка dump, шифрования, upload или manifest блокирует миграцию.
+
+### Media bucket
+
+Database backup не содержит S3 media. Для production media bucket отдельно
+включите versioning и примените `ops/s3/media-lifecycle.json`: current objects
+не имеют expiration, удалённые/заменённые версии сохраняются 365 дней, а
+незавершённые multipart uploads очищаются через 7 дней. Bucket остаётся
+публичным только для чтения media-объектов; list/config/write не должны быть
+публичными. Application key не должен иметь право изменять versioning/lifecycle.
+После одноразовой настройки административным credential проверьте статус через
+Yandex Cloud API/console и отзовите этот credential из runtime.
+
+Ежедневный DB backup и versioning media закрывают разные сценарии. Ежемесячный
+DR drill обязан дополнительно выбрать несколько `ProductImage` ключей из
+восстановленной БД и подтвердить, что соответствующие версии читаются из media
+bucket; иначе восстановленная БД может ссылаться на отсутствующие изображения.
 
 ## 5. Ежемесячный restore drill
 

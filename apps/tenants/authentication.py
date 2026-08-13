@@ -70,6 +70,11 @@ class TenantJWTAuthentication(JWTAuthentication):
             return None
 
         user, validated_token = result
+        from apps.users.models import User
+        if not isinstance(user, User):
+            # The configured authentication backend must never return a
+            # different user model: fail closed instead of trusting claims.
+            raise AuthenticationFailed('Некорректный пользователь сессии.')
         tenant_id = validated_token.get('tenant_id')
         token_auth_version = validated_token.get('auth_version')
 
@@ -84,4 +89,4 @@ class TenantJWTAuthentication(JWTAuthentication):
             user=user,
         ).exists():
             raise AuthenticationFailed('Доступ к организации отозван.')
-        return result
+        return user, validated_token

@@ -1,0 +1,120 @@
+name: Production monitor
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+concurrency:
+  group: production-monitor
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      PROD_HOST: ${{ secrets.PROD_HOST }}
+      PROD_USER: ${{ secrets.PROD_USER }}
+      PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
+      PROD_HOST_FINGERPRINT: ${{ secrets.PROD_HOST_FINGERPRINT }}
+      PROD_READY_URL: https://dodugir.com/api/v1/ready/
+    steps:
+      - name: Проверить public readiness, backup и topology
+        id: production_check
+        continue-on-error: true
+        run: |
+          test -n "$PROD_HOST"
+          test -n "$PROD_USER"
+          test "$PROD_USER" = mapdeploy
+          test -n "$PROD_SSH_KEY"
+          case "$PROD_HOST_FINGERPRINT" in SHA256:?*) ;; *) exit 1 ;; esac
+
+          curl --fail --silent --show-error --max-time 20 \
+            --output /dev/null "$PROD_READY_URL"
+
+          ssh_dir="$(mktemp -d "$RUNNER_TEMP/monitor-ssh.XXXXXX")"
+          chmod 700 "$ssh_dir"
+          trap 'rm -rf -- "$ssh_dir"' EXIT
+          printf '%s\n' "$PROD_SSH_KEY" > "$ssh_dir/id"
+          chmod 600 "$ssh_dir/id"
+          ssh-keyscan -T 10 "$PROD_HOST" > "$ssh_dir/scanned-host-keys"
+
+          fingerprint_matched=false
+          while IFS= read -r host_key; do
+            case "$host_key" in ''|'#'*) continue ;; esac
+            printf '%s\n' "$host_key" > "$ssh_dir/candidate-host-key"
+            key_info="$(ssh-keygen -lf "$ssh_dir/candidate-host-key" -E sha256)"
+            candidate_fingerprint="${key_info#* }"
+            candidate_fingerprint="${candidate_fingerprint%% *}"
+            if [ "$candidate_fingerprint" = "$PROD_HOST_FINGERPRINT" ]; then
+              printf '%s\n' "$host_key" > "$ssh_dir/known_hosts"
+              fingerprint_matched=true
+              break
+            fi
+          done < "$ssh_dir/scanned-host-keys"
+          [ "$fingerprint_matched" = true ]
+
+          ssh_options=(
+            -i "$ssh_dir/id"
+            -o BatchMode=yes
+            -o ClearAllForwardings=yes
+            -o ConnectTimeout=30
+            -o GlobalKnownHostsFile=/dev/null
+            -o IdentitiesOnly=yes
+            -o KbdInteractiveAuthentication=no
+            -o LogLevel=ERROR
+            -o PasswordAuthentication=no
+            -o StrictHostKeyChecking=yes
+            -o UpdateHostKeys=no
+            -o UserKnownHostsFile="$ssh_dir/known_hosts"
+            -o VerifyHostKeyDNS=no
+          )
+          timeout --foreground --signal=TERM --kill-after=10s 10m \
+            ssh "${ssh_options[@]}" "$PROD_USER@$PROD_HOST" backup-check
+          timeout --foreground --signal=TERM --kill-after=10s 2m \
+            ssh "${ssh_options[@]}" "$PROD_USER@$PROD_HOST" topology-check
+          timeout --foreground --signal=TERM --kill-after=10s 2m \
+            ssh "${ssh_options[@]}" "$PROD_USER@$PROD_HOST" capacity-check
+
+      - name: Открыть или обновить incident issue
+        if: steps.production_check.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title='Production monitor failed'
+          body="Automated production readiness, backup freshness, or topology check failed. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          issue_number="$(
+            gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+              --search "in:title $title" --json number --jq '.[0].number // empty'
+          )"
+          if [ -n "$issue_number" ]; then
+            gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" \
+              --title "$title" --body "$body"
+          fi
+          exit 1
+
+      - name: Закрыть восстановленный incident issue
+        if: steps.production_check.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          issue_number="$(
+            gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+              --search 'in:title Production monitor failed' \
+              --json number --jq '.[0].number // empty'
+          )"
+          if [ -n "$issue_number" ]; then
+            gh issue close "$issue_number" --repo "$GITHUB_REPOSITORY" \
+              --comment 'Automated production checks have recovered.'
+          fi

@@ -3,8 +3,10 @@ from unittest.mock import patch
 
 import pytest
 
+from apps.ai_agent.models import AIProviderOperation
 from apps.ai_agent.prompts import SYSTEM_PROMPT
 from apps.ai_agent.providers import AIProviderError, AIProviderResult
+from apps.ai_agent.reconciliation import apply_description_provider_operation
 from apps.ai_agent.services import AICreditsExhausted, DescriptionAgent
 from apps.ai_agent.tasks import generate_description_task
 from apps.ai_agent.validators import (
@@ -16,6 +18,8 @@ from apps.ai_agent.validators import (
     validate_json_response,
     validate_title,
 )
+from apps.billing.ai_wallet import AIWalletService
+from apps.core.dispatch import SafeRetryableDispatchError
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
 from apps.products.models import ProductCrossCode, ProductEnrichmentFact
@@ -273,6 +277,44 @@ class TestDescriptionAgent:
         tenant.refresh_from_db()
         assert tenant.ai_credits_used == initial + 1
 
+    def test_task_resumes_paid_result_after_crash_before_product_write(self):
+        tenant = make_tenant('description-paid-result-resume-co')
+        product = make_product(tenant)
+
+        with patch(
+            'apps.ai_agent.services.call_model',
+            return_value=_provider_response(VALID_RESPONSE),
+        ) as provider:
+            generated = DescriptionAgent().generate(product, tenant)
+
+        provider.assert_called_once()
+        operation_id = generated['_provider_operation_id']
+        operation = AIProviderOperation.objects.get(pk=operation_id)
+        product.refresh_from_db()
+        assert operation.status == AIProviderOperation.Status.SETTLED
+        assert operation.apply_state == AIProviderOperation.ApplyState.PENDING
+        assert operation.validated_result['title'] == generated['title']
+        assert product.title_ai == ''
+
+        with patch(
+            'apps.ai_agent.services.call_model',
+            side_effect=AssertionError('provider must not be replayed'),
+        ) as replay:
+            resumed = generate_description_task(product.pk)
+
+        replay.assert_not_called()
+        operation.refresh_from_db()
+        product.refresh_from_db()
+        assert resumed['resumed'] is True
+        assert resumed['provider_operation_id'] == operation_id
+        assert operation.apply_state == AIProviderOperation.ApplyState.APPLIED
+        assert operation.applied_at is not None
+        assert product.title_ai == generated['title']
+        assert product.description_ai == generated['description']
+
+        # Reapplying the exact operation is a read-only idempotent no-op.
+        assert apply_description_provider_operation(operation.pk)['title'] == generated['title']
+
     def test_banned_words_trigger_retry(self):
         tenant = make_tenant('banned-co')
         product = make_product(tenant)
@@ -291,6 +333,22 @@ class TestDescriptionAgent:
 
         assert result['title'] == json.loads(VALID_RESPONSE)['title']
         assert mock_provider.call_count == 2
+        operations = list(AIProviderOperation.objects.filter(
+            tenant=tenant,
+            domain_type=AIProviderOperation.DomainType.PRODUCT,
+            domain_reference=str(product.pk),
+        ).order_by('created_at'))
+        assert len(operations) == 2
+        assert [operation.status for operation in operations] == [
+            AIProviderOperation.Status.SETTLED,
+            AIProviderOperation.Status.SETTLED,
+        ]
+        assert operations[0].terminal_reason == 'validation_rejected'
+        assert operations[0].charged_amount > 0
+        assert tenant.ai_credit_transactions.filter(
+            idempotency_key__endswith=':release',
+            reference=operations[0].reservation_key,
+        ).exists() is False
 
     def test_vague_fitment_triggers_retry(self):
         tenant = make_tenant('vague-fitment-co')
@@ -318,7 +376,11 @@ class TestDescriptionAgent:
         with patch(
             'apps.ai_agent.services.call_model',
             side_effect=[
-                AIProviderError('Primary failed', code='provider_unavailable'),
+                AIProviderError(
+                    'Primary failed',
+                    code='provider_unavailable',
+                    request_not_accepted=True,
+                ),
                 _provider_response(VALID_RESPONSE),
             ],
         ) as mock_provider:
@@ -330,6 +392,110 @@ class TestDescriptionAgent:
         assert mock_provider.call_args_list[0].args[0].external_id != (
             mock_provider.call_args_list[1].args[0].external_id
         )
+
+    def test_uncertain_provider_outcome_never_falls_back_or_releases_reservation(self):
+        tenant = make_tenant('uncertain-provider-co')
+        product = make_product(tenant)
+
+        with patch(
+            'apps.ai_agent.services.call_model',
+            side_effect=AIProviderError(
+                'read timeout',
+                code='connection_error',
+                retryable=True,
+                outcome_uncertain=True,
+            ),
+        ) as provider, patch(
+            'apps.ai_agent.services.release_ai_provider_operation',
+        ) as release, pytest.raises(RuntimeError, match='автоматический повтор запрещён'):
+            DescriptionAgent().generate(product, tenant)
+
+        provider.assert_called_once()
+        release.assert_not_called()
+        operation = AIProviderOperation.objects.get(
+            tenant=tenant,
+            domain_type=AIProviderOperation.DomainType.PRODUCT,
+            domain_reference=str(product.pk),
+        )
+        assert operation.task_type == DescriptionAgent.task_type
+        assert operation.status == AIProviderOperation.Status.PENDING_RECONCILIATION
+        assert operation.provider_error_code == 'connection_error'
+        assert operation.uncertainty_marked_at is not None
+        assert operation.network_started_at is not None
+        assert operation.reserved_amount > 0
+
+    def test_rate_limit_never_falls_back_or_releases_reservation(self):
+        tenant = make_tenant('rate-limit-uncertain-co')
+        product = make_product(tenant)
+
+        with patch(
+            'apps.ai_agent.services.call_model',
+            side_effect=AIProviderError(
+                'rate limited',
+                code='http_429',
+                retryable=True,
+                outcome_uncertain=True,
+            ),
+        ) as provider, patch(
+            'apps.ai_agent.services.release_ai_provider_operation',
+        ) as release, pytest.raises(RuntimeError, match='автоматический повтор запрещён'):
+            DescriptionAgent().generate(product, tenant)
+
+        provider.assert_called_once()
+        release.assert_not_called()
+        operation = AIProviderOperation.objects.get(
+            tenant=tenant,
+            domain_type=AIProviderOperation.DomainType.PRODUCT,
+            domain_reference=str(product.pk),
+        )
+        assert operation.status == AIProviderOperation.Status.PENDING_RECONCILIATION
+        assert operation.provider_error_code == 'http_429'
+
+    def test_malformed_post_call_response_is_uncertain_without_explicit_flag(self):
+        tenant = make_tenant('malformed-provider-response-co')
+        product = make_product(tenant)
+
+        with patch(
+            'apps.ai_agent.services.call_model',
+            side_effect=AIProviderError(
+                'invalid response',
+                code='invalid_provider_response',
+            ),
+        ) as provider, pytest.raises(RuntimeError, match='автоматический повтор запрещён'):
+            DescriptionAgent().generate(product, tenant)
+
+        provider.assert_called_once()
+        operation = AIProviderOperation.objects.get(
+            tenant=tenant,
+            domain_type=AIProviderOperation.DomainType.PRODUCT,
+            domain_reference=str(product.pk),
+        )
+        assert operation.status == AIProviderOperation.Status.PENDING_RECONCILIATION
+        assert operation.provider_error_code == 'invalid_provider_response'
+
+    def test_settlement_failure_is_persisted_for_reconciliation(self):
+        tenant = make_tenant('provider-settlement-failure-co')
+        product = make_product(tenant)
+
+        with patch(
+            'apps.ai_agent.services.call_model',
+            return_value=_provider_response(VALID_RESPONSE),
+        ) as provider, patch(
+            'apps.ai_agent.services.settle_ai_provider_operation',
+            side_effect=RuntimeError('database commit outcome unknown'),
+        ), pytest.raises(RuntimeError, match='операция передана на сверку'):
+            DescriptionAgent().generate(product, tenant)
+
+        provider.assert_called_once()
+        operation = AIProviderOperation.objects.get(
+            tenant=tenant,
+            domain_type=AIProviderOperation.DomainType.PRODUCT,
+            domain_reference=str(product.pk),
+        )
+        assert operation.status == AIProviderOperation.Status.PENDING_RECONCILIATION
+        assert operation.provider_error_code == 'settlement_failed'
+        assert operation.network_started_at is not None
+        assert AIWalletService.summary(tenant)['reserved'] == operation.reserved_amount
 
     def test_credits_exhausted_raises(self):
         tenant = make_tenant('exhausted-co')
@@ -753,3 +919,34 @@ class TestDescriptionAgent:
         assert product.fitments.filter(make='MERCEDES-BENZ', model='E-CLASS', generation='W213').exists()
         message = mock_provider.call_args.args[2]
         assert 'MERCEDES-BENZ E-CLASS W213' in message
+
+    def test_generate_task_never_schedules_nested_celery_retry(self):
+        tenant = make_tenant('description-no-nested-retry')
+        product = make_product(tenant)
+
+        with patch.object(
+            DescriptionAgent,
+            'generate',
+            side_effect=RuntimeError('durable executor owns retry policy'),
+        ), patch.object(generate_description_task, 'retry') as celery_retry:
+            with pytest.raises(RuntimeError, match='durable executor owns'):
+                generate_description_task(product.pk)
+
+        celery_retry.assert_not_called()
+
+    def test_no_model_is_safe_retryable_before_provider_boundary(self):
+        tenant = make_tenant('description-no-model-safe-retry')
+        product = make_product(tenant)
+
+        with patch(
+            'apps.ai_agent.services.AIModelRouter.candidates',
+            return_value=[],
+        ), patch(
+            'apps.ai_agent.services.begin_ai_provider_operation',
+        ) as reserve, pytest.raises(
+            SafeRetryableDispatchError,
+            match='No configured AI model',
+        ):
+            generate_description_task(product.pk)
+
+        reserve.assert_not_called()

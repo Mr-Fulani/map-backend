@@ -19,7 +19,11 @@ DEFAULT_DATASOURCE_THROTTLE_RATES = {
 
 
 class _DataSourceRateMixin:
+    scope: str | None
+
     def get_rate(self):
+        if not self.scope:
+            return None
         configured = getattr(settings, 'REST_FRAMEWORK', {}).get(
             'DEFAULT_THROTTLE_RATES', {},
         ).get(self.scope)

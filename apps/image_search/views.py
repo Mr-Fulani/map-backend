@@ -1,8 +1,12 @@
 """DRF-views для API управления изображениями товаров."""
 
+from datetime import timedelta
+
 from celery.result import AsyncResult
 from django.conf import settings
+from django.db import transaction
 from django.shortcuts import get_object_or_404
+from django.utils.timezone import now
 from drf_spectacular.utils import extend_schema, inline_serializer
 from rest_framework import serializers
 from rest_framework import status
@@ -16,7 +20,12 @@ from apps.tenants.principals import human_user_or_none
 from apps.core.throttling import (
     PrincipalScopedRateThrottle,
     TenantScopedRateThrottle,
-    consume_tenant_daily_budget,
+    consume_transactional_tenant_daily_budget,
+)
+from apps.core.idempotency import (
+    IdempotencyConflict,
+    canonical_payload_fingerprint,
+    raise_on_fingerprint_conflict,
 )
 from apps.image_search.serializers import ProductImageSerializer
 from apps.image_search.services import moderation
@@ -35,10 +44,12 @@ def _ok_response(name, data):
 
 
 class ImageSearchStartRequestSerializer(serializers.Serializer):
+    idempotency_key = serializers.UUIDField(required=True)
     force = serializers.BooleanField(required=False, default=False)
 
 
 class BulkImageSearchRequestSerializer(serializers.Serializer):
+    idempotency_key = serializers.UUIDField(required=True)
     product_ids = serializers.ListField(
         child=serializers.IntegerField(min_value=1),
         allow_empty=False,
@@ -50,7 +61,13 @@ IMAGE_SEARCH_STATUS_DATA = inline_serializer(
     name='ImageSearchStatusData',
     fields={
         'state': serializers.ChoiceField(
-            choices=['running', 'done', 'failed'], read_only=True,
+            choices=[
+                'running',
+                'done',
+                'failed',
+                'reconciliation_required',
+            ],
+            read_only=True,
         ),
         'saved_count': serializers.IntegerField(required=False),
         'found_count': serializers.IntegerField(required=False),
@@ -78,6 +95,38 @@ IMAGE_SEARCH_STATUS_DATA = inline_serializer(
         ),
     },
 )
+
+
+IMAGE_SEARCH_CONFLICT_RESPONSE = inline_serializer(
+    name='ImageSearchConflictResponse',
+    fields={
+        'status': serializers.CharField(read_only=True),
+        'code': serializers.CharField(read_only=True),
+        'message': serializers.CharField(read_only=True),
+    },
+)
+
+
+def _idempotency_conflict_response(exc: IdempotencyConflict) -> Response:
+    return Response(
+        {
+            'status': 'error',
+            'code': 'idempotency_conflict',
+            'message': str(exc),
+        },
+        status=status.HTTP_409_CONFLICT,
+    )
+
+
+def _idempotency_incomplete_response() -> Response:
+    return Response(
+        {
+            'status': 'error',
+            'code': 'idempotency_incomplete',
+            'message': 'Исходный результат запроса недоступен.',
+        },
+        status=status.HTTP_409_CONFLICT,
+    )
 
 
 def _get_product(product_pk: int, tenant) -> Product:
@@ -163,43 +212,77 @@ class ImageSearchView(APIView):
     @extend_schema(
         operation_id='product_image_search_start',
         request=ImageSearchStartRequestSerializer,
-        responses=_ok_response(
-            'ProductImageSearchStartResponse',
-            inline_serializer(
-                name='ProductImageSearchTask',
-                fields={'task_id': serializers.CharField(read_only=True)},
+        responses={
+            200: _ok_response(
+                'ProductImageSearchStartResponse',
+                inline_serializer(
+                    name='ProductImageSearchTask',
+                    fields={'task_id': serializers.CharField(read_only=True)},
+                ),
             ),
-        ),
+            409: IMAGE_SEARCH_CONFLICT_RESPONSE,
+        },
     )
     def post(self, request, product_pk: int):
-        """Запускает Celery-задачу поиска изображений. Возвращает task_id для опроса статуса."""
-        from apps.image_search.models import ImageSearchCache, ImageSearchTask
-        from apps.image_search.tasks import search_images_for_product
+        """Создаёт durable-задачу и возвращает ID для опроса статуса."""
+        from apps.image_search.models import ImageSearchCache, ImageSearchIntent
+        from apps.image_search.services.dispatch import create_image_search_task
 
         request_serializer = ImageSearchStartRequestSerializer(data=request.data)
         request_serializer.is_valid(raise_exception=True)
         force = request_serializer.validated_data['force']
+        idempotency_key = request_serializer.validated_data['idempotency_key']
         if force and not TenantAdminPermission().has_permission(request, self):
             raise PermissionDenied(TenantAdminPermission.message)
 
         product = get_object_or_404(Product, pk=product_pk, tenant=request.tenant)
         from apps.image_search.services.pipeline import build_cache_key
         cache_key = build_cache_key(product)
-        consume_tenant_daily_budget(
-            tenant_id=request.tenant.pk,
-            scope='image-search-jobs',
-            cost=1,
-            limit=settings.IMAGE_SEARCH_TENANT_DAILY_JOBS,
-        )
-        if force:
-            ImageSearchCache.objects.filter(cache_key=cache_key).delete()
-        task = search_images_for_product.delay(product.pk)
-        ImageSearchTask.objects.create(
-            tenant=request.tenant,
-            product=product,
-            task_id=task.id,
-        )
-        return Response({'status': 'ok', 'data': {'task_id': task.id}})
+        canonical_payload = {
+            'force': force,
+            'product_id': product.pk,
+        }
+        fingerprint = canonical_payload_fingerprint(canonical_payload)
+        try:
+            with transaction.atomic():
+                type(request.tenant).objects.select_for_update().only('pk').get(
+                    pk=request.tenant.pk,
+                )
+                intent, created = ImageSearchIntent.objects.get_or_create(
+                    tenant=request.tenant,
+                    operation=ImageSearchIntent.Operation.SINGLE,
+                    idempotency_key=idempotency_key,
+                    defaults={
+                        'request_fingerprint': fingerprint,
+                        'request_payload': canonical_payload,
+                    },
+                )
+                if created:
+                    if force:
+                        ImageSearchCache.objects.filter(cache_key=cache_key).delete()
+                    task = create_image_search_task(
+                        tenant=request.tenant,
+                        product=product,
+                        intent=intent,
+                    )
+                    consume_transactional_tenant_daily_budget(
+                        tenant=request.tenant,
+                        scope='image-search-jobs',
+                        cost=1,
+                        limit=settings.IMAGE_SEARCH_TENANT_DAILY_JOBS,
+                    )
+                else:
+                    raise_on_fingerprint_conflict(
+                        intent.request_fingerprint,
+                        fingerprint,
+                    )
+                    existing_task = intent.tasks.filter(product=product).first()
+                    if existing_task is None:
+                        return _idempotency_incomplete_response()
+                    task = existing_task
+        except IdempotencyConflict as exc:
+            return _idempotency_conflict_response(exc)
+        return Response({'status': 'ok', 'data': {'task_id': task.task_id}})
 
 
 @extend_schema(tags=['Images'])
@@ -219,12 +302,87 @@ class ImageSearchStatusView(APIView):
         """Возвращает состояние Celery-задачи и количество сохранённых изображений."""
         from apps.image_search.models import ImageSearchTask
 
-        get_object_or_404(
-            ImageSearchTask,
+        tracking = get_object_or_404(
+            ImageSearchTask.objects.select_related('dispatch'),
             task_id=task_id,
             tenant=request.tenant,
             product_id=product_pk,
         )
+        if tracking.status == ImageSearchTask.Status.SUCCEEDED:
+            outcome = tracking.result if isinstance(tracking.result, dict) else {}
+            if not outcome:
+                outcome = {
+                    'saved_count': 0,
+                    'reason_code': 'completed',
+                    'message': 'Поиск фотографий завершён.',
+                }
+            return Response({
+                'status': 'ok',
+                'data': {'state': 'done', **outcome},
+            })
+        if tracking.status == ImageSearchTask.Status.FAILED:
+            return Response({
+                'status': 'ok',
+                'data': {
+                    'state': 'failed',
+                    'saved_count': 0,
+                    'reason_code': tracking.error_code or 'task_failed',
+                    'message': (
+                        tracking.error_message
+                        or 'Поиск фотографий завершился с ошибкой.'
+                    ),
+                },
+            })
+        if tracking.status == ImageSearchTask.Status.RECONCILIATION_REQUIRED:
+            return Response({
+                'status': 'ok',
+                'data': {
+                    'state': 'reconciliation_required',
+                    'saved_count': 0,
+                    'reason_code': (
+                        tracking.error_code
+                        or 'provider_reconciliation_required'
+                    ),
+                    'message': (
+                        tracking.error_message
+                        or (
+                            'Исход платного запроса требует '
+                            'сверки оператором.'
+                        )
+                    ),
+                },
+            })
+        dispatch = tracking.dispatch
+        if dispatch is not None:
+            if dispatch.status == dispatch.Status.SUCCEEDED:
+                outcome = dispatch.result if isinstance(dispatch.result, dict) else {}
+                if not outcome:
+                    outcome = {
+                        'saved_count': 0,
+                        'reason_code': 'completed',
+                        'message': 'Поиск фотографий завершён.',
+                    }
+                return Response({
+                    'status': 'ok',
+                    'data': {'state': 'done', **outcome},
+                })
+            if dispatch.status in {dispatch.Status.FAILED, dispatch.Status.CANCELLED}:
+                failure = dispatch.result if isinstance(dispatch.result, dict) else {}
+                return Response({
+                    'status': 'ok',
+                    'data': {
+                        'state': 'failed',
+                        'saved_count': 0,
+                        'reason_code': failure.get('reason_code', 'task_failed'),
+                        'message': failure.get(
+                            'message',
+                            'Поиск фотографий завершился с ошибкой.',
+                        ),
+                    },
+                })
+            return Response({'status': 'ok', 'data': {'state': 'running'}})
+
+        # Compatibility for tasks created before durable dispatch was deployed.
         result = AsyncResult(task_id)
 
         state_map = {
@@ -233,6 +391,12 @@ class ImageSearchStatusView(APIView):
             'REVOKED': 'failed',
         }
         state = state_map.get(result.state, 'running')
+        if (
+            result.state == 'PENDING'
+            and tracking.created_at
+            <= now() - timedelta(seconds=settings.CELERY_TASK_TIME_LIMIT + 300)
+        ):
+            state = 'failed'
 
         outcome = {}
         if state == 'done':
@@ -248,8 +412,15 @@ class ImageSearchStatusView(APIView):
         elif state == 'failed':
             outcome = {
                 'saved_count': 0,
-                'reason_code': 'task_failed',
-                'message': 'Поиск фотографий завершился с ошибкой.',
+                'reason_code': (
+                    'task_result_lost' if result.state == 'PENDING' else 'task_failed'
+                ),
+                'message': (
+                    'Результат старой задачи недоступен; '
+                    'запустите поиск повторно.'
+                    if result.state == 'PENDING'
+                    else 'Поиск фотографий завершился с ошибкой.'
+                ),
             }
 
         return Response({'status': 'ok', 'data': {'state': state, **outcome}})
@@ -396,18 +567,21 @@ class BulkSearchView(APIView):
     @extend_schema(
         operation_id='product_image_bulk_search',
         request=BulkImageSearchRequestSerializer,
-        responses=_ok_response(
-            'ProductImageBulkSearchResponse',
-            inline_serializer(
-                name='ProductImageBulkSearchResult',
-                fields={
-                    'task_ids': serializers.DictField(
-                        child=serializers.CharField(), read_only=True,
-                    ),
-                    'count': serializers.IntegerField(read_only=True),
-                },
+        responses={
+            200: _ok_response(
+                'ProductImageBulkSearchResponse',
+                inline_serializer(
+                    name='ProductImageBulkSearchResult',
+                    fields={
+                        'task_ids': serializers.DictField(
+                            child=serializers.CharField(), read_only=True,
+                        ),
+                        'count': serializers.IntegerField(read_only=True),
+                    },
+                ),
             ),
-        ),
+            409: IMAGE_SEARCH_CONFLICT_RESPONSE,
+        },
     )
     def post(self, request):
         """Принимает список product_ids, запускает задачу поиска для каждого.
@@ -418,35 +592,73 @@ class BulkSearchView(APIView):
         Ответ:
             {"status": "ok", "data": {"task_ids": {1: "abc", 2: "def"}, "count": 2}}
         """
-        from apps.image_search.models import ImageSearchTask
-        from apps.image_search.tasks import search_images_for_product
+        from apps.image_search.models import ImageSearchIntent
+        from apps.image_search.services.dispatch import create_image_search_task
 
         request_serializer = BulkImageSearchRequestSerializer(data=request.data)
         request_serializer.is_valid(raise_exception=True)
         product_ids = request_serializer.validated_data['product_ids']
+        idempotency_key = request_serializer.validated_data['idempotency_key']
+        canonical_product_ids = sorted(set(product_ids))
 
         # Tenant isolation — принимаем только товары тенанта
         products = list(
             Product.objects.filter(
-                pk__in=product_ids, tenant=request.tenant,
+                pk__in=canonical_product_ids, tenant=request.tenant,
             ).order_by('pk')
         )
-        consume_tenant_daily_budget(
-            tenant_id=request.tenant.pk,
-            scope='image-search-jobs',
-            cost=len(products),
-            limit=settings.IMAGE_SEARCH_TENANT_DAILY_JOBS,
-        )
+        canonical_payload = {'product_ids': canonical_product_ids}
+        fingerprint = canonical_payload_fingerprint(canonical_payload)
+        try:
+            with transaction.atomic():
+                type(request.tenant).objects.select_for_update().only('pk').get(
+                    pk=request.tenant.pk,
+                )
+                intent, created = ImageSearchIntent.objects.get_or_create(
+                    tenant=request.tenant,
+                    operation=ImageSearchIntent.Operation.BULK,
+                    idempotency_key=idempotency_key,
+                    defaults={
+                        'request_fingerprint': fingerprint,
+                        'request_payload': {
+                            **canonical_payload,
+                            'resolved_product_ids': [product.pk for product in products],
+                        },
+                    },
+                )
+                if created:
+                    tasks = [
+                        create_image_search_task(
+                            tenant=request.tenant,
+                            product=product,
+                            intent=intent,
+                        )
+                        for product in products
+                    ]
+                    consume_transactional_tenant_daily_budget(
+                        tenant=request.tenant,
+                        scope='image-search-jobs',
+                        cost=len(products),
+                        limit=settings.IMAGE_SEARCH_TENANT_DAILY_JOBS,
+                    )
+                else:
+                    raise_on_fingerprint_conflict(
+                        intent.request_fingerprint,
+                        fingerprint,
+                    )
+                    tasks = list(intent.tasks.order_by('product_id'))
+                    expected_ids = intent.request_payload.get(
+                        'resolved_product_ids',
+                    )
+                    if (
+                        not isinstance(expected_ids, list)
+                        or [task.product_id for task in tasks] != expected_ids
+                    ):
+                        return _idempotency_incomplete_response()
+        except IdempotencyConflict as exc:
+            return _idempotency_conflict_response(exc)
 
-        task_ids = {}
-        for product in products:
-            task = search_images_for_product.delay(product.pk)
-            task_ids[product.pk] = task.id
-            ImageSearchTask.objects.create(
-                tenant=request.tenant,
-                product=product,
-                task_id=task.id,
-            )
+        task_ids = {task.product_id: task.task_id for task in tasks}
 
         return Response({
             'status': 'ok',

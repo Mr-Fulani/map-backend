@@ -36,7 +36,7 @@
 - [ ] Python 3.12.13 lock-файлы воспроизводимы; hash-locked установка и
       `pip check` успешны.
 - [ ] `pip-audit` успешен для production, development, CI и backup lock-файлов.
-- [ ] `flake8`, инкрементальный `mypy` baseline, ShellCheck и
+- [ ] `flake8`, application-wide `mypy` baseline, ShellCheck и
       runtime/deploy/health contracts успешны.
 - [ ] PostgreSQL migrations применились на чистом CI database;
       `makemigrations --check --dry-run` не нашёл drift.
@@ -63,28 +63,45 @@ targets, если daemon занят чужим проектом.
 
 ## 3. Production preflight
 
-- [ ] GitHub environment `production` защищён required reviewers; deploy
-      разрешён только для успешного `push` CI в `main`.
+- [ ] GitHub environment `production` создан; deploy разрешён только для
+      успешного `push` CI в `main`. Если тариф GitHub поддерживает required
+      reviewers для private repository, они включены; иначе merge protection и
+      точный успешный CI SHA являются обязательным gate.
+- [ ] `mapdeploy` принимает только public-key auth, не состоит в `docker`, не
+      читает checkout/secrets и принимает только forced commands `deploy`, `backup-check`,
+      `topology-check`; его sudoers прошёл `visudo -c`.
 - [ ] `PROD_HOST_FINGERPRINT` независимо сверен с SSH host key; парольный SSH и
       agent forwarding не требуются.
 - [ ] На хосте `/opt/saas_poster` нет tracked и untracked Git drift и достаточно
       свободного диска (`PROD_MIN_FREE_DISK_MB` плюс запас на параллельную сборку).
-- [ ] `.env`, `.backup.env`, `.deploy.env` — обычные non-symlink файлы deploy user,
+- [ ] Host имеет не менее 3584 MiB RAM; normal Compose memory budget не выше
+      2816 MiB, backup не выше 384 MiB, `capacity-check` подтверждает минимум
+      1024 MiB доступной памяти для последовательной сборки и отсутствие
+      OOM/restart событий.
+- [ ] `.env`, `.backup.env`, `.deploy.env` — обычные root-owned non-symlink файлы,
       имеют mode `600`/`400` и получены из secret manager; `.deploy.env`
       содержит только allowlisted `KEY=value`, секреты не записаны в Git/CI logs.
 - [ ] DNS уже указывает на production, а сертификат для домена существует по
       путям, смонтированным в `docker-compose.prod.yml`.
-- [ ] `/run/lock/saas-poster` принадлежит deploy user, имеет mode `0700` и
+- [ ] `/run/lock/saas-poster` принадлежит `root:root`, имеет mode `0700` и
       восстанавливается после reboot через `systemd-tmpfiles`/конфигурацию хоста.
-- [ ] Certbot deploy-hook указывает на `scripts/reload_production_nginx.sh`;
+- [ ] Certbot deploy-hook указывает на root-owned
+      `/usr/local/sbin/saas-poster-reload-nginx`;
       `renew --dry-run --run-deploy-hooks` успешно выполнил `nginx -t`, reload и
       внешнюю проверку обслуживаемого сертификата.
+- [ ] `saas-poster-backup.timer` и `saas-poster-backup-check.timer` enabled и
+      active; последние service runs завершились success.
+- [ ] Если перед релизом выполнялся host bootstrap, timers были отключены до
+      exact target deploy, а `/run/lock/saas-poster/host-contract-pending`
+      удалён только после успешных topology и external smoke checks.
 - [ ] `ALLOWED_HOSTS`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS`,
       `SITE_URL`, `FRONTEND_URL`, `BILLING_RETURN_URL_ALLOWED_ORIGINS` и
       `PROD_SMOKE_URL` согласованы с текущим HTTPS origin.
 - [ ] Platform SMTP настроен только как `smtp.resend.com:587` через
       `http://egress_proxy:3128`; domain-scoped Sending key актуален, а
       `DEFAULT_FROM_EMAIL` является plain email на `notify.dodugir.com`.
+- [ ] Regression доставки подтверждает стабильный `Resend-Idempotency-Key`,
+      channel-level dedupe и сохранение Telegram `outcome_uncertain` без replay.
 - [ ] Platform credential не используется для tenant sender identities;
       tenant mail требует отдельного verified domain и scoped/BYOK credential.
 - [ ] `PUBLIC_HTTP_PROXY_URL` равен строго `http://egress_proxy:3128`;
@@ -112,6 +129,9 @@ targets, если daemon занят чужим проектом.
       encrypted object checksum и pinned S3 `VersionId` проверены freshness job.
 - [ ] Backup bucket private, versioned, с lifecycle из
       `ops/s3/backup-lifecycle.json`; writer не имеет `DeleteObject`/policy rights.
+- [ ] Media bucket versioned, lifecycle соответствует
+      `ops/s3/media-lifecycle.json`: current objects бессрочны, noncurrent версии
+      хранятся минимум 365 дней; публичны только object reads, не list/config/write.
 - [ ] Offline age identity и trusted Ed25519 public key доступны дежурному по DR,
       но отсутствуют на production application/backup runtime.
 - [ ] Restore drill за последний месяц успешно восстановил архив в отдельную
@@ -142,6 +162,9 @@ targets, если daemon занят чужим проектом.
       Nginx) стали healthy/running.
 - [ ] Nginx — единственный service в `ingress_public`, а `docker compose ps`
       показывает фактические host bindings для TCP 80 и 443.
+- [ ] `scripts/verify_production_topology.sh` подтвердил точное членство сетей:
+      Redis не подключён к legacy/default network, только Nginx имеет ingress,
+      только egress proxy имеет внешний egress.
 - [ ] Публичный HTTPS `PROD_SMOKE_URL` (`/api/v1/ready/`) возвращает успех.
 - [ ] Проверены предметные сценарии: login/refresh, dashboard, checkout без
       реального списания, webhook/outbox backlog, Celery named ping и Beat

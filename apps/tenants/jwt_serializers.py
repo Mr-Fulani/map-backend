@@ -55,6 +55,29 @@ class BrowserTokenRefreshResponseSerializer(serializers.Serializer):
     browser_session_id = serializers.CharField(read_only=True)
 
 
+class BrowserCSRFResponseSerializer(serializers.Serializer):
+    """Readable masked token used in the X-CSRFToken request header."""
+
+    status = serializers.CharField(read_only=True)
+    csrf_token = serializers.CharField(read_only=True)
+
+
+class BrowserSessionRejectedSerializer(serializers.Serializer):
+    """Stable signed-out response for a missing or rejected refresh cookie."""
+
+    status = serializers.CharField(read_only=True)
+    code = serializers.CharField(read_only=True)
+    message = serializers.CharField(read_only=True)
+
+
+class BrowserCSRFFailureSerializer(serializers.Serializer):
+    """Stable API response when the CSRF cookie/header pair is invalid."""
+
+    status = serializers.CharField(read_only=True)
+    code = serializers.CharField(read_only=True)
+    message = serializers.CharField(read_only=True)
+
+
 class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
     """
     Расширенный TokenObtainPairSerializer, добавляющий tenant_id и role в JWT claims.
@@ -96,9 +119,14 @@ class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
         data = super(TokenObtainPairSerializer, self).validate(attrs)
 
         # 2. Теперь self.user доступен, определяем его тенант
+        user = self.user
+        if user is None:
+            raise serializers.ValidationError(
+                {'detail': 'Не удалось определить пользователя.'},
+            )
         from apps.tenants.models import TenantUser
         memberships = TenantUser.objects.filter(
-            user=self.user
+            user=user,
         ).select_related('tenant')
 
         if not memberships.exists():
@@ -119,6 +147,11 @@ class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
                 })
             membership = memberships.first()
 
+        if membership is None:
+            # Membership may disappear between authentication and selection.
+            raise serializers.ValidationError(
+                {'detail': 'Доступ к организации отозван.'},
+            )
         tenant = membership.tenant
         if not tenant.is_active:
             raise serializers.ValidationError(
@@ -126,10 +159,10 @@ class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
             )
 
         # 3. Сохраняем membership в user, чтобы get_token мог его использовать
-        self.user._current_tenant_membership = membership
+        user._current_tenant_membership = membership
 
         # 4. Генерируем токены с правильным payload
-        refresh = self.get_token(self.user)
+        refresh = self.get_token(user)
 
         data["refresh"] = str(refresh)
         data["access"] = str(refresh.access_token)
@@ -143,8 +176,8 @@ class TenantTokenObtainPairSerializer(TokenObtainPairSerializer):
         }
         data['role'] = membership.role
         data['user'] = {
-            'id': self.user.pk,
-            'email': self.user.email,
+            'id': user.pk,
+            'email': user.email,
         }
 
         return data

@@ -2,15 +2,19 @@ from types import SimpleNamespace
 
 import pytest
 from django.core.cache.backends.locmem import LocMemCache
+from django.db import transaction
 from rest_framework.exceptions import Throttled
 
 from apps.core import throttling
+from apps.core.models import TenantDailyPaidUsage
 from apps.core.throttling import (
     CoordinationBackendUnavailable,
     PrincipalScopedRateThrottle,
     TenantScopedRateThrottle,
     consume_tenant_daily_budget,
+    consume_transactional_tenant_daily_budget,
 )
+from apps.tenants.services import TenantService
 
 
 def _request(*, api_key_id=1, tenant_id=1, method='POST'):
@@ -140,3 +144,61 @@ def test_tenant_daily_budget_fails_closed(monkeypatch):
         consume_tenant_daily_budget(
             tenant_id=41, scope='image-search', cost=1, limit=100,
         )
+
+
+@pytest.mark.django_db
+def test_transactional_daily_budget_enforces_limit_and_rolls_back_rejection():
+    tenant, _ = TenantService.create_tenant(
+        'DB budget', 'db-budget', 'db-budget@example.com', 'pass12345',
+    )
+
+    with transaction.atomic():
+        locked_tenant = type(tenant).objects.select_for_update().get(pk=tenant.pk)
+        assert consume_transactional_tenant_daily_budget(
+            tenant=locked_tenant, scope='external-jobs', cost=2, limit=2,
+        ) == 2
+
+    with pytest.raises(Throttled), transaction.atomic():
+        locked_tenant = type(tenant).objects.select_for_update().get(pk=tenant.pk)
+        consume_transactional_tenant_daily_budget(
+            tenant=locked_tenant, scope='external-jobs', cost=1, limit=2,
+        )
+
+    assert TenantDailyPaidUsage.objects.get(
+        tenant=tenant, scope='external-jobs',
+    ).units == 2
+
+
+@pytest.mark.django_db(transaction=True)
+def test_transactional_daily_budget_rejects_autocommit_usage():
+    tenant, _ = TenantService.create_tenant(
+        'Autocommit budget', 'autocommit-budget',
+        'autocommit-budget@example.com', 'pass12345',
+    )
+
+    with pytest.raises(RuntimeError, match='outer database transaction'):
+        consume_transactional_tenant_daily_budget(
+            tenant=tenant, scope='external-jobs', cost=1, limit=10,
+        )
+
+    assert not TenantDailyPaidUsage.objects.filter(tenant=tenant).exists()
+
+
+@pytest.mark.django_db
+def test_transactional_daily_budget_rolls_back_with_canonical_domain_work():
+    tenant, _ = TenantService.create_tenant(
+        'Rollback budget', 'rollback-budget',
+        'rollback-budget@example.com', 'pass12345',
+    )
+
+    with pytest.raises(RuntimeError, match='abort canonical work'):
+        with transaction.atomic():
+            locked_tenant = type(tenant).objects.select_for_update().get(pk=tenant.pk)
+            consume_transactional_tenant_daily_budget(
+                tenant=locked_tenant, scope='external-jobs', cost=3, limit=10,
+            )
+            raise RuntimeError('abort canonical work')
+
+    assert not TenantDailyPaidUsage.objects.filter(
+        tenant=tenant, scope='external-jobs',
+    ).exists()

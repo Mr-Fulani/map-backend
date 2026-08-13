@@ -114,7 +114,7 @@ class MediaJobCreateSerializer(serializers.Serializer):
     )
     parameters = serializers.DictField(required=False)
     provider_id = serializers.SlugField(required=False, allow_blank=True)
-    idempotency_key = serializers.CharField(required=False, allow_blank=True, max_length=64)
+    idempotency_key = serializers.UUIDField(required=True)
 
     def validate_operations(self, value):
         if len(value) != len(set(value)):

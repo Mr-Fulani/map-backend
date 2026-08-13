@@ -1,4 +1,6 @@
 import datetime
+from types import TracebackType
+from typing import Protocol, cast
 
 from celery import shared_task
 from django.core.cache import caches
@@ -23,6 +25,30 @@ from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR, LEVEL_SUCCE
 
 
 cache = caches['coordination']
+
+
+class _CoordinationLock(Protocol):
+    def __enter__(self) -> object: ...
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None: ...
+
+    def acquire(self, blocking: bool = True) -> bool: ...
+
+    def release(self) -> None: ...
+
+
+class _LockingCache(Protocol):
+    def lock(self, key: str, *, timeout: int) -> _CoordinationLock: ...
+
+
+def _coordination_lock(key: str, *, timeout: int) -> _CoordinationLock:
+    """Typed view of the django-redis coordination backend contract."""
+    return cast(_LockingCache, cache).lock(key, timeout=timeout)
 
 
 def _notify_error(tenant, message: str, listing=None) -> None:
@@ -307,7 +333,7 @@ def publish_listing_task(self, listing_id: int):
     listing = _get_listing(listing_id)
 
     lock_key = f'avito:publish_lock:{listing.publish_idempotency_key}'
-    with cache.lock(lock_key, timeout=60):
+    with _coordination_lock(lock_key, timeout=60):
         listing.refresh_from_db()
         # Публикуем только из публикуемых статусов; активные/ожидающие отсекаются
         # здесь же (это и есть защита от повторной публикации живого объявления).
@@ -678,9 +704,9 @@ def poll_feed_results_task(self, account_id: int):
     truly_pending = []
     rejected_count = 0
     for listing in unresolved:
-        reason = item_errors.get(get_ad_id(listing))
-        if reason:
-            _reject_listing(listing, reason)
+        item_error = item_errors.get(get_ad_id(listing))
+        if item_error:
+            _reject_listing(listing, item_error)
             rejected_count += 1
         else:
             truly_pending.append(listing)
@@ -935,7 +961,7 @@ def refresh_avito_account_status_task(account_id: int, tenant_id: int):
     from apps.marketplaces.services import AvitoAccountStatusService
 
     lock_key = f'avito:account-status:{tenant_id}:{account_id}'
-    lock = cache.lock(lock_key, timeout=120)
+    lock = _coordination_lock(lock_key, timeout=120)
     if not lock.acquire(blocking=False):
         return {'status': 'locked'}
     try:
@@ -962,7 +988,7 @@ def sync_avito_category_tree(self):
     """Еженедельно обновляет проверенный снимок дерева и мягко применяет его."""
     from apps.marketplaces.avito_tree_sync import AvitoCategoryTreeSyncService
 
-    lock = cache.lock('avito:category-tree-sync:auto_parts', timeout=3300)
+    lock = _coordination_lock('avito:category-tree-sync:auto_parts', timeout=3300)
     if not lock.acquire(blocking=False):
         return {'status': 'locked'}
     try:

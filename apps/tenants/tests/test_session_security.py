@@ -194,6 +194,12 @@ def test_browser_session_is_csrf_protected_and_hides_refresh_token():
         'password': 'CorrectHorse-123',
     }, content_type='application/json')
     assert rejected.status_code == 403
+    assert rejected.json() == {
+        'status': 'error',
+        'code': 'csrf_failed',
+        'message': 'CSRF-проверка не пройдена. Получите новый CSRF-токен.',
+    }
+    assert 'no-store' in rejected['Cache-Control']
 
     csrf = client.get('/api/v1/auth/browser/csrf/')
     csrf_token = csrf.json()['csrf_token']
@@ -248,6 +254,7 @@ def test_browser_refresh_rejects_missing_or_invalid_cookie_as_signed_out(
         content_type='application/json',
     )
     assert csrf_rejected.status_code == 403
+    assert csrf_rejected.json()['code'] == 'csrf_failed'
 
     csrf_token = client.get('/api/v1/auth/browser/csrf/').json()['csrf_token']
     if refresh_cookie is not None:

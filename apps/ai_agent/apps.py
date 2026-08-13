@@ -5,3 +5,6 @@ class AiAgentConfig(AppConfig):
     default_auto_field = 'django.db.models.BigAutoField'
     name = 'apps.ai_agent'
     verbose_name = 'AI-агент'
+
+    def ready(self):
+        from apps.ai_agent import signals  # noqa: F401

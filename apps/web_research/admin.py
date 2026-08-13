@@ -1,6 +1,9 @@
+from typing import cast
+
 from django import forms
 from django.contrib import admin, messages
 from django.db import transaction
+from django.db.models import Q
 from unfold.admin import ModelAdmin, TabularInline
 
 from apps.core.admin import TenantScopedReadOnlyAdminMixin
@@ -8,6 +11,7 @@ from apps.tenants.models import Tenant
 from apps.web_research.models import (
     CompetitorOffer, TenantWebResearchSettings, WebResearchClaim,
     WebResearchEvidence, WebResearchRun, WebSearchAttempt, WebSearchConnection,
+    WebSearchWorkflow,
 )
 from apps.web_research.providers.registry import (
     create_search_provider, registered_search_providers,
@@ -19,7 +23,11 @@ class ResearchTenantFilter(admin.SimpleListFilter):
     parameter_name = 'tenant'
 
     def lookups(self, request, model_admin):
-        tenants = Tenant.objects.filter(web_research_runs__isnull=False)
+        tenants = Tenant.objects.filter(
+            Q(web_research_runs__isnull=False)
+            | Q(web_search_attempts__isnull=False)
+            | Q(web_search_workflows__isnull=False)
+        )
         if not request.user.is_superuser:
             tenants = tenants.filter(members__user=request.user)
         return [
@@ -32,7 +40,9 @@ class ResearchTenantFilter(admin.SimpleListFilter):
             return queryset
         lookup = (
             'tenant_id'
-            if queryset.model is WebResearchRun
+            if queryset.model in {
+                WebResearchRun, WebSearchAttempt, WebSearchWorkflow,
+            }
             else 'run__tenant_id'
         )
         return queryset.filter(**{lookup: self.value()})
@@ -50,8 +60,9 @@ class AttemptInline(TabularInline):
     model = WebSearchAttempt
     extra = 0
     fields = [
-        'provider_id', 'status', 'query', 'result_count', 'duration_ms',
-        'error_message', 'created_at',
+        'workflow', 'provider_id', 'call_kind', 'status', 'apply_state',
+        'query', 'result_count', 'duration_ms',
+        'retryable', 'error_code', 'error_message', 'created_at',
     ]
     readonly_fields = fields
     can_delete = False
@@ -69,7 +80,7 @@ class ClaimInline(TabularInline):
 
 
 @admin.register(WebResearchRun)
-class WebResearchRunAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
+class WebResearchRunAdmin(TenantScopedReadOnlyAdminMixin):
     list_display = [
         'id', 'product', 'tenant', 'status', 'purpose', 'trigger', 'search_provider',
         'result_count', 'claim_count', 'offer_count', 'created_at',
@@ -93,7 +104,7 @@ class WebResearchRunAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
 
 
 @admin.register(WebResearchEvidence)
-class WebResearchEvidenceAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
+class WebResearchEvidenceAdmin(TenantScopedReadOnlyAdminMixin):
     tenant_lookup = 'run__tenant_id'
     list_display = ['id', 'get_tenant', 'run', 'domain', 'rank', 'title', 'created_at']
     list_filter = [ResearchTenantFilter, 'domain', 'created_at']
@@ -157,7 +168,11 @@ class WebSearchConnectionForm(forms.ModelForm):
         ]
         self.fields['provider_id'].widget = forms.Select(choices=choices)
         from apps.billing.models import Plan
-        self.fields['allowed_plan_slugs'].choices = list(
+        allowed_plan_field = cast(
+            forms.MultipleChoiceField,
+            self.fields['allowed_plan_slugs'],
+        )
+        allowed_plan_field.choices = list(
             Plan.objects.filter(is_active=True).values_list('slug', 'name')
         )
         if self.instance and self.instance.pk:
@@ -278,53 +293,77 @@ class WebSearchConnectionAdmin(ModelAdmin):
         current = now()
         used = obj.attempts.filter(
             created_at__year=current.year, created_at__month=current.month,
+        ).exclude(
+            Q(status=WebSearchAttempt.Status.SKIPPED)
+            | Q(
+                status=WebSearchAttempt.Status.FAILED,
+                error_code='pre_send_failure',
+            )
         ).count()
         return f'{used} / {obj.monthly_request_limit or "∞"}'
 
     @admin.action(description='Проверить выбранные подключения')
     def check_connections(self, request, queryset):
-        ok_count = 0
-        for connection in queryset:
-            provider = create_search_provider(
-                connection.provider_id,
-                credentials=connection.get_credentials(),
-                parameters=connection.parameters,
-            )
-            if provider is None or not provider.is_available():
-                connection.mark_checked(ok=False, message='API-ключ не настроен.')
-                continue
-            try:
-                provider.search('Kia Optima 92402D4000 автозапчасть', count=1)
-            except Exception as exc:
-                connection.mark_checked(ok=False, message=str(exc))
-            else:
-                connection.mark_checked(ok=True, message='Подключение работает.')
-                ok_count += 1
+        # A health-check network request consumes the same paid quota as a
+        # customer query, but an admin action has no tenant to own the audit
+        # record. Fail closed instead of creating unattributed provider spend.
         self.message_user(
             request,
-            f'Работают подключений: {ok_count} из {queryset.count()}.',
-            level=messages.SUCCESS if ok_count else messages.WARNING,
+            'Сетевой тест отключён: проверка провайдера должна выполняться '
+            'через tenant-owned рабочий запрос с журналом лимитов.',
+            level=messages.WARNING,
         )
 
 
 @admin.register(WebSearchAttempt)
-class WebSearchAttemptAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
-    tenant_lookup = 'run__tenant_id'
+class WebSearchAttemptAdmin(TenantScopedReadOnlyAdminMixin):
+    tenant_lookup = 'tenant_id'
     list_display = [
-        'id', 'provider_id', 'status', 'run', 'result_count',
-        'duration_ms', 'created_at',
+        'id', 'tenant', 'workflow', 'provider_id', 'operation', 'call_kind',
+        'status', 'apply_state', 'run', 'result_count', 'duration_ms', 'created_at',
     ]
-    list_filter = ['provider_id', 'status', 'created_at']
-    search_fields = ['query', 'error_message', 'run__product__article']
+    list_filter = ['provider_id', 'operation', 'status', 'created_at']
+    search_fields = [
+        'query', 'error_message', 'domain_reference', 'run__product__article',
+    ]
     readonly_fields = [
-        'run', 'connection', 'provider_id', 'query', 'status', 'result_count',
-        'duration_ms', 'retryable', 'error_code', 'error_message',
+        'tenant', 'workflow', 'run', 'connection', 'provider_id', 'operation',
+        'call_kind', 'domain_reference', 'call_key', 'request_fingerprint',
+        'query', 'status', 'apply_state', 'result_count', 'duration_ms',
+        'retryable', 'error_code', 'error_message',
+        'reconciliation_state', 'reconciliation_action',
+        'reconciliation_note', 'reconciled_at',
         'created_at', 'updated_at',
     ]
 
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(WebSearchWorkflow)
+class WebSearchWorkflowAdmin(TenantScopedReadOnlyAdminMixin):
+    tenant_lookup = 'tenant_id'
+    list_display = [
+        'id', 'tenant', 'operation', 'workflow_key', 'domain_reference',
+        'status', 'run', 'product', 'updated_at',
+    ]
+    list_filter = ['operation', 'status', 'created_at']
+    search_fields = [
+        'workflow_key', 'domain_reference', 'tenant__name', 'tenant__slug',
+    ]
+    readonly_fields = [
+        'tenant', 'product', 'run', 'operation', 'domain_reference',
+        'workflow_key', 'input_fingerprint', 'input_snapshot', 'status',
+        'applied_at', 'reconciliation_action', 'reconciliation_note',
+        'reconciled_at', 'created_at', 'updated_at',
+    ]
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 @admin.register(WebResearchClaim)
-class WebResearchClaimAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
+class WebResearchClaimAdmin(TenantScopedReadOnlyAdminMixin):
     tenant_lookup = 'run__tenant_id'
     list_display = [
         'id', 'get_tenant', 'run', 'claim_type', 'confidence',
@@ -348,7 +387,7 @@ class WebResearchClaimAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
 
 
 @admin.register(CompetitorOffer)
-class CompetitorOfferAdmin(TenantScopedReadOnlyAdminMixin, ModelAdmin):
+class CompetitorOfferAdmin(TenantScopedReadOnlyAdminMixin):
     tenant_lookup = 'tenant_id'
     list_display = [
         'id', 'tenant', 'product', 'seller_name', 'domain', 'price', 'currency',

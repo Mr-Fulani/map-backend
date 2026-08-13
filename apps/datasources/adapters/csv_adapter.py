@@ -109,7 +109,7 @@ class CSVAdapter(BaseDataSourceAdapter):
         except csv.Error:
             first = lines[0] if lines else ''
             counts = {d: first.count(d) for d in (',', ';', '\t')}
-            return max(counts, key=counts.get) if any(counts.values()) else ','
+            return max(counts, key=lambda delimiter: counts[delimiter]) if any(counts.values()) else ','
 
     def _read_xlsx(self, file_path: str) -> list[dict]:
         self._validate_xlsx_archive(file_path)

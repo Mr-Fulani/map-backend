@@ -41,6 +41,40 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 Секреты должны храниться в secret manager или защищённом `.env` на сервере. `.env`
 не коммитится в Git.
 
+После подозрения на раскрытие отдельного read-only backup DB URL выполните от
+root-owned `/usr/local/sbin/saas-poster-rotate-backup-db-password`. Скрипт готовит
+новый `.backup.env`,
+проверяет, что login из `BACKUP_DATABASE_URL` не совпадает с application DB
+login, не имеет elevated-атрибутов, ownership/write grants или membership кроме
+`pg_read_all_data`, а PostgreSQL использует `password_encryption=scram-sha-256`,
+атомарно заменяет файл и сразу создаёт новый encrypted backup. Новый пароль
+передаётся `psql` только через stdin-команду `\password`:
+он не выводится, не попадает в argv/Docker CLI environment и не оказывается
+cleartext-значением в server SQL log.
+
+Перед `\password` скрипт fsync-ит root-only recovery env и атомарно создаёт
+`/opt/saas_poster/.backup-db-rotation-uncertain`. Поэтому потеря SSH, `SIGTERM`,
+`SIGKILL`, reboot или неоднозначный exit Docker/psql после provider boundary не
+приводят к уничтожению возможного нового credential. Marker содержит только
+путь к recovery env, но оба файла всё равно должны принадлежать `root:root` и
+иметь mode `0600`. Пока marker существует, повторная ротация fail-closed.
+
+Если команда завершилась с `CRITICAL` или marker остался после reboot:
+
+1. не перезапускайте ротацию, не удаляйте marker/recovery env и не копируйте их
+   содержимое в terminal, ticket или chat;
+2. в maintenance window через защищённый DB client определите, какой из двух
+   credentials принимает именно production DB; двусмысленный timeout не
+   является доказательством, что `ALTER ROLE` отклонён;
+3. если принят новый credential, атомарно установите сохранённый recovery env как
+   `.backup.env`; если подтверждён старый — оставьте исходный `.backup.env`;
+4. выполните `scripts/production_backup.sh`. Только после успешного encrypted
+   backup удалите marker и неиспользуемый recovery env, затем fsync-ните каталог
+   (или поручите это DBA/host operator с эквивалентной процедурой).
+
+Удаление marker «для повторной попытки» без проверки credentials запрещено: это
+может уничтожить единственную копию уже принятого PostgreSQL пароля.
+
 Полный bootstrap production host, текущий доменный/TLS-контракт и согласованный
 набор значений описаны в [`DEPLOYMENT.md`](DEPLOYMENT.md).
 
@@ -240,7 +274,19 @@ python manage.py dispatch_billing_outbox --event-id UUID --force
 broker, но авария процесса между подтверждением broker и DB-finalize теоретически
 может повторить downstream-задачу. Для трассировки используется стабильный Celery
 `task_id`; финансовые проводки и entitlement остаются идемпотентными независимо от
-повторной публикации. Настройки retry: `BILLING_OUTBOX_BASE_DELAY_SECONDS`,
+повторной публикации. Уведомления дополнительно создают уникальную
+`NotificationDelivery` на каждый канал. Email повторяет тот же
+`Resend-Idempotency-Key` только внутри безопасного 23-часового окна провайдера,
+а уже доставленный канал critical-уведомления повторно не вызывается. Telegram не
+имеет provider idempotency primitive: потерянный ответ сохраняется как
+`outcome_uncertain` и требует явной сверки, а не автоматической повторной отправки:
+
+```bash
+python manage.py reconcile_notification_delivery UUID \
+  --action sent --note "verified in provider dashboard" --confirm UUID
+```
+
+Настройки retry: `BILLING_OUTBOX_BASE_DELAY_SECONDS`,
 `BILLING_OUTBOX_MAX_DELAY_SECONDS`, `BILLING_OUTBOX_PROCESSING_TIMEOUT_SECONDS` и
 `BILLING_OUTBOX_BATCH_SIZE`, `BILLING_OUTBOX_MAX_ATTEMPTS`. Только успешно
 опубликованные outbox-записи удаляются
@@ -268,9 +314,119 @@ python manage.py restore_soft_deleted marketplaces.MarketplaceAccount 42 --react
 python manage.py purge_retained_data --dry-run
 ```
 
-Физическая очистка запускается Celery Beat ежедневно. Сроки задаются переменными
+Физическая очистка запускается Celery Beat ежедневно порциями не больше
+`RETENTION_PURGE_BATCH_SIZE` записей каждого типа. Базовые сроки задаются
 `SOFT_DELETE_RETENTION_DAYS`, `WEBHOOK_AUDIT_RETENTION_DAYS`,
-`BILLING_AUDIT_RETENTION_DAYS` и `SYNC_LOG_RETENTION_DAYS`.
+`BILLING_AUDIT_RETENTION_DAYS` и `SYNC_LOG_RETENTION_DAYS`. Для тяжёлых фоновых артефактов есть
+отдельные сроки:
+
+- `PRODUCT_PARSE_RAW_HTML_RETENTION_DAYS` — ранняя очистка raw HTML у завершённых parser jobs;
+- `PRODUCT_PARSE_JOB_RETENTION_DAYS`;
+- `IMAGE_SEARCH_LOG_RETENTION_DAYS` и `IMAGE_SEARCH_TASK_RETENTION_DAYS`;
+- `PRODUCT_BULK_ACTION_JOB_RETENTION_DAYS`;
+- `MEDIA_PROCESSING_JOB_RETENTION_DAYS`;
+- `BACKGROUND_JOB_RETENTION_DAYS` — только finished durable dispatch в terminal-статусе.
+- `AI_PROVIDER_OPERATION_RETENTION_DAYS` — audit paid AI calls; удаляются только
+  старые released/settled операции, для которых применение не требовалось либо
+  уже атомарно завершено. `pending_reconciliation`, reserved и settled/unapplied
+  операции retention никогда не затрагивает.
+- `NOTIFICATION_DELIVERY_RETENTION_DAYS` — только sent/skipped/failed доставки;
+  pending/sending/outcome_uncertain не удаляются. Claim старше
+  `NOTIFICATION_DELIVERY_CLAIM_TIMEOUT_SECONDS` считается потерянным worker;
+  email безопасно повторяется с тем же provider key, Telegram блокируется до сверки.
+
+Активные, ожидающие, paused/cooling-down задачи не удаляются. Кеш поиска
+изображений удаляется только после `expires_at`.
+Media job с `outcome_uncertain`, удержанным credit reservation или неприменённым
+durable provider-response checkpoint, а также его soft-deleted Product, не
+удаляются до явной операторской сверки.
+
+## Целостность media storage
+
+Аудит сверяет ProductImage, derived variants и fallback-изображения
+категорий с управляемыми S3-prefix. По умолчанию команда только читает
+метаданные и HEAD-состояние:
+
+```bash
+python manage.py reconcile_media_storage --read-sample 25 \
+  --check-s3-policy --fail-on-drift
+```
+
+Production-контракт media bucket: versioning и `Enabled`, и есть enabled lifecycle
+для удаления старых noncurrent versions. Lifecycle текущих версий не должен
+удалять live DB-referenced objects. Для policy-check нужны read-only IAM permissions
+`storage.buckets.get`/`чтение versioning и lifecycle`; команда не изменяет policy.
+
+Удаление orphan-объектов намеренно требует два флага и остановленные
+media uploads, чтобы не удалить объект между S3 PUT и DB commit:
+
+```bash
+python manage.py reconcile_media_storage --delete-orphans \
+  --maintenance-mode-confirmed --max-deletes 100
+```
+
+## Неопределённый исход платного провайдера
+
+После timeout/потери worker после начала AI, paid web/image search или media запроса система
+не повторяет внешний side effect: задача переходит в
+`pending_reconciliation`/`outcome_uncertain`, а резерв AI-кредитов остаётся
+удержанным. Массовой auto-sweep намеренно отсутствует.
+
+Оператор сначала находит точную операцию в read-only Admin/DB, затем
+сверяет её в dashboard провайдера. Только после этого разрешает одну
+запись, повторяя её ID в confirmation-аргументе:
+
+```bash
+python manage.py reconcile_ai_provider_operation OPERATION_UUID \
+  --action settle-reserved --note 'provider dashboard checked: accepted' \
+  --confirm OPERATION_UUID
+
+python manage.py reconcile_media_provider_outcome \
+  --job-id JOB_ID --action release \
+  --note 'provider dashboard checked: request not accepted' \
+  --confirm-job-id JOB_ID
+
+python manage.py reconcile_media_provider_outcome \
+  --job-id JOB_ID --action apply-known \
+  --note 'apply durable response without provider resubmission' \
+  --confirm-job-id JOB_ID
+
+python manage.py reconcile_web_search_outcome \
+  --attempt-id ATTEMPT_ID --action accepted \
+  --note 'provider dashboard checked: request accepted' \
+  --confirm ATTEMPT_ID
+```
+
+`release` допустим только при доказанном непринятии запроса;
+`settle-reserved` — при принятии/списании провайдером. Команды берут
+row lock, аудируют решение и идемпотентны только для повтора того
+же действия; противоречащее решение отклоняется.
+
+`WebSearchAttempt` создаётся со статусом `started` и pending reconciliation до
+каждого платного HTTP-вызова. Fence использует tenant + operation + устойчивую
+business-domain ссылку и действует между Brave/Tavily: новый idempotency key или
+fallback-провайдер не обходят неопределённый исход. Для image search domain
+привязан к товару, но не к task UUID. `accepted` означает, что запрос был принят
+и учтён провайдером; `not_accepted` допустим только при положительном
+подтверждении непринятия. Pending/started попытки retention не удаляет.
+
+Нормализованный ответ media-провайдера сохраняется сразу после `process()` в
+ограниченный по размеру зашифрованный checkpoint — до download, S3, domain DB
+и списания кредитов. Inline binary сохраняется только до жёсткого лимита 2 MiB;
+для большего ответа остаются status, SHA-256 и размер, после чего разрешена лишь
+явная operator accounting reconciliation. `apply-known` повторяет локальное применение этого
+ответа и никогда не вызывает provider submission. После успешного применения
+или явного accounting-решения encrypted payload удаляется, а digest, provider
+status и audit timestamps остаются до обычного срока retention media job.
+Известный `succeeded`/`pending` запрещает `release`, а известный `failed` —
+`settle-reserved`; для ответа, который невозможно локально применить, оператор
+после проверки dashboard может выбрать совместимое явное accounting-действие.
+Перед локальным применением checkpoint получает durable `applying` claim:
+конкурирующее accounting-решение отклоняется. Fresh claim не перехватывается,
+а оставшийся после hard kill claim старше 10 минут автоматически ставится в
+durable recovery очередь Celery Beat и применяется без provider resubmission.
+Ключ recovery-dispatch включает claim token, поэтому повторный crash/reclaim
+создаёт новое поколение восстановления и не блокируется старым terminal dispatch.
 
 ## Egress policy
 
@@ -280,8 +436,10 @@ loopback, link-local, multicast и служебные диапазоны, но �
 endpoint-ы, необходимые Avito, AI-провайдерам, S3 и tenant webhook-ам. Public URL
 transport принимает только точный `PUBLIC_HTTP_PROXY_URL`; application DNS
 admission и Squid `dst` ACL являются независимыми проверками одного назначения.
-`check_public_http_connectivity` выполняет только GET несуществующего YooKassa
-payment sentinel и до drain проверяет этот маршрут, TLS и credentials без записи.
+`check_public_http_connectivity` до drain выполняет side-effect-free GET. При
+`BILLING_ENABLED=false` он проверяет независимый корень Yandex Object Storage без
+bucket/object credentials; при `BILLING_ENABLED=true` — несуществующий YooKassa
+payment sentinel, TLS и credentials. Ни один вариант не создаёт и не изменяет данные.
 
 SMTP является отдельным узким исключением: Squid принимает CONNECT на порт 587
 только для точного имени `smtp.resend.com`. Django не использует прямой
@@ -294,10 +452,10 @@ image. Изменение host/порта/proxy требует отдельно�
 
 Глобальный SMTP credential и `DEFAULT_FROM_EMAIL` обслуживают только письма
 платформы (восстановление пароля, подтверждение email, security notifications).
-Отправка от имени тенанта требует отдельной проверенной sender identity. Для
-tenant mail используется domain-scoped credential или BYOK с отдельными quotas,
-suppression/audit trail и webhook routing; произвольный tenant `From` через
-platform credential запрещён.
+Отправка от имени тенанта требует отдельной проверенной sender identity и сейчас
+не реализована. Будущий tenant-mail контур должен использовать domain-scoped
+credential или BYOK с отдельными quotas, suppression/audit trail и webhook
+routing; произвольный tenant `From` через platform credential запрещён.
 
 `NO_PROXY` содержит только внутренние имена `db`, `redis`, `redis_broker`,
 `django`, `frontend`, `nginx` и `egress_proxy`. Изменять этот список следует только

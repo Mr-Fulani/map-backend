@@ -135,7 +135,8 @@ class MediaProcessingPreset(TimestampedModel):
         ]
 
     def __str__(self):
-        scope = self.tenant.slug if self.tenant_id else 'platform'
+        tenant = self.tenant
+        scope = tenant.slug if tenant is not None else 'platform'
         return f'{self.name} ({scope})'
 
 
@@ -183,6 +184,17 @@ class MediaProcessingJob(TimestampedModel):
         FAILED = 'failed', 'Ошибка'
         CANCELLED = 'cancelled', 'Отменено'
 
+    class ProviderResponseState(models.TextChoices):
+        RECORDED = 'recorded', 'Ответ сохранён'
+        APPLYING = 'applying', 'Ответ применяется'
+        APPLIED = 'applied', 'Ответ применён'
+        ACCOUNTING_RESOLVED = 'accounting_resolved', 'Закрыто оператором'
+
+    class ProviderResponseStatus(models.TextChoices):
+        SUCCEEDED = 'succeeded', 'Готово'
+        PENDING = 'pending', 'Принято провайдером'
+        FAILED = 'failed', 'Отклонено провайдером'
+
     tenant = models.ForeignKey(
         'tenants.Tenant', on_delete=models.CASCADE,
         related_name='media_processing_jobs', verbose_name='Тенант',
@@ -211,12 +223,50 @@ class MediaProcessingJob(TimestampedModel):
         max_length=64, default=uuid.uuid4, editable=False,
         verbose_name='Ключ идемпотентности',
     )
+    request_fingerprint = models.CharField(
+        max_length=64, blank=True, editable=False,
+        verbose_name='Отпечаток входного запроса',
+    )
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='requested_media_jobs', verbose_name='Запустил',
     )
     provider_metadata = models.JSONField(
         default=dict, blank=True, verbose_name='Метаданные провайдера',
+    )
+    provider_response_enc = models.BinaryField(
+        null=True, blank=True, editable=False,
+        verbose_name='Зашифрованный checkpoint ответа провайдера',
+    )
+    provider_response_digest = models.CharField(
+        max_length=64, blank=True, editable=False,
+        verbose_name='SHA256 checkpoint ответа провайдера',
+    )
+    provider_response_status = models.CharField(
+        max_length=20, blank=True, editable=False,
+        choices=ProviderResponseStatus.choices,
+        verbose_name='Статус известного ответа провайдера',
+    )
+    provider_response_state = models.CharField(
+        max_length=24, blank=True, editable=False, db_index=True,
+        choices=ProviderResponseState.choices,
+        verbose_name='Состояние checkpoint ответа провайдера',
+    )
+    provider_response_recorded_at = models.DateTimeField(
+        null=True, blank=True, editable=False,
+        verbose_name='Ответ провайдера сохранён',
+    )
+    provider_response_apply_token = models.UUIDField(
+        null=True, blank=True, editable=False,
+        verbose_name='Claim применения ответа провайдера',
+    )
+    provider_response_apply_claimed_at = models.DateTimeField(
+        null=True, blank=True, editable=False, db_index=True,
+        verbose_name='Checkpoint взят в применение',
+    )
+    provider_response_resolved_at = models.DateTimeField(
+        null=True, blank=True, editable=False,
+        verbose_name='Checkpoint ответа провайдера закрыт',
     )
     estimated_credits = models.DecimalField(
         max_digits=12, decimal_places=4, default=Decimal('0'),

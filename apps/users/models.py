@@ -1,11 +1,16 @@
+from typing import TYPE_CHECKING, cast
+
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
+
+if TYPE_CHECKING:
+    from apps.tenants.models import TenantUser
 
 
 class UserManager(BaseUserManager):
     def create_user(self, email, password=None, **extra_fields):
         email = self.normalize_email(email)
-        user = self.model(email=email, **extra_fields)
+        user = cast('User', self.model(email=email, **extra_fields))
         user.set_password(password)
         user.save(using=self._db)
         return user
@@ -18,6 +23,10 @@ class UserManager(BaseUserManager):
 
 class User(AbstractBaseUser, PermissionsMixin):
     """Кастомный пользователь с email вместо username."""
+
+    # Ephemeral request-scoped context selected immediately before JWT issue.
+    # This is deliberately not a model field and is absent on ordinary users.
+    _current_tenant_membership: 'TenantUser'
 
     email = models.EmailField(unique=True, verbose_name='Email')
     phone = models.CharField(max_length=20, blank=True, verbose_name='Телефон')

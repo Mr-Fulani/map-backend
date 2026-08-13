@@ -1,5 +1,6 @@
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 from apps.products.attribute_presentation import presented_attributes
 from apps.products.models import ProductEnrichmentFact
@@ -191,7 +192,7 @@ class ProductAIEnrichmentContextBuilder:
         """Build a compact, truthful marketplace view without losing raw fitments."""
         vehicles = []
         seen_vehicles = set()
-        grouped_models = {}
+        grouped_models: dict[str, dict[str, Any]] = {}
         for item in fitments:
             make = ' '.join(str(item.make or '').split())
             model = ' '.join(str(item.model or '').split())
@@ -255,7 +256,7 @@ class ProductAIEnrichmentContextBuilder:
     @staticmethod
     def _build_catalog_number_presentation(cross_codes) -> dict:
         """Collapse formatting aliases for buyers while preserving raw search data."""
-        groups = {}
+        groups: dict[tuple[str, str], dict[str, str]] = {}
         for item in cross_codes:
             manufacturer = ' '.join(str(item.manufacturer or '').split())
             code = ' '.join(str(item.code or '').split())

@@ -13,27 +13,33 @@ YOOKASSA_PREFLIGHT_URL = (
 YOOKASSA_NOT_FOUND_STATUS = 404
 
 
-def _request_preflight(url, auth=None):
-    request_options = {
-        'method': 'GET',
-        'timeout': (
-            settings.YOOKASSA_API_CONNECT_TIMEOUT_SECONDS,
-            settings.YOOKASSA_API_READ_TIMEOUT_SECONDS,
-        ),
-        'status_only': True,
-        'redirect_policy': REDIRECT_NONE,
-        'max_redirects': 0,
-        'max_elapsed_seconds': settings.YOOKASSA_API_MAX_ELAPSED_SECONDS,
-    }
+def _request_preflight(
+    url: str,
+    auth: tuple[str, str] | None = None,
+):
+    timeout = (
+        settings.YOOKASSA_API_CONNECT_TIMEOUT_SECONDS,
+        settings.YOOKASSA_API_READ_TIMEOUT_SECONDS,
+    )
     if auth is None:
         return request_public_http_url(
             url,
-            **request_options,
+            method='GET',
+            timeout=timeout,
+            status_only=True,
+            redirect_policy=REDIRECT_NONE,
+            max_redirects=0,
+            max_elapsed_seconds=settings.YOOKASSA_API_MAX_ELAPSED_SECONDS,
         )
     return request_public_http_url(
         url,
+        method='GET',
+        timeout=timeout,
         auth=auth,
-        **request_options,
+        status_only=True,
+        redirect_policy=REDIRECT_NONE,
+        max_redirects=0,
+        max_elapsed_seconds=settings.YOOKASSA_API_MAX_ELAPSED_SECONDS,
     )
 
 

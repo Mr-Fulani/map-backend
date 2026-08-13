@@ -28,7 +28,15 @@ from apps.media_processing.serializers import (
     ProductImageVariantSerializer,
     TenantMediaSettingsSerializer,
 )
-from apps.media_processing.services import activate_variant, create_processing_job
+from apps.media_processing.services import (
+    activate_variant,
+    create_processing_job,
+    media_processing_request_fingerprint,
+)
+from apps.core.idempotency import (
+    IdempotencyConflict,
+    raise_on_fingerprint_conflict,
+)
 from apps.products.models import ProductImage
 
 
@@ -83,11 +91,17 @@ class MediaProviderListView(APIView):
         for provider_id in provider_ids:
             provider = registered.get(provider_id)
             policy = policies.get(provider_id)
+            if policy is not None:
+                display_name = policy.display_name
+            elif provider is not None:
+                display_name = provider.display_name or provider_id
+            else:
+                # ``provider_ids`` is built from these two mappings, but keep
+                # the response deterministic if that implementation changes.
+                display_name = provider_id
             data.append({
                 'provider_id': provider_id,
-                'display_name': (
-                    policy.display_name if policy else provider.display_name or provider_id
-                ),
+                'display_name': display_name,
                 'is_active': policy.is_active if policy else True,
                 'is_configured': provider.is_configured() if provider else False,
                 'capabilities': (
@@ -254,6 +268,14 @@ class ProductImageProcessView(APIView):
                 'ProductImageProcessResponse',
                 MediaProcessingJobSerializer(read_only=True),
             ),
+            409: inline_serializer(
+                name='ProductImageProcessConflictResponse',
+                fields={
+                    'status': serializers.CharField(read_only=True),
+                    'code': serializers.CharField(read_only=True),
+                    'message': serializers.CharField(read_only=True),
+                },
+            ),
         },
     )
     def post(self, request, product_pk: int, image_pk: int):
@@ -266,29 +288,74 @@ class ProductImageProcessView(APIView):
         payload = MediaJobCreateSerializer(data=request.data)
         payload.is_valid(raise_exception=True)
         data = payload.validated_data
-        preset = None
-        if data.get('preset_id'):
-            preset = get_object_or_404(
-                MediaProcessingPreset,
-                Q(tenant=request.tenant) | Q(tenant__isnull=True),
-                pk=data['preset_id'],
-                is_active=True,
-            )
         try:
-            job = create_processing_job(
-                product_image=image,
-                preset=preset,
-                operations=data.get('operations'),
-                parameters=data.get('parameters'),
-                provider_id=data.get('provider_id', ''),
-                requested_by=human_user_or_none(request),
-                idempotency_key=data.get('idempotency_key', ''),
+            with transaction.atomic():
+                type(request.tenant).objects.select_for_update().only('pk').get(
+                    pk=request.tenant.pk,
+                )
+                idempotency_key = str(data['idempotency_key'])
+                request_fingerprint = media_processing_request_fingerprint(
+                    product_image_id=image.pk,
+                    preset_id=data.get('preset_id'),
+                    operations=data.get('operations'),
+                    parameters=data.get('parameters'),
+                    provider_id=data.get('provider_id', ''),
+                )
+                job = MediaProcessingJob.objects.filter(
+                    tenant=request.tenant,
+                    idempotency_key=idempotency_key,
+                ).first()
+                if job is not None:
+                    raise_on_fingerprint_conflict(
+                        job.request_fingerprint,
+                        request_fingerprint,
+                    )
+                    created_for_request = False
+                else:
+                    preset = None
+                    if data.get('preset_id'):
+                        preset = get_object_or_404(
+                            MediaProcessingPreset,
+                            Q(tenant=request.tenant) | Q(tenant__isnull=True),
+                            pk=data['preset_id'],
+                            is_active=True,
+                        )
+                    job = create_processing_job(
+                        product_image=image,
+                        preset=preset,
+                        operations=data.get('operations'),
+                        parameters=data.get('parameters'),
+                        provider_id=data.get('provider_id', ''),
+                        requested_by=human_user_or_none(request),
+                        idempotency_key=idempotency_key,
+                    )
+                    created_for_request = bool(
+                        getattr(job, '_created_for_request', False),
+                    )
+                retryable_submission = (
+                    job.status == MediaProcessingJob.Status.FAILED
+                    and job.error_code == 'submission_failed'
+                )
+                if created_for_request or retryable_submission:
+                    from apps.core.dispatch import enqueue_durable_task
+                    enqueue_durable_task(
+                        'apps.media_processing.tasks.process_media_job',
+                        args=[job.pk],
+                        deduplication_key=f'media-processing-job:{job.pk}',
+                        max_run_attempts=4,
+                        revive_failed=retryable_submission,
+                    )
+        except IdempotencyConflict as exc:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'idempotency_conflict',
+                    'message': str(exc),
+                },
+                status=status.HTTP_409_CONFLICT,
             )
         except ValueError as exc:
             raise ValidationError({'operations': [str(exc)]}) from exc
-        from apps.media_processing.tasks import process_media_job
-        if job._created_for_request:
-            transaction.on_commit(lambda: process_media_job.delay(job.pk))
         return Response(
             {'status': 'ok', 'data': MediaProcessingJobSerializer(job).data},
             status=status.HTTP_202_ACCEPTED,

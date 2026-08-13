@@ -1,6 +1,7 @@
 import json
 import uuid
 from decimal import Decimal
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -420,6 +421,23 @@ def test_parallel_delivery_does_not_start_second_provider_fetch(client):
     assert event.delivery_count == 2
     assert event.decision == BillingWebhookEvent.DECISION_RECEIVED
     fetch_payment.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_unexpected_claim_state_fails_closed_without_processing(client):
+    with patch(
+        'apps.billing.views._claim_webhook_event',
+        return_value=(SimpleNamespace(pk=1), None, 'unexpected'),
+    ), patch('apps.billing.views.process_claimed_yookassa_event') as process_event:
+        response = client.post(
+            WEBHOOK_URL,
+            data=json.dumps(payment_payload('pay_unexpected_claim')),
+            content_type='application/json',
+            REMOTE_ADDR=YOOKASSA_IP,
+        )
+
+    assert response.status_code == 503
+    process_event.assert_not_called()
 
 
 def test_processing_claim_remains_legacy_received_for_safe_rollback():

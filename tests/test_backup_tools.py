@@ -23,6 +23,7 @@ from backup.common import (
     CRITICAL_TABLES,
     DatabaseTarget,
     S3Settings,
+    exported_snapshot,
     object_metadata_value,
     parse_database_url,
     postgres_environment,
@@ -149,6 +150,35 @@ def test_postgres_environment_uses_private_pgpass_and_removes_it(tmp_path):
         assert stat.S_IMODE(pgpass.stat().st_mode) == 0o600
         assert pgpass.read_text() == 'db:5432:map:map:p\\:a\\\\ss\n'
     assert not pgpass.exists()
+
+
+def test_exported_snapshot_fails_closed_when_postgres_returns_no_identifier(monkeypatch):
+    class FakeResult:
+        @staticmethod
+        def fetchone():
+            return None
+
+    class FakeConnection:
+        def __init__(self):
+            self.commands = []
+            self.closed = False
+
+        def execute(self, command):
+            self.commands.append(command)
+            return FakeResult()
+
+        def close(self):
+            self.closed = True
+
+    connection = FakeConnection()
+    monkeypatch.setattr('psycopg.connect', lambda *args, **kwargs: connection)
+
+    with pytest.raises(RuntimeError, match='snapshot identifier'):
+        with exported_snapshot('postgresql://backup:secret@db/map'):
+            pytest.fail('An invalid snapshot must never be yielded.')
+
+    assert connection.commands[-1] == 'ROLLBACK'
+    assert connection.closed is True
 
 
 def test_retention_plan_promotes_first_success_in_period(monkeypatch):

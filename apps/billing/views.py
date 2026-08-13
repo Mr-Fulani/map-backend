@@ -5,7 +5,8 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 from django.utils.decorators import method_decorator
-from drf_spectacular.utils import extend_schema, inline_serializer
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
@@ -17,7 +18,8 @@ from apps.billing.models import (
 )
 from apps.billing.serializers import (
     AICreditPackageSerializer, AITopupCheckoutSerializer, CheckoutSerializer,
-    InvoiceSerializer, PlanSerializer, SubscriptionSerializer,
+    BillingCheckoutErrorSerializer, InvoiceSerializer, PlanSerializer,
+    SubscriptionSerializer,
 )
 from apps.billing.services import (
     ActiveSubscriptionCheckoutError, BillingService, CheckoutConflictError,
@@ -83,6 +85,16 @@ _PAYMENT_URL_RESPONSE = inline_serializer(
             fields={'payment_url': serializers.URLField()},
         ),
     },
+)
+_CHECKOUT_RETRY_AFTER_HEADER = OpenApiParameter(
+    name='Retry-After',
+    type=OpenApiTypes.INT,
+    location=OpenApiParameter.HEADER,
+    response=[503],
+    description=(
+        'Секунды до повторной попытки для `checkout_pending`. '
+        'При `billing_disabled` заголовок отсутствует.'
+    ),
 )
 
 
@@ -339,7 +351,13 @@ class AITopupCheckoutView(APIView):
     @extend_schema(
         summary='Создать платёж на пополнение AI-кредитов',
         request=AITopupCheckoutSerializer,
-        responses={200: _PAYMENT_URL_RESPONSE},
+        parameters=[_CHECKOUT_RETRY_AFTER_HEADER],
+        responses={
+            200: _PAYMENT_URL_RESPONSE,
+            404: BillingCheckoutErrorSerializer,
+            409: BillingCheckoutErrorSerializer,
+            503: BillingCheckoutErrorSerializer,
+        },
     )
     def post(self, request):
         if not settings.BILLING_ENABLED:
@@ -389,7 +407,13 @@ class CheckoutView(APIView):
 
     @extend_schema(
         request=CheckoutSerializer,
-        responses={200: _PAYMENT_URL_RESPONSE},
+        parameters=[_CHECKOUT_RETRY_AFTER_HEADER],
+        responses={
+            200: _PAYMENT_URL_RESPONSE,
+            404: BillingCheckoutErrorSerializer,
+            409: BillingCheckoutErrorSerializer,
+            503: BillingCheckoutErrorSerializer,
+        },
     )
     def post(self, request):
         if not settings.BILLING_ENABLED:
@@ -412,6 +436,11 @@ class CheckoutView(APIView):
                 period=period,
                 return_url=return_url,
                 idempotency_key=serializer.validated_data['idempotency_key'],
+            )
+        except Plan.DoesNotExist:
+            return Response(
+                {'status': 'error', 'code': 'plan_not_found'},
+                status=status.HTTP_404_NOT_FOUND,
             )
         except (
             ActiveSubscriptionCheckoutError,
@@ -478,6 +507,10 @@ class YooKassaWebhookView(APIView):
             return Response({'status': 'ok'})
         if claim_state == 'busy':
             return _retry_webhook_response('already_processing')
+        if claim_state != 'claimed' or processing_token is None:
+            # Fail closed if the claim contract ever returns an unexpected
+            # state instead of calling the processor without lock ownership.
+            return _retry_webhook_response('claim_unavailable')
         result = process_claimed_yookassa_event(
             webhook_event.pk,
             processing_token,

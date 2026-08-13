@@ -3,8 +3,43 @@ from pathlib import Path
 import subprocess
 import sys
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def _memory_mib(value: str) -> int:
+    normalized = value.strip().lower()
+    assert normalized.endswith('m')
+    return int(normalized[:-1])
+
+
+def test_production_compose_fits_the_supported_four_gib_host_budget():
+    compose = yaml.safe_load((ROOT / 'docker-compose.prod.yml').read_text())
+    services = compose['services']
+    normal_names = {
+        'django', 'celery_worker', 'celery_beat', 'celery_worker_images',
+        'frontend', 'db', 'redis', 'redis_broker', 'egress_proxy', 'nginx',
+    }
+    normal_budget = sum(
+        _memory_mib(services[name]['mem_limit']) for name in normal_names
+    )
+    backup_budget = _memory_mib(services['backup']['mem_limit'])
+
+    # Leave about 584 MiB of a 3.7 GiB CPX22 for the kernel, Docker and
+    # deployment overhead, even while the bounded backup container is active.
+    assert normal_budget <= 2816
+    assert backup_budget <= 384
+    assert normal_budget + backup_budget <= 3200
+    assert '--maxmemory 160mb' in ' '.join(services['redis']['command'])
+    assert '--maxmemory 224mb' in ' '.join(services['redis_broker']['command'])
+
+
+def test_capacity_gate_reserves_memory_for_sequential_release_builds():
+    capacity = (ROOT / 'scripts' / 'check_production_capacity.sh').read_text()
+    assert 'MIN_TOTAL_MEMORY_KB=3670016' in capacity
+    assert 'MIN_AVAILABLE_MEMORY_KB=1048576' in capacity
 
 
 def test_hostile_environment_cannot_raise_resource_hard_ceilings():
@@ -37,8 +72,12 @@ def test_hostile_environment_cannot_raise_resource_hard_ceilings():
         'AVITO_API_RESPONSE_MAX_BYTES': oversized,
         'TRUSTED_API_RESPONSE_MAX_BYTES': oversized,
         'IMAGE_SEARCH_BULK_MAX_PRODUCTS': oversized,
+        'PRODUCT_PARSE_TENANT_DAILY_JOBS': oversized,
         'WEB_RESEARCH_MAX_QUERIES': oversized,
         'WEB_RESEARCH_RESULTS_PER_QUERY': oversized,
+        'WEB_SEARCH_STARTED_STALE_SECONDS': '-100',
+        'WEB_SEARCH_CHECKPOINT_MAX_BYTES': oversized,
+        'WEB_SEARCH_WORKFLOW_INPUT_MAX_BYTES': oversized,
         'YOOKASSA_API_CONNECT_TIMEOUT_SECONDS': oversized,
         'YOOKASSA_API_READ_TIMEOUT_SECONDS': oversized,
         'YOOKASSA_API_MAX_ELAPSED_SECONDS': oversized,
@@ -48,6 +87,15 @@ def test_hostile_environment_cannot_raise_resource_hard_ceilings():
         'WEBHOOK_AUDIT_RETENTION_DAYS': '-100',
         'BILLING_AUDIT_RETENTION_DAYS': '-100',
         'SYNC_LOG_RETENTION_DAYS': '-100',
+        'PRODUCT_PARSE_RAW_HTML_RETENTION_DAYS': '-100',
+        'PRODUCT_PARSE_JOB_RETENTION_DAYS': '-100',
+        'IMAGE_SEARCH_LOG_RETENTION_DAYS': '-100',
+        'IMAGE_SEARCH_TASK_RETENTION_DAYS': '-100',
+        'PRODUCT_BULK_ACTION_JOB_RETENTION_DAYS': '-100',
+        'MEDIA_PROCESSING_JOB_RETENTION_DAYS': '-100',
+        'BACKGROUND_JOB_RETENTION_DAYS': '-100',
+        'WEB_SEARCH_ATTEMPT_RETENTION_DAYS': '-100',
+        'RETENTION_PURGE_BATCH_SIZE': oversized,
     }
     assertions = """
 from config.settings import base as s
@@ -77,8 +125,12 @@ assert s.PART_PAGE_MAX_BYTES == 2 * 1024 * 1024
 assert s.AVITO_API_RESPONSE_MAX_BYTES == 5 * 1024 * 1024
 assert s.TRUSTED_API_RESPONSE_MAX_BYTES == 5 * 1024 * 1024
 assert s.IMAGE_SEARCH_BULK_MAX_PRODUCTS == 25
+assert s.PRODUCT_PARSE_TENANT_DAILY_JOBS == 1000
 assert s.WEB_RESEARCH_MAX_QUERIES == 10
 assert s.WEB_RESEARCH_RESULTS_PER_QUERY == 20
+assert s.WEB_SEARCH_STARTED_STALE_SECONDS == 3700
+assert s.WEB_SEARCH_CHECKPOINT_MAX_BYTES == 4 * 1024 * 1024
+assert s.WEB_SEARCH_WORKFLOW_INPUT_MAX_BYTES == 512 * 1024
 assert s.YOOKASSA_API_CONNECT_TIMEOUT_SECONDS == 30
 assert s.YOOKASSA_API_READ_TIMEOUT_SECONDS == 60
 assert s.YOOKASSA_API_MAX_ELAPSED_SECONDS == 120
@@ -88,6 +140,15 @@ assert s.SOFT_DELETE_RETENTION_DAYS == 1
 assert s.WEBHOOK_AUDIT_RETENTION_DAYS == 1
 assert s.BILLING_AUDIT_RETENTION_DAYS == 1
 assert s.SYNC_LOG_RETENTION_DAYS == 1
+assert s.PRODUCT_PARSE_RAW_HTML_RETENTION_DAYS == 1
+assert s.PRODUCT_PARSE_JOB_RETENTION_DAYS == 1
+assert s.IMAGE_SEARCH_LOG_RETENTION_DAYS == 1
+assert s.IMAGE_SEARCH_TASK_RETENTION_DAYS == 1
+assert s.PRODUCT_BULK_ACTION_JOB_RETENTION_DAYS == 1
+assert s.MEDIA_PROCESSING_JOB_RETENTION_DAYS == 1
+assert s.BACKGROUND_JOB_RETENTION_DAYS == 1
+assert s.WEB_SEARCH_ATTEMPT_RETENTION_DAYS == 30
+assert s.RETENTION_PURGE_BATCH_SIZE == 10000
 """
 
     result = subprocess.run(

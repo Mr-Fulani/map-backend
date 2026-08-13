@@ -1,16 +1,20 @@
 import logging
+import hashlib
+from datetime import datetime, timezone as datetime_timezone
 
 from django.conf import settings
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
 from django.core import signing
 from django.core.exceptions import ValidationError as DjangoValidationError
-from django.core.mail import send_mail
 from django.db import IntegrityError, transaction
+from django.utils import timezone
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 
 from apps.users.models import User
+from apps.notifications.email import EmailNotifier
+from apps.users.tokens import current_password_reset_timestamp, dumps_at
 
 
 logger = logging.getLogger(__name__)
@@ -64,7 +68,11 @@ class ProfileService:
         if User.objects.filter(email__iexact=new_email).exists():
             raise ValueError('Этот email уже используется')
 
-        token = signing.dumps(
+        # Repeated HTTP submissions inside five minutes reuse both the signed
+        # payload and Resend idempotency key. The fixed timestamp still leaves
+        # at least 23h55m of the documented 24-hour confirmation lifetime.
+        token_timestamp = int(timezone.now().timestamp()) // 300 * 300
+        token = dumps_at(
             {
                 'user_id': user.pk,
                 'new_email': new_email,
@@ -72,6 +80,7 @@ class ProfileService:
                 'auth_version': user.auth_version,
             },
             salt=_SIGNING_SALT,
+            timestamp=token_timestamp,
         )
 
         frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
@@ -79,16 +88,23 @@ class ProfileService:
         # Frontend извлекает токен и подтверждает изменение отдельным POST.
         confirm_url = f'{frontend_url}/confirm-email#token={token}'
 
-        send_mail(
-            subject='Подтверждение смены email — MAP',
-            message=(
+        idempotency_digest = hashlib.sha256(token.encode('utf-8')).hexdigest()
+        sent = EmailNotifier().send(
+            new_email,
+            'Подтверждение смены email — MAP',
+            (
                 f'Для подтверждения нового email перейдите по ссылке:\n\n'
                 f'{confirm_url}\n\n'
                 f'Ссылка действительна 24 часа.'
             ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[new_email],
+            idempotency_key=f'map-email-change/{idempotency_digest}',
+            message_date=datetime.fromtimestamp(
+                token_timestamp,
+                tz=datetime_timezone.utc,
+            ),
         )
+        if not sent:
+            raise RuntimeError('Email change confirmation delivery failed.')
 
     @staticmethod
     def confirm_email_change(token: str) -> User:
@@ -144,7 +160,15 @@ class ProfileService:
         normalized = User.objects.normalize_email(email)
         user = User.objects.filter(email__iexact=normalized, is_active=True).first()
         try:
-            send_password_reset_email.delay(user.pk if user is not None else None)
+            token_timestamp = (
+                current_password_reset_timestamp()
+                if user is not None
+                else None
+            )
+            send_password_reset_email.delay(
+                user.pk if user is not None else None,
+                token_timestamp,
+            )
         except Exception:
             # Сбой публикации не раскрывает существование адреса через HTTP-ответ.
             logger.exception('Не удалось поставить письмо восстановления в очередь.')

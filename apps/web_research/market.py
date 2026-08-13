@@ -39,30 +39,39 @@ def catalog_offers(product, *, listing_price: Decimal | None = None) -> list[dic
             latest[job.source_id] = job
     result = []
     for source_id in CATALOG_SOURCES:
-        job = latest.get(source_id)
+        latest_job = latest.get(source_id)
         result.append({
             'source_id': source_id,
             'source_label': {'tachka': 'Tachka', 'rossko': 'Rossko', 'euroauto': 'Euroauto'}[source_id],
-            'status': job.status if job else 'not_checked',
-            'status_label': job.get_status_display() if job else 'Ещё не проверялся',
-            'price': _money(job.source_price) if job else None,
-            'currency': job.source_currency if job else 'RUB',
-            'price_is_from': job.source_price_is_from if job else False,
-            'availability': job.source_availability if job else 'unknown',
-            'availability_label': job.get_source_availability_display() if job else 'Наличие не указано',
-            'availability_text': job.source_availability_text if job else '',
-            'quantity': job.source_quantity if job else None,
-            'checked_at': (job.finished_at or job.updated_at) if job else None,
-            'url': job.source_url if job else '',
+            'status': latest_job.status if latest_job else 'not_checked',
+            'status_label': (
+                latest_job.get_status_display() if latest_job else 'Ещё не проверялся'
+            ),
+            'price': _money(latest_job.source_price) if latest_job else None,
+            'currency': latest_job.source_currency if latest_job else 'RUB',
+            'price_is_from': latest_job.source_price_is_from if latest_job else False,
+            'availability': latest_job.source_availability if latest_job else 'unknown',
+            'availability_label': (
+                latest_job.get_source_availability_display()
+                if latest_job else 'Наличие не указано'
+            ),
+            'availability_text': latest_job.source_availability_text if latest_job else '',
+            'quantity': latest_job.source_quantity if latest_job else None,
+            'checked_at': (
+                latest_job.finished_at or latest_job.updated_at
+            ) if latest_job else None,
+            'url': latest_job.source_url if latest_job else '',
             'difference_from_listing': _difference(
-                job.source_price if job else None, listing_price,
+                latest_job.source_price if latest_job else None, listing_price,
             ),
             'difference_from_base': _difference(
-                job.source_price if job else None, product.price,
+                latest_job.source_price if latest_job else None, product.price,
             ),
             'message': (
-                job.error_message if job and job.status == ProductParseJob.Status.FAILED
-                else 'Товар не найден' if job and job.status == ProductParseJob.Status.NOT_FOUND
+                latest_job.error_message
+                if latest_job and latest_job.status == ProductParseJob.Status.FAILED
+                else 'Товар не найден'
+                if latest_job and latest_job.status == ProductParseJob.Status.NOT_FOUND
                 else ''
             ),
         })
