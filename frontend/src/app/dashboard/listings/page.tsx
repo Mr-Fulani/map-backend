@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { accountApi, listingApi } from '@/lib/api';
+import { dashboardPageParam, dashboardQueryHref } from '@/lib/dashboard-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -70,6 +71,7 @@ const STATUS_FILTERS = [
   { value: 'draft', label: 'Черновики' },
   { value: 'rejected', label: 'Отклонены' },
   { value: 'requires_review', label: 'Требуют проверки' },
+  { value: 'limit_reached', label: 'Лимит достигнут' },
   { value: 'archived', label: 'Архив' },
 ];
 
@@ -89,10 +91,15 @@ export default function ListingsPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const requestedStatus = searchParams.get('status') ?? '';
+  const urlStatus = STATUS_FILTERS.some((item) => item.value === requestedStatus)
+    ? requestedStatus
+    : '';
+  const urlPage = dashboardPageParam(searchParams.get('page'));
+  const statusFilter = urlStatus;
+  const page = urlPage;
   const [listings, setListings] = useState<Listing[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
-  const [statusFilter, setStatusFilter] = useState('');
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [bulkAction, setBulkAction] = useState('update_placement');
@@ -270,8 +277,10 @@ export default function ListingsPage() {
             onClick={() => {
               if (f.value === statusFilter) return;
               setLoading(true);
-              setPage(1);
-              setStatusFilter(f.value);
+              router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+                status: f.value,
+                page: null,
+              }), { scroll: false });
             }}
           >
             {f.label}
@@ -650,7 +659,9 @@ export default function ListingsPage() {
               variant="outline"
               onClick={() => {
                 setLoading(true);
-                setPage((current) => current - 1);
+                router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+                  page: Math.max(1, page - 1),
+                }), { scroll: false });
               }}
               disabled={!meta.prev}
             >
@@ -661,7 +672,9 @@ export default function ListingsPage() {
               variant="outline"
               onClick={() => {
                 setLoading(true);
-                setPage((current) => current + 1);
+                router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+                  page: page + 1,
+                }), { scroll: false });
               }}
               disabled={!meta.next}
             >

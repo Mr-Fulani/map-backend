@@ -143,7 +143,7 @@ function SummaryCard({ icon: Icon, title, value, loading }: {
 }) {
   return (
     <Card>
-      <CardContent className="flex items-center gap-3 p-4">
+      <CardContent className="flex items-center gap-3 p-4 sm:p-4">
         <Icon className="h-5 w-5 text-muted-foreground" />
         <div>
           <p className="text-xs text-muted-foreground">{title}</p>

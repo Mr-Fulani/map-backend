@@ -25,6 +25,8 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
+  SheetTitle,
   SheetTrigger,
 } from '@/components/ui/sheet';
 import { MobileSidebar } from './mobile-sidebar';
@@ -80,11 +82,15 @@ export function Header() {
         {/* Mobile menu */}
         <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
           <SheetTrigger asChild>
-            <Button variant="ghost" size="icon" className="lg:hidden">
+            <Button variant="ghost" size="icon" className="lg:hidden" aria-label="Открыть навигацию">
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
           <SheetContent side="left" className="w-[240px] p-0">
+            <SheetTitle className="sr-only">Навигация по панели</SheetTitle>
+            <SheetDescription className="sr-only">
+              Основные разделы панели управления
+            </SheetDescription>
             <MobileSidebar onNavigate={() => setMobileMenuOpen(false)} />
           </SheetContent>
         </Sheet>
@@ -119,7 +125,11 @@ export function Header() {
         {/* User menu */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" className="relative h-8 w-8 rounded-full">
+            <Button
+              variant="ghost"
+              className="relative h-8 w-8 rounded-full"
+              aria-label="Открыть меню пользователя"
+            >
               <Avatar className="h-8 w-8">
                 <AvatarFallback className="bg-primary/10 text-primary text-xs">
                   {initials}

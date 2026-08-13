@@ -81,6 +81,39 @@ class AIWalletService:
     def summary(cls, tenant) -> dict:
         wallet = cls.ensure_wallet(tenant)
         wallet.refresh_from_db()
+        return cls._summarize_wallet(tenant, wallet)
+
+    @classmethod
+    def read_only_summary(cls, tenant) -> dict:
+        """Return the current balance without bootstrapping persistent state."""
+        wallet = AIWallet.objects.filter(tenant_id=tenant.pk).first()
+        if wallet is None:
+            limit = cls.effective_limit(tenant)
+            remaining = max(
+                Decimal('0'),
+                limit - Decimal(tenant.ai_credits_used),
+            )
+            included_expires_at = None
+            try:
+                period_end = (
+                    tenant.subscription.ai_period_end
+                    or tenant.subscription.current_period_end
+                )
+                included_expires_at = timezone.make_aware(
+                    datetime.combine(period_end, time.max),
+                )
+            except (Subscription.DoesNotExist, TypeError):
+                pass
+            wallet = AIWallet(
+                tenant=tenant,
+                included_limit=limit,
+                included_balance=remaining,
+                included_expires_at=included_expires_at,
+            )
+        return cls._summarize_wallet(tenant, wallet)
+
+    @classmethod
+    def _summarize_wallet(cls, tenant, wallet: AIWallet) -> dict:
         limit = wallet.included_limit
         used = max(Decimal('0'), limit - wallet.included_balance)
         percent_used = (

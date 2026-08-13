@@ -4,6 +4,7 @@
  */
 
 import axios, { type AxiosRequestConfig } from 'axios';
+import type { DashboardSummary } from './dashboard-summary';
 import {
   advanceBrowserSessionVersion,
   readBrowserSessionVersion,
@@ -19,6 +20,7 @@ import {
 export const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
 const BILLING_READ_TIMEOUT_MS = 10_000;
 const BILLING_MUTATION_TIMEOUT_MS = 30_000;
+const DASHBOARD_READ_TIMEOUT_MS = 15_000;
 
 const api = axios.create({
   baseURL: `${API_BASE_URL}/api/v1`,
@@ -706,6 +708,13 @@ export const tenantApi = {
   getApiKeys: () => api.get('/tenant/api-keys/'),
   createApiKey: (name: string) => api.post('/tenant/api-keys/', { name }),
   revokeApiKey: (id: number) => api.delete(`/tenant/api-keys/${id}/`),
+};
+
+export const dashboardApi = {
+  getSummary: (signal?: AbortSignal) => api.get<ApiEnvelope<DashboardSummary>>(
+    '/dashboard/summary/',
+    { signal, timeout: DASHBOARD_READ_TIMEOUT_MS },
+  ),
 };
 
 // Billing
