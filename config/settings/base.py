@@ -558,6 +558,7 @@ SPECTACULAR_SETTINGS = {
         {'name': 'Accounts', 'description': 'Аккаунты маркетплейсов (Avito)'},
         {'name': 'Category mappings', 'description': 'Сопоставление категорий с Avito'},
         {'name': 'Analytics', 'description': 'Статистика просмотров и CTR'},
+        {'name': 'Dashboard', 'description': 'Сводка состояния и ключевых показателей тенанта'},
         {'name': 'Billing', 'description': 'Тарифы, подписки, платежи'},
         {'name': 'AI', 'description': 'AI-модели, настройки и расход кредитов'},
         {'name': 'Images', 'description': 'Поиск и отбор изображений товаров'},
