@@ -15,6 +15,7 @@
     "src/lib/api.ts",
     "src/lib/billing-page-loader.ts",
     "src/lib/browser-session-lock.ts",
+    "src/lib/dashboard-summary.ts",
     "tests/**/*.ts"
   ],
   "exclude": [".next", ".test-dist", "node_modules"]

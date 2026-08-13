@@ -1,7 +1,9 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { logApi } from '@/lib/api';
+import { dashboardPageParam, dashboardQueryHref } from '@/lib/dashboard-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -38,11 +40,21 @@ const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive'> = 
 };
 
 export default function LogsPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const requestedStatus = searchParams.get('status') ?? '';
+  const urlStatus = STATUS_FILTERS.some((item) => item.value === requestedStatus)
+    ? requestedStatus
+    : '';
+  const requestedDate = searchParams.get('date') ?? '';
+  const urlDate = /^\d{4}-\d{2}-\d{2}$/.test(requestedDate) ? requestedDate : '';
+  const urlPage = dashboardPageParam(searchParams.get('page'));
+  const statusFilter = urlStatus;
+  const date = urlDate;
+  const page = urlPage;
   const [logs, setLogs] = useState<SyncLog[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
-  const [statusFilter, setStatusFilter] = useState('');
-  const [date, setDate] = useState('');
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -94,8 +106,10 @@ export default function LogsPage() {
               onClick={() => {
                 if (f.value === statusFilter) return;
                 setLoading(true);
-                setPage(1);
-                setStatusFilter(f.value);
+                router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+                  status: f.value,
+                  page: null,
+                }), { scroll: false });
               }}
             >
               {f.label}
@@ -107,8 +121,10 @@ export default function LogsPage() {
           value={date}
           onChange={(e) => {
             setLoading(true);
-            setPage(1);
-            setDate(e.target.value);
+            router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+              date: e.target.value,
+              page: null,
+            }), { scroll: false });
           }}
           className="w-full sm:w-auto"
         />
@@ -216,7 +232,9 @@ export default function LogsPage() {
               variant="outline"
               onClick={() => {
                 setLoading(true);
-                setPage((current) => current - 1);
+                router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+                  page: Math.max(1, page - 1),
+                }), { scroll: false });
               }}
               disabled={!meta.prev}
             >
@@ -227,7 +245,9 @@ export default function LogsPage() {
               variant="outline"
               onClick={() => {
                 setLoading(true);
-                setPage((current) => current + 1);
+                router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+                  page: page + 1,
+                }), { scroll: false });
               }}
               disabled={!meta.next}
             >

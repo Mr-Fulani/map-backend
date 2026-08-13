@@ -310,7 +310,7 @@ export default function BillingPage() {
 
       {!loading && !billingEnabled && !plansError && (
         <Card className="border-amber-500/50">
-          <CardContent className="p-4 text-sm">
+          <CardContent className="p-4 text-sm sm:p-4">
             Онлайн-оплата временно недоступна. Текущий тариф, лимиты и история
             платежей остаются доступны.
           </CardContent>
@@ -319,7 +319,7 @@ export default function BillingPage() {
 
       {subscriptionState === 'loading' && (
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-4 sm:p-4">
             <Skeleton className="h-12 w-full" />
           </CardContent>
         </Card>
@@ -327,7 +327,7 @@ export default function BillingPage() {
 
       {subscriptionState === 'error' && (
         <Card className="border-destructive/50">
-          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-4">
             <p className="text-sm text-destructive">
               Статус подписки недоступен. Оплата временно заблокирована, чтобы исключить повторное списание.
             </p>
@@ -340,7 +340,7 @@ export default function BillingPage() {
 
       {subscriptionState === 'loaded' && subscription && (
         <Card className={hasFullAccess ? '' : 'border-destructive/50'}>
-          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-4">
             <div>
               <p className="font-semibold">
                 {subscription.plan.name} · {
@@ -373,7 +373,7 @@ export default function BillingPage() {
         )}
         {plansError && (
           <Card className="border-destructive/50">
-            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <CardContent className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-4">
               <p className="text-sm text-destructive">
                 Тарифные планы временно недоступны.
               </p>
@@ -390,7 +390,7 @@ export default function BillingPage() {
         )}
         {!plansError && plans.length === 0 && (
           <Card>
-            <CardContent className="p-4 text-sm text-muted-foreground">
+            <CardContent className="p-4 text-sm text-muted-foreground sm:p-4">
               Доступных тарифных планов сейчас нет.
             </CardContent>
           </Card>
@@ -574,7 +574,7 @@ export default function BillingPage() {
       <div>
         <h2 className="mb-3 text-lg font-semibold">История платежей</h2>
         <Card>
-          <CardContent className="p-0">
+          <CardContent className="p-0 sm:p-0">
             {invoicesState === 'loading' ? (
               <div className="space-y-2 p-4">
                 <Skeleton className="h-12 w-full" />

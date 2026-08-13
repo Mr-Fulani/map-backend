@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
@@ -14,6 +15,7 @@ import {
   Search,
 } from 'lucide-react';
 import { webResearchApi } from '@/lib/api';
+import { dashboardPageParam, dashboardQueryHref } from '@/lib/dashboard-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -86,6 +88,16 @@ function statusVariant(status: string): 'default' | 'secondary' | 'destructive' 
 }
 
 export default function ResearchPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const requestedStatus = searchParams.get('status') ?? '';
+  const urlStatus = STATUS_FILTERS.some((item) => item.value === requestedStatus)
+    ? requestedStatus
+    : '';
+  const urlPage = dashboardPageParam(searchParams.get('page'));
+  const statusFilter = urlStatus;
+  const page = urlPage;
   const [runs, setRuns] = useState<ResearchRun[]>([]);
   const [meta, setMeta] = useState<PageMeta | null>(null);
   const [summary, setSummary] = useState<ResearchSummary>({
@@ -94,8 +106,6 @@ export default function ResearchPage() {
     need_review: 0,
     failed: 0,
   });
-  const [statusFilter, setStatusFilter] = useState('');
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [providerStatus, setProviderStatus] = useState<SearchProviderStatus | null>(null);
@@ -178,7 +188,7 @@ export default function ResearchPage() {
 
       {providerStatus && (
         <Card className={providerStatus.available ? '' : 'border-destructive/40'}>
-          <CardContent className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+          <CardContent className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-4">
             <div className="min-w-0">
               <p className="text-sm font-medium">Сервисы поиска</p>
               <p className="text-xs text-muted-foreground">
@@ -215,8 +225,10 @@ export default function ResearchPage() {
             onClick={() => {
               if (filter.value === statusFilter) return;
               setLoading(true);
-              setPage(1);
-              setStatusFilter(filter.value);
+              router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+                status: filter.value,
+                page: null,
+              }), { scroll: false });
             }}
           >
             {filter.label}
@@ -229,7 +241,7 @@ export default function ResearchPage() {
           <EmptyState />
         ) : runs.map((run) => (
           <Card key={run.id} className="min-w-0 overflow-hidden">
-            <CardContent className="min-w-0 space-y-3 p-4">
+            <CardContent className="min-w-0 space-y-3 p-4 sm:p-4">
               <div className="flex min-w-0 flex-col items-start gap-2 min-[420px]:flex-row min-[420px]:justify-between">
                 <div className="min-w-0 max-w-full">
                   <p className="break-words font-medium [overflow-wrap:anywhere]">{run.product_name}</p>
@@ -319,7 +331,9 @@ export default function ResearchPage() {
               disabled={!meta.prev}
               onClick={() => {
                 setLoading(true);
-                setPage((value) => value - 1);
+                router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+                  page: Math.max(1, page - 1),
+                }), { scroll: false });
               }}
             >
               <ChevronLeft className="mr-1 h-4 w-4" /> Назад
@@ -330,7 +344,9 @@ export default function ResearchPage() {
               disabled={!meta.next}
               onClick={() => {
                 setLoading(true);
-                setPage((value) => value + 1);
+                router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+                  page: page + 1,
+                }), { scroll: false });
               }}
             >
               Вперёд <ChevronRight className="ml-1 h-4 w-4" />
@@ -350,7 +366,7 @@ function SummaryCard({ icon: Icon, label, value, loading }: {
 }) {
   return (
     <Card>
-      <CardContent className="flex items-center gap-3 p-4">
+      <CardContent className="flex items-center gap-3 p-4 sm:p-4">
         <Icon className="h-5 w-5 text-muted-foreground" />
         <div>
           <p className="text-xs text-muted-foreground">{label}</p>
@@ -378,7 +394,7 @@ function RunDetails({ run }: { run: ResearchRun }) {
 
 function ResearchSkeleton({ count }: { count: number }) {
   return Array.from({ length: count }).map((_, index) => (
-    <Card key={index}><CardContent className="space-y-3 p-4">
+    <Card key={index}><CardContent className="space-y-3 p-4 sm:p-4">
       <Skeleton className="h-5 w-2/3" />
       <Skeleton className="h-4 w-1/3" />
       <Skeleton className="h-9 w-full" />

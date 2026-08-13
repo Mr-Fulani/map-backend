@@ -9,13 +9,13 @@ import {
 } from './browser-test-helpers';
 
 
-test('billing reads and mutations have bounded client deadlines', async () => {
+test('billing and dashboard requests have bounded client deadlines', async () => {
   installBrowserEnvironment();
   const observed = new Map<string, number | undefined>();
   let handler: AxiosAdapter = async (config) => response(config, {});
   axios.defaults.adapter = (config) => handler(config);
 
-  const { authApi, billingApi } = await import('../src/lib/api');
+  const { authApi, billingApi, dashboardApi } = await import('../src/lib/api');
   handler = async (config) => {
     observed.set(config.url ?? '', config.timeout);
     if (config.url === '/auth/browser/csrf/') {
@@ -39,6 +39,7 @@ test('billing reads and mutations have bounded client deadlines', async () => {
     billingApi.getUsage(),
     billingApi.getInvoices(),
     billingApi.getAIPackages(),
+    dashboardApi.getSummary(),
   ]);
   for (const path of (
     [
@@ -51,6 +52,7 @@ test('billing reads and mutations have bounded client deadlines', async () => {
   )) {
     assert.equal(observed.get(path), 10_000, path);
   }
+  assert.equal(observed.get('/dashboard/summary/'), 15_000);
 
   await authApi.login('owner@example.test', 'password', 'tenant-a');
   await billingApi.checkout('pro', 'monthly');
