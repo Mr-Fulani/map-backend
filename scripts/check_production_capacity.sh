@@ -33,8 +33,11 @@ load_one="$(awk '{print $1}' /proc/loadavg)"
 (( available_memory_kb >= MIN_AVAILABLE_MEMORY_KB )) \
   || fail "available memory is below 1024 MiB required for a sequential build"
 (( free_disk_kb >= MIN_FREE_DISK_KB )) || fail "free disk is below 8 GiB"
-awk -v load="$load_one" -v cpus="$cpu_count" -v max="$MAX_LOAD_PER_CPU" \
-  'BEGIN {exit !(load <= cpus * max)}' \
+awk \
+  -v one_minute_load="$load_one" \
+  -v cpu_total="$cpu_count" \
+  -v max_per_cpu="$MAX_LOAD_PER_CPU" \
+  'BEGIN {exit !(one_minute_load <= cpu_total * max_per_cpu)}' \
   || fail "one-minute load is above ${MAX_LOAD_PER_CPU}x CPU count"
 
 while IFS= read -r container_id; do
