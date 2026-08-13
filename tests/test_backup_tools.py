@@ -546,6 +546,20 @@ def test_backup_container_and_deploy_contracts():
     )
     assert 'USER postgres' in dockerfile
     assert 'BACKUP_AGE_IDENTITY_FILE' not in dockerfile
+    assert '/usr/bin/python3 -m venv --without-pip /opt/backup-venv' in dockerfile
+    assert 'sysconfig.get_path("purelib")' in dockerfile
+    assert '--target "$venv_site_packages"' in dockerfile
+    assert '/usr/bin/python3 -m pip install' in dockerfile
+    assert 'apk add --no-cache age ca-certificates python3\n' in dockerfile
+    assert 'apk del .backup-python-installer' in dockerfile
+    assert 'rm -rf "$ensurepip_dir"' in dockerfile
+    assert 'command -v age >/dev/null' in dockerfile
+    assert 'command -v pg_dump >/dev/null' in dockerfile
+    assert '! apk info --exists py3-pip' in dockerfile
+    assert "! /usr/bin/python3 -c 'import ensurepip'" in dockerfile
+    assert "-path '*/pip/_vendor/msgpack/*'" in dockerfile
+    assert "find_spec('pip') is None" in dockerfile
+    assert "find_spec('setuptools') is None" in dockerfile
 
     backup_position = deploy.index('pre-migration database backup')
     migration_position = deploy.index('DEPLOY_PHASE="database migration"')
