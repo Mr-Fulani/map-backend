@@ -506,6 +506,7 @@ def test_ci_shards_coverage_without_weakening_the_global_threshold():
     assert '--durations-path .github/pytest-durations.json' in CI_WORKFLOW
     assert '--cov-fail-under=0' in CI_WORKFLOW
     assert 'coverage report --fail-under=70' in CI_WORKFLOW
+    assert 'coverage xml -o coverage.xml' in CI_WORKFLOW
     assert 'include-hidden-files: true' in CI_WORKFLOW
     assert 'merge-multiple: true' in CI_WORKFLOW
     assert 'relative_files = True' in (ROOT / '.coveragerc').read_text()

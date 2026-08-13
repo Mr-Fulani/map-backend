@@ -323,7 +323,7 @@ jobs:
         run: |
           python -m coverage combine --keep "$RUNNER_TEMP/coverage"
           python -m coverage report --fail-under=70
-          python -m coverage xml --output coverage.xml
+          python -m coverage xml -o coverage.xml
 
       - name: Загрузить покрытие
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
