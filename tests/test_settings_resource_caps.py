@@ -42,6 +42,13 @@ def test_capacity_gate_reserves_memory_for_sequential_release_builds():
     assert 'MIN_AVAILABLE_MEMORY_KB=1048576' in capacity
 
 
+def test_capacity_gate_avoids_gawk_reserved_load_builtin():
+    capacity = (ROOT / 'scripts' / 'check_production_capacity.sh').read_text()
+    assert '-v load=' not in capacity
+    assert '-v one_minute_load="$load_one"' in capacity
+    assert 'one_minute_load <= cpu_total * max_per_cpu' in capacity
+
+
 def test_hostile_environment_cannot_raise_resource_hard_ceilings():
     oversized = str(10 ** 12)
     env = {
