@@ -4,13 +4,13 @@
 #
 #    scripts/compile_requirements.sh
 #
---only-binary :all:
-
-boto3==1.43.67 \
-    --hash=sha256:082cf9df068168cb44028a1703822374c1eb7e48fa49470d7e8a76f0c977d0bc
-    # via -r backup/requirements.in
-botocore==1.43.67 \
-    --hash=sha256:48ab8e9fac26fbc2a700d57010251003e6a5f731cf74d8540fb796bc8f3fc0ef
+boto3==1.43.71 \
+    --hash=sha256:3bb46661dc33121e56e3706753069d18f8dbcb644599cf098206546338602e16 \
+    --hash=sha256:e3eddb6346ee23c895dd98e5c2cfc72cb5e5ed111aa6d4331f9e903a3e3bf4ee
+    # via -r requirements.in
+botocore==1.43.72 \
+    --hash=sha256:1b878c69081e8e9d55aa4c0d85683e7b07f0e274a5554662f9507a46641be3d2 \
+    --hash=sha256:de5a1bcf8d7602c6cefc15016f15dad82981e339192531f31fa9483e11feea47
     # via
     #   boto3
     #   s3transfer
@@ -161,7 +161,7 @@ cryptography==50.0.0 \
     --hash=sha256:f59e38625469987d7ef6d495323c55e7db6c212eaf6112267e0d3b565a2e9c9f \
     --hash=sha256:f89831ef99dd7dd169ab06d63a831adb9e20a87aac6d380266bbda5823349169 \
     --hash=sha256:fd9192b7b70c573d7f214eb1ae35e00d359f6f5e4b27c7e21e30de1fc6204645
-    # via -r backup/requirements.in
+    # via -r requirements.in
 jmespath==1.1.0 \
     --hash=sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64
     # via
@@ -169,7 +169,7 @@ jmespath==1.1.0 \
     #   botocore
 psycopg==3.3.4 \
     --hash=sha256:b6bbc25ccf05c8fad3b061d9db2ef0909a555171b84b07f29458a447253d679a
-    # via -r backup/requirements.in
+    # via -r requirements.in
 pycparser==3.0 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
     # via cffi
