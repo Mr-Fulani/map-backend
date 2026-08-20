@@ -320,6 +320,22 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
         'FROM python:3.12.13-slim@sha256:'
         '229a2c5bfa27522db7815ea81f9bed70af17ccb9de9fc7ad142b1877b5830d36'
     )
+    assert '--only-upgrade' in dockerfiles['backend']
+    for package in (
+        'bsdutils',
+        'libblkid1',
+        'liblastlog2-2',
+        'libmount1',
+        'libsmartcols1',
+        'libuuid1',
+        'login',
+        'mount',
+        'util-linux',
+    ):
+        assert package in dockerfiles['backend']
+    assert '2.41.5-0+deb13u1' in dockerfiles['backend']
+    assert '1:2.41.5-0+deb13u1' in dockerfiles['backend']
+    assert '1:4.16.0-2+really2.41.5-0+deb13u1' in dockerfiles['backend']
     assert dockerfiles['frontend'].splitlines()[0] == (
         'FROM node:24.18.0-alpine@sha256:'
         'a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd '
