@@ -174,7 +174,25 @@ targets, если daemon занят чужим проектом.
       loops, duplicate checkout intents, failed webhook deliveries, queue lag,
       worker restarts, DB saturation или backup alerts.
 
-## 6. Ошибка и recovery
+## 6. Gate roadmap фидов Avito
+
+- [ ] Release содержит не больше одного пакета из
+      [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а его точный состав
+      соответствует
+      [`AVITO_FEED_CHANGESET_MANIFEST.md`](AVITO_FEED_CHANGESET_MANIFEST.md).
+- [ ] P0 не содержит runtime-код, настройки приложения, миграции или тесты
+      будущих пакетов.
+- [ ] Для P1 и последующих пакетов указаны точные узкие и полные test commands
+      с результатами; следующий пакет не используется для исправления текущего.
+- [ ] Production feed contract остаётся
+      `legacy/legacy/disabled/false/legacy_public` для run, ingress, artifact,
+      profile migration и storage.
+- [ ] Cleanup, `0039`, private serving, GC, object deletion, новые
+      migrations/modes и worker activation отсутствуют, если соответствующий
+      roadmap package не был отдельно активирован.
+- [ ] Cleanup/backfill и auto-applied `0039` не объединены в один release.
+
+## 7. Ошибка и recovery
 
 - [ ] При ошибке **до** начала миграций проверен автоматический возврат на
       сохранённые image IDs предыдущего SHA и повторный public smoke check.
@@ -187,7 +205,7 @@ targets, если daemon занят чужим проектом.
 - [ ] Инцидент, фактические времена drain/backup/migrate/readiness и решение
       rollback/forward recovery записаны в журнал релиза.
 
-## 7. Периодические проверки вне release
+## 8. Периодические проверки вне release
 
 - [ ] Еженедельно проверяются dependency updates, pinned GitHub Actions/base
       image digests и Trivy release checksum. Direct Trivy asset не обновляется
