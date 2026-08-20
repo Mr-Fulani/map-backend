@@ -21,6 +21,18 @@ images из registry: `deploy.sh` повторно собирает их на pr
 проверенного SHA. Исходники, Python/npm lock-файлы, base-image digests и npm tarball
 checksum зафиксированы, но это пока не схема «build once, deploy exact image digest».
 
+### Freeze новой отправки фидов Avito
+
+Текущий runtime продолжает использовать legacy-отправку. Сохранённый
+`not-for-merge` WIP разделяется по
+[`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md); фактическое состояние
+зафиксировано в [`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md).
+
+До отдельно утверждённого rollout будущие feed-настройки не могут отличаться от
+`legacy/legacy/disabled/false/legacy_public` для run, ingress, artifact,
+profile migration и storage соответственно. P0 не добавляет эти настройки в
+runtime и не меняет production environment.
+
 ## 1. Подготовка production host
 
 До первого deploy:

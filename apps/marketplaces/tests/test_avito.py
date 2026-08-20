@@ -13,7 +13,7 @@ from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
 from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 from apps.marketplaces.adapters.avito.error_handler import backoff
-from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
+from apps.marketplaces.adapters.avito.adapter import AvitoAdapter, _avito_request
 from apps.marketplaces.adapters.avito.feed_builder import build_feed, get_ad_id
 from apps.marketplaces.adapters.avito import rate_limiter
 from apps.marketplaces.adapters.avito.rate_limiter import (
@@ -102,6 +102,72 @@ def test_rate_limiter_creates_ttl_window_and_rejects_only_over_limit(monkeypatch
     assert exc_info.value.retry_after == 60
     assert local_cache.get('avito:rl:42:test-operation') == 3
     log_rate_limit.assert_called_once_with(account, 'test-operation')
+
+
+def test_avito_request_emits_bounded_5xx_telemetry():
+    response = MagicMock(status_code=503)
+    requester = MagicMock()
+
+    with (
+        patch(
+            'apps.marketplaces.adapters.avito.adapter.bounded_http_request',
+            return_value=response,
+        ),
+        patch('apps.marketplaces.adapters.avito.adapter.metric_count') as count,
+        patch(
+            'apps.marketplaces.adapters.avito.adapter.metric_distribution',
+        ) as distribution,
+    ):
+        result = _avito_request(
+            requester,
+            'https://api.avito.ru/test',
+            operation='status',
+        )
+
+    assert result is response
+    count.assert_called_once_with(
+        'map.provider.request',
+        attributes={
+            'provider': 'avito',
+            'operation': 'status',
+            'outcome': 'failure',
+            'response_class': '5xx',
+        },
+    )
+    assert distribution.call_args.kwargs['attributes']['response_class'] == '5xx'
+
+
+def test_avito_request_emits_remote_429_and_network_error_telemetry():
+    response = MagicMock(status_code=429)
+    with (
+        patch(
+            'apps.marketplaces.adapters.avito.adapter.bounded_http_request',
+            return_value=response,
+        ),
+        patch('apps.marketplaces.adapters.avito.adapter.metric_count') as count,
+        patch('apps.marketplaces.adapters.avito.adapter.metric_distribution'),
+    ):
+        _avito_request(MagicMock(), 'https://api.avito.ru/test', operation='price')
+
+    assert count.call_args_list[0].kwargs['attributes'] == {
+        'provider': 'avito',
+        'operation': 'price',
+        'rate_limit_source': 'remote',
+    }
+    assert count.call_args_list[1].kwargs['attributes']['response_class'] == '4xx'
+
+    with (
+        patch(
+            'apps.marketplaces.adapters.avito.adapter.bounded_http_request',
+            side_effect=TimeoutError('provider timeout'),
+        ),
+        patch('apps.marketplaces.adapters.avito.adapter.metric_count') as count,
+        patch('apps.marketplaces.adapters.avito.adapter.metric_distribution'),
+        pytest.raises(TimeoutError),
+    ):
+        _avito_request(MagicMock(), 'https://api.avito.ru/test', operation='price')
+
+    assert count.call_args.kwargs['attributes']['response_class'] == 'network_error'
 
 
 # ------------------------------------------------------------------ #

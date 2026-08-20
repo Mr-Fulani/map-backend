@@ -2,6 +2,7 @@ import datetime
 import html
 import logging
 import re
+import time
 
 import boto3
 import requests
@@ -9,6 +10,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from django.conf import settings
 
 from apps.core.http_responses import bounded_http_request
+from apps.core.telemetry import metric_count, metric_distribution
 from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 from apps.marketplaces.adapters.avito.error_handler import (
     ForbiddenError,
@@ -29,13 +31,44 @@ AVITO_API_BASE = 'https://api.avito.ru'
 _STATS_CHUNK = 200  # максимум item_ids за один запрос к Stats API
 
 
-def _avito_request(requester, *args, **kwargs):
-    return bounded_http_request(
-        requester,
-        *args,
-        max_bytes=settings.AVITO_API_RESPONSE_MAX_BYTES,
-        **kwargs,
-    )
+def _avito_request(requester, *args, operation: str = 'other', **kwargs):
+    """Execute one physical Avito HTTP request and emit bounded telemetry."""
+    started_at = time.monotonic()
+    outcome = 'failure'
+    response_class = 'network_error'
+    try:
+        response = bounded_http_request(
+            requester,
+            *args,
+            max_bytes=settings.AVITO_API_RESPONSE_MAX_BYTES,
+            **kwargs,
+        )
+        if response.status_code == 429:
+            metric_count(
+                'map.provider.rate_limit',
+                attributes={
+                    'provider': 'avito',
+                    'operation': operation,
+                    'rate_limit_source': 'remote',
+                },
+            )
+        response_class = f'{response.status_code // 100}xx'
+        outcome = 'success' if 200 <= response.status_code < 300 else 'failure'
+        return response
+    finally:
+        attrs = {
+            'provider': 'avito',
+            'operation': operation,
+            'outcome': outcome,
+            'response_class': response_class,
+        }
+        metric_count('map.provider.request', attributes=attrs)
+        metric_distribution(
+            'map.provider.request.duration',
+            time.monotonic() - started_at,
+            unit='second',
+            attributes=attrs,
+        )
 
 
 def _strip_html(text: str) -> str:
@@ -121,13 +154,23 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         url = f'{AVITO_API_BASE}{path}'
         requester = getattr(requests, method)
         resp = _avito_request(
-            requester, url, headers=self._headers(), timeout=30, **kwargs,
+            requester,
+            url,
+            operation=operation,
+            headers=self._headers(),
+            timeout=30,
+            **kwargs,
         )
         self._rl.handle_response_headers(dict(resp.headers), self.account)
         if resp.status_code == 401:
             self._auth.invalidate(self.account)
             resp = _avito_request(
-                requester, url, headers=self._headers(), timeout=30, **kwargs,
+                requester,
+                url,
+                operation=operation,
+                headers=self._headers(),
+                timeout=30,
+                **kwargs,
             )
         handle_avito_error(resp)
         return resp
@@ -180,6 +223,7 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         resp = _avito_request(
             requests.post,
             f'{AVITO_API_BASE}/autoload/v1/upload',
+            operation='autoload',
             headers={'Authorization': f'Bearer {token}'},
             timeout=30,
         )
@@ -227,6 +271,7 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         resp = _avito_request(
             requests.get,
             f'{AVITO_API_BASE}/autoload/v1/user-docs/tree',
+            operation='status',
             headers={'Authorization': f'Bearer {token}'},
             timeout=60,
         )
@@ -249,6 +294,7 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         resp = _avito_request(
             requests.get,
             f'{AVITO_API_BASE}/autoload/v1/user-docs/node/{node_slug}/fields',
+            operation='status',
             headers={'Authorization': f'Bearer {token}'},
             timeout=60,
         )
@@ -352,6 +398,7 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         resp = _avito_request(
             requests.get,
             f'{AVITO_API_BASE}/autoload/v2/items/avito_ids',
+            operation='feed_poll',
             headers={'Authorization': f'Bearer {token}'},
             params={'query': ','.join(ad_ids)},
             timeout=30,
@@ -362,6 +409,7 @@ class AvitoAdapter(BaseMarketplaceAdapter):
             resp = _avito_request(
                 requests.get,
                 f'{AVITO_API_BASE}/autoload/v2/items/avito_ids',
+                operation='feed_poll',
                 headers={'Authorization': f'Bearer {token}'},
                 params={'query': ','.join(ad_ids)},
                 timeout=30,
@@ -387,6 +435,7 @@ class AvitoAdapter(BaseMarketplaceAdapter):
             resp = _avito_request(
                 requests.get,
                 f'{AVITO_API_BASE}/autoload/v4/uploads',
+                operation='feed_poll',
                 headers={'Authorization': f'Bearer {token}'},
                 params={'per_page': 1, 'page': 1}, timeout=30,
             )
@@ -421,6 +470,7 @@ class AvitoAdapter(BaseMarketplaceAdapter):
                 resp = _avito_request(
                     requests.get,
                     f'{AVITO_API_BASE}/autoload/v4/uploads/last_successful/items',
+                    operation='feed_poll',
                     headers=headers, params={'per_page': 100, 'page': page}, timeout=30,
                 )
                 if not resp.ok:
@@ -512,14 +562,24 @@ class AvitoAdapter(BaseMarketplaceAdapter):
                 'periodGrouping': 'day',
             }
             resp = _avito_request(
-                requests.post, url, headers=headers, json=payload, timeout=30,
+                requests.post,
+                url,
+                operation='stats',
+                headers=headers,
+                json=payload,
+                timeout=30,
             )
             if resp.status_code == 401:
                 self._auth.invalidate(self.account)
                 token = self._auth.get_token(self.account)
                 headers['Authorization'] = f'Bearer {token}'
                 resp = _avito_request(
-                    requests.post, url, headers=headers, json=payload, timeout=30,
+                    requests.post,
+                    url,
+                    operation='stats',
+                    headers=headers,
+                    json=payload,
+                    timeout=30,
                 )
             resp.raise_for_status()
             result.extend(resp.json().get('result', {}).get('items', []))

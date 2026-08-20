@@ -4,6 +4,37 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1
 
+RUN set -eux; \
+    apt-get update; \
+    apt-get install --yes --no-install-recommends --only-upgrade \
+        bsdutils \
+        libblkid1 \
+        liblastlog2-2 \
+        libmount1 \
+        libsmartcols1 \
+        libuuid1 \
+        login \
+        mount \
+        util-linux; \
+    for package in \
+        libblkid1 \
+        liblastlog2-2 \
+        libmount1 \
+        libsmartcols1 \
+        libuuid1 \
+        mount \
+        util-linux; do \
+        version="$(dpkg-query -W -f='${Version}' "$package")"; \
+        dpkg --compare-versions "$version" ge 2.41.5-0+deb13u1; \
+    done; \
+    bsdutils_version="$(dpkg-query -W -f='${Version}' bsdutils)"; \
+    dpkg --compare-versions \
+        "$bsdutils_version" ge 1:2.41.5-0+deb13u1; \
+    login_version="$(dpkg-query -W -f='${Version}' login)"; \
+    dpkg --compare-versions \
+        "$login_version" ge 1:4.16.0-2+really2.41.5-0+deb13u1; \
+    rm -rf /var/lib/apt/lists/*
+
 RUN useradd --create-home --shell /usr/sbin/nologin --uid 1000 app
 
 WORKDIR /app

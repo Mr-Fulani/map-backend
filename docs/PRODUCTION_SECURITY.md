@@ -341,6 +341,23 @@ Media job с `outcome_uncertain`, удержанным credit reservation или
 durable provider-response checkpoint, а также его soft-deleted Product, не
 удаляются до явной операторской сверки.
 
+## Blocking contract новой отправки фидов Avito
+
+Текущая стадия и freeze зафиксированы в
+[`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md), порядок будущих пакетов — в
+[`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md). Production продолжает
+работать через legacy-отправку. Для разделяемого WIP обязательны:
+
+- run и ingress — `legacy`;
+- artifact mode — `disabled`;
+- profile migration — `false`;
+- storage — `legacy_public`.
+
+Выключенный или сохранённый в WIP код не считается production-защитой.
+Private serving, GC, object deletion, cleanup, `0039`, новые миграции/режимы и
+worker wiring остаются замороженными до отдельного roadmap package. Cleanup и
+auto-applied `0039` нельзя выпускать одним release.
+
 ## Целостность media storage
 
 Аудит сверяет ProductImage, derived variants и fallback-изображения

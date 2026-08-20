@@ -106,6 +106,30 @@
 
 Trial: 14 дней бесплатно на плане Business. Скидка 20% при оплате за год.
 
+### Текущий режим фидов Avito
+
+Production продолжает использовать существующую legacy-отправку. Большой WIP
+новой отправки сохранён отдельно как `not-for-merge` snapshot и заморожен до
+разделения на независимо проверяемые пакеты.
+
+Для разделяемого WIP зафиксирован обязательный production-контракт; ни один
+пакет не меняет его без отдельного rollout:
+
+```text
+MARKETPLACE_FEED_RUN_MODE=legacy
+MARKETPLACE_FEED_INGRESS_MODE=legacy
+MARKETPLACE_FEED_ARTIFACT_MODE=disabled
+MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
+MARKETPLACE_FEED_STORAGE_MODE=legacy_public
+```
+
+Актуальные границы и порядок:
+
+- [текущее состояние](docs/AVITO_FEED_STATUS.md);
+- [roadmap P0–P7](docs/AVITO_FEED_ROADMAP.md);
+- [карта разделения изменений](docs/AVITO_FEED_CHANGESET_MANIFEST.md);
+- [обязательные правила выполнения](docs/ENGINEERING_EXECUTION_RULES.md).
+
 ---
 
 ## Технический стек

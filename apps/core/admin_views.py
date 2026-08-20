@@ -1,6 +1,7 @@
 from datetime import timedelta
 
 from django.contrib import admin
+from django.db.models import Count
 from django.shortcuts import render
 from django.utils.timezone import now
 
@@ -21,9 +22,13 @@ def stats_view(request):
     active_tenants = Tenant.objects.filter(is_active=True).count()
 
     # Листинги по статусам
-    listing_statuses = {}
-    for status_val, status_label in Listing.STATUS_CHOICES:
-        listing_statuses[status_label] = Listing.objects.filter(status=status_val).count()
+    status_counts = dict(
+        Listing.objects.values_list('status').annotate(total=Count('pk'))
+    )
+    listing_statuses = {
+        status_label: status_counts.get(status_val, 0)
+        for status_val, status_label in Listing.STATUS_CHOICES
+    }
 
     # Ошибки за 24 часа
     errors_24h = SyncLog.objects.filter(
@@ -36,8 +41,10 @@ def stats_view(request):
         created_at__gte=now() - timedelta(hours=24),
     ).count()
 
-    # Глубина очередей Celery
-    queue_depths = _get_celery_queue_depths()
+    # Snapshot собирается по расписанию. HTTP request не делает
+    # Celery broadcast и не сканирует Redis broker.
+    from apps.core.queue_observability import get_cached_celery_queue_snapshot
+    queue_snapshot = get_cached_celery_queue_snapshot()
 
     context = {
         **admin.site.each_context(request),
@@ -47,25 +54,7 @@ def stats_view(request):
         'listing_statuses': listing_statuses,
         'errors_24h': errors_24h,
         'warnings_24h': warnings_24h,
-        'queue_depths': queue_depths,
+        'queue_snapshot': queue_snapshot,
         'now': now(),
     }
     return render(request, 'admin/stats.html', context)
-
-
-def _get_celery_queue_depths() -> dict:
-    """Возвращает глубину очередей через Celery inspect с таймаутом 2 сек."""
-    try:
-        from celery import current_app
-
-        inspect = current_app.control.inspect(timeout=2)
-        reserved = inspect.reserved() or {}
-
-        counts: dict[str, int] = {}
-        for worker_tasks in reserved.values():
-            for task in worker_tasks:
-                queue = task.get('delivery_info', {}).get('routing_key', 'unknown')
-                counts[queue] = counts.get(queue, 0) + 1
-        return counts
-    except Exception:
-        return {}

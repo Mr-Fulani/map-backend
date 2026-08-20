@@ -1,4 +1,8 @@
-from config.sentry_scrubbing import scrub_sentry_breadcrumb, scrub_sentry_event
+from config.sentry_scrubbing import (
+    scrub_sentry_breadcrumb,
+    scrub_sentry_event,
+    scrub_sentry_metric,
+)
 
 
 def test_sentry_event_removes_auth_body_headers_locals_and_url_secrets():
@@ -53,6 +57,76 @@ def test_sentry_breadcrumb_strips_url_query_and_nested_credentials():
     assert scrubbed['data']['credentials'] == '[Filtered]'
 
 
+def test_sentry_scrubs_feed_location_referer_and_every_named_url():
+    capability = 'stable-capability-must-not-leak'
+    event = {
+        'request': {
+            'url': f'https://app.example/marketplace-feeds/v1/feed.xml?key={capability}',
+            'query_string': f'key={capability}',
+            'headers': {
+                'Referer': f'https://app.example/feed?key={capability}',
+            },
+        },
+        'extra': {
+            'feed_url': f'https://app.example/feed?key={capability}',
+            'presigned_url': f'https://storage.example/object?signature={capability}',
+            'response': {
+                'Location': f'https://storage.example/object?signature={capability}',
+            },
+        },
+    }
+
+    scrubbed = scrub_sentry_event(event)
+
+    assert capability not in repr(scrubbed)
+    assert scrubbed['request']['headers']['Referer'] == 'https://app.example/feed'
+    assert scrubbed['extra']['feed_url'] == 'https://app.example/feed'
+    assert scrubbed['extra']['presigned_url'] == 'https://storage.example/object'
+    assert scrubbed['extra']['response']['Location'] == 'https://storage.example/object'
+
+
+def test_sentry_transaction_event_scrubs_feed_capability_query():
+    capability = 'sampled-transaction-capability-must-not-leak'
+    transaction = {
+        'type': 'transaction',
+        'transaction': 'GET /marketplace-feeds/v1/feed.xml',
+        'request': {
+            'url': (
+                'https://app.example/marketplace-feeds/v1/feed.xml'
+                f'?id=00000000-0000-0000-0000-000000000001&key={capability}'
+            ),
+            'query_string': (
+                'id=00000000-0000-0000-0000-000000000001'
+                f'&key={capability}'
+            ),
+        },
+    }
+
+    scrubbed = scrub_sentry_event(transaction)
+
+    assert capability not in repr(scrubbed)
+    assert scrubbed['request']['url'] == (
+        'https://app.example/marketplace-feeds/v1/feed.xml'
+    )
+    assert scrubbed['request']['query_string'] == '[Filtered]'
+
+
+def test_sentry_recursively_scrubs_nested_query_string():
+    capability = 'nested-capability-must-not-leak'
+    event = {
+        'contexts': {
+            'trace': {
+                'query_string': f'id=endpoint-id&key={capability}',
+            },
+        },
+    }
+
+    scrubbed = scrub_sentry_event(event)
+
+    assert capability not in repr(scrubbed)
+    assert scrubbed['contexts']['trace']['query_string'] == '[Filtered]'
+
+
 def test_sentry_url_scrubber_removes_embedded_basic_auth_credentials():
     event = {
         'request': {
@@ -63,3 +137,28 @@ def test_sentry_url_scrubber_removes_embedded_basic_auth_credentials():
     scrubbed = scrub_sentry_event(event)
 
     assert scrubbed['request']['url'] == 'https://example.com:8443/path'
+
+
+def test_sentry_metric_keeps_only_map_allowlisted_dimensions():
+    metric = {
+        'name': 'map.provider.request',
+        'attributes': {
+            'provider': 'avito',
+            'operation': 'status',
+            'outcome': 'failure',
+            'response_class': '5xx',
+            'tenant_id': '123',
+            'request_url': 'https://secret.example/path',
+        },
+    }
+
+    scrubbed = scrub_sentry_metric(metric)
+
+    assert scrubbed['attributes'] == {
+        'provider': 'avito',
+        'operation': 'status',
+        'outcome': 'failure',
+        'response_class': '5xx',
+    }
+    external = {'name': 'sentry.sdk.metric', 'attributes': {'tenant_id': '123'}}
+    assert scrub_sentry_metric(external) == external

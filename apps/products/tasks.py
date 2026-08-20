@@ -1,5 +1,6 @@
 from datetime import timedelta
 import logging
+import time
 from urllib.parse import unquote, urlparse
 
 from celery import shared_task
@@ -7,6 +8,7 @@ from django.db import transaction
 from django.db.models import Q
 from django.utils.timezone import now
 
+from apps.core.telemetry import metric_count, metric_distribution
 from apps.datasources.models import DataSourceConnection
 from apps.datasources.registry import get_adapter
 from apps.products.models import Product, ProductBulkActionJob, ProductParseJob
@@ -30,6 +32,7 @@ def _write_sync_log(tenant, event_type: str, status: str, message: str) -> None:
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='sync_import')
 def import_from_datasource(self, connection_id: int):
+    started_at = time.monotonic()
     try:
         connection = DataSourceConnection.objects.select_related('tenant').get(
             pk=connection_id,
@@ -37,6 +40,10 @@ def import_from_datasource(self, connection_id: int):
             tenant__is_active=True,
         )
     except DataSourceConnection.DoesNotExist:
+        metric_count(
+            'map.sync.attempt',
+            attributes={'source_type': 'other', 'outcome': 'skipped'},
+        )
         return {
             'skipped': True,
             'reason': 'connection_not_found_or_inactive',
@@ -50,6 +57,10 @@ def import_from_datasource(self, connection_id: int):
         connection.last_error = reason
         connection.save(update_fields=['last_sync_status', 'last_error'])
         _write_sync_log(tenant, 'datasource_import', 'warn', reason)
+        metric_count(
+            'map.sync.attempt',
+            attributes={'source_type': connection.type, 'outcome': 'skipped'},
+        )
         return {'skipped': True, 'reason': reason}
 
     adapter = get_adapter(connection)
@@ -89,6 +100,22 @@ def import_from_datasource(self, connection_id: int):
         # чтобы не требовать ручного запуска (категория нужна для маппинга на Avito).
         if counts['created'] or counts['updated']:
             classify_tenant_products.delay(tenant.id)
+        metric_count(
+            'map.sync.attempt',
+            attributes={'source_type': connection.type, 'outcome': 'success'},
+        )
+        metric_distribution(
+            'map.sync.attempt.duration',
+            time.monotonic() - started_at,
+            unit='second',
+            attributes={'source_type': connection.type, 'outcome': 'success'},
+        )
+        for item_result, count in counts.items():
+            metric_count(
+                'map.sync.items',
+                count,
+                attributes={'source_type': connection.type, 'result': item_result},
+            )
         return counts
 
     except Exception as exc:
@@ -96,6 +123,18 @@ def import_from_datasource(self, connection_id: int):
         connection.last_error = str(exc)
         connection.save(update_fields=['last_sync_status', 'last_error'])
         _write_sync_log(tenant, 'datasource_import', 'error', str(exc))
+        will_retry = self.request.retries < self.max_retries
+        outcome = 'retry' if will_retry else 'failure'
+        metric_count(
+            'map.sync.attempt',
+            attributes={'source_type': connection.type, 'outcome': outcome},
+        )
+        metric_distribution(
+            'map.sync.attempt.duration',
+            time.monotonic() - started_at,
+            unit='second',
+            attributes={'source_type': connection.type, 'outcome': outcome},
+        )
         raise self.retry(exc=exc)
 
 

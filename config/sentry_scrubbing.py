@@ -1,9 +1,9 @@
 """Fail-closed redaction for error telemetry."""
 
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
-from sentry_sdk.types import Event
+from sentry_sdk.types import Event, Metric
 
 
 _SENSITIVE_KEY_PARTS = (
@@ -23,8 +23,16 @@ _SENSITIVE_EXACT_KEYS = {
     'confirm_url',
     'key',
     'magic_link',
+    'query_string',
     'reset_url',
     'verification_url',
+}
+_URL_VALUE_KEYS = {
+    'location',
+    'referer',
+    'referrer',
+    'request_url',
+    'url',
 }
 
 
@@ -66,7 +74,13 @@ def _redact(value, *, parent_key: str = ''):
         return [_redact(item, parent_key=parent_key) for item in value]
     if isinstance(value, tuple):
         return tuple(_redact(item, parent_key=parent_key) for item in value)
-    if isinstance(value, str) and parent_key in {'url', 'request_url'}:
+    if (
+        isinstance(value, str)
+        and (
+            parent_key in _URL_VALUE_KEYS
+            or parent_key.endswith('_url')
+        )
+    ):
         return _without_url_secrets(value)
     return value
 
@@ -92,3 +106,23 @@ def scrub_sentry_event(
 def scrub_sentry_breadcrumb(crumb: dict, _hint=None) -> dict:
     """Strip credentials and URL queries before a breadcrumb is retained."""
     return _redact(crumb)
+
+
+def scrub_sentry_metric(
+    metric: Metric,
+    _hint: dict[str, Any] | None = None,
+) -> Metric | None:
+    """Allow only MAP metrics and their already-bounded application attributes.
+
+    Sentry applies scope attributes after the application wrapper, so this
+    final processor deliberately drops those implicit dimensions as well.
+    """
+    if not str(metric.get('name') or '').startswith('map.'):
+        return metric
+    from apps.core.telemetry import safe_metric_attributes
+
+    metric['attributes'] = cast(
+        Any,
+        safe_metric_attributes(metric.get('attributes')),
+    )
+    return metric

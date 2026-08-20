@@ -1,7 +1,10 @@
 from datetime import date, timedelta
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from celery.app.task import Context
+from celery.exceptions import MaxRetriesExceededError, Retry
 from django.test import Client
 
 from apps.datasources.models import DataSourceConnection
@@ -84,3 +87,56 @@ def test_inactive_datasource_is_rejected_at_api_worker_and_beat_boundaries():
     human_delay.assert_not_called()
     beat_delay.assert_called_once_with(active.pk)
     assert beat_result == {'connections_queued': 1}
+
+
+@pytest.mark.django_db
+def test_datasource_import_metrics_distinguish_retry_from_exhausted_failure():
+    tenant, _ = TenantService.create_tenant(
+        'Import Retry Metrics',
+        'import-retry-metrics',
+        'import-retry-metrics@test.com',
+        'pass12345',
+    )
+    connection = DataSourceConnection.objects.create(
+        tenant=tenant,
+        name='Failing 1C',
+        type=DataSourceConnection.TYPE_1C_HTTP,
+        credentials=b'opaque',
+    )
+    adapter = SimpleNamespace(
+        fetch_changes=lambda **_kwargs: (_ for _ in ()).throw(
+            RuntimeError('source unavailable'),
+        ),
+    )
+
+    with (
+        patch('apps.products.tasks.get_adapter', return_value=adapter),
+        patch('apps.products.tasks.metric_count') as count,
+        patch('apps.products.tasks.metric_distribution'),
+        patch.object(import_from_datasource, 'retry', side_effect=Retry()),
+        pytest.raises(Retry),
+    ):
+        import_from_datasource(connection.pk)
+
+    assert count.call_args.kwargs['attributes']['outcome'] == 'retry'
+
+    import_from_datasource.request_stack.push(
+        Context(retries=import_from_datasource.max_retries),
+    )
+    try:
+        with (
+            patch('apps.products.tasks.get_adapter', return_value=adapter),
+            patch('apps.products.tasks.metric_count') as count,
+            patch('apps.products.tasks.metric_distribution'),
+            patch.object(
+                import_from_datasource,
+                'retry',
+                side_effect=MaxRetriesExceededError(),
+            ),
+            pytest.raises(MaxRetriesExceededError),
+        ):
+            import_from_datasource(connection.pk)
+    finally:
+        import_from_datasource.request_stack.pop()
+
+    assert count.call_args.kwargs['attributes']['outcome'] == 'failure'
