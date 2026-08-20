@@ -1,9 +1,9 @@
 """Fail-closed redaction for error telemetry."""
 
-from typing import Any
+from typing import Any, cast
 from urllib.parse import urlsplit, urlunsplit
 
-from sentry_sdk.types import Event
+from sentry_sdk.types import Event, Metric
 
 
 _SENSITIVE_KEY_PARTS = (
@@ -108,7 +108,10 @@ def scrub_sentry_breadcrumb(crumb: dict, _hint=None) -> dict:
     return _redact(crumb)
 
 
-def scrub_sentry_metric(metric: dict, _hint=None) -> dict | None:
+def scrub_sentry_metric(
+    metric: Metric,
+    _hint: dict[str, Any] | None = None,
+) -> Metric | None:
     """Allow only MAP metrics and their already-bounded application attributes.
 
     Sentry applies scope attributes after the application wrapper, so this
@@ -118,5 +121,8 @@ def scrub_sentry_metric(metric: dict, _hint=None) -> dict | None:
         return metric
     from apps.core.telemetry import safe_metric_attributes
 
-    metric['attributes'] = safe_metric_attributes(metric.get('attributes'))
+    metric['attributes'] = cast(
+        Any,
+        safe_metric_attributes(metric.get('attributes')),
+    )
     return metric

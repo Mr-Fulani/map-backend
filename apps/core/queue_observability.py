@@ -78,7 +78,7 @@ def _published_at_ms(raw_message: Any) -> int | None:
 
 def _collect_ready_queues(*, observed_at: float) -> dict[str, dict[str, Any]]:
     queue_names = declared_queue_names()
-    result = {
+    result: dict[str, dict[str, Any]] = {
         queue: {
             'ready_depth': 0,
             'oldest_ready_age_seconds': None,
@@ -123,7 +123,9 @@ def _collect_ready_queues(*, observed_at: float) -> dict[str, dict[str, Any]]:
             ):
                 result[queue]['age_status'] = 'unknown'
                 continue
-            oldest_ms = min(published_values)
+            oldest_ms = min(
+                value for value in published_values if value is not None
+            )
             result[queue]['age_status'] = 'known'
             result[queue]['oldest_ready_age_seconds'] = round(
                 observed_at - (oldest_ms / 1000),
@@ -165,7 +167,9 @@ def _collect_worker_state(
 
     subscribed = {queue: 0 for queue in queues}
     active_count = {queue: 0 for queue in queues}
-    max_active_age = {queue: None for queue in queues}
+    max_active_age: dict[str, float | None] = {
+        queue: None for queue in queues
+    }
 
     for worker_queues in active_queues.values():
         seen: set[str] = set()
@@ -195,8 +199,9 @@ def _collect_worker_state(
     for queue, data in queues.items():
         data['subscribed_workers'] = subscribed[queue]
         data['active_count'] = active_count[queue]
-        if max_active_age[queue] is not None:
-            data['max_active_age_seconds'] = round(max_active_age[queue], 3)
+        active_age = max_active_age[queue]
+        if active_age is not None:
+            data['max_active_age_seconds'] = round(active_age, 3)
     return True
 
 
