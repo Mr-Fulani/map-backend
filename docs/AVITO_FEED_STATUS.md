@@ -1,6 +1,6 @@
 # Текущее состояние работ по фидам Avito
 
-Обновлено: 2026-08-20.
+Обновлено: 2026-08-21.
 
 Исходный WIP сохранён как локальный `not-for-merge` snapshot:
 
@@ -15,9 +15,10 @@ Snapshot хранит смешанный незавершённый WIP, не п
 release и не означает, что его код присутствует в P0-ветке.
 
 P0 сохранён commit `646ee62d3113042fb0d283c4257e65d5611caa40`.
-От него создана локальная P1-ветка `codex/p1-avito-observability`. В P1
-перенесены только observability и production-check hunks; push и deploy не
-выполнялись.
+P1 observability был выделен по hunks, проверен, merged через PR `#225` и
+выложен в production commit `8710007c37eba1de000475fc8024fe850f97ef1b`.
+Текущий P1 follow-up PR `#226` добавляет только Sentry Cron dead-man collector,
+его тесты и runbook; feed-код и feed-флаги он не меняет.
 
 Этот файл — единственный источник правды о текущей стадии работ. Roadmap
 находится в [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а обязательные
@@ -199,9 +200,25 @@ docker compose run --rm django pytest --cov=apps --cov-report=term-missing
 `git diff --check`, проверка Markdown-ссылок, отсутствие migrations/frozen
 paths и неизменность `MARKETPLACE_FEED_*` hunks проходят перед P1 commit.
 Production значения остаются
-`legacy/legacy/disabled/false/legacy_public`. Эти результаты дают P1 статус
-`VERIFIED`, но не `DEPLOYED_OFF`: внешний Sentry dashboard/alerts, test-fire и
-период наблюдения ещё не выполнялись.
+`legacy/legacy/disabled/false/legacy_public`. P1 foundation выложен с этими
+значениями. Sentry dashboard, восемь metric monitors и alert
+`P1 Production Critical Alerts` настроены; email action направлен команде
+`#map-dodugir`.
+
+Cron dead-man follow-up создал code-owned monitor
+`map-celery-observability-collector` (`1674179`). Реальный pre-deploy test-fire
+создал missed-check-in issue `141940026`, вызвал два alert actions и закрыл issue
+после успешного check-in. Monitor временно disabled до release follow-up, чтобы
+не создавать ложные пропуски без ещё не выложенного producer-кода.
+
+Follow-up gates: 21 observability/Sentry test и 89 production runtime/host
+contract tests прошли; mypy, flake8, compileall, clean PostgreSQL migrations и
+migration drift прошли. GitHub full suite дал 1862 passed и один известный
+baseline failure в retention-тесте. Тот же `assert 0 == 1` независимо
+воспроизведён на чистом base commit `8710007`: тест смешивает
+`timezone.localdate()` и UTC `timezone.now().date()` в интервале 00:00–03:00
+Europe/Istanbul. Retention не меняется внутри P1; CI повторяется после UTC
+midnight.
 
 Для смешанного WIP snapshot всё ещё не выполнены как единый актуальный gate:
 
@@ -214,8 +231,8 @@ Production значения остаются
 - реальная проверка приватного versioned bucket, IAM и восстановления после
   сбоев.
 
-Snapshot и будущие P1–P7 не являются кандидатами на релиз. Успешный P0
-baseline подтверждает чистый исходный `main`, но не верифицирует код из
+Snapshot и будущие P2–P7 не являются кандидатами на релиз. Успешные P0/P1
+gates подтверждают выделенные пакеты, но не верифицируют оставшийся код из
 snapshot.
 
 ## Текущий bounded cleanup-срез
@@ -252,11 +269,11 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный разрешённый шаг
 
-Завершены локальные пакеты P0 и P1 из
-[`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md). P1 observability проверен, но
-не выложен. Следующее допустимое действие для P1 — отдельный release и период
-наблюдения без включения новых feed-механизмов. P2 требует новой явной
-активации; он пока не начат.
+P0 завершён, P1 foundation выложен. Активный пакет — завершение P1 Cron
+dead-man release и период наблюдения без включения новых feed-механизмов.
+Владелец продукта 2026-08-21 явно разрешил продолжить roadmap; поэтому P2
+считается следующим разрешённым пакетом, но его код не смешивается с P1 и
+начинается только после закрытия текущего release gate.
 
 ## Состояние разделения
 
@@ -270,7 +287,9 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 | Физическое выделение P1 observability по hunks | `VERIFIED` 2026-08-20 |
 | P1 narrow observability/Sentry/runtime/host tests | `VERIFIED` 2026-08-20, 86 passed |
 | P1 migrations, full backend, coverage и flake8 | `VERIFIED` 2026-08-20, 1859 passed, 1 skipped |
-| P1 production release и период наблюдения | `NOT_STARTED` |
+| P1 foundation production release | `DEPLOYED_OFF` 2026-08-20, commit `8710007` |
+| P1 Sentry Cron dead-man release и период наблюдения | `IN_PROGRESS`, PR `#226` |
+| P2 lifecycle activation | `AUTHORIZED` 2026-08-21, ждёт закрытия P1 gate |
 | Физическое разделение diff на commits/PR P2–P7 | `NOT_STARTED` |
 | Проверки и deploy пакетов P2–P5 | `NOT_STARTED` |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |
