@@ -1,5 +1,7 @@
 from django.core.cache import cache
 
+from apps.core.telemetry import metric_count
+
 # Консервативные лимиты — уточняются по реальным заголовкам X-RateLimit-*
 RATE_LIMITS = {
     'publish': {'rate': 10, 'per': 60},
@@ -27,6 +29,14 @@ class AvitoRateLimiter:
         """Списывает один запрос из бакета. Бросает RateLimitError при превышении."""
         # Если Avito вернул slow-down флаг — блокируем раньше лимита
         if cache.get(f'avito:rl:slow:{account.pk}'):
+            metric_count(
+                'map.provider.rate_limit',
+                attributes={
+                    'provider': 'avito',
+                    'operation': operation,
+                    'rate_limit_source': 'local',
+                },
+            )
             raise RateLimitError(retry_after=60)
 
         config = RATE_LIMITS.get(operation, {'rate': 10, 'per': 60})
@@ -41,6 +51,14 @@ class AvitoRateLimiter:
 
         if count > config['rate']:
             self._log_rate_limit(account, operation)
+            metric_count(
+                'map.provider.rate_limit',
+                attributes={
+                    'provider': 'avito',
+                    'operation': operation,
+                    'rate_limit_source': 'local',
+                },
+            )
             raise RateLimitError(retry_after=config['per'])
 
     def handle_response_headers(self, headers: dict, account) -> None:

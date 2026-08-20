@@ -14,6 +14,11 @@
 Snapshot хранит смешанный незавершённый WIP, не предназначен для merge или
 release и не означает, что его код присутствует в P0-ветке.
 
+P0 сохранён commit `646ee62d3113042fb0d283c4257e65d5611caa40`.
+От него создана локальная P1-ветка `codex/p1-avito-observability`. В P1
+перенесены только observability и production-check hunks; push и deploy не
+выполнялись.
+
 Этот файл — единственный источник правды о текущей стадии работ. Roadmap
 находится в [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а обязательные
 правила выполнения — в
@@ -145,6 +150,59 @@ diff \
 Проверка staged-paths подтвердила, что P0 содержит только десять объявленных
 документов: runtime-кода, settings, миграций и тестов в пакете нет.
 
+### Проверка P1 observability
+
+P1 содержит 16 production/config/operations-файлов, восемь test-файлов и один
+runbook. Новых миграций нет. Public feed endpoint, lifecycle/product writer
+changes, future `feed_poll` budget, private storage, cleanup, GC, `0039` и
+worker wiring будущих пакетов исключены по hunks.
+
+Узкий gate:
+
+```text
+docker compose run --rm django pytest \
+  apps/core/tests/test_celery_observability.py \
+  apps/core/tests/test_observability_periodic.py \
+  apps/core/tests/test_queue_observability.py \
+  apps/core/tests/test_sentry_scrubbing.py \
+  apps/marketplaces/tests/test_avito.py::test_rate_limiter_creates_ttl_window_and_rejects_only_over_limit \
+  apps/marketplaces/tests/test_avito.py::test_avito_request_emits_bounded_5xx_telemetry \
+  apps/marketplaces/tests/test_avito.py::test_avito_request_emits_remote_429_and_network_error_telemetry \
+  apps/products/tests/test_subscription_access_tasks.py::test_datasource_import_metrics_distinguish_retry_from_exhausted_failure \
+  tests/test_production_host_contract.py tests/test_runtime_contract.py
+результат: exit 0, 86 passed in 20.84s
+```
+
+Migration и static gates:
+
+```text
+docker compose run --rm django python manage.py makemigrations --check --dry-run
+результат: exit 0, No changes detected
+
+docker compose run --rm django python manage.py migrate --noinput
+результат: exit 0, все существующие миграции применены на чистой PostgreSQL
+
+docker compose run --rm django python manage.py migrate --noinput
+результат: exit 0, No migrations to apply поверх схемы предыдущего пакета
+
+docker compose run --rm django flake8 .
+результат: exit 0
+```
+
+Полный backend gate:
+
+```text
+docker compose run --rm django pytest --cov=apps --cov-report=term-missing
+результат: exit 0, 1859 passed, 1 skipped in 899.68s, coverage 79.63%
+```
+
+`git diff --check`, проверка Markdown-ссылок, отсутствие migrations/frozen
+paths и неизменность `MARKETPLACE_FEED_*` hunks проходят перед P1 commit.
+Production значения остаются
+`legacy/legacy/disabled/false/legacy_public`. Эти результаты дают P1 статус
+`VERIFIED`, но не `DEPLOYED_OFF`: внешний Sentry dashboard/alerts, test-fire и
+период наблюдения ещё не выполнялись.
+
 Для смешанного WIP snapshot всё ещё не выполнены как единый актуальный gate:
 
 - применение всех миграций на чистой PostgreSQL;
@@ -194,11 +252,11 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный разрешённый шаг
 
-Завершён только пакет `P0` из
-[`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md): зафиксировать состав
-изменений, разделить их, получить чистую базовую проверку и не менять рабочие
-production-флаги. P1 observability требует отдельной активации после завершения
-и отчёта P0; он пока не активирован.
+Завершены локальные пакеты P0 и P1 из
+[`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md). P1 observability проверен, но
+не выложен. Следующее допустимое действие для P1 — отдельный release и период
+наблюдения без включения новых feed-механизмов. P2 требует новой явной
+активации; он пока не начат.
 
 ## Состояние разделения
 
@@ -209,8 +267,11 @@ production-флаги. P1 observability требует отдельной акт
 | P0 Markdown links, inventory parity и `git diff --check` | `VERIFIED` 2026-08-20 |
 | P0 clean PostgreSQL migrations и migration drift | `VERIFIED` 2026-08-20 |
 | P0 полный backend suite, coverage и flake8 | `VERIFIED` 2026-08-20 |
-| Физическое разделение diff на commits/PR P1–P7 | `NOT_STARTED` |
-| Проверки пакета P1 | `NOT_STARTED` |
+| Физическое выделение P1 observability по hunks | `VERIFIED` 2026-08-20 |
+| P1 narrow observability/Sentry/runtime/host tests | `VERIFIED` 2026-08-20, 86 passed |
+| P1 migrations, full backend, coverage и flake8 | `VERIFIED` 2026-08-20, 1859 passed, 1 skipped |
+| P1 production release и период наблюдения | `NOT_STARTED` |
+| Физическое разделение diff на commits/PR P2–P7 | `NOT_STARTED` |
 | Проверки и deploy пакетов P2–P5 | `NOT_STARTED` |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |
 | P7 cleanup/GC/0039 | `FROZEN` |

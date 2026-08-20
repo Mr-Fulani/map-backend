@@ -34,7 +34,7 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
-    'apps.core',
+    'apps.core.apps.CoreConfig',
     'apps.users',
     'apps.tenants',
     'apps.billing',
@@ -329,6 +329,10 @@ CACHES = {
         'LOCATION': COORDINATION_REDIS_URL,
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            # Coordination is on business hot paths and in staff telemetry.
+            # A failed durable Redis must fail fast instead of hanging workers.
+            'SOCKET_CONNECT_TIMEOUT': 2,
+            'SOCKET_TIMEOUT': 2,
         },
         'KEY_PREFIX': 'map_coord',
     },
@@ -336,6 +340,7 @@ CACHES = {
 
 # --- Celery ---
 CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_PROTOCOL = 2
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'Europe/Moscow'
@@ -393,6 +398,7 @@ CELERY_TASK_QUEUES = {
     'part_parsing_bulk':  {'exchange': 'part_parsing_bulk',  'routing_key': 'part_parsing_bulk'},
 }
 CELERY_TASK_DEFAULT_QUEUE = 'sync_import'
+CELERY_TASK_CREATE_MISSING_QUEUES = False
 CELERY_TASK_ROUTES = {
     'apps.image_search.tasks.search_images_for_product': {'queue': 'image_search'},
 }

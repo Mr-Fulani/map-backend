@@ -1,4 +1,10 @@
+import os
 from pathlib import Path
+import re
+import subprocess
+
+import pytest
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -7,6 +13,7 @@ RELEASE = (ROOT / 'scripts' / 'production_release.sh').read_text()
 DEPLOY_SCRIPT = (ROOT / 'deploy.sh').read_text()
 INSTALLER = (ROOT / 'scripts' / 'install_production_host_services.sh').read_text()
 MONITOR = (ROOT / '.github' / 'workflows' / 'production-monitor.yml').read_text()
+MONITOR_CONFIG = yaml.safe_load(MONITOR)
 DEPLOY = (ROOT / '.github' / 'workflows' / 'deploy.yml').read_text()
 ROTATE_BACKUP_DB = (ROOT / 'scripts' / 'rotate_backup_db_password.sh').read_text()
 BOOTSTRAP = (ROOT / 'scripts' / 'bootstrap_production_host_contract.sh').read_text()
@@ -17,6 +24,64 @@ CHECKOUT_VALIDATOR = (
 ).read_text()
 SUDOERS = (ROOT / 'ops' / 'sudoers' / 'saas-poster-deploy').read_text()
 RELOAD_NGINX = (ROOT / 'scripts' / 'reload_production_nginx.sh').read_text()
+
+
+def _monitor_step(step_id):
+    steps = MONITOR_CONFIG['jobs']['verify']['steps']
+    return next(step for step in steps if step.get('id') == step_id)
+
+
+def _monitor_triggers():
+    # PyYAML 1.1 treats the unquoted GitHub Actions key `on` as boolean true.
+    return MONITOR_CONFIG.get('on', MONITOR_CONFIG.get(True))
+
+
+def _run_monitor_block(run_block, tmp_path, *, list_result='', fail_on=''):
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    gh_log = tmp_path / 'gh.log'
+    fake_gh = fake_bin / 'gh'
+    fake_gh.write_text(
+        '#!/usr/bin/env bash\n'
+        'set -eu\n'
+        'printf \'%s\\n\' "$*" >> "$GH_LOG"\n'
+        'command_name="$1 $2"\n'
+        'if [ "${GH_FAIL_ON:-}" = "$command_name" ]; then exit 42; fi\n'
+        'if [ "$command_name" = "issue list" ]; then '
+        'printf \'%s\' "${GH_LIST_RESULT:-}"; fi\n',
+    )
+    fake_gh.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            'PATH': f'{fake_bin}:{env["PATH"]}',
+            'GH_LOG': str(gh_log),
+            'GH_LIST_RESULT': list_result,
+            'GH_FAIL_ON': fail_on,
+            'GITHUB_REPOSITORY': 'example/saas-poster',
+            'GITHUB_RUN_ID': '12345',
+            'GITHUB_SERVER_URL': 'https://github.example',
+            'PROD_SSH_KEY': 'must-not-appear-in-incident-output',
+        },
+    )
+    result = subprocess.run(
+        [
+            'bash',
+            '--noprofile',
+            '--norc',
+            '-c',
+            f'set -euo pipefail\n{run_block}',
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+    log = gh_log.read_text() if gh_log.exists() else ''
+    return result, log
 
 
 def test_restricted_gateway_has_a_tiny_allowlist_and_never_evaluates_input():
@@ -218,6 +283,202 @@ def test_scheduled_monitor_checks_public_backup_and_runtime_topology():
     assert 'Production monitor failed' in MONITOR
     assert 'test "$PROD_USER" = mapdeploy' in MONITOR
     assert 'test "$PROD_USER" = mapdeploy' in DEPLOY
+
+
+def test_monitor_deadline_reserves_incident_budget():
+    job = MONITOR_CONFIG['jobs']['verify']
+    production_check = _monitor_step('production_check')
+    incident_open = _monitor_step('incident_open')
+    incident_close = _monitor_step('incident_close')
+
+    assert job['timeout-minutes'] == 25
+    assert production_check['timeout-minutes'] == 17
+    assert production_check['continue-on-error'] is True
+    assert incident_open['timeout-minutes'] == 5
+    assert incident_close['timeout-minutes'] == 5
+    assert job['timeout-minutes'] * 60 >= (
+        production_check['timeout-minutes'] * 60
+        + max(
+            incident_open['timeout-minutes'],
+            incident_close['timeout-minutes'],
+        )
+        * 60
+        + 120
+    )
+    assert incident_open['if'] == (
+        "${{ always() && !cancelled() && "
+        "steps.production_check.outcome == 'failure' }}"
+    )
+    assert incident_close['if'] == (
+        "${{ always() && !cancelled() && "
+        "steps.production_check.outcome == 'success' }}"
+    )
+    assert incident_open['run'].rstrip().endswith('exit 1')
+
+
+def test_all_monitor_network_calls_are_bounded_by_the_check_deadline():
+    production_check = _monitor_step('production_check')
+    run_block = production_check['run']
+
+    assert 'curl --fail --silent --show-error --max-time 20' in run_block
+    assert re.search(
+        r'timeout --foreground --signal=TERM --kill-after=2s 15s \\\n'
+        r'\s+ssh-keyscan -T 10 ',
+        run_block,
+    )
+    ssh_timeouts = re.findall(
+        r'timeout --foreground --signal=TERM --kill-after=(\d+)s '
+        r'(\d+)([ms]) \\\n\s+ssh ',
+        run_block,
+    )
+    assert ssh_timeouts == [('10', '11', 'm'), ('10', '2', 'm'), ('10', '2', 'm')]
+    assert run_block.count('ssh "${ssh_options[@]}"') == 3
+
+    ssh_budget = sum(
+        int(duration) * (60 if unit == 'm' else 1) + int(kill_after)
+        for kill_after, duration, unit in ssh_timeouts
+    )
+    # curl + keyscan (including hard-kill grace) + SSH + bounded local setup.
+    worst_case_seconds = 20 + 15 + 2 + ssh_budget + 45
+    assert worst_case_seconds <= production_check['timeout-minutes'] * 60
+
+
+@pytest.mark.parametrize(
+    ('fault_mode', 'expected_returncode'),
+    [('fail', 97), ('timeout', 124), ('unexpected', 64)],
+)
+def test_monitor_fault_injection_fails_before_production_network(
+    tmp_path,
+    fault_mode,
+    expected_returncode,
+):
+    network_log = tmp_path / 'network.log'
+    fake_bin = tmp_path / 'bin'
+    fake_bin.mkdir()
+    for command in ('curl', 'ssh', 'ssh-keyscan'):
+        path = fake_bin / command
+        path.write_text(
+            '#!/usr/bin/env bash\n'
+            'printf \'%s\\n\' "$0 $*" >> "$NETWORK_LOG"\n'
+            'exit 99\n',
+        )
+        path.chmod(0o755)
+    fake_timeout = fake_bin / 'timeout'
+    fake_timeout.write_text(
+        '#!/usr/bin/env bash\n'
+        '# Deterministic GNU-timeout result for the synthetic timeout fault.\n'
+        'exit 124\n',
+    )
+    fake_timeout.chmod(0o755)
+
+    env = os.environ.copy()
+    env.update(
+        {
+            'PATH': f'{fake_bin}:{env["PATH"]}',
+            'MONITOR_FAULT_MODE': fault_mode,
+            'NETWORK_LOG': str(network_log),
+        },
+    )
+    result = subprocess.run(
+        [
+            'bash',
+            '--noprofile',
+            '--norc',
+            '-c',
+            f'set -euo pipefail\n{_monitor_step("production_check")["run"]}',
+        ],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=False,
+    )
+
+    assert result.returncode == expected_returncode
+    assert not network_log.exists()
+
+
+def test_monitor_fault_input_is_closed_and_scheduled_runs_default_to_none():
+    triggers = _monitor_triggers()
+    fault_input = triggers['workflow_dispatch']['inputs']['fault_mode']
+
+    assert fault_input['type'] == 'choice'
+    assert fault_input['default'] == 'none'
+    assert fault_input['options'] == ['none', 'fail', 'timeout']
+    assert "github.event_name == 'workflow_dispatch'" in MONITOR
+    assert "inputs.fault_mode || 'none'" in MONITOR
+
+
+@pytest.mark.parametrize(
+    ('step_id', 'list_result', 'expected_mutation', 'expected_returncode'),
+    [
+        ('incident_open', '', 'issue create', 1),
+        ('incident_open', '77', 'issue comment 77', 1),
+        ('incident_close', '77', 'issue close 77', 0),
+        ('incident_close', '', None, 0),
+    ],
+)
+def test_monitor_incident_reconciliation_paths(
+    tmp_path,
+    step_id,
+    list_result,
+    expected_mutation,
+    expected_returncode,
+):
+    result, gh_log = _run_monitor_block(
+        _monitor_step(step_id)['run'],
+        tmp_path,
+        list_result=list_result,
+    )
+
+    assert result.returncode == expected_returncode
+    assert 'issue list --repo example/saas-poster --state open' in gh_log
+    assert '--json number,title' in gh_log
+    assert '--limit 100' in gh_log
+    assert 'select(.title == "Production monitor failed")' in gh_log
+    if expected_mutation is None:
+        assert len(gh_log.splitlines()) == 1
+    else:
+        assert expected_mutation in gh_log
+        assert len(gh_log.splitlines()) == 2
+    if step_id == 'incident_open':
+        assert (
+            'Run: https://github.example/example/saas-poster/actions/runs/12345'
+            in gh_log
+        )
+    elif list_result:
+        assert 'Automated production checks have recovered.' in gh_log
+    assert 'must-not-appear-in-incident-output' not in (
+        result.stdout + result.stderr + gh_log
+    )
+
+
+@pytest.mark.parametrize(
+    ('step_id', 'list_result', 'failed_command', 'expected_calls'),
+    [
+        ('incident_open', '', 'issue list', 1),
+        ('incident_open', '', 'issue create', 2),
+        ('incident_open', '77', 'issue comment', 2),
+        ('incident_close', '77', 'issue close', 2),
+    ],
+)
+def test_monitor_incident_command_failures_remain_failures(
+    tmp_path,
+    step_id,
+    list_result,
+    failed_command,
+    expected_calls,
+):
+    result, gh_log = _run_monitor_block(
+        _monitor_step(step_id)['run'],
+        tmp_path,
+        list_result=list_result,
+        fail_on=failed_command,
+    )
+
+    assert result.returncode == 42
+    assert len(gh_log.splitlines()) == expected_calls
 
 
 def test_backup_db_rotation_uses_stdin_and_validates_a_read_only_role():

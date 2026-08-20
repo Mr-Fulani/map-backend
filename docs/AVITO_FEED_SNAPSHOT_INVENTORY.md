@@ -28,7 +28,7 @@ snapshot и не относится ни к одному пакету.
 | M | `apps/core/dispatch.py` | SHARED HUNKS |
 | M | `apps/core/management/commands/restore_soft_deleted.py` | SHARED HUNKS |
 | M | `apps/core/management/commands/setup_periodic_tasks.py` | SHARED HUNKS |
-| M | `apps/core/middleware.py` | P1 |
+| M | `apps/core/middleware.py` | P4 |
 | A | `apps/core/queue_observability.py` | P1 |
 | M | `apps/core/retention.py` | SHARED HUNKS |
 | M | `apps/core/tasks.py` | SHARED HUNKS |
@@ -40,15 +40,15 @@ snapshot и не относится ни к одному пакету.
 | A | `apps/core/tests/test_restore_soft_deleted_safety.py` | SHARED HUNKS |
 | M | `apps/core/tests/test_retention.py` | SHARED HUNKS |
 | M | `apps/core/tests/test_sentry_scrubbing.py` | P1 |
-| M | `apps/datasources/models.py` | P1 |
-| M | `apps/datasources/views.py` | P1 |
+| M | `apps/datasources/models.py` | P5 |
+| M | `apps/datasources/views.py` | P5 |
 | M | `apps/image_search/services/moderation.py` | P5 |
 | M | `apps/image_search/services/pipeline.py` | P5 |
 | M | `apps/image_search/views.py` | P5 |
 | M | `apps/marketplaces/adapters/avito/adapter.py` | SHARED HUNKS |
 | M | `apps/marketplaces/adapters/avito/feed_builder.py` | SHARED HUNKS |
 | A | `apps/marketplaces/adapters/avito/profile_migration.py` | P4 |
-| M | `apps/marketplaces/adapters/avito/rate_limiter.py` | P1 |
+| M | `apps/marketplaces/adapters/avito/rate_limiter.py` | SHARED HUNKS |
 | M | `apps/marketplaces/admin.py` | SHARED HUNKS |
 | M | `apps/marketplaces/avito_tree_import.py` | P5 |
 | A | `apps/marketplaces/feed_artifact_promotion.py` | P6 FROZEN |
@@ -147,12 +147,12 @@ snapshot и не относится ни к одному пакету.
 | M | `apps/products/models.py` | P5 |
 | M | `apps/products/services.py` | P5 |
 | M | `apps/products/storage.py` | P5 |
-| M | `apps/products/tasks.py` | P5 |
+| M | `apps/products/tasks.py` | SHARED HUNKS |
 | A | `apps/products/tests/test_admin_feed_safety.py` | SHARED HUNKS |
 | A | `apps/products/tests/test_automatic_image_feed_writer.py` | P5 |
 | M | `apps/products/tests/test_dedupe_auto_parts_categories.py` | P5 |
 | A | `apps/products/tests/test_feed_intent_writers.py` | P5 |
-| M | `apps/products/tests/test_subscription_access_tasks.py` | P5 |
+| M | `apps/products/tests/test_subscription_access_tasks.py` | SHARED HUNKS |
 | M | `apps/products/views.py` | P5 |
 | M | `apps/sync/admin.py` | P5 |
 | M | `apps/sync/tasks.py` | P5 |
@@ -178,9 +178,9 @@ snapshot и не относится ни к одному пакету.
 | M | `frontend/src/app/dashboard/settings/page.tsx` | P4 |
 | M | `nginx.conf` | P4 |
 | M | `templates/admin/stats.html` | P1 |
-| M | `tests/test_avito_rate_limit_contract.py` | P1 |
+| M | `tests/test_avito_rate_limit_contract.py` | P4 |
 | A | `tests/test_feed_artifact_settings.py` | P6 FROZEN |
 | A | `tests/test_feed_ingress_settings.py` | P5 |
 | M | `tests/test_production_host_contract.py` | P1 |
-| M | `tests/test_production_storage_settings.py` | P6 FROZEN |
+| M | `tests/test_production_storage_settings.py` | SHARED HUNKS |
 | M | `tests/test_runtime_contract.py` | SHARED HUNKS |

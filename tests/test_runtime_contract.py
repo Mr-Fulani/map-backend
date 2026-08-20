@@ -1,3 +1,4 @@
+import ast
 import json
 import re
 from pathlib import Path
@@ -121,6 +122,99 @@ def test_runtime_healthchecks_cover_http_workers_beat_and_proxy():
         == proxy_healthcheck
     )
     assert '/nginx-health' in ' '.join(services['nginx']['healthcheck']['test'])
+
+
+def test_every_declared_celery_queue_has_a_production_consumer():
+    base_settings = (ROOT / 'config' / 'settings' / 'base.py').read_text()
+    queue_block = re.search(
+        r'CELERY_TASK_QUEUES = (?P<queues>\{.*?\n\})\nCELERY_TASK_DEFAULT_QUEUE',
+        base_settings,
+        re.DOTALL,
+    )
+    assert queue_block
+    declared = set(ast.literal_eval(queue_block['queues']))
+
+    consumed = set()
+    for service_name in ('celery_worker', 'celery_worker_images'):
+        command = COMPOSE['services'][service_name]['command']
+        match = re.search(r'(?:^|\s)-Q\s+([^\s]+)', command)
+        assert match, service_name
+        consumed.update(match.group(1).split(','))
+
+    assert consumed == declared
+    settings_tree = ast.parse(base_settings)
+    assignments = {
+        target.id: ast.literal_eval(node.value)
+        for node in settings_tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+        and target.id in {
+            'CELERY_TASK_CREATE_MISSING_QUEUES',
+            'CELERY_TASK_PROTOCOL',
+        }
+    }
+    assert assignments['CELERY_TASK_CREATE_MISSING_QUEUES'] is False
+    assert assignments['CELERY_TASK_PROTOCOL'] == 2
+
+
+def test_literal_task_and_periodic_routes_use_only_declared_queues():
+    base_settings = (ROOT / 'config' / 'settings' / 'base.py').read_text()
+    queue_block = re.search(
+        r'CELERY_TASK_QUEUES = (?P<queues>\{.*?\n\})\nCELERY_TASK_DEFAULT_QUEUE',
+        base_settings,
+        re.DOTALL,
+    )
+    assert queue_block
+    declared = set(ast.literal_eval(queue_block['queues']))
+
+    routed = set()
+    for path in (ROOT / 'apps').glob('*/tasks.py'):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                if not isinstance(decorator, ast.Call):
+                    continue
+                for keyword in decorator.keywords:
+                    if (
+                        keyword.arg == 'queue'
+                        and isinstance(keyword.value, ast.Constant)
+                        and isinstance(keyword.value.value, str)
+                    ):
+                        routed.add(keyword.value.value)
+
+    periodic_tree = ast.parse(
+        (ROOT / 'apps/core/management/commands/setup_periodic_tasks.py').read_text()
+    )
+    for node in ast.walk(periodic_tree):
+        if not isinstance(node, ast.Dict):
+            continue
+        values = {
+            key.value: value.value
+            for key, value in zip(node.keys, node.values)
+            if isinstance(key, ast.Constant)
+            and isinstance(key.value, str)
+            and isinstance(value, ast.Constant)
+            and isinstance(value.value, str)
+        }
+        if 'task' in values and 'queue' in values:
+            routed.add(values['queue'])
+
+    dispatch_tree = ast.parse((ROOT / 'apps/core/dispatch.py').read_text())
+    for node in ast.walk(dispatch_tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Name) and target.id == 'DURABLE_TASK_QUEUES'
+            for target in node.targets
+        ):
+            continue
+        routed.update(ast.literal_eval(node.value).values())
+
+    assert routed
+    assert routed <= declared
 
 
 def test_public_ingress_is_isolated_to_nginx():

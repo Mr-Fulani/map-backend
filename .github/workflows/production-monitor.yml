@@ -4,6 +4,16 @@ on:
   schedule:
     - cron: '17 * * * *'
   workflow_dispatch:
+    inputs:
+      fault_mode:
+        description: 'Test incident path without contacting production'
+        required: true
+        default: none
+        type: choice
+        options:
+          - none
+          - fail
+          - timeout
 
 permissions:
   contents: read
@@ -20,18 +30,31 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    # 17m check + 5m incident reconciliation + 3m runner reserve.
+    timeout-minutes: 25
     env:
       PROD_HOST: ${{ secrets.PROD_HOST }}
       PROD_USER: ${{ secrets.PROD_USER }}
       PROD_SSH_KEY: ${{ secrets.PROD_SSH_KEY }}
       PROD_HOST_FINGERPRINT: ${{ secrets.PROD_HOST_FINGERPRINT }}
       PROD_READY_URL: https://dodugir.com/api/v1/ready/
+      MONITOR_FAULT_MODE: >-
+        ${{ github.event_name == 'workflow_dispatch' && inputs.fault_mode || 'none' }}
     steps:
       - name: Проверить public readiness, backup и topology
         id: production_check
         continue-on-error: true
+        timeout-minutes: 17
         run: |
+          case "${MONITOR_FAULT_MODE:-none}" in
+            none) ;;
+            fail) exit 97 ;;
+            timeout)
+              timeout --foreground --signal=TERM --kill-after=1s 1s sleep 5
+              ;;
+            *) exit 64 ;;
+          esac
+
           test -n "$PROD_HOST"
           test -n "$PROD_USER"
           test "$PROD_USER" = mapdeploy
@@ -46,7 +69,8 @@ jobs:
           trap 'rm -rf -- "$ssh_dir"' EXIT
           printf '%s\n' "$PROD_SSH_KEY" > "$ssh_dir/id"
           chmod 600 "$ssh_dir/id"
-          ssh-keyscan -T 10 "$PROD_HOST" > "$ssh_dir/scanned-host-keys"
+          timeout --foreground --signal=TERM --kill-after=2s 15s \
+            ssh-keyscan -T 10 "$PROD_HOST" > "$ssh_dir/scanned-host-keys"
 
           fingerprint_matched=false
           while IFS= read -r host_key; do
@@ -78,7 +102,8 @@ jobs:
             -o UserKnownHostsFile="$ssh_dir/known_hosts"
             -o VerifyHostKeyDNS=no
           )
-          timeout --foreground --signal=TERM --kill-after=10s 10m \
+          # The outer client deadline must exceed the host unit's 10m deadline.
+          timeout --foreground --signal=TERM --kill-after=10s 11m \
             ssh "${ssh_options[@]}" "$PROD_USER@$PROD_HOST" backup-check
           timeout --foreground --signal=TERM --kill-after=10s 2m \
             ssh "${ssh_options[@]}" "$PROD_USER@$PROD_HOST" topology-check
@@ -86,7 +111,9 @@ jobs:
             ssh "${ssh_options[@]}" "$PROD_USER@$PROD_HOST" capacity-check
 
       - name: Открыть или обновить incident issue
-        if: steps.production_check.outcome == 'failure'
+        id: incident_open
+        if: ${{ always() && !cancelled() && steps.production_check.outcome == 'failure' }}
+        timeout-minutes: 5
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -94,7 +121,8 @@ jobs:
           body="Automated production readiness, backup freshness, or topology check failed. Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
           issue_number="$(
             gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-              --search "in:title $title" --json number --jq '.[0].number // empty'
+              --search "in:title $title" --limit 100 --json number,title \
+              --jq 'map(select(.title == "Production monitor failed")) | .[0].number // empty'
           )"
           if [ -n "$issue_number" ]; then
             gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body "$body"
@@ -105,14 +133,17 @@ jobs:
           exit 1
 
       - name: Закрыть восстановленный incident issue
-        if: steps.production_check.outcome == 'success'
+        id: incident_close
+        if: ${{ always() && !cancelled() && steps.production_check.outcome == 'success' }}
+        timeout-minutes: 5
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          title='Production monitor failed'
           issue_number="$(
             gh issue list --repo "$GITHUB_REPOSITORY" --state open \
-              --search 'in:title Production monitor failed' \
-              --json number --jq '.[0].number // empty'
+              --search "in:title $title" --limit 100 --json number,title \
+              --jq 'map(select(.title == "Production monitor failed")) | .[0].number // empty'
           )"
           if [ -n "$issue_number" ]; then
             gh issue close "$issue_number" --repo "$GITHUB_REPOSITORY" \

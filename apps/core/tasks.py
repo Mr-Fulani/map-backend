@@ -1,6 +1,36 @@
 from celery import shared_task
 
 
+@shared_task(
+    queue='notifications',
+    expires=50,
+    soft_time_limit=12,
+    time_limit=15,
+    ignore_result=True,
+)
+def collect_celery_observability():
+    """Publish/cache one bounded broker and worker snapshot every minute."""
+    from apps.core.queue_observability import (
+        cache_celery_queue_snapshot,
+        collect_celery_queue_snapshot,
+        emit_celery_queue_snapshot_metrics,
+    )
+
+    snapshot = collect_celery_queue_snapshot()
+    snapshot['cache_status'] = 'ok'
+    try:
+        cache_celery_queue_snapshot(snapshot)
+    except Exception:
+        snapshot['cache_status'] = 'unavailable'
+        snapshot['collector_status'] = (
+            'unavailable'
+            if snapshot['collector_status'] == 'unavailable'
+            else 'degraded'
+        )
+    emit_celery_queue_snapshot_metrics(snapshot)
+    return snapshot
+
+
 @shared_task(queue='notifications')
 def purge_retained_data_task():
     from apps.core.retention import purge_retained_data

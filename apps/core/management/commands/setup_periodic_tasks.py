@@ -1,6 +1,11 @@
 from django.core.management.base import BaseCommand
 from django_celery_beat.models import CrontabSchedule, IntervalSchedule, PeriodicTask
 
+from apps.core.queue_observability import (
+    COLLECTOR_INTERVAL_SECONDS,
+    SNAPSHOT_TTL_SECONDS,
+)
+
 
 class Command(BaseCommand):
     """
@@ -20,6 +25,12 @@ class Command(BaseCommand):
     def _setup_tasks(self):
         """Регистрирует все периодические задачи."""
         # Интервальные расписания
+        if SNAPSHOT_TTL_SECONDS <= 2 * COLLECTOR_INTERVAL_SECONDS:
+            raise RuntimeError('Celery observability snapshot TTL is too short.')
+        collector_every_60s = self._get_interval(
+            COLLECTOR_INTERVAL_SECONDS,
+            IntervalSchedule.SECONDS,
+        )
         every_1m = self._get_interval(1, IntervalSchedule.MINUTES)
         every_10s = self._get_interval(10, IntervalSchedule.SECONDS)
         every_5m = self._get_interval(5, IntervalSchedule.MINUTES)
@@ -37,6 +48,13 @@ class Command(BaseCommand):
         daily_10 = self._get_crontab(minute=0, hour=10)
 
         tasks = [
+            {
+                'name': 'collect_celery_observability',
+                'task': 'apps.core.tasks.collect_celery_observability',
+                'schedule': collector_every_60s,
+                'queue': 'notifications',
+                'expire_seconds': COLLECTOR_INTERVAL_SECONDS - 10,
+            },
             {
                 'name': 'dispatch_due_background_jobs',
                 'task': 'apps.core.tasks.dispatch_due_background_jobs',
@@ -171,6 +189,7 @@ class Command(BaseCommand):
                 'crontab': None,
                 'queue': task_def['queue'],
                 'enabled': True,
+                'expire_seconds': task_def.get('expire_seconds'),
             }
             defaults[schedule_field] = task_def['schedule']
             obj, created = PeriodicTask.objects.update_or_create(

@@ -42,19 +42,35 @@ not-for-merge snapshot до отдельного review его нефидовы�
 
 ## P1 — observability и production checks
 
-Основные файлы:
+Фактически выделенный состав P1:
 
-- docs/OBSERVABILITY.md;
-- apps/core/celery_observability.py;
-- apps/core/queue_observability.py;
-- apps/core/telemetry.py;
-- соответствующие apps/core/tests/test_*observability.py;
-- config/sentry_scrubbing.py и test_sentry_scrubbing.py;
-- tests/test_production_host_contract.py и test_runtime_contract.py;
-- только связанные части core apps/admin/tasks/middleware,
-  production-monitor workflow и admin stats template.
+- `.github/workflows/production-monitor.yml`;
+- `apps/core/admin_views.py`, `apps/core/apps.py`;
+- `apps/core/celery_observability.py`, `apps/core/queue_observability.py`,
+  `apps/core/telemetry.py`;
+- `apps/core/tests/test_celery_observability.py`,
+  `test_observability_periodic.py`, `test_queue_observability.py` и
+  `test_sentry_scrubbing.py`;
+- `config/sentry_scrubbing.py`, `docs/OBSERVABILITY.md` и
+  `templates/admin/stats.html`;
+- `tests/test_production_host_contract.py`;
+- только observability-hunks в `.env.example`,
+  `apps/core/management/commands/setup_periodic_tasks.py`,
+  `apps/core/tasks.py`, marketplace Avito adapter/rate limiter и его тесте,
+  datasource-import task и его тесте, `config/settings/base.py`,
+  `config/settings/production.py` и `tests/test_runtime_contract.py`.
 
-Не включать feed migrations, product writers и private storage.
+После hunk-аудита из P1 исключены ошибочно назначенные целиком файлы:
+
+- public feed path в `apps/core/middleware.py` относится к P4;
+- datasource polling guards в `apps/datasources/models.py` и `views.py`
+  относятся к P5;
+- stable endpoint assertions в `tests/test_avito_rate_limit_contract.py`
+  относятся к P4;
+- `feed_poll` budget и прочие будущие feed-hunks не перенесены.
+
+Не включать feed migrations, lifecycle/product writer changes, stable endpoint,
+private storage, cleanup, GC или worker activation будущих пакетов.
 
 Узкая проверка: observability, Sentry, production-host и runtime-contract tests.
 Deploy: отдельный релиз без изменения feed-флагов.

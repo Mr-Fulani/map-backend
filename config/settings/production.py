@@ -9,7 +9,11 @@ from sentry_sdk.integrations.celery import CeleryIntegration
 from sentry_sdk.integrations.django import DjangoIntegration
 
 from config.redis_config import validate_production_redis_layout
-from config.sentry_scrubbing import scrub_sentry_breadcrumb, scrub_sentry_event
+from config.sentry_scrubbing import (
+    scrub_sentry_breadcrumb,
+    scrub_sentry_event,
+    scrub_sentry_metric,
+)
 
 from .base import *  # noqa: F401, F403
 
@@ -251,7 +255,9 @@ if SENTRY_DSN:
         max_request_body_size='never',
         include_local_variables=False,
         before_send=scrub_sentry_event,
+        before_send_transaction=scrub_sentry_event,
         before_breadcrumb=scrub_sentry_breadcrumb,
+        before_send_metric=scrub_sentry_metric,
     )
 
 
