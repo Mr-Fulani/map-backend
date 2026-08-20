@@ -1,15 +1,44 @@
+import time
+
 from celery import shared_task
+from sentry_sdk.crons import MonitorStatus, capture_checkin
+from sentry_sdk.types import MonitorConfig
 
 
-@shared_task(
-    queue='notifications',
-    expires=50,
-    soft_time_limit=12,
-    time_limit=15,
-    ignore_result=True,
-)
-def collect_celery_observability():
-    """Publish/cache one bounded broker and worker snapshot every minute."""
+SENTRY_COLLECTOR_MONITOR_SLUG = 'map-celery-observability-collector'
+SENTRY_COLLECTOR_MONITOR_CONFIG: MonitorConfig = {
+    'schedule': {
+        'type': 'interval',
+        'value': 1,
+        'unit': 'minute',
+    },
+    'checkin_margin': 1,
+    'max_runtime': 1,
+    'failure_issue_threshold': 1,
+    'recovery_threshold': 1,
+}
+
+
+def _capture_collector_check_in(
+    *,
+    status: str,
+    check_in_id: str | None = None,
+    duration: float | None = None,
+) -> str | None:
+    """Emit the collector dead-man check-in without affecting task outcome."""
+    try:
+        return capture_checkin(
+            monitor_slug=SENTRY_COLLECTOR_MONITOR_SLUG,
+            check_in_id=check_in_id,
+            status=status,
+            duration=duration,
+            monitor_config=SENTRY_COLLECTOR_MONITOR_CONFIG,
+        )
+    except Exception:
+        return check_in_id
+
+
+def _collect_celery_observability_snapshot():
     from apps.core.queue_observability import (
         cache_celery_queue_snapshot,
         collect_celery_queue_snapshot,
@@ -28,6 +57,36 @@ def collect_celery_observability():
             else 'degraded'
         )
     emit_celery_queue_snapshot_metrics(snapshot)
+    return snapshot
+
+
+@shared_task(
+    queue='notifications',
+    expires=50,
+    soft_time_limit=12,
+    time_limit=15,
+    ignore_result=True,
+)
+def collect_celery_observability():
+    """Publish/cache one bounded broker and worker snapshot every minute."""
+    started_at = time.monotonic()
+    check_in_id = _capture_collector_check_in(
+        status=MonitorStatus.IN_PROGRESS,
+    )
+    try:
+        snapshot = _collect_celery_observability_snapshot()
+    except BaseException:
+        _capture_collector_check_in(
+            check_in_id=check_in_id,
+            status=MonitorStatus.ERROR,
+            duration=time.monotonic() - started_at,
+        )
+        raise
+    _capture_collector_check_in(
+        check_in_id=check_in_id,
+        status=MonitorStatus.OK,
+        duration=time.monotonic() - started_at,
+    )
     return snapshot
 
 

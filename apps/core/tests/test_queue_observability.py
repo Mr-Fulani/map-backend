@@ -1,5 +1,7 @@
 import json
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
+
+import pytest
 
 from apps.core.celery_observability import ENQUEUED_AT_HEADER
 from apps.core.queue_observability import (
@@ -10,7 +12,11 @@ from apps.core.queue_observability import (
     emit_celery_queue_snapshot_metrics,
     get_cached_celery_queue_snapshot,
 )
-from apps.core.tasks import collect_celery_observability
+from apps.core.tasks import (
+    SENTRY_COLLECTOR_MONITOR_CONFIG,
+    SENTRY_COLLECTOR_MONITOR_SLUG,
+    collect_celery_observability,
+)
 
 
 class _Pipeline:
@@ -288,3 +294,92 @@ def test_collector_cache_failure_is_degraded_but_still_emits_metrics():
     assert result['collector_status'] == 'degraded'
     assert result['cache_status'] == 'unavailable'
     emit.assert_called_once_with(result)
+
+
+def test_collector_emits_paired_sentry_cron_check_ins():
+    snapshot = {
+        'collector_status': 'ok',
+        'broker_status': 'ok',
+        'worker_status': 'ok',
+        'cache_status': 'ok',
+        'queues': {},
+    }
+    with (
+        patch(
+            'apps.core.tasks._collect_celery_observability_snapshot',
+            return_value=snapshot,
+        ),
+        patch(
+            'apps.core.tasks.capture_checkin',
+            side_effect=['check-in-id', 'check-in-id'],
+        ) as capture,
+        patch('apps.core.tasks.time.monotonic', side_effect=[10.0, 12.5]),
+    ):
+        result = collect_celery_observability()
+
+    assert result is snapshot
+    assert capture.call_args_list == [
+        call(
+            monitor_slug=SENTRY_COLLECTOR_MONITOR_SLUG,
+            check_in_id=None,
+            status='in_progress',
+            duration=None,
+            monitor_config=SENTRY_COLLECTOR_MONITOR_CONFIG,
+        ),
+        call(
+            monitor_slug=SENTRY_COLLECTOR_MONITOR_SLUG,
+            check_in_id='check-in-id',
+            status='ok',
+            duration=2.5,
+            monitor_config=SENTRY_COLLECTOR_MONITOR_CONFIG,
+        ),
+    ]
+
+
+def test_collector_monitoring_failure_does_not_change_task_result():
+    snapshot = {
+        'collector_status': 'ok',
+        'broker_status': 'ok',
+        'worker_status': 'ok',
+        'cache_status': 'ok',
+        'queues': {},
+    }
+    with (
+        patch(
+            'apps.core.tasks._collect_celery_observability_snapshot',
+            return_value=snapshot,
+        ),
+        patch(
+            'apps.core.tasks.capture_checkin',
+            side_effect=RuntimeError('sentry unavailable'),
+        ) as capture,
+        patch('apps.core.tasks.time.monotonic', side_effect=[10.0, 11.0]),
+    ):
+        result = collect_celery_observability()
+
+    assert result is snapshot
+    assert capture.call_count == 2
+
+
+def test_collector_exception_emits_error_check_in_and_is_reraised():
+    with (
+        patch(
+            'apps.core.tasks._collect_celery_observability_snapshot',
+            side_effect=RuntimeError('collector failed'),
+        ),
+        patch(
+            'apps.core.tasks.capture_checkin',
+            side_effect=['check-in-id', 'check-in-id'],
+        ) as capture,
+        patch('apps.core.tasks.time.monotonic', side_effect=[10.0, 10.25]),
+        pytest.raises(RuntimeError, match='collector failed'),
+    ):
+        collect_celery_observability()
+
+    assert capture.call_args_list[-1] == call(
+        monitor_slug=SENTRY_COLLECTOR_MONITOR_SLUG,
+        check_in_id='check-in-id',
+        status='error',
+        duration=0.25,
+        monitor_config=SENTRY_COLLECTOR_MONITOR_CONFIG,
+    )
