@@ -421,12 +421,63 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 `0039` возможен только в отдельном следующем rollout после фактической очистки,
 полного повторного backfill и независимого fleet/broker drain evidence.
 
-## Следующий возможный шаг
+## Активный шаг
 
-P0, P1, P2a и P2b1 завершены и работают в production. Следующий пакет — P2b2:
-runtime fencing/dual-write при сохранении production-режима `legacy` и без
-scheduler activation. Gate P2b1 закрыт, но P2b2 ещё не активирован: для начала
-нужно отдельное явное разрешение пользователя. P3 ждёт закрытия всего P2.
+P0, P1, P2a и P2b1 завершены и работают в production. P2b2 активирован
+пользователем 2026-08-21: runtime fencing/dual-write выполняется при сохранении
+production-режима `legacy` и без scheduler activation. P3 ждёт закрытия всего
+P2.
+
+### Локальная проверка P2b2 перед PR
+
+P2b2 физически выделен от production `main`: два production-файла,
+1 368 новых production-строк, один новый test-файл и три обновлённых документа.
+Новых миграций, scheduler activation, private storage, cleanup, GC, feed-run и
+stable endpoint частей в пакете нет. Личные настройки
+`.claude/settings.local.json` отсутствуют. Production-режим остаётся `legacy`.
+
+Фактические проверки точного финального diff:
+
+```text
+python3 -m compileall -q apps/marketplaces/services.py \
+  apps/marketplaces/tasks.py apps/marketplaces/tests/test_status_fencing.py
+git diff --check
+результат: exit 0
+
+pytest -q apps/marketplaces/tests/test_status_fencing.py
+результат: exit 0, 15 passed in 34.99s
+
+pytest -q apps/marketplaces/tests
+результат: exit 0, 292 passed in 117.27s
+
+pytest --cov=apps --cov-config=.coveragerc --cov-report=term-missing
+результат: exit 0, 1937 passed, 1 skipped in 1078.35s, coverage 79.70%
+
+flake8 .
+mypy
+mypy --check-untyped-defs --exclude '(^|/)(tests?|migrations)/' \
+  apps config backup
+результат: exit 0; 625 и 328 source files без ошибок типов
+
+python manage.py makemigrations --check --dry-run
+результат: exit 0, No changes detected
+
+python manage.py spectacular --file /tmp/openapi-p2b2.yml \
+  --validate --fail-on-warn
+результат: exit 0
+```
+
+Дополнительно все существующие миграции были успешно применены на чистой
+PostgreSQL до `marketplaces.0022`; последующая финальная правка затронула только
+runtime services/tasks и тесты, а повторный migration-drift остался чистым.
+Legacy-тест подтверждает, что lifecycle-поля остаются `NULL`, когда режим
+`AVITO_STATUS_LIFECYCLE_MODE=legacy`.
+
+Отдельно зафиксирован пользовательский дефект: в Avito нет активных объявлений,
+но дашборд показывает 10 активных листингов. Он не смешивается с P2b2 без
+доказанной общей причины. После P2b2 требуется read-only сверка источника
+дашборд-метрики, локальных `Listing.status` и фактических статусов Avito, затем
+отдельный план исправления.
 
 ## Состояние разделения
 
@@ -446,7 +497,7 @@ scheduler activation. Gate P2b1 закрыт, но P2b2 ещё не активи
 | P2a post-deploy monitor/schema/log observation | `VERIFIED` 2026-08-21 |
 | P2b1 lifecycle/index/backfill `0022` | `DEPLOYED_LEGACY_ONLY`, PR `#229`, production `de0d202` |
 | P2b1 monitor/schema/log observation | `VERIFIED` 2026-08-21 |
-| P2b2 runtime fencing/dual-write | `AWAITING_EXPLICIT_ACTIVATION` |
+| P2b2 runtime fencing/dual-write | `VERIFIED_LOCAL` 2026-08-21; PR/release pending |
 | Физическое разделение diff на commits/PR P3–P7 | `NOT_STARTED` |
 | Проверки и deploy пакетов P3–P5 | `NOT_STARTED` |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |
