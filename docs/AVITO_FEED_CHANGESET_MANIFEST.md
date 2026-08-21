@@ -100,7 +100,7 @@ private artifacts, cleanup или GC.
 Deploy: только additive schema. Production продолжает работать старым кодом;
 новые поля nullable и не читаются runtime-логикой.
 
-### P2b1 — lifecycle/index/backfill, миграция 0022
+### P2b1 — lifecycle/index/backfill, миграция 0022 — deployed
 
 Точный состав:
 
@@ -123,9 +123,9 @@ artifacts.
 - test_production_storage_settings.py lifecycle cases;
 - PostgreSQL upgrade/rollback/catalog migration contracts.
 
-Deploy: exact production setting `legacy`, ручной backfill не запускается,
-новый scheduler отсутствует. P2b1 не начинается до закрытия
-PR/CI/deploy/observation gate P2a.
+Deploy: production commit `de0d202`, exact setting `legacy`, ручной backfill
+apply не запускался, новый scheduler отсутствует. PR/CI/deploy/observation gate
+закрыт 2026-08-21.
 
 ### P2b2 — runtime fencing/dual-write, без новой миграции
 
@@ -136,8 +136,8 @@ PR/CI/deploy/observation gate P2a.
 - без scheduler activation, views/admin, feed-run, stable endpoint, intents,
   artifacts, cleanup и GC.
 
-Deploy: status mode по-прежнему `legacy`, scheduler выключен. P2b2 не
-начинается до закрытия PR/CI/deploy/observation gate P2b1.
+Deploy: status mode по-прежнему `legacy`, scheduler выключен. Gate P2b1
+закрыт, но P2b2 не начинается без отдельной явной активации.
 
 ## P3 — надёжный запуск фида, миграции 0023–0024
 
