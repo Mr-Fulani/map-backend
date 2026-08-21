@@ -14,7 +14,7 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: P2b2 активирован
+## Текущая фаза: P2b2 завершён в legacy
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
@@ -22,9 +22,10 @@ dead-man, работает в production commit `c2bc2eb`; check-in, test-fire �
 commit `decd480` без runtime-логики; schema, health, backup и monitor gates
 зелёные. P2b1 с чистой lifecycle-логикой, индексом и ручным backfill выложен в
 production commit `de0d202` с режимом `legacy`; schema, health, monitor и
-десятиминутное наблюдение зелёные. P2b2 с runtime fencing активирован отдельным
-решением пользователя 2026-08-21 и выполняется без смены production-режима.
-P3 и последующие пакеты ждут закрытия всего P2.
+десятиминутное наблюдение зелёные. P2b2 с runtime fencing выложен в production
+commit `0ef04de` без смены режима `legacy`; PR/main CI, manual monitor, health и
+десятиминутное наблюдение зелёные. P2 закрыт как legacy-only release. P3 и
+последующие пакеты не начинаются без нового отдельного решения пользователя.
 
 Готово только когда:
 
@@ -114,7 +115,7 @@ Deploy: status mode остаётся `legacy`, новый scheduler выключ
 manual monitor, health и десятиминутное наблюдение подтверждены на production
 commit `de0d202`. Backfill apply не запускался.
 
-#### P2b2. Runtime fencing/dual-write — активирован
+#### P2b2. Runtime fencing/dual-write — завершён в legacy
 
 Содержимое:
 
@@ -127,13 +128,17 @@ commit `de0d202`. Backfill apply не запускался.
 Проверки: status-fencing tests, весь Marketplace suite и полный backend test.
 Локальный gate закрыт 2026-08-21: 15 status-fencing, 292 Marketplace и 1 937
 backend-тестов прошли; migration drift, OpenAPI, flake8 и mypy зелёные.
-PR/CI/deploy/observation gate P2b1 закрыт. P2b2 активирован пользователем
-2026-08-21; production-режим остаётся `legacy`, PR/release ещё не закрыты.
+PR `#232`, PR CI `32491344632` и main CI `32493682105` зелёные. Production
+commit `0ef04de` работает в режиме `legacy`; lifecycle scheduler отсутствует,
+manual monitor `32496429816` и десятиминутное наблюдение зелёные.
 
 Отдельный дефект, не расширяющий P2b2: пользователь сообщил, что в Avito нет
-активных объявлений, а дашборд показывает 10 активных листингов. После P2b2
-нужно отдельно установить источник метрики, сверить локальные статусы с Avito
-и исправить подтверждённую причину.
+активных объявлений, а дашборд показывает 10 активных листингов. Read-only
+проверка подтвердила 10 локальных `Listing.status=active` одного аккаунта и то,
+что дашборд считает именно это поле. Legacy-сверка не сохраняет неизвестный
+provider-status и не переводит `removed`/`archived`/`old` в архив. Следующий
+отдельный пакет должен сначала выполнить bounded provider GET canary, затем
+добавить regression test и исправить подтверждённый переход.
 
 ### P3. Надёжная запись задания на отправку
 
