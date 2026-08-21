@@ -4,9 +4,10 @@
 
 В приложении реализован **OBS-001 foundation**: bounded snapshot Celery broker,
 метрики жизненного цикла задач, импорта datasource и основных HTTP-вызовов
-Avito. Это ещё не законченный production monitoring: репозиторий не создаёт
-Sentry dashboards/alert rules, а внешний dead-man и test-fire остаются
-обязательной операционной настройкой.
+Avito. Sentry dashboard и metric alert rules остаются операционной настройкой,
+а collector отправляет code-owned Cron check-ins для обнаружения пропущенных
+запусков. Независимый внешний monitor и test-fire всё равно остаются
+обязательными для полной production-наблюдаемости.
 
 Telemetry fail-open: сбой или отсутствие Sentry не меняет результат бизнес-
 операции. Исключение — существующие coordination-механизмы продукта; их отказ
@@ -95,9 +96,18 @@ process-local timer map для сопоставления `prerun/postrun`, но
 доступен, но внешние `map.*` series не экспортируются. После deploy необходимо
 проверить свежий heartbeat и создать внешние dashboards/alerts.
 
+Каждый запуск `collect_celery_observability` отправляет парные Sentry Cron
+check-ins с monitor slug `map-celery-observability-collector`. Code-owned
+конфигурация ожидает запуск раз в минуту, имеет минутный check-in margin и
+минутный max runtime; один пропуск/сбой открывает issue, один успешный запуск
+закрывает его. Поэтому остановка Beat, потеря публикации или hard timeout
+collector должны обнаруживаться примерно за две минуты. Ошибка отправки
+check-in является fail-open и не меняет результат Celery-задачи.
+
 Стартовые правила (уточнить после profiling):
 
-- missing `map.celery.collector.heartbeat` дольше 150 секунд — critical;
+- missed/error Sentry Cron check-in collector — critical; независимый monitor
+  также проверяет отсутствие `map.celery.collector.heartbeat` дольше 150 секунд;
 - `broker_up=0`, `worker_inspect_up=0` или `cache_up=0` два samples подряд —
   critical;
 - `subscribed_workers=0` у любой production queue два samples подряд — critical;
@@ -120,12 +130,15 @@ Actions/API и потому не заменяет независимый вне�
 1. Убедиться, что `collect_celery_observability` enabled с interval 60 секунд и
    queue `notifications` имеет consumer.
 2. За две минуты увидеть свежий `map.celery.collector.heartbeat`.
-3. Открыть `/admin/stats/`: snapshot моложе 150 секунд, broker/workers/cache —
+3. Убедиться, что Sentry Cron monitor
+   `map-celery-observability-collector` получает парные `in_progress`/`ok`
+   check-ins не реже одного раза в минуту.
+4. Открыть `/admin/stats/`: snapshot моложе 150 секунд, broker/workers/cache —
    `ok`, каждая queue имеет хотя бы одного subscriber.
-4. Проверить, что stale snapshot и `age_status=unknown` не отображаются как
+5. Проверить, что stale snapshot и `age_status=unknown` не отображаются как
    пустая здоровая очередь.
-5. Выполнить test-fire missing-data и degraded alert, подтвердить routing и
+6. Выполнить test-fire Cron error и degraded alert, подтвердить routing и
    назначенного on-call owner.
 
-До выполнения пунктов 2–5 OBS-001 считается частично внедрённым foundation, а
+До выполнения пунктов 2–6 OBS-001 считается частично внедрённым foundation, а
 не доказанной production-наблюдаемостью.
