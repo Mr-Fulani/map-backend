@@ -58,7 +58,7 @@ Snapshot меняет 169 файлов и добавляет больше 61 т�
 ## Что сейчас работает в production
 
 Рабочая система продолжает использовать старую отправку фидов. Обязательные
-значения:
+значения после появления соответствующих runtime-переключателей:
 
 ```text
 MARKETPLACE_FEED_RUN_MODE=legacy
@@ -68,8 +68,9 @@ MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
 MARKETPLACE_FEED_STORAGE_MODE=legacy_public
 ```
 
-Новая система настройками выключена. Она не должна включаться в рамках
-текущего набора изменений.
+В текущем production commit эти имена ещё не определены в Django/Compose и
+отсутствуют в `.env`: альтернативного runtime-пути нет, поэтому система
+legacy-only по конструкции. P2a не добавляет и не читает эти переключатели.
 
 ## Фактическая стадия snapshot
 
@@ -217,8 +218,8 @@ contract tests прошли; mypy, flake8, compileall, clean PostgreSQL migratio
 migration drift прошли. Повтор самого нового GitHub run после UTC midnight дал
 зелёный full suite: 1863 passed. PR `#226` merged, push-main CI и release gate
 зелёные. Production checkout имеет exact SHA `c2bc2eb`, все десять контейнеров
-healthy, readiness отвечает HTTP 200, backup timers активны. Production feed
-settings подтверждены как `legacy/legacy/disabled/false/legacy_public`.
+healthy, readiness отвечает HTTP 200, backup timers активны. P1 не добавлял
+runtime-переключатели feed-системы; production оставался legacy-only.
 
 ### Проверка P2a: только расширение схемы
 
@@ -266,6 +267,28 @@ MigrationExecutor test создаёт существующие account/product/l
 дополнительно проверяется через PostgreSQL catalog как valid/ready, без default
 и `atthasmissing` у новых колонок.
 
+PR `#227` merged в `decd480036353f08f26e5279d1056a71a4802172`. PR CI run
+`32443968692` и push-main CI run `32445091312` завершены успешно. One-off
+production release создал зашифрованный backup, применил ровно `0020` и `0021`
+и завершил exact topology/readiness gate.
+
+Post-deploy подтверждено:
+
+- production checkout exact `decd480`, Git clean;
+- все десять контейнеров healthy, restart count `0`, readiness HTTP 200;
+- `0020` и `0021` применены;
+- пять listing-колонок и четыре account-колонки nullable без DB defaults;
+- `mkt_lst_acct_stat_due` valid/ready;
+- backup timers active;
+- manual production monitor run `32447097556` для exact SHA зелёный;
+- за первые десять минут нет critical/traceback/internal-server-error matches
+  в Django, Celery, frontend и Nginx.
+
+На host остаётся не связанный с приложением failed unit
+`cloud-init-hotplugd.service`: он упал 2026-08-20 19:04 UTC до P2a из-за
+metadata hotplug detection. Application topology, readiness, backup freshness
+и capacity от этого не пострадали; исправление ОС не входит в feed-пакет.
+
 Для смешанного WIP snapshot всё ещё не выполнены как единый актуальный gate:
 
 - применение всех миграций на чистой PostgreSQL;
@@ -277,9 +300,9 @@ MigrationExecutor test создаёт существующие account/product/l
 - реальная проверка приватного versioned bucket, IAM и восстановления после
   сбоев.
 
-Snapshot и будущие P2–P7 не являются кандидатами на релиз. Успешные P0/P1
-gates подтверждают выделенные пакеты, но не верифицируют оставшийся код из
-snapshot.
+Snapshot и оставшиеся P2b–P7 не являются кандидатами на единый релиз. Успешные
+P0/P1/P2a gates подтверждают только выделенные пакеты и не верифицируют
+оставшийся код из snapshot.
 
 ## Текущий bounded cleanup-срез
 
@@ -315,10 +338,9 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный разрешённый шаг
 
-P0 и P1 завершены и работают в production. Активный пакет — P2a: только
-additive schema expansion `0020`–`0021`, без runtime-активации. После отдельного
-PR, CI, deploy и периода наблюдения P2a можно начать P2b: migration `0022`,
-lifecycle/backfill/fencing с режимом `legacy` и выключенным scheduler. P3 не
+P0, P1 и P2a завершены и работают в production. Активный следующий пакет —
+P2b: migration `0022`, lifecycle/backfill/fencing с режимом `legacy` и
+выключенным scheduler. Он выделяется и проверяется отдельно от P2a. P3 не
 начинается до отдельного закрытия всего P2.
 
 ## Состояние разделения
@@ -335,8 +357,9 @@ lifecycle/backfill/fencing с режимом `legacy` и выключенным 
 | P1 migrations, full backend, coverage и flake8 | `VERIFIED` 2026-08-20, 1859 passed, 1 skipped |
 | P1 foundation production release | `DEPLOYED_OFF` 2026-08-20, commit `8710007` |
 | P1 Sentry Cron dead-man release | `VERIFIED` 2026-08-21, PR `#226`, production `c2bc2eb` |
-| P2a schema `0020`–`0021` | `VERIFIED_LOCAL` 2026-08-21, ждёт PR/CI/release |
-| P2b lifecycle/backfill/fencing `0022` | `AUTHORIZED`, ждёт закрытия P2a release gate |
+| P2a schema `0020`–`0021` | `DEPLOYED_LEGACY_ONLY` 2026-08-21, PR `#227`, production `decd480` |
+| P2a post-deploy monitor/schema/log observation | `VERIFIED` 2026-08-21 |
+| P2b lifecycle/backfill/fencing `0022` | `AUTHORIZED`, следующий отдельный пакет |
 | Физическое разделение diff на commits/PR P3–P7 | `NOT_STARTED` |
 | Проверки и deploy пакетов P3–P5 | `NOT_STARTED` |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |
