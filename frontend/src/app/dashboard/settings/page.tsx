@@ -32,6 +32,10 @@ import {
   type CatalogCategoryOption,
 } from '@/components/products/catalog-category-picker';
 import { WebResearchSettingsCard } from '@/components/settings/web-research-settings';
+import {
+  claimSettingsLoadGroups,
+  type SettingsLoadGroup,
+} from '@/lib/settings-page-loader';
 
 interface ApiKey {
   id: number;
@@ -452,9 +456,13 @@ export default function SettingsPage() {
   const [notifOnCritical, setNotifOnCritical] = useState(true);
   const telegramPopupRef = useRef<Window | null>(null);
   const telegramPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const settingsPageMountedRef = useRef(true);
+  const claimedSettingsLoadsRef = useRef(new Set<SettingsLoadGroup>());
 
   useEffect(() => {
+    settingsPageMountedRef.current = true;
     return () => {
+      settingsPageMountedRef.current = false;
       if (telegramPollTimerRef.current) clearTimeout(telegramPollTimerRef.current);
       telegramPopupRef.current?.close();
     };
@@ -494,120 +502,152 @@ export default function SettingsPage() {
   }, []);
 
   useEffect(() => {
-    let active = true;
+    const groups = claimSettingsLoadGroups(
+      activeTab,
+      claimedSettingsLoadsRef.current,
+    );
+    const mounted = () => settingsPageMountedRef.current;
 
-    tenantApi.getApiKeys()
-      .then((r) => {
-        if (active) setApiKeys(r.data.data ?? r.data);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (active) setLoadingKeys(false);
-      });
-
-    accountApi.list()
-      .then((r) => {
-        if (!active) return;
-        const list: Account[] = r.data.data ?? r.data;
-        setAccounts(list);
-        // Подставляем последний известный статус Автозагрузки, чтобы плашка
-        // не сбрасывалась в «неизвестно» при каждой перезагрузке страницы.
-        setAutoloadStatus((prev) => {
-          const seeded = { ...prev };
-          for (const acc of list) {
-            if (acc.avito_status || (acc.autoload_active !== null && acc.autoload_active !== undefined)) {
-              seeded[acc.id] = {
-                activated: acc.avito_status
-                  ? acc.avito_status.autoload_status === 'enabled'
-                  : Boolean(acc.autoload_active),
-                feed_url: '',
-                stale: acc.avito_status?.profile_stale,
-                status: acc.avito_status ?? undefined,
-              };
-            }
+    for (const group of groups) {
+      if (group === 'api-keys') {
+        tenantApi.getApiKeys()
+          .then((r) => {
+            if (mounted()) setApiKeys(r.data.data ?? r.data);
+          })
+          .catch(() => {
+            claimedSettingsLoadsRef.current.delete(group);
+          })
+          .finally(() => {
+            if (mounted()) setLoadingKeys(false);
+          });
+      } else if (group === 'marketplaces') {
+        Promise.allSettled([
+          accountApi.list(),
+          accountApi.listPlacementAddresses(),
+        ]).then(([accountsResult, addressesResult]) => {
+          if (!mounted()) return;
+          if (accountsResult.status === 'fulfilled') {
+            const list: Account[] = accountsResult.value.data.data ?? accountsResult.value.data;
+            setAccounts(list);
+            // Подставляем последний известный статус Автозагрузки, чтобы плашка
+            // не сбрасывалась в «неизвестно» при каждой перезагрузке страницы.
+            setAutoloadStatus((prev) => {
+              const seeded = { ...prev };
+              for (const acc of list) {
+                if (acc.avito_status || (acc.autoload_active !== null && acc.autoload_active !== undefined)) {
+                  seeded[acc.id] = {
+                    activated: acc.avito_status
+                      ? acc.avito_status.autoload_status === 'enabled'
+                      : Boolean(acc.autoload_active),
+                    feed_url: '',
+                    stale: acc.avito_status?.profile_stale,
+                    status: acc.avito_status ?? undefined,
+                  };
+                }
+              }
+              return seeded;
+            });
+          } else {
+            claimedSettingsLoadsRef.current.delete(group);
           }
-          return seeded;
+          setPlacementAddresses(
+            addressesResult.status === 'fulfilled'
+              ? addressesResult.value.data.data ?? addressesResult.value.data
+              : [],
+          );
+          setLoadingAccounts(false);
         });
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (active) setLoadingAccounts(false);
-      });
-
-    accountApi.listPlacementAddresses()
-      .then((r) => {
-        if (active) setPlacementAddresses(r.data.data ?? r.data);
-      })
-      .catch(() => {
-        if (active) setPlacementAddresses([]);
-      });
-
-    datasourceApi.list()
-      .then((r) => {
-        if (active) setDatasources(r.data.data ?? r.data);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (active) setLoadingDatasources(false);
-      });
-
-    tenantApi.catalogDomains()
-      .then((r) => {
-        if (active) setCatalogDomains(r.data.data ?? r.data);
-      })
-      .catch(() => {
-        if (active) setCatalogDomains([]);
-      });
-
-    Promise.all([
-      productApi.catalogCategories(),
-      productApi.catalogSourceCategories(),
-      productApi.catalogCategoryMappings(),
-    ])
-      .then(([categoriesRes, sourceRes, mappingsRes]) => {
-        if (!active) return;
-        const categories: CatalogCategory[] = categoriesRes.data.data ?? categoriesRes.data;
-        categories.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-        setCatalogCategories(categories);
-        setSourceCategories(sourceRes.data.data ?? sourceRes.data);
-        setCatalogMappings(mappingsRes.data.data ?? mappingsRes.data);
-      })
-      .catch(() => {
-        if (active) toast.error('Не удалось загрузить категории каталога');
-      })
-      .finally(() => {
-        if (active) setLoadingCatalogCategories(false);
-      });
-
-    notificationApi.getSettings()
-      .then((r) => {
-        if (!active) return;
-        const d = r.data.data as NotificationSettings;
-        setNotifSettings(d);
-        setNotifEmail(d.notify_email);
-        setNotifOnError(d.notify_on_error);
-        setNotifOnCritical(d.notify_on_critical);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (active) setLoadingNotif(false);
-      });
-
-    Promise.all([aiApi.getModels(), aiApi.getSettings()])
-      .then(([modelsRes, settingsRes]) => {
-        if (!active) return;
-        setAIModels(modelsRes.data.data ?? modelsRes.data);
-        setAISettings(settingsRes.data.data ?? settingsRes.data);
-      })
-      .catch(() => {
-        if (active) toast.error('Не удалось загрузить настройки AI');
-      })
-      .finally(() => {
-        if (active) setLoadingAI(false);
-      });
-
-    return () => { active = false; };
-  }, []);
+      } else if (group === 'datasources') {
+        datasourceApi.list()
+          .then((r) => {
+            if (mounted()) setDatasources(r.data.data ?? r.data);
+          })
+          .catch(() => {
+            claimedSettingsLoadsRef.current.delete(group);
+          })
+          .finally(() => {
+            if (mounted()) setLoadingDatasources(false);
+          });
+      } else if (group === 'catalog-domains') {
+        tenantApi.catalogDomains()
+          .then((r) => {
+            if (mounted()) setCatalogDomains(r.data.data ?? r.data);
+          })
+          .catch(() => {
+            claimedSettingsLoadsRef.current.delete(group);
+            if (mounted()) setCatalogDomains([]);
+          });
+      } else if (group === 'catalog') {
+        setLoadingCatalogCategories(true);
+        Promise.all([
+          productApi.catalogCategories(),
+          productApi.catalogSourceCategories(),
+          productApi.catalogCategoryMappings(),
+        ])
+          .then(([categoriesRes, sourceRes, mappingsRes]) => {
+            if (!mounted()) return;
+            const categories: CatalogCategory[] = categoriesRes.data.data ?? categoriesRes.data;
+            categories.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+            setCatalogCategories(categories);
+            setSourceCategories(sourceRes.data.data ?? sourceRes.data);
+            setCatalogMappings(mappingsRes.data.data ?? mappingsRes.data);
+          })
+          .catch(() => {
+            claimedSettingsLoadsRef.current.delete(group);
+            if (mounted()) toast.error('Не удалось загрузить категории каталога. Повторите открытие раздела.');
+          })
+          .finally(() => {
+            if (mounted()) setLoadingCatalogCategories(false);
+          });
+      } else if (group === 'pricing-categories') {
+        setLoadingCatalogCategories(true);
+        productApi.catalogCategories({ assignable: true })
+          .then((res) => {
+            if (!mounted()) return;
+            const categories: CatalogCategory[] = res.data.data ?? res.data;
+            categories.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+            setCatalogCategories(categories);
+          })
+          .catch(() => {
+            claimedSettingsLoadsRef.current.delete(group);
+            if (mounted()) toast.error('Не удалось загрузить категории для наценок. Повторите открытие раздела.');
+          })
+          .finally(() => {
+            if (mounted()) setLoadingCatalogCategories(false);
+          });
+      } else if (group === 'notifications') {
+        notificationApi.getSettings()
+          .then((r) => {
+            if (!mounted()) return;
+            const d = r.data.data as NotificationSettings;
+            setNotifSettings(d);
+            setNotifEmail(d.notify_email);
+            setNotifOnError(d.notify_on_error);
+            setNotifOnCritical(d.notify_on_critical);
+          })
+          .catch(() => {
+            claimedSettingsLoadsRef.current.delete(group);
+          })
+          .finally(() => {
+            if (mounted()) setLoadingNotif(false);
+          });
+      } else if (group === 'ai') {
+        Promise.all([aiApi.getModels(), aiApi.getSettings()])
+          .then(([modelsRes, settingsRes]) => {
+            if (!mounted()) return;
+            setAIModels(modelsRes.data.data ?? modelsRes.data);
+            setAISettings(settingsRes.data.data ?? settingsRes.data);
+          })
+          .catch(() => {
+            claimedSettingsLoadsRef.current.delete(group);
+            if (mounted()) toast.error('Не удалось загрузить настройки AI');
+          })
+          .finally(() => {
+            if (mounted()) setLoadingAI(false);
+          });
+      }
+    }
+  }, [activeTab]);
 
   async function saveAISettings() {
     if (!aiSettings?.default_model) return;
