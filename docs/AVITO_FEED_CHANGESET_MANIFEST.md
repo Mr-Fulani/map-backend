@@ -75,11 +75,34 @@ private storage, cleanup, GC или worker activation будущих пакет�
 Узкая проверка: observability, Sentry, production-host и runtime-contract tests.
 Deploy: отдельный релиз без изменения feed-флагов.
 
-## P2 — lifecycle объявлений, миграции 0020–0022
+## P2 — lifecycle объявлений, два последовательных release
+
+Три миграции нельзя выпускать одним пакетом из-за общего ограничения не более
+двух миграций. Поэтому P2 физически разделён на P2a и P2b.
+
+### P2a — additive schema, миграции 0020–0021
+
+Точный состав:
+
+- только lifecycle-field hunks в `apps/marketplaces/models.py`;
+- `0020_listing_status_lifecycle_expand.py`;
+- `0021_status_lifecycle_concurrent_indexes.py` только с listing due index;
+- `test_status_lifecycle_expand.py` со schema, PostgreSQL catalog,
+  existing-row upgrade и rollback contracts;
+- status/roadmap/manifest documentation.
+
+Не включать `0022`, lifecycle service, backfill command, services/tasks/views,
+admin, settings, scheduler, MarketplaceFeedRun, stable endpoint, feed intents,
+private artifacts, cleanup или GC.
+
+Deploy: только additive schema. Production продолжает работать старым кодом;
+новые поля nullable и не читаются runtime-логикой.
+
+### P2b — lifecycle/backfill/fencing, миграция 0022
 
 Основные файлы:
 
-- migrations 0020–0022;
+- migration 0022 с account due index;
 - listing_lifecycle.py;
 - backfill_listing_status_lifecycle.py;
 - status lifecycle/backfill/fencing tests;
@@ -89,12 +112,12 @@ Deploy: отдельный релиз без изменения feed-флаго�
 
 Узкая проверка:
 
-- test_status_lifecycle_expand.py;
 - test_listing_lifecycle.py;
 - test_status_fencing.py;
 - test_backfill_listing_status_lifecycle.py.
 
-Deploy: additive migrations, status mode legacy, новый scheduler выключен.
+Deploy: status mode legacy, новый scheduler выключен. P2b не начинается до
+закрытия PR/CI/deploy/observation gate P2a.
 
 ## P3 — надёжный запуск фида, миграции 0023–0024
 

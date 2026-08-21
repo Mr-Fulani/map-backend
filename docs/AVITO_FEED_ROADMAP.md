@@ -14,15 +14,13 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: завершение P1 production observability
+## Текущая фаза: P2a, безопасное расширение схемы
 
-P0 завершён отдельным commit. P1 observability выделен из snapshot по hunks,
-прошёл gates и его foundation выложен в production commit `8710007`. Sentry
-dashboard, metric alerts и routing настроены. Отдельный P1 follow-up добавляет
-code-owned Cron dead-man для минутного collector; после его release остаются
-post-deploy test-fire и период наблюдения. P2 явно разрешён следующим пакетом,
-но не начинается до закрытия P1 gate. Остальная новая feed-функциональность
-заморожена.
+P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
+dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
+проверены. Активирован только P2a: nullable schema expansion `0020`–`0021` без
+runtime-логики. P2b и все последующие пакеты не смешиваются с ним и ждут
+отдельного release gate.
 
 Готово только когда:
 
@@ -51,7 +49,7 @@ post-deploy test-fire и период наблюдения. P2 явно разр
 
 Deploy: отсутствует.
 
-### P1. Общая production-наблюдаемость — завершение production gate
+### P1. Общая production-наблюдаемость — завершён
 
 Содержимое:
 
@@ -65,15 +63,37 @@ Deploy: отсутствует.
 - полный backend test;
 - проверка, что feed-флаги остались `legacy/legacy/disabled`.
 
-Deploy: foundation работает в production на commit `8710007`; Cron dead-man
-follow-up проходит отдельный безопасный release. После него — период наблюдения,
-без включения новых фидов.
+Deploy: foundation и Cron dead-man работают в production на commit `c2bc2eb`.
+Новые фиды не включались.
 
 ### P2. Статусы объявлений Avito
 
+P2 разделён на два последовательных release, потому что общий пакет содержит
+три миграции, а execution rules разрешают не более двух.
+
+#### P2a. Additive schema expansion — активен
+
 Содержимое:
 
-- миграции `0020`–`0022`;
+- migration `0020` с девятью nullable полями;
+- migration `0021` с concurrent partial listing index;
+- model state и schema/upgrade/rollback tests;
+- без lifecycle-кода, backfill и scheduler.
+
+Проверки:
+
+- PostgreSQL clean/upgrade/rollback и catalog contracts;
+- весь Marketplace suite и полный backend test;
+- migration drift, flake8, mypy и OpenAPI.
+
+Deploy: только схема. Старый код продолжает работать, новые поля остаются
+`NULL`, ни один новый worker или режим не включается.
+
+#### P2b. Lifecycle/backfill/fencing — после P2a gate
+
+Содержимое:
+
+- migration `0022` с account due index;
 - единые правила смены статусов;
 - безопасный backfill статусов;
 - без нового планировщика и без private storage.
@@ -84,8 +104,8 @@ follow-up проходит отдельный безопасный release. По
 - обновление копии существующей базы;
 - полный backend test.
 
-Deploy: сначала только дополнительные поля и запись старым способом. Новый
-планировщик остаётся выключен. После выкладки — наблюдение.
+Deploy: status mode остаётся `legacy`, новый scheduler выключен. После
+выкладки — отдельное наблюдение до закрытия всего P2.
 
 ### P3. Надёжная запись задания на отправку
 

@@ -116,6 +116,33 @@ class MarketplaceAccount(SoftDeleteModel):
     # Когда последний раз триггерили Autoload. Avito читает фид ~раз в час, поэтому
     # изменения копятся в окне и уходят одним фидом (см. request_feed_flush).
     last_feed_flush_at = models.DateTimeField(null=True, blank=True, verbose_name='Последняя автозагрузка фида')
+    # Provider-neutral scheduler state. This release only expands the schema;
+    # no scheduler reads these fields until the separately reviewed lifecycle
+    # rollout.
+    status_batch_due_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Следующая проверка статусов аккаунта',
+    )
+    status_batch_cooldown_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Проверки статусов приостановлены до',
+    )
+    status_batch_claim_token = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Токен владельца проверки статусов',
+    )
+    status_batch_claimed_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Lease проверки статусов истекает',
+    )
 
     class Meta:
         verbose_name = 'Avito-аккаунт'
@@ -347,6 +374,21 @@ class Listing(SoftDeleteModel):
         (STATUS_LIMIT_REACHED, 'Лимит достигнут'),
     ]
 
+    REMOTE_STATUS_ACTIVE = 'active'
+    REMOTE_STATUS_REJECTED = 'rejected'
+    REMOTE_STATUS_BLOCKED = 'blocked'
+    REMOTE_STATUS_REMOVED = 'removed'
+    REMOTE_STATUS_ARCHIVED = 'archived'
+    REMOTE_STATUS_OTHER = 'other'
+    REMOTE_STATUS_CHOICES = [
+        (REMOTE_STATUS_ACTIVE, 'Активно на площадке'),
+        (REMOTE_STATUS_REJECTED, 'Отклонено площадкой'),
+        (REMOTE_STATUS_BLOCKED, 'Заблокировано площадкой'),
+        (REMOTE_STATUS_REMOVED, 'Удалено с площадки'),
+        (REMOTE_STATUS_ARCHIVED, 'В архиве площадки'),
+        (REMOTE_STATUS_OTHER, 'Другой нормализованный статус'),
+    ]
+
     # Вид объявления Avito (тег <AdType> в фиде Autoload). Значения — точные
     # строки, которые принимает Avito; в БД храним их же. «Продаю своё» Avito
     # не принимает для категории «Запчасти и аксессуары», поэтому его нет.
@@ -409,6 +451,41 @@ class Listing(SoftDeleteModel):
     next_retry_at = models.DateTimeField(null=True, blank=True, verbose_name='Следующая попытка')
     published_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата публикации')
     last_sync_at = models.DateTimeField(null=True, blank=True, verbose_name='Последняя синхронизация')
+    # The canonical lifecycle remains ``status``. These fields store a bounded
+    # provider observation and a future due cursor without inferring remote
+    # truth from local state. They remain nullable during schema expansion.
+    remote_status = models.CharField(
+        max_length=32,
+        choices=REMOTE_STATUS_CHOICES,
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Последний статус на площадке',
+    )
+    remote_status_checked_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Статус на площадке проверен',
+    )
+    next_status_check_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Следующая проверка статуса',
+    )
+    status_check_claim_token = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Токен batch-проверки статуса',
+    )
+    status_check_claimed_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Lease проверки статуса истекает',
+    )
 
     class Meta:
         verbose_name = 'Листинг'
@@ -418,6 +495,15 @@ class Listing(SoftDeleteModel):
             models.Index(fields=['tenant', 'status']),
             models.Index(fields=['account', 'status']),
             models.Index(fields=['next_retry_at']),
+            models.Index(
+                fields=['account', 'status', 'next_status_check_at', 'id'],
+                name='mkt_lst_acct_stat_due',
+                condition=models.Q(
+                    deleted_at__isnull=True,
+                    external_id__isnull=False,
+                    next_status_check_at__isnull=False,
+                ) & ~models.Q(external_id=''),
+            ),
         ]
 
     def __str__(self):

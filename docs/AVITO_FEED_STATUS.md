@@ -16,9 +16,10 @@ release и не означает, что его код присутствует 
 
 P0 сохранён commit `646ee62d3113042fb0d283c4257e65d5611caa40`.
 P1 observability был выделен по hunks, проверен, merged через PR `#225` и
-выложен в production commit `8710007c37eba1de000475fc8024fe850f97ef1b`.
-Текущий P1 follow-up PR `#226` добавляет только Sentry Cron dead-man collector,
-его тесты и runbook; feed-код и feed-флаги он не меняет.
+дополнен Sentry Cron dead-man collector через PR `#226`. Полный P1 работает в
+production на commit `c2bc2eb102c5caa7610cd15e2a8dfac8193e0a34`; feed-код и
+feed-флаги P1 не менял. Активный пакет P2 разделён на P2a и P2b, чтобы каждый
+release соблюдал ограничение не более двух миграций.
 
 Этот файл — единственный источник правды о текущей стадии работ. Roadmap
 находится в [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а обязательные
@@ -206,19 +207,64 @@ Production значения остаются
 `#map-dodugir`.
 
 Cron dead-man follow-up создал code-owned monitor
-`map-celery-observability-collector` (`1674179`). Реальный pre-deploy test-fire
-создал missed-check-in issue `141940026`, вызвал два alert actions и закрыл issue
-после успешного check-in. Monitor временно disabled до release follow-up, чтобы
-не создавать ложные пропуски без ещё не выложенного producer-кода.
+`map-celery-observability-collector` (`1674179`). После production release
+monitor включён и получает регулярные `Okay` check-in. Безопасный
+error-to-success test-fire повторно открыл issue `141940026`, выполнил правила
+alert `773554` и закрыл issue после успешного check-in.
 
 Follow-up gates: 21 observability/Sentry test и 89 production runtime/host
 contract tests прошли; mypy, flake8, compileall, clean PostgreSQL migrations и
-migration drift прошли. GitHub full suite дал 1862 passed и один известный
-baseline failure в retention-тесте. Тот же `assert 0 == 1` независимо
-воспроизведён на чистом base commit `8710007`: тест смешивает
-`timezone.localdate()` и UTC `timezone.now().date()` в интервале 00:00–03:00
-Europe/Istanbul. Retention не меняется внутри P1; CI повторяется после UTC
-midnight.
+migration drift прошли. Повтор самого нового GitHub run после UTC midnight дал
+зелёный full suite: 1863 passed. PR `#226` merged, push-main CI и release gate
+зелёные. Production checkout имеет exact SHA `c2bc2eb`, все десять контейнеров
+healthy, readiness отвечает HTTP 200, backup timers активны. Production feed
+settings подтверждены как `legacy/legacy/disabled/false/legacy_public`.
+
+### Проверка P2a: только расширение схемы
+
+P2a физически выделен от текущего `main`. Он содержит только девять nullable
+полей в `MarketplaceAccount`/`Listing`, миграцию `0020`, один concurrent partial
+index в миграции `0021` и schema-contract tests. В пакете нет lifecycle-сервиса,
+backfill, scheduler, task/view/admin wiring, новой настройки режима, private
+storage, cleanup, GC или `0022+`.
+
+Локальный PostgreSQL gate:
+
+```text
+python manage.py migrate --noinput
+результат: exit 0, чистая PostgreSQL применена до marketplaces.0021
+
+python manage.py makemigrations --check --dry-run
+результат: exit 0, No changes detected
+
+python manage.py migrate marketplaces 0019 --noinput
+python manage.py migrate marketplaces 0021 --noinput
+результат: exit 0, 0020/0021 успешно отменены и повторно применены
+
+pytest apps/marketplaces/tests/test_status_lifecycle_expand.py -q
+результат: exit 0, 6 passed
+
+pytest apps/marketplaces/tests -q
+результат: exit 0, 230 passed
+
+flake8 .
+mypy
+mypy --check-untyped-defs --exclude '(^|/)(tests?|migrations)/' apps config backup
+результат: exit 0, 619 и 326 source files без ошибок типов
+
+pytest --cov=apps --cov-config=.coveragerc --cov-report=term-missing
+результат: exit 0, 1868 passed, 1 skipped in 997.17s, coverage 79.65%
+
+python manage.py spectacular --file /tmp/p2a-openapi-schema.yml \
+  --validate --fail-on-warn
+результат: exit 0
+```
+
+MigrationExecutor test создаёт существующие account/product/listing на текущей
+схеме, переводит Marketplace с `0021` на `0019` и обратно на `0021`, затем
+проверяет сохранность старых значений и `NULL` во всех новых колонках. Индекс
+дополнительно проверяется через PostgreSQL catalog как valid/ready, без default
+и `atthasmissing` у новых колонок.
 
 Для смешанного WIP snapshot всё ещё не выполнены как единый актуальный gate:
 
@@ -269,11 +315,11 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный разрешённый шаг
 
-P0 завершён, P1 foundation выложен. Активный пакет — завершение P1 Cron
-dead-man release и период наблюдения без включения новых feed-механизмов.
-Владелец продукта 2026-08-21 явно разрешил продолжить roadmap; поэтому P2
-считается следующим разрешённым пакетом, но его код не смешивается с P1 и
-начинается только после закрытия текущего release gate.
+P0 и P1 завершены и работают в production. Активный пакет — P2a: только
+additive schema expansion `0020`–`0021`, без runtime-активации. После отдельного
+PR, CI, deploy и периода наблюдения P2a можно начать P2b: migration `0022`,
+lifecycle/backfill/fencing с режимом `legacy` и выключенным scheduler. P3 не
+начинается до отдельного закрытия всего P2.
 
 ## Состояние разделения
 
@@ -288,10 +334,11 @@ dead-man release и период наблюдения без включения 
 | P1 narrow observability/Sentry/runtime/host tests | `VERIFIED` 2026-08-20, 86 passed |
 | P1 migrations, full backend, coverage и flake8 | `VERIFIED` 2026-08-20, 1859 passed, 1 skipped |
 | P1 foundation production release | `DEPLOYED_OFF` 2026-08-20, commit `8710007` |
-| P1 Sentry Cron dead-man release и период наблюдения | `IN_PROGRESS`, PR `#226` |
-| P2 lifecycle activation | `AUTHORIZED` 2026-08-21, ждёт закрытия P1 gate |
-| Физическое разделение diff на commits/PR P2–P7 | `NOT_STARTED` |
-| Проверки и deploy пакетов P2–P5 | `NOT_STARTED` |
+| P1 Sentry Cron dead-man release | `VERIFIED` 2026-08-21, PR `#226`, production `c2bc2eb` |
+| P2a schema `0020`–`0021` | `VERIFIED_LOCAL` 2026-08-21, ждёт PR/CI/release |
+| P2b lifecycle/backfill/fencing `0022` | `AUTHORIZED`, ждёт закрытия P2a release gate |
+| Физическое разделение diff на commits/PR P3–P7 | `NOT_STARTED` |
+| Проверки и deploy пакетов P3–P5 | `NOT_STARTED` |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |
 | P7 cleanup/GC/0039 | `FROZEN` |
 
