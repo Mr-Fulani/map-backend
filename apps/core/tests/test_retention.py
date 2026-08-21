@@ -1,5 +1,6 @@
 from datetime import timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.db import connection
@@ -305,6 +306,7 @@ def test_retention_purges_only_safe_paid_intents_and_resolved_search_evidence(se
     settings.BACKGROUND_JOB_RETENTION_DAYS = 30
     settings.WEB_SEARCH_ATTEMPT_RETENTION_DAYS = 30
     settings.RETENTION_PURGE_BATCH_SIZE = 100
+    retention_now = timezone.now()
     tenant, _ = TenantService.create_tenant(
         'Paid evidence retention',
         'paid-evidence-retention',
@@ -417,16 +419,16 @@ def test_retention_purges_only_safe_paid_intents_and_resolved_search_evidence(se
     old_usage = TenantDailyPaidUsage.objects.create(
         tenant=tenant,
         scope='web-research-starts',
-        usage_date=timezone.localdate() - timedelta(days=31),
+        usage_date=(retention_now - timedelta(days=31)).date(),
         units=3,
     )
     fresh_usage = TenantDailyPaidUsage.objects.create(
         tenant=tenant,
         scope='image-search-jobs',
-        usage_date=timezone.localdate() - timedelta(days=29),
+        usage_date=(retention_now - timedelta(days=29)).date(),
         units=2,
     )
-    expired = timezone.now() - timedelta(days=31)
+    expired = retention_now - timedelta(days=31)
     PaidIngressIntent.objects.filter(
         pk__in=[old_safe_intent.pk, old_active_intent.pk],
     ).update(created_at=expired, updated_at=expired)
@@ -449,7 +451,8 @@ def test_retention_purges_only_safe_paid_intents_and_resolved_search_evidence(se
         reconciled_at=expired,
     )
 
-    result = purge_retained_data()
+    with patch('apps.core.retention.timezone.now', return_value=retention_now):
+        result = purge_retained_data()
 
     assert result['paid_ingress_intents'] == 1
     assert result['tenant_daily_paid_usage'] == 1
@@ -461,7 +464,8 @@ def test_retention_purges_only_safe_paid_intents_and_resolved_search_evidence(se
     assert WebSearchAttempt.objects.filter(pk=old_apply_pending.pk).exists()
     # Workflow selection happened before its child was purged; the next
     # bounded cycle removes the now-empty terminal owner, never the active one.
-    second = purge_retained_data()
+    with patch('apps.core.retention.timezone.now', return_value=retention_now):
+        second = purge_retained_data()
     assert second['web_search_workflows'] == 1
     assert not WebSearchWorkflow.objects.filter(pk=resolved_workflow.pk).exists()
     assert WebSearchWorkflow.objects.filter(pk=pending_workflow.pk).exists()
