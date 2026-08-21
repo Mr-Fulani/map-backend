@@ -336,6 +336,44 @@ pytest --cov=apps --cov-config=.coveragerc --cov-report=term-missing
 (`updated=0`) и ожидаемо отказал apply с `CommandError`. Команда не делает
 provider-вызовов и нигде не зарегистрирована в periodic scheduler.
 
+### Production release P2b1
+
+PR `#229` merged в `de0d202d084af51169ce284cdaf117b0335cb7e5`. PR CI run
+`32467660130` и push-main CI run `32469548088` завершены успешно для точных
+head/merge SHA. Автоматический Deploy run `32471517904` ожидаемо получил
+`skipped`, потому что repository variable `PROD_DEPLOY_ENABLED=false`.
+
+Документированный one-off release:
+
+- до release production был на `decd480`, Git clean;
+- в защищённый `.env` добавлена только строка
+  `AVITO_STATUS_LIFECYCLE_MODE=legacy`; права остались `600 root:root`;
+- encrypted backup загружен как
+  `postgres/daily/2026/08/20260821T102448Z_de0d202d084a_b53848c10edf.dump.age`;
+- применена ровно `marketplaces.0022_account_status_lifecycle_concurrent_index`;
+- production checkout exact `de0d202`, Git clean;
+- `mkt_acct_provider_due` в PostgreSQL catalog имеет `valid=true` и
+  `ready=true`;
+- runtime setting равен `legacy`; scheduled backfill/lifecycle tasks: `0`;
+- bounded production dry-run нашёл 10 active candidates в одном аккаунте,
+  сообщил `would_update=10`, но `updated=0`; apply не запускался;
+- все десять контейнеров healthy, initial restart count `0`, readiness HTTP
+  200, оба backup timer active;
+- manual production monitor run `32472777118` для exact SHA зелёный;
+- через десять минут exact SHA и clean Git сохранились, все десять контейнеров
+  оставались healthy, readiness HTTP 200, critical/traceback/unhandled/internal
+  server error matches в application-логах: `0`.
+
+Во время graceful drain старый `celery_beat` проигнорировал повторные SIGTERM и
+оставался sleeping внутри общего `docker compose stop -t 3700`. Ingress и
+workers уже были остановлены, beat не выполняет сами business tasks, а его
+логи были пустыми. Чтобы не держать production без ingress до часового timeout,
+оператор завершил только старый beat через SIGKILL; тот же release затем создал
+backup, применил миграцию и поднял новый healthy beat с restart count `0`.
+Разделение короткого beat-stop timeout и длинного worker drain, а также
+проверка signal propagation записаны как отдельный release-tooling backlog и
+не исправляются внутри P2b1.
+
 Для смешанного WIP snapshot всё ещё не выполнены как единый актуальный gate:
 
 - применение всех миграций на чистой PostgreSQL;
@@ -348,7 +386,7 @@ provider-вызовов и нигде не зарегистрирована в p
   сбоев.
 
 Snapshot и оставшиеся P2b2–P7 не являются кандидатами на единый релиз. Успешные
-P0/P1/P2a gates подтверждают только выделенные пакеты и не верифицируют
+P0/P1/P2a/P2b1 gates подтверждают только выделенные пакеты и не верифицируют
 оставшийся код из snapshot.
 
 ## Текущий bounded cleanup-срез
@@ -383,13 +421,12 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 `0039` возможен только в отдельном следующем rollout после фактической очистки,
 полного повторного backfill и независимого fleet/broker drain evidence.
 
-## Активный разрешённый шаг
+## Следующий возможный шаг
 
-P0, P1 и P2a завершены и работают в production. Активный пакет — P2b1:
-migration `0022`, чистая lifecycle-логика, ручной bounded backfill и явный
-production-режим `legacy`. Runtime fencing выделен в следующий P2b2. Оба
-пакета не включают scheduler; P2b2 не начинается до release gate P2b1, а P3 —
-до отдельного закрытия всего P2.
+P0, P1, P2a и P2b1 завершены и работают в production. Следующий пакет — P2b2:
+runtime fencing/dual-write при сохранении production-режима `legacy` и без
+scheduler activation. Gate P2b1 закрыт, но P2b2 ещё не активирован: для начала
+нужно отдельное явное разрешение пользователя. P3 ждёт закрытия всего P2.
 
 ## Состояние разделения
 
@@ -407,8 +444,9 @@ production-режим `legacy`. Runtime fencing выделен в следующ
 | P1 Sentry Cron dead-man release | `VERIFIED` 2026-08-21, PR `#226`, production `c2bc2eb` |
 | P2a schema `0020`–`0021` | `DEPLOYED_LEGACY_ONLY` 2026-08-21, PR `#227`, production `decd480` |
 | P2a post-deploy monitor/schema/log observation | `VERIFIED` 2026-08-21 |
-| P2b1 lifecycle/index/backfill `0022` | `IN_PROGRESS`, явно разрешён 2026-08-21 |
-| P2b2 runtime fencing/dual-write | `NOT_STARTED`, ждёт P2b1 release gate |
+| P2b1 lifecycle/index/backfill `0022` | `DEPLOYED_LEGACY_ONLY`, PR `#229`, production `de0d202` |
+| P2b1 monitor/schema/log observation | `VERIFIED` 2026-08-21 |
+| P2b2 runtime fencing/dual-write | `AWAITING_EXPLICIT_ACTIVATION` |
 | Физическое разделение diff на commits/PR P3–P7 | `NOT_STARTED` |
 | Проверки и deploy пакетов P3–P5 | `NOT_STARTED` |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |

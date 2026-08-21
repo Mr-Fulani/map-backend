@@ -14,16 +14,16 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: P2b1 после P2a release
+## Текущая фаза: P2b1 завершён, P2b2 ждёт отдельной активации
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
 проверены. P2a nullable schema expansion `0020`–`0021` выложен в production
 commit `decd480` без runtime-логики; schema, health, backup и monitor gates
-зелёные. P2b дополнительно разделён по лимиту production-кода: сначала P2b1
-с чистой lifecycle-логикой, индексом и ручным backfill, затем P2b2 с runtime
-fencing. P3 и последующие пакеты не смешиваются с ними и ждут закрытия всего
-P2.
+зелёные. P2b1 с чистой lifecycle-логикой, индексом и ручным backfill выложен в
+production commit `de0d202` с режимом `legacy`; schema, health, monitor и
+десятиминутное наблюдение зелёные. P2b2 с runtime fencing не начат и требует
+отдельной явной активации. P3 и последующие пакеты ждут закрытия всего P2.
 
 Готово только когда:
 
@@ -93,7 +93,7 @@ Deploy: production commit `decd480`, только схема. Старый ко�
 работать, новые поля остаются `NULL`, ни один новый worker или режим не
 включён. Production monitor и десятиминутное наблюдение зелёные.
 
-#### P2b1. Lifecycle, индекс и ручной backfill — активный пакет
+#### P2b1. Lifecycle, индекс и ручной backfill — завершён
 
 Содержимое:
 
@@ -109,10 +109,11 @@ Deploy: production commit `decd480`, только схема. Старый ко�
 - обновление копии существующей базы;
 - полный backend test.
 
-Deploy: status mode остаётся `legacy`, новый scheduler выключен. После
-выкладки — отдельное наблюдение до начала P2b2.
+Deploy: status mode остаётся `legacy`, новый scheduler выключен. Schema/index,
+manual monitor, health и десятиминутное наблюдение подтверждены на production
+commit `de0d202`. Backfill apply не запускался.
 
-#### P2b2. Runtime fencing/dual-write — ждёт P2b1 release gate
+#### P2b2. Runtime fencing/dual-write — ждёт отдельной активации
 
 Содержимое:
 
@@ -123,7 +124,8 @@ Deploy: status mode остаётся `legacy`, новый scheduler выключ
 - без scheduler activation, private storage и feed-run логики.
 
 Проверки: status-fencing tests, весь Marketplace suite и полный backend test.
-P2b2 не начинается до PR/CI/deploy/observation gate P2b1.
+PR/CI/deploy/observation gate P2b1 закрыт. P2b2 всё равно не начинается без
+отдельного явного разрешения пользователя.
 
 ### P3. Надёжная запись задания на отправку
 
