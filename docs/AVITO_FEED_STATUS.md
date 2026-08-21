@@ -289,6 +289,53 @@ Post-deploy подтверждено:
 metadata hotplug detection. Application topology, readiness, backup freshness
 и capacity от этого не пострадали; исправление ОС не входит в feed-пакет.
 
+### Проверка P2b1 перед PR
+
+P2b1 физически выделен от production `main`: 14 файлов, из них семь
+production-файлов и около 871 новой production-строки. В пакете нет scheduler,
+marketplace tasks/services/views/admin, runtime fencing, private storage,
+cleanup или GC. Настройка production остаётся `legacy`.
+
+Локальный PostgreSQL и application gate:
+
+```text
+python manage.py makemigrations --check --dry-run
+результат: exit 0, No changes detected
+
+python manage.py migrate marketplaces 0022 --noinput
+python manage.py migrate marketplaces 0021 --noinput
+python manage.py migrate marketplaces 0022 --noinput
+результат: exit 0; 0022 применена, отменена и повторно применена
+PostgreSQL catalog: mkt_acct_provider_due valid=true, ready=true
+
+pytest -q apps/marketplaces/tests/test_listing_lifecycle.py \
+  apps/marketplaces/tests/test_backfill_listing_status_lifecycle.py \
+  tests/test_production_storage_settings.py
+результат: exit 0, 123 passed
+
+pytest -q apps/marketplaces/tests/test_status_lifecycle_expand.py
+результат: exit 0, 7 passed
+
+pytest -q apps/marketplaces/tests
+результат: exit 0, 277 passed
+
+flake8 .
+mypy
+mypy --check-untyped-defs --exclude '(^|/)(tests?|migrations)/' apps config backup
+результат: exit 0; 624 и 328 source files без ошибок типов
+
+python manage.py spectacular --file /tmp/openapi-p2b1.yml \
+  --validate --fail-on-warn
+результат: exit 0
+
+pytest --cov=apps --cov-config=.coveragerc --cov-report=term-missing
+результат: exit 0, 1922 passed, 1 skipped in 954.83s, coverage 79.85%
+```
+
+Ручной command preflight в `legacy` разрешил только bounded `--dry-run`
+(`updated=0`) и ожидаемо отказал apply с `CommandError`. Команда не делает
+provider-вызовов и нигде не зарегистрирована в periodic scheduler.
+
 Для смешанного WIP snapshot всё ещё не выполнены как единый актуальный gate:
 
 - применение всех миграций на чистой PostgreSQL;
@@ -300,7 +347,7 @@ metadata hotplug detection. Application topology, readiness, backup freshness
 - реальная проверка приватного versioned bucket, IAM и восстановления после
   сбоев.
 
-Snapshot и оставшиеся P2b–P7 не являются кандидатами на единый релиз. Успешные
+Snapshot и оставшиеся P2b2–P7 не являются кандидатами на единый релиз. Успешные
 P0/P1/P2a gates подтверждают только выделенные пакеты и не верифицируют
 оставшийся код из snapshot.
 
@@ -338,10 +385,11 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный разрешённый шаг
 
-P0, P1 и P2a завершены и работают в production. Активный следующий пакет —
-P2b: migration `0022`, lifecycle/backfill/fencing с режимом `legacy` и
-выключенным scheduler. Он выделяется и проверяется отдельно от P2a. P3 не
-начинается до отдельного закрытия всего P2.
+P0, P1 и P2a завершены и работают в production. Активный пакет — P2b1:
+migration `0022`, чистая lifecycle-логика, ручной bounded backfill и явный
+production-режим `legacy`. Runtime fencing выделен в следующий P2b2. Оба
+пакета не включают scheduler; P2b2 не начинается до release gate P2b1, а P3 —
+до отдельного закрытия всего P2.
 
 ## Состояние разделения
 
@@ -359,7 +407,8 @@ P2b: migration `0022`, lifecycle/backfill/fencing с режимом `legacy` и
 | P1 Sentry Cron dead-man release | `VERIFIED` 2026-08-21, PR `#226`, production `c2bc2eb` |
 | P2a schema `0020`–`0021` | `DEPLOYED_LEGACY_ONLY` 2026-08-21, PR `#227`, production `decd480` |
 | P2a post-deploy monitor/schema/log observation | `VERIFIED` 2026-08-21 |
-| P2b lifecycle/backfill/fencing `0022` | `AUTHORIZED`, следующий отдельный пакет |
+| P2b1 lifecycle/index/backfill `0022` | `IN_PROGRESS`, явно разрешён 2026-08-21 |
+| P2b2 runtime fencing/dual-write | `NOT_STARTED`, ждёт P2b1 release gate |
 | Физическое разделение diff на commits/PR P3–P7 | `NOT_STARTED` |
 | Проверки и deploy пакетов P3–P5 | `NOT_STARTED` |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |

@@ -14,14 +14,16 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: выделение P2b после P2a release
+## Текущая фаза: P2b1 после P2a release
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
 проверены. P2a nullable schema expansion `0020`–`0021` выложен в production
 commit `decd480` без runtime-логики; schema, health, backup и monitor gates
-зелёные. Следующим отдельно выделяется P2b. P3 и последующие пакеты не
-смешиваются с ним и ждут закрытия всего P2.
+зелёные. P2b дополнительно разделён по лимиту production-кода: сначала P2b1
+с чистой lifecycle-логикой, индексом и ручным backfill, затем P2b2 с runtime
+fencing. P3 и последующие пакеты не смешиваются с ними и ждут закрытия всего
+P2.
 
 Готово только когда:
 
@@ -91,23 +93,37 @@ Deploy: production commit `decd480`, только схема. Старый ко�
 работать, новые поля остаются `NULL`, ни один новый worker или режим не
 включён. Production monitor и десятиминутное наблюдение зелёные.
 
-#### P2b. Lifecycle/backfill/fencing — следующий активный пакет
+#### P2b1. Lifecycle, индекс и ручной backfill — активный пакет
 
 Содержимое:
 
 - migration `0022` с account due index;
 - единые правила смены статусов;
 - безопасный backfill статусов;
+- явный production-режим `legacy`;
 - без нового планировщика и без private storage.
 
 Проверки:
 
-- schema/backfill/status fencing tests;
+- schema/lifecycle/backfill/settings tests;
 - обновление копии существующей базы;
 - полный backend test.
 
 Deploy: status mode остаётся `legacy`, новый scheduler выключен. После
-выкладки — отдельное наблюдение до закрытия всего P2.
+выкладки — отдельное наблюдение до начала P2b2.
+
+#### P2b2. Runtime fencing/dual-write — ждёт P2b1 release gate
+
+Содержимое:
+
+- только lifecycle-hunks существующих marketplace tasks/services;
+- fencing устаревшего ответа внешнего API;
+- dual-write служебных lifecycle-полей при сохранении канонического legacy
+  статуса объявления;
+- без scheduler activation, private storage и feed-run логики.
+
+Проверки: status-fencing tests, весь Marketplace suite и полный backend test.
+P2b2 не начинается до PR/CI/deploy/observation gate P2b1.
 
 ### P3. Надёжная запись задания на отправку
 

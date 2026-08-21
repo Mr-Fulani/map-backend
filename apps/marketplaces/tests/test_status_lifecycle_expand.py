@@ -27,6 +27,7 @@ ACCOUNT_EXPAND_FIELDS = (
 )
 
 LISTING_DUE_INDEX = 'mkt_lst_acct_stat_due'
+ACCOUNT_DUE_INDEX = 'mkt_acct_provider_due'
 
 LISTING_DUE_CONDITION = (
     models.Q(
@@ -35,6 +36,12 @@ LISTING_DUE_CONDITION = (
         next_status_check_at__isnull=False,
     )
     & ~models.Q(external_id='')
+)
+
+ACCOUNT_DUE_CONDITION = models.Q(
+    deleted_at__isnull=True,
+    is_active=True,
+    status_batch_due_at__isnull=False,
 )
 
 
@@ -80,10 +87,11 @@ def test_status_lifecycle_expand_model_fields_are_inert_and_nullable():
     ]
     assert listing_index.condition == LISTING_DUE_CONDITION
 
-    assert all(
-        index.name != 'mkt_acct_provider_due'
-        for index in MarketplaceAccount._meta.indexes
-    )
+    account_index = _index(MarketplaceAccount, ACCOUNT_DUE_INDEX)
+    assert account_index.fields == [
+        'marketplace', 'status_batch_due_at', 'id',
+    ]
+    assert account_index.condition == ACCOUNT_DUE_CONDITION
 
 
 @pytest.mark.django_db
@@ -91,11 +99,7 @@ def test_status_lifecycle_expand_migrations_are_additive_and_split():
     loader = MigrationLoader(connection)
     expand = _marketplaces_migration(loader, '0020')
     listing_index_migration = _marketplaces_migration(loader, '0021')
-
-    assert not any(
-        app_label == 'marketplaces' and name.startswith('0022_')
-        for app_label, name in loader.disk_migrations
-    )
+    account_index_migration = _marketplaces_migration(loader, '0022')
 
     assert expand.atomic is True
     assert all(
@@ -131,6 +135,20 @@ def test_status_lifecycle_expand_migrations_are_additive_and_split():
         'account', 'status', 'next_status_check_at', 'id',
     ]
     assert listing_operation.index.condition == LISTING_DUE_CONDITION
+
+    assert account_index_migration.atomic is False
+    assert account_index_migration.dependencies == [
+        ('marketplaces', listing_index_migration.name),
+    ]
+    assert len(account_index_migration.operations) == 1
+    account_operation = account_index_migration.operations[0]
+    assert isinstance(account_operation, AddIndexConcurrently)
+    assert account_operation.model_name == 'marketplaceaccount'
+    assert account_operation.index.name == ACCOUNT_DUE_INDEX
+    assert account_operation.index.fields == [
+        'marketplace', 'status_batch_due_at', 'id',
+    ]
+    assert account_operation.index.condition == ACCOUNT_DUE_CONDITION
 
 
 @pytest.mark.django_db
@@ -236,6 +254,50 @@ def test_listing_due_index_is_valid_postgresql_index():
 
 
 @pytest.mark.django_db
+def test_account_due_index_is_valid_postgresql_index():
+    if connection.vendor != 'postgresql':
+        pytest.skip('PostgreSQL catalog contract')
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            '''
+            SELECT table_class.relname,
+                   pg_index.indisvalid,
+                   pg_index.indisready,
+                   pg_index.indisunique,
+                   pg_get_indexdef(pg_index.indexrelid),
+                   pg_get_expr(pg_index.indpred, pg_index.indrelid)
+              FROM pg_index
+              JOIN pg_class AS index_class
+                ON index_class.oid = pg_index.indexrelid
+              JOIN pg_class AS table_class
+                ON table_class.oid = pg_index.indrelid
+              JOIN pg_namespace AS namespace
+                ON namespace.oid = table_class.relnamespace
+             WHERE namespace.nspname = current_schema()
+               AND index_class.relname = %s
+            ''',
+            [ACCOUNT_DUE_INDEX],
+        )
+        row = cursor.fetchone()
+
+    assert row is not None
+    table, valid, ready, unique, definition, predicate = row
+    assert table == MarketplaceAccount._meta.db_table
+    assert valid is True
+    assert ready is True
+    assert unique is False
+    assert predicate is not None
+
+    definition = ' '.join(definition.replace('"', '').split()).lower()
+    predicate = ' '.join(predicate.replace('"', '').split()).lower()
+    assert '(marketplace, status_batch_due_at, id)' in definition
+    assert 'deleted_at is null' in predicate
+    assert 'is_active' in predicate
+    assert 'status_batch_due_at is not null' in predicate
+
+
+@pytest.mark.django_db
 def test_models_can_be_created_without_status_lifecycle_values():
     tenant = Tenant.objects.create(name='Status expand', slug='status-expand')
     account = MarketplaceAccount.objects.create(
@@ -294,7 +356,7 @@ def test_existing_marketplace_rows_survive_upgrade_from_0019():
 
     executor = MigrationExecutor(connection)
     executor.migrate([
-        ('marketplaces', '0021_status_lifecycle_concurrent_indexes'),
+        ('marketplaces', '0022_account_status_lifecycle_concurrent_index'),
     ])
 
     upgraded_account = MarketplaceAccount.objects.get(pk=account_pk)

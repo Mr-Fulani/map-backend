@@ -56,7 +56,49 @@ def _production_environment() -> dict[str, str]:
         'DEFAULT_FROM_EMAIL': 'noreply@notify.dodugir.com',
         'EMAIL_HTTP_PROXY_URL': 'http://egress_proxy:3128',
         'PUBLIC_HTTP_PROXY_URL': 'http://egress_proxy:3128',
+        'AVITO_STATUS_LIFECYCLE_MODE': 'legacy',
     }
+
+
+@pytest.mark.parametrize('value', ('', 'enabled', 'true', 'DUAL-WRITE'))
+def test_production_requires_explicit_valid_avito_lifecycle_mode(value):
+    environment = _production_environment()
+    environment['AVITO_STATUS_LIFECYCLE_MODE'] = value
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'AVITO_STATUS_LIFECYCLE_MODE' in result.stderr
+
+
+@pytest.mark.parametrize('value', ('legacy', 'dual_write', ' DUAL_WRITE '))
+def test_production_accepts_explicit_avito_lifecycle_modes(value):
+    environment = _production_environment()
+    environment['AVITO_STATUS_LIFECYCLE_MODE'] = value
+
+    command = (
+        'import config.settings.production as settings; '
+        'assert settings.AVITO_STATUS_LIFECYCLE_MODE in {"legacy", "dual_write"}'
+    )
+    result = subprocess.run(
+        [sys.executable, '-c', command],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_production_allows_explicitly_disabled_billing_without_credentials():
