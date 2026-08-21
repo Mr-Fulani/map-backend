@@ -65,6 +65,7 @@ interface ListingDetail {
   bulk_manager_name: string;
   bulk_contact_phone: string;
   rejection_reason: string;
+  last_sync_at: string | null;
   avito_field_warnings?: string[];
   avito_brand_valid: boolean;
   avito_brand_catalog_synced_at: string | null;
@@ -655,6 +656,15 @@ function ListingDrawerContent({
                     {listing.status_display}
                   </Badge>
                 </div>
+                {listing.status === 'active' && listing.last_sync_at && (
+                  <p className="text-xs text-green-700 dark:text-green-400">
+                    Статус проверен через Avito:{' '}
+                    {new Date(listing.last_sync_at).toLocaleString('ru-RU', {
+                      day: '2-digit', month: '2-digit', year: 'numeric',
+                      hour: '2-digit', minute: '2-digit',
+                    })}
+                  </p>
+                )}
               </SheetHeader>
 
               {/* Фотографии — Avito-стиль */}

@@ -425,9 +425,9 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 P0, P1, P2a, P2b1 и P2b2 завершены и работают в production. Runtime fencing
 P2b2 выложен выключенным режимом `legacy`, lifecycle scheduler не активирован.
-P2 закрыт как legacy-only release. До P3 следующим отдельным действием является
-bounded canary и исправление подтверждённого дефекта счётчика active listings;
-P3 не начинается без нового решения пользователя.
+P2b2 закрыт как legacy-only release. Bounded canary не подтвердил дефект
+счётчика: P2c tenant-visibility/expiry-notice follow-up локально проверен и
+ожидает отдельного PR/release. P3 не начинается без нового решения пользователя.
 
 ### Локальная проверка P2b2 перед PR
 
@@ -501,24 +501,72 @@ head/merge SHA. Автоматический Deploy run `32495874817` ожида
   а critical/traceback/unhandled/internal-server-error/5xx matches в Django,
   Celery, frontend и Nginx равны `0`.
 
-### Дефект active listings: read-only вывод
+### Проверка active listings и P2c tenant visibility
 
 Пользователь сообщил: в Avito нет активных объявлений, но дашборд показывает
 10. Production-проверка подтвердила ровно 10 локальных
 `Listing.status=active`, все у одного включённого marketplace account и все с
 `external_id`. Дашборд напрямую считает это локальное поле.
 
-Существующая legacy-сверка запускалась в 15:05 UTC и обновила `last_sync_at`
-всех десяти строк. Однако она изменяет канонический статус только для ответов
-`active`, `rejected` и `blocked`; остальные ответы оставляет `active`, одновременно
-записывая свежий `last_sync_at`. Task results отключены настройкой
-`CELERY_TASK_IGNORE_RESULT=True`, поэтому точный уже полученный provider-status
-после факта не сохранён.
+Bounded read-only GET canary затем получил точный текущий provider truth:
 
-Исправление не смешивается с release-record P2b2. Следующий пакет: один bounded
-read-only GET canary для этих десяти ID, regression test точного ответа,
-минимальная правка legacy-перехода и отдельный PR/release gate. До canary нельзя
-угадывать, является фактический ответ `removed`, `archived`, `old` или другим.
+- все 10 item GET вернули `status=active`;
+- account-wide `GET /core/v1/items?status=active` вернул 14 active items;
+- все 10 локальных external ID присутствуют в этом active list;
+- OAuth credentials соответствуют configured Avito account;
+- проверенный item дополнительно вернул `start_time` и `finish_time`, причём
+  фактический срок действует до 2026-09-12.
+
+Следовательно, замена 10 на 0 или принудительное архивирование были бы
+неверными. P2c вместо этого делает источник числа понятным и предупреждает о
+сроке, который подтверждает сам Avito:
+
+- dashboard подписывает число как `Активные в MAP`;
+- listing list и drawer показывают `last_sync_at` как время проверки Avito;
+- active response с валидным `finish_time` создаёт tenant notice за
+  14/7/3/1/0 дней;
+- одно logical notice имеет стабильный неперсональный event key, coalescing в
+  coordination cache и durable per-channel deduplication;
+- устаревший CAS response, не-active status, отсутствующий/невалидный
+  `finish_time` и срок больше 14 дней не создают notice;
+- canonical status, lifecycle mode, scheduler и feed-механизм не меняются.
+
+P2c затрагивает пять production-файлов в двух подсистемах, два test-файла и эти
+три документа; новых миграций и настроек нет. Локальные gates:
+
+```text
+pytest -q apps/marketplaces/tests/test_status_fencing.py
+результат: 25 passed in 24.10s
+
+pytest -q apps/marketplaces/tests
+результат: 303 passed in 95.91s
+
+pytest --cov=apps --cov-config=.coveragerc --cov-report=term-missing
+результат: 1948 passed, 1 skipped in 932.90s, coverage 79.72%
+
+python manage.py makemigrations --check --dry-run
+результат: No changes detected
+
+flake8 .
+mypy
+mypy --check-untyped-defs --exclude '(^|/)(tests?|migrations)/' \
+  apps config backup
+результат: exit 0; 625 и 328 source files без ошибок типов
+
+python manage.py spectacular --file /tmp/avito-expiry-openapi.yml \
+  --validate --fail-on-warn
+результат: exit 0
+
+frontend: typecheck, ESLint, 25 unit tests
+frontend production build: Next.js 16.3.0 webpack, 21 pages
+результат: exit 0
+```
+
+Первый одноразовый pytest container остановился до тестов из-за невалидного
+локального `FIELD_ENCRYPTION_KEY`; тот же gate повторён с фиксированным
+несекретным Fernet test key и прошёл. Turbopack build не принял внешний
+`node_modules` symlink временного checkout; тот же production build выполнен
+поддерживаемым Next.js webpack mode и прошёл.
 
 ## Состояние разделения
 
@@ -540,7 +588,8 @@ read-only GET canary для этих десяти ID, regression test точно
 | P2b1 monitor/schema/log observation | `VERIFIED` 2026-08-21 |
 | P2b2 runtime fencing/dual-write | `DEPLOYED_LEGACY_ONLY`, PR `#232`, production `0ef04de` |
 | P2b2 monitor/health/log observation | `VERIFIED` 2026-08-21 |
-| Дефект Avito 0 / dashboard 10: read-only diagnosis | `VERIFIED`; exact provider-status canary pending |
+| Avito 0 / dashboard 10: bounded provider canary | `VERIFIED`; Avito API подтверждает все 10 active |
+| P2c tenant status clarity/expiry notices | `VERIFIED` локально; PR/release pending |
 | Физическое разделение diff на commits/PR P3–P7 | `NOT_STARTED` |
 | Проверки и deploy пакетов P3–P5 | `NOT_STARTED` |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |

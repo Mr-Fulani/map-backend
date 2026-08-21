@@ -13,6 +13,8 @@ import uuid
 import pytest
 from django.conf import settings
 from django.db import close_old_connections
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
@@ -658,6 +660,20 @@ class TestListingDetailSerializer:
         data = ListingDetailSerializer(listing).data
 
         assert data['product_brand'] == 'Hyundai-KIA'
+
+    def test_detail_includes_last_avito_sync_time(self):
+        """Tenant UI can explain when the provider last confirmed the status."""
+        from apps.marketplaces.serializers import ListingDetailSerializer
+
+        tenant = make_tenant('detail-last-sync-co')
+        listing = make_listing(tenant)
+        checked_at = timezone.now().replace(microsecond=0)
+        listing.last_sync_at = checked_at
+        listing.save(update_fields=['last_sync_at'])
+
+        data = ListingDetailSerializer(listing).data
+
+        assert parse_datetime(data['last_sync_at']) == checked_at
 
     def test_detail_includes_images(self):
         """ListingDetailSerializer возвращает список изображений товара."""

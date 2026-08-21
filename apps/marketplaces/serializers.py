@@ -194,7 +194,8 @@ class ListingSerializer(serializers.ModelSerializer):
             'bulk_placement_address',
             'bulk_address', 'bulk_seller_address_id',
             'bulk_manager_name', 'bulk_contact_phone',
-            'rejection_reason', 'retry_count', 'published_at', 'created_at',
+            'rejection_reason', 'retry_count', 'published_at', 'last_sync_at',
+            'created_at',
         ]
         read_only_fields = fields
 
