@@ -423,10 +423,11 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный шаг
 
-P0, P1, P2a и P2b1 завершены и работают в production. P2b2 активирован
-пользователем 2026-08-21: runtime fencing/dual-write выполняется при сохранении
-production-режима `legacy` и без scheduler activation. P3 ждёт закрытия всего
-P2.
+P0, P1, P2a, P2b1 и P2b2 завершены и работают в production. Runtime fencing
+P2b2 выложен выключенным режимом `legacy`, lifecycle scheduler не активирован.
+P2 закрыт как legacy-only release. До P3 следующим отдельным действием является
+bounded canary и исправление подтверждённого дефекта счётчика active listings;
+P3 не начинается без нового решения пользователя.
 
 ### Локальная проверка P2b2 перед PR
 
@@ -473,11 +474,51 @@ runtime services/tasks и тесты, а повторный migration-drift ос
 Legacy-тест подтверждает, что lifecycle-поля остаются `NULL`, когда режим
 `AVITO_STATUS_LIFECYCLE_MODE=legacy`.
 
-Отдельно зафиксирован пользовательский дефект: в Avito нет активных объявлений,
-но дашборд показывает 10 активных листингов. Он не смешивается с P2b2 без
-доказанной общей причины. После P2b2 требуется read-only сверка источника
-дашборд-метрики, локальных `Listing.status` и фактических статусов Avito, затем
-отдельный план исправления.
+### Production release P2b2
+
+PR `#232` merged в `0ef04de90ced8817ffe6edf2e775a4efda3d1784`. PR CI run
+`32491344632` и push-main CI run `32493682105` завершены успешно для точных
+head/merge SHA. Автоматический Deploy run `32495874817` ожидаемо получил
+`skipped`, потому что repository variable `PROD_DEPLOY_ENABLED=false`.
+
+Документированный one-off release:
+
+- до release production был на `de0d202`, Git clean;
+- production setting сохранился `AVITO_STATUS_LIFECYCLE_MODE=legacy`, а пять
+  будущих feed-переключателей отсутствуют — runtime legacy-only по конструкции;
+- создан encrypted backup
+  `postgres/daily/2026/08/20260821T151024Z_0ef04de90ced_fff802b3a557.dump.age`;
+- новых миграций не было; применённый head остаётся `marketplaces.0022`;
+- индексы `mkt_lst_acct_stat_due` и `mkt_acct_provider_due` valid/ready;
+- production checkout exact `0ef04de`, Git clean;
+- lifecycle periodic tasks, remote observations, listing/account claims: `0`;
+- старые Nginx, Django, frontend, оба worker и Beat остановились graceful без
+  SIGKILL;
+- все десять контейнеров healthy, restart count `0`, readiness HTTP 200, оба
+  backup timer active;
+- manual production monitor run `32496429816` для exact SHA зелёный;
+- через десять минут exact SHA и clean Git сохранились, все контейнеры healthy,
+  а critical/traceback/unhandled/internal-server-error/5xx matches в Django,
+  Celery, frontend и Nginx равны `0`.
+
+### Дефект active listings: read-only вывод
+
+Пользователь сообщил: в Avito нет активных объявлений, но дашборд показывает
+10. Production-проверка подтвердила ровно 10 локальных
+`Listing.status=active`, все у одного включённого marketplace account и все с
+`external_id`. Дашборд напрямую считает это локальное поле.
+
+Существующая legacy-сверка запускалась в 15:05 UTC и обновила `last_sync_at`
+всех десяти строк. Однако она изменяет канонический статус только для ответов
+`active`, `rejected` и `blocked`; остальные ответы оставляет `active`, одновременно
+записывая свежий `last_sync_at`. Task results отключены настройкой
+`CELERY_TASK_IGNORE_RESULT=True`, поэтому точный уже полученный provider-status
+после факта не сохранён.
+
+Исправление не смешивается с release-record P2b2. Следующий пакет: один bounded
+read-only GET canary для этих десяти ID, regression test точного ответа,
+минимальная правка legacy-перехода и отдельный PR/release gate. До canary нельзя
+угадывать, является фактический ответ `removed`, `archived`, `old` или другим.
 
 ## Состояние разделения
 
@@ -497,7 +538,9 @@ Legacy-тест подтверждает, что lifecycle-поля остают
 | P2a post-deploy monitor/schema/log observation | `VERIFIED` 2026-08-21 |
 | P2b1 lifecycle/index/backfill `0022` | `DEPLOYED_LEGACY_ONLY`, PR `#229`, production `de0d202` |
 | P2b1 monitor/schema/log observation | `VERIFIED` 2026-08-21 |
-| P2b2 runtime fencing/dual-write | `VERIFIED_LOCAL` 2026-08-21; PR/release pending |
+| P2b2 runtime fencing/dual-write | `DEPLOYED_LEGACY_ONLY`, PR `#232`, production `0ef04de` |
+| P2b2 monitor/health/log observation | `VERIFIED` 2026-08-21 |
+| Дефект Avito 0 / dashboard 10: read-only diagnosis | `VERIFIED`; exact provider-status canary pending |
 | Физическое разделение diff на commits/PR P3–P7 | `NOT_STARTED` |
 | Проверки и deploy пакетов P3–P5 | `NOT_STARTED` |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |
