@@ -704,6 +704,8 @@ export const tenantApi = {
   catalogDomains: () => api.get('/catalog-domains/'),
   setCatalogDomainEnabled: (domainSlug: string, isEnabled: boolean) =>
     api.post('/catalog-domains/', { domain_slug: domainSlug, is_enabled: isEnabled }),
+  replaceCatalogDomainSelection: (enabledDomainSlugs: string[]) =>
+    api.put('/catalog-domains/', { enabled_domain_slugs: enabledDomainSlugs }),
   getUsers: () => api.get('/tenant/users/'),
   getApiKeys: () => api.get('/tenant/api-keys/'),
   createApiKey: (name: string) => api.post('/tenant/api-keys/', { name }),

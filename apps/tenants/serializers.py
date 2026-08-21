@@ -86,6 +86,16 @@ class CatalogDomainSerializer(serializers.ModelSerializer):
         return obj.tenant_enablings.filter(tenant=tenant, is_enabled=True).exists()
 
 
+class CatalogDomainSelectionSerializer(serializers.Serializer):
+    enabled_domain_slugs = serializers.ListField(
+        child=serializers.SlugField(max_length=50),
+        allow_empty=True,
+    )
+
+    def validate_enabled_domain_slugs(self, value):
+        return list(dict.fromkeys(value))
+
+
 class TenantUserSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source='user.email', read_only=True)
 
