@@ -83,6 +83,160 @@ def test_moderation_success_dual_writes_observation_and_active_due():
     write_log.assert_not_called()
 
 
+def test_legacy_active_moderation_queues_bounded_expiry_notice(settings):
+    from apps.marketplaces.tasks import check_moderation_task
+
+    listing = _listing('legacy-expiry-notice')
+    settings.AVITO_STATUS_LIFECYCLE_MODE = 'legacy'
+    checked_at = timezone.now().replace(microsecond=0)
+    finish_time = checked_at + datetime.timedelta(days=6)
+
+    with (
+        patch('apps.marketplaces.tasks.now', return_value=checked_at),
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_status',
+            return_value={
+                'status': 'active',
+                'finish_time': finish_time.isoformat(),
+            },
+        ),
+        patch('apps.marketplaces.tasks.cache.add', return_value=True) as cache_add,
+        patch(
+            'apps.notifications.tasks.send_notification_task.delay',
+        ) as notify,
+    ):
+        result = check_moderation_task(listing.pk)
+
+    listing.refresh_from_db()
+    assert result == {'status': 'active', 'changed': False}
+    assert listing.last_sync_at == checked_at
+    cache_add.assert_called_once()
+    notify.assert_called_once()
+    assert notify.call_args.args[0] == listing.tenant_id
+    assert notify.call_args.args[1] == 'error'
+    assert 'осталось 6 дн.' in notify.call_args.args[2]
+    assert notify.call_args.args[3] == {
+        'account_id': listing.account_id,
+        'listing_id': listing.pk,
+        'finish_time': finish_time.isoformat(),
+        'days_left': 6,
+    }
+    assert notify.call_args.kwargs['event_key'].endswith(':7')
+
+
+def test_expired_active_listing_notice_is_critical():
+    from apps.marketplaces.tasks import _queue_listing_expiry_notification
+
+    listing = _listing('expired-expiry-notice')
+    checked_at = timezone.now().replace(microsecond=0)
+    finish_time = checked_at - datetime.timedelta(minutes=1)
+
+    with (
+        patch('apps.marketplaces.tasks.cache.add', return_value=True),
+        patch(
+            'apps.notifications.tasks.send_notification_task.delay',
+        ) as notify,
+    ):
+        _queue_listing_expiry_notification(
+            listing,
+            {'status': 'active', 'finish_time': finish_time.isoformat()},
+            checked_at=checked_at,
+        )
+
+    notify.assert_called_once()
+    assert notify.call_args.args[1] == 'critical'
+    assert 'срок размещения объявления' in notify.call_args.args[2]
+    assert 'API пока возвращает статус active' in notify.call_args.args[2]
+    assert notify.call_args.args[3]['days_left'] == 0
+    assert notify.call_args.kwargs['event_key'].endswith(':0')
+
+
+def test_provider_finish_time_uses_moscow_for_naive_avito_timestamp():
+    from apps.marketplaces.tasks import _provider_finish_time
+
+    parsed = _provider_finish_time('2026-09-12T00:52:46')
+
+    assert parsed is not None
+    assert timezone.is_aware(parsed)
+    assert parsed.utcoffset() == datetime.timedelta(hours=3)
+
+
+@pytest.mark.parametrize('finish_time', [None, '', 'not-a-date', 17, 'x' * 65])
+def test_expiry_notice_ignores_missing_or_malformed_finish_time(finish_time):
+    from apps.marketplaces.tasks import _queue_listing_expiry_notification
+
+    listing = _listing(f'bad-expiry-{str(finish_time)[:8]}')
+    with (
+        patch('apps.marketplaces.tasks.cache.add') as cache_add,
+        patch(
+            'apps.notifications.tasks.send_notification_task.delay',
+        ) as notify,
+    ):
+        _queue_listing_expiry_notification(
+            listing,
+            {'status': 'active', 'finish_time': finish_time},
+            checked_at=timezone.now(),
+        )
+
+    cache_add.assert_not_called()
+    notify.assert_not_called()
+
+
+def test_expiry_notice_is_not_queued_before_fourteen_day_window():
+    from apps.marketplaces.tasks import _queue_listing_expiry_notification
+
+    listing = _listing('future-expiry-notice')
+    checked_at = timezone.now().replace(microsecond=0)
+    finish_time = checked_at + datetime.timedelta(days=15)
+    with (
+        patch('apps.marketplaces.tasks.cache.add') as cache_add,
+        patch(
+            'apps.notifications.tasks.send_notification_task.delay',
+        ) as notify,
+    ):
+        _queue_listing_expiry_notification(
+            listing,
+            {'status': 'active', 'finish_time': finish_time.isoformat()},
+            checked_at=checked_at,
+        )
+
+    cache_add.assert_not_called()
+    notify.assert_not_called()
+
+
+def test_repeated_expiry_check_is_coalesced_before_notification_queue():
+    from apps.marketplaces.tasks import _queue_listing_expiry_notification
+
+    listing = _listing('coalesced-expiry-notice')
+    checked_at = timezone.now().replace(microsecond=0)
+    response = {
+        'status': 'active',
+        'finish_time': (checked_at + datetime.timedelta(days=3)).isoformat(),
+    }
+    with (
+        patch(
+            'apps.marketplaces.tasks.cache.add',
+            side_effect=[True, False],
+        ),
+        patch(
+            'apps.notifications.tasks.send_notification_task.delay',
+        ) as notify,
+    ):
+        _queue_listing_expiry_notification(
+            listing,
+            response,
+            checked_at=checked_at,
+        )
+        _queue_listing_expiry_notification(
+            listing,
+            response,
+            checked_at=checked_at,
+        )
+
+    notify.assert_called_once()
+    assert notify.call_args.kwargs['event_key'].endswith(':3')
+
+
 def test_moderation_stale_response_cannot_resurrect_archiving_intent():
     from apps.marketplaces.tasks import check_moderation_task
 
@@ -94,7 +248,10 @@ def test_moderation_stale_response_cannot_resurrect_archiving_intent():
             status_check_claim_token=None,
             status_check_claimed_until=None,
         )
-        return {'status': 'active'}
+        return {
+            'status': 'active',
+            'finish_time': (timezone.now() + datetime.timedelta(days=1)).isoformat(),
+        }
 
     with (
         patch(
@@ -104,6 +261,9 @@ def test_moderation_stale_response_cannot_resurrect_archiving_intent():
         ),
         patch('apps.marketplaces.tasks._write_log') as write_log,
         patch('apps.marketplaces.tasks._notify_error') as notify_error,
+        patch(
+            'apps.notifications.tasks.send_notification_task.delay',
+        ) as expiry_notify,
     ):
         result = check_moderation_task(listing.pk)
 
@@ -114,6 +274,7 @@ def test_moderation_stale_response_cannot_resurrect_archiving_intent():
     assert listing.remote_status_checked_at is None
     write_log.assert_not_called()
     notify_error.assert_not_called()
+    expiry_notify.assert_not_called()
 
 
 def test_live_claim_suppresses_duplicate_provider_call():

@@ -143,6 +143,26 @@ Deploy: status mode по-прежнему `legacy`, scheduler выключен. 
 monitor и десятиминутное наблюдение зелёные. Production остаётся `legacy`,
 lifecycle scheduler не активирован.
 
+### P2c — tenant visibility/expiry notices, без новой миграции
+
+Точный состав:
+
+- только tenant-notice hunk в `apps/marketplaces/tasks.py`;
+- только `last_sync_at` в marketplace serializers;
+- dashboard/listing/drawer подписи времени последней provider-проверки;
+- status-fencing и serializer regressions;
+- status/roadmap/manifest documentation.
+
+Не включать status transitions, новые lifecycle/feed modes, scheduler, новые
+очереди, migrations, feed-run, stable endpoint, private artifacts, cleanup или
+GC. `finish_time` берётся только из уже выполняемого provider GET; фиксированный
+месячный срок не предполагается.
+
+Локальный gate закрыт: 24 status-fencing, 302 Marketplace и 1 947 backend
+tests; frontend typecheck/ESLint/25 unit tests/production build; migration
+drift, OpenAPI, flake8 и mypy. Deploy возможен только в режиме `legacy` после
+отдельного PR/CI.
+
 ## P3 — надёжный запуск фида, миграции 0023–0024
 
 Основные файлы:

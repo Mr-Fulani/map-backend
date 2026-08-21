@@ -1,4 +1,5 @@
 import datetime
+import logging
 import uuid
 from dataclasses import dataclass
 from types import TracebackType
@@ -9,6 +10,7 @@ from django.conf import settings
 from django.core.cache import caches
 from django.db import transaction
 from django.db.models import F, Q
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.utils.timezone import now
 
@@ -38,6 +40,7 @@ from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR, LEVEL_SUCCE
 
 
 cache = caches['coordination']
+logger = logging.getLogger(__name__)
 
 
 _STATUS_CHECK_CLAIM_LEASE = datetime.timedelta(minutes=5)
@@ -47,6 +50,9 @@ _POLL_RETRY_DELAY = datetime.timedelta(minutes=30)
 _FEED_POLL_BATCH_SIZE = 100
 _FEED_POLL_BATCH_DELAY_SECONDS = 30
 _MAX_PROVIDER_REASON_LENGTH = 2000
+_LISTING_EXPIRY_THRESHOLDS = (0, 1, 3, 7, 14)
+_LISTING_EXPIRY_NOTICE_CACHE_MIN = datetime.timedelta(days=7)
+_LISTING_EXPIRY_NOTICE_CACHE_MAX = datetime.timedelta(days=60)
 _AVITO_REMOTE_STATUS_ALIASES = {
     # Avito calls an ad that has left active publication ``old``.
     'old': Listing.REMOTE_STATUS_ARCHIVED,
@@ -79,6 +85,135 @@ def _bounded_provider_reason(value: object) -> str:
     text = str(value or '')
     printable = ''.join(character for character in text if character.isprintable())
     return ' '.join(printable.split())[:_MAX_PROVIDER_REASON_LENGTH]
+
+
+def _provider_finish_time(value: object) -> datetime.datetime | None:
+    """Parse Avito's bounded ISO finish_time in the configured local zone."""
+
+    if not isinstance(value, str) or not 1 <= len(value) <= 64:
+        return None
+    parsed = parse_datetime(value)
+    if parsed is None:
+        return None
+    if timezone.is_naive(parsed):
+        parsed = timezone.make_aware(parsed, timezone.get_default_timezone())
+    return parsed
+
+
+def _listing_expiry_days_left(
+    finish_time: datetime.datetime,
+    *,
+    checked_at: datetime.datetime,
+) -> int:
+    seconds_left = (finish_time - checked_at).total_seconds()
+    if seconds_left <= 0:
+        return 0
+    return int((seconds_left + 86399) // 86400)
+
+
+def _queue_listing_expiry_notification(
+    listing: Listing,
+    response: dict,
+    *,
+    checked_at: datetime.datetime,
+) -> None:
+    """Warn once per Avito placement period and threshold without DB changes."""
+
+    if str(response.get('status', '')).strip().lower() != 'active':
+        return
+    finish_time = _provider_finish_time(response.get('finish_time'))
+    if finish_time is None:
+        return
+
+    days_left = _listing_expiry_days_left(finish_time, checked_at=checked_at)
+    threshold = next(
+        (
+            value
+            for value in _LISTING_EXPIRY_THRESHOLDS
+            if days_left <= value
+        ),
+        None,
+    )
+    if threshold is None:
+        return
+
+    finish_utc = finish_time.astimezone(datetime.timezone.utc)
+    period_key = finish_utc.strftime('%Y%m%dT%H%M%SZ')
+    event_key = f'avito-listing-expiry:{listing.pk}:{period_key}:{threshold}'
+    cache_key = f'notice:{event_key}'
+    cache_lifetime = finish_time - checked_at + datetime.timedelta(days=7)
+    cache_lifetime = max(cache_lifetime, _LISTING_EXPIRY_NOTICE_CACHE_MIN)
+    cache_lifetime = min(cache_lifetime, _LISTING_EXPIRY_NOTICE_CACHE_MAX)
+
+    try:
+        should_queue = cache.add(
+            cache_key,
+            '1',
+            timeout=max(1, int(cache_lifetime.total_seconds())),
+        )
+    except Exception:
+        # Delivery itself has a durable event key. Cache loss may enqueue a
+        # duplicate task, but cannot create a duplicate channel delivery.
+        logger.exception(
+            'Failed to coalesce Avito expiry notice listing_id=%s',
+            listing.pk,
+        )
+        should_queue = True
+    if not should_queue:
+        return
+
+    listing_label = ' '.join(
+        str(listing.title or listing.product.name or f'#{listing.pk}').split()
+    )[:160]
+    finish_local = timezone.localtime(finish_time)
+    finish_label = finish_local.strftime('%d.%m.%Y %H:%M')
+    if days_left == 0:
+        level = LEVEL_CRITICAL
+        message = (
+            f'Avito ({listing.account.name}): срок размещения объявления '
+            f'«{listing_label}» закончился {finish_label}, но API пока '
+            'возвращает статус active. Проверьте объявление в Avito; MAP '
+            'продолжит сверку автоматически.'
+        )
+    else:
+        level = LEVEL_CRITICAL if days_left <= 1 else LEVEL_ERROR
+        message = (
+            f'Avito ({listing.account.name}): объявление «{listing_label}» '
+            f'активно до {finish_label} — осталось {days_left} дн. '
+            'Проверьте продление или повторное размещение заранее, если '
+            'объявление должно оставаться активным.'
+        )
+
+    from apps.notifications.tasks import send_notification_task
+
+    try:
+        send_notification_task.delay(
+            listing.tenant_id,
+            level,
+            message,
+            {
+                'account_id': listing.account_id,
+                'listing_id': listing.pk,
+                'finish_time': finish_time.isoformat(),
+                'days_left': days_left,
+            },
+            event_key=event_key,
+        )
+    except Exception:
+        # A broker outage must not turn a successful provider read into a
+        # failed moderation check. Release the coalescing key so the next
+        # scheduled check can retry dispatching the notice.
+        try:
+            cache.delete(cache_key)
+        except Exception:
+            logger.exception(
+                'Failed to release Avito expiry notice cache listing_id=%s',
+                listing.pk,
+            )
+        logger.exception(
+            'Failed to enqueue Avito expiry notice listing_id=%s',
+            listing.pk,
+        )
 
 
 def _claim_listing_status_check(
@@ -1725,6 +1860,13 @@ def _check_moderation_dual_write(task, listing_id: int):
     if affected != 1:
         return {'status': 'stale', 'changed': False}
 
+    if normalized == Listing.REMOTE_STATUS_ACTIVE:
+        _queue_listing_expiry_notification(
+            listing,
+            response,
+            checked_at=checked_at,
+        )
+
     if changed and result_status == 'active':
         _write_log(
             listing.tenant, 'moderation', 'ok',
@@ -1780,6 +1922,7 @@ def check_moderation_task(self, listing_id: int):
     try:
         data = AvitoAdapter(listing.account).get_status(listing)
         avito_status = data.get('status', '')
+        checked_at = now()
         changed = False
         if avito_status == 'active':
             changed = listing.status != Listing.STATUS_ACTIVE
@@ -1809,11 +1952,16 @@ def check_moderation_task(self, listing_id: int):
                 f'Отклонено модерацией{reason_txt}',
                 listing=listing,
             )
-        listing.last_sync_at = now()
+        listing.last_sync_at = checked_at
         listing.save(update_fields=['status', 'rejection_reason', 'last_sync_at'])
         if avito_status in ('rejected', 'blocked'):
             return {'status': 'rejected', 'changed': changed}
         if avito_status == 'active':
+            _queue_listing_expiry_notification(
+                listing,
+                data,
+                checked_at=checked_at,
+            )
             return {'status': 'active', 'changed': changed}
         return {'status': 'ignored', 'provider_status': avito_status}
     except RateLimitError as exc:

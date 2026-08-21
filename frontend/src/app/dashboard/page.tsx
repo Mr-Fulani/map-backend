@@ -370,7 +370,7 @@ function FunnelWidget({
   const items = funnel ? [
     { label: 'Товары в каталоге', value: funnel.products, href: '/dashboard/products', icon: Package },
     { label: 'Всего объявлений', value: funnel.listings, href: '/dashboard/listings', icon: ListOrdered },
-    { label: 'Активные объявления', value: funnel.active_listings, href: '/dashboard/listings?status=active', icon: ListOrdered },
+    { label: 'Активные в MAP', value: funnel.active_listings, href: '/dashboard/listings?status=active', icon: ListOrdered },
     { label: 'В очереди', value: funnel.queued_listings, href: '/dashboard/listings?status=queued', icon: Clock3 },
     { label: 'На модерации', value: funnel.pending_listings, href: '/dashboard/listings?status=pending', icon: Clock3 },
     { label: 'Требуют проверки', value: funnel.requires_review_listings, href: '/dashboard/listings?status=requires_review', icon: ListChecks },
@@ -385,7 +385,8 @@ function FunnelWidget({
           Каталог и публикация
         </CardTitle>
         <CardDescription>
-          Состояние каталога и объявлений на всех подключённых аккаунтах.
+          Счётчики MAP по всем аккаунтам. В списке активных объявлений показано,
+          когда каждый статус проверен через Avito.
         </CardDescription>
       </CardHeader>
       <CardContent>

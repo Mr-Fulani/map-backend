@@ -35,7 +35,18 @@ interface Listing {
   rejection_reason: string;
   retry_count: number;
   published_at: string | null;
+  last_sync_at: string | null;
   created_at: string;
+}
+
+function avitoCheckedLabel(value: string): string {
+  return new Date(value).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 interface Meta {
@@ -432,6 +443,11 @@ export default function ListingsPage() {
                         ? `Опубликован: ${new Date(l.published_at).toLocaleDateString('ru-RU')}`
                         : `Создан: ${new Date(l.created_at).toLocaleDateString('ru-RU')}`}
                     </p>
+                    {l.status === 'active' && l.last_sync_at && (
+                      <p className="mt-1 text-xs text-green-700 dark:text-green-400">
+                        Проверено через Avito: {avitoCheckedLabel(l.last_sync_at)}
+                      </p>
+                    )}
                   </div>
                   <div className="flex shrink-0 flex-col gap-1" onClick={(e) => e.stopPropagation()}>
                     {l.external_url && (
@@ -550,6 +566,11 @@ export default function ListingsPage() {
                       <Badge variant={STATUS_VARIANT[l.status] ?? 'outline'}>
                         {l.status_display}
                       </Badge>
+                      {l.status === 'active' && l.last_sync_at && (
+                        <p className="mt-1 max-w-40 text-[11px] leading-4 text-green-700 dark:text-green-400">
+                          Avito: {avitoCheckedLabel(l.last_sync_at)}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">{l.product_article}</td>
                     <td className="px-4 py-3">
