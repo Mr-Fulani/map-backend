@@ -158,10 +158,12 @@ lifecycle scheduler не активирован.
 GC. `finish_time` берётся только из уже выполняемого provider GET; фиксированный
 месячный срок не предполагается.
 
-Локальный gate закрыт: 24 status-fencing, 302 Marketplace и 1 947 backend
+Локальный gate закрыт: 25 status-fencing, 303 Marketplace и 1 948 backend
 tests; frontend typecheck/ESLint/25 unit tests/production build; migration
-drift, OpenAPI, flake8 и mypy. Deploy возможен только в режиме `legacy` после
-отдельного PR/CI.
+drift, OpenAPI, flake8 и mypy. PR `#234` merged в `1f05367`; PR/main CI,
+production backup/readiness/topology и manual monitor зелёные. Production остаётся
+`legacy`; десятиминутное наблюдение зелёное, новых
+migrations/scheduler/queue/settings нет.
 
 ## P3 — надёжный запуск фида, миграции 0023–0024
 

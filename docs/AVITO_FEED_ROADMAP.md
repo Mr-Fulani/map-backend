@@ -14,7 +14,7 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: P2c tenant visibility проверен локально
+## Текущая фаза: P2c tenant visibility выложен в production
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
@@ -25,9 +25,12 @@ production commit `de0d202` с режимом `legacy`; schema, health, monitor 
 десятиминутное наблюдение зелёные. P2b2 с runtime fencing выложен в production
 commit `0ef04de` без смены режима `legacy`; PR/main CI, manual monitor, health и
 десятиминутное наблюдение зелёные. P2b2 закрыт как legacy-only release.
-Отдельный P2c follow-up проверяет provider truth и делает источник статуса
-понятным тенанту без изменения feed-режима. P3 и последующие пакеты не
-начинаются без нового отдельного решения пользователя.
+P2c follow-up с provider truth, временем последней Avito-проверки и
+tenant notices выложен в production commit `1f05367` без изменения
+feed-режима. Первый плановый цикл повторно подтвердил 10 active
+объявлений и доставил два разных Telegram notice для порога 14 дней.
+P3 и последующие пакеты не начинаются без нового отдельного решения
+пользователя.
 
 Готово только когда:
 
@@ -140,7 +143,7 @@ Avito вернул `active` для каждого, а account-wide active list �
 настроенному account. Поэтому искусственный переход `active → archived` не
 делается.
 
-#### P2c. Понятный tenant-facing статус и срок размещения — локально проверен
+#### P2c. Понятный tenant-facing статус и срок размещения — production legacy-only
 
 Содержимое:
 
@@ -154,10 +157,12 @@ Avito вернул `active` для каждого, а account-wide active list �
 - без миграций, новых scheduler/queue/settings и без изменения canonical
   статуса или feed-режима.
 
-Проверки: 24 status-fencing, 302 Marketplace и 1 947 backend-тестов прошли;
+Проверки: 25 status-fencing, 303 Marketplace и 1 948 backend-тестов прошли;
 frontend typecheck, ESLint, 25 unit tests и production build зелёные. Migration
-drift, OpenAPI, flake8 и оба mypy gate зелёные. Отдельный PR/release ещё не
-выполнен; production остаётся на `0ef04de` в режиме `legacy`.
+drift, OpenAPI, flake8 и оба mypy gate зелёные. PR `#234`, PR CI
+`32507225396` и main CI `32509442153` зелёные. Production commit
+`1f05367` работает в режиме `legacy`; exact topology, readiness,
+backup, manual monitor `32512208535` и десятиминутное наблюдение зелёные.
 
 ### P3. Надёжная запись задания на отправку
 

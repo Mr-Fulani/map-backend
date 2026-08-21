@@ -423,11 +423,13 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный шаг
 
-P0, P1, P2a, P2b1 и P2b2 завершены и работают в production. Runtime fencing
-P2b2 выложен выключенным режимом `legacy`, lifecycle scheduler не активирован.
-P2b2 закрыт как legacy-only release. Bounded canary не подтвердил дефект
-счётчика: P2c tenant-visibility/expiry-notice follow-up локально проверен и
-ожидает отдельного PR/release. P3 не начинается без нового решения пользователя.
+P0, P1, P2a, P2b1, P2b2 и P2c завершены и работают в production.
+Runtime fencing P2b2 и tenant visibility P2c выложены в режиме
+`legacy`, lifecycle scheduler не активирован. Bounded canary не подтвердил
+дефект счётчика: Avito повторно подтвердил все 10 active listings.
+P2c добавил время provider-проверки и уведомления о сроке; первые два
+Telegram notice доставлены. P3 не начинается без нового решения
+пользователя.
 
 ### Локальная проверка P2b2 перед PR
 
@@ -568,6 +570,40 @@ frontend production build: Next.js 16.3.0 webpack, 21 pages
 `node_modules` symlink временного checkout; тот же production build выполнен
 поддерживаемым Next.js webpack mode и прошёл.
 
+### Production release P2c
+
+PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
+`32507225396` и push-main CI run `32509442153` завершены успешно для
+точных head/merge SHA. Автоматический Deploy run `32511642072` ожидаемо
+получил `skipped`, потому что repository variable
+`PROD_DEPLOY_ENABLED=false`.
+
+Документированный one-off release:
+
+- до release production был на `0ef04de`, Git clean, все десять
+  контейнеров healthy, readiness HTTP 200 и оба backup timer active;
+- создан encrypted backup
+  `postgres/daily/2026/08/20260821T181008Z_1f053674617c_135d50f0af73.dump.age`;
+- новых миграций нет; применённый head остался
+  `marketplaces.0022_account_status_lifecycle_concurrent_index`;
+- production checkout exact `1f053674`, Git clean;
+- `AVITO_STATUS_LIFECYCLE_MODE=legacy`, а пять будущих feed-переключателей
+  отсутствуют и в environment, и в Django settings;
+- все десять контейнеров healthy, restart count `0`, readiness HTTP 200,
+  exact topology и оба backup timer зелёные;
+- serializer отдаёт `last_sync_at`; все 10 active listings имеют время
+  provider-проверки;
+- первый плановый цикл на новом коде в `18:15 UTC` повторно обновил
+  все 10 `last_sync_at` и сохранил provider-confirmed `active`;
+- два разных listing event key вошли в порог 14 дней; создано по
+  одной Telegram delivery на event, обе получили `sent`, дублей нет;
+- manual production monitor run `32512208535` для exact SHA зелёный;
+- через десять минут exact SHA и clean Git сохранились, все десять
+  контейнеров остались healthy с restart count `0`, readiness отвечал
+  HTTP 200, два notification event не дублировались, а
+  critical/traceback/unhandled/internal-server-error matches в application logs и
+  Nginx 5xx равны `0`.
+
 ## Состояние разделения
 
 | Шаг | Статус |
@@ -589,7 +625,7 @@ frontend production build: Next.js 16.3.0 webpack, 21 pages
 | P2b2 runtime fencing/dual-write | `DEPLOYED_LEGACY_ONLY`, PR `#232`, production `0ef04de` |
 | P2b2 monitor/health/log observation | `VERIFIED` 2026-08-21 |
 | Avito 0 / dashboard 10: bounded provider canary | `VERIFIED`; Avito API подтверждает все 10 active |
-| P2c tenant status clarity/expiry notices | `VERIFIED` локально; PR/release pending |
+| P2c tenant status clarity/expiry notices | `DEPLOYED_LEGACY_ONLY`, PR `#234`, production `1f05367` |
 | Физическое разделение diff на commits/PR P3–P7 | `NOT_STARTED` |
 | Проверки и deploy пакетов P3–P5 | `NOT_STARTED` |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |
