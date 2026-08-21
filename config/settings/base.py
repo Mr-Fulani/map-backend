@@ -730,6 +730,13 @@ AVITO_TREE_MAX_LEAVES = min(
 AVITO_TREE_MAX_TOTAL_CALLS = min(
     10000, max(1, int(os.environ.get('AVITO_TREE_MAX_TOTAL_CALLS', '3000'))),
 )
+AVITO_STATUS_LIFECYCLE_MODE = os.environ.get(
+    'AVITO_STATUS_LIFECYCLE_MODE', 'legacy',
+).strip().lower()
+if AVITO_STATUS_LIFECYCLE_MODE not in {'legacy', 'dual_write'}:
+    raise ValueError(
+        'AVITO_STATUS_LIFECYCLE_MODE должен быть legacy или dual_write.',
+    )
 TRUSTED_API_RESPONSE_MAX_BYTES = min(
     5 * 1024 * 1024,
     max(1, int(os.environ.get('TRUSTED_API_RESPONSE_MAX_BYTES', str(5 * 1024 * 1024)))),

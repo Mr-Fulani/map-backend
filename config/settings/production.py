@@ -142,6 +142,14 @@ if PUBLIC_HTTP_PROXY_URL != 'http://egress_proxy:3128':
         'PUBLIC_HTTP_PROXY_URL в production должен быть http://egress_proxy:3128.',
     )
 
+AVITO_STATUS_LIFECYCLE_MODE = _required_env(
+    'AVITO_STATUS_LIFECYCLE_MODE',
+).lower()
+if AVITO_STATUS_LIFECYCLE_MODE not in {'legacy', 'dual_write'}:
+    raise ImproperlyConfigured(
+        'AVITO_STATUS_LIFECYCLE_MODE должен быть legacy или dual_write.',
+    )
+
 database_url = _required_env('DATABASE_URL')
 if 'map_password' in database_url:
     raise ImproperlyConfigured('Dev-пароль БД запрещён в production DATABASE_URL.')

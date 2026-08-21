@@ -75,10 +75,12 @@ private storage, cleanup, GC или worker activation будущих пакет�
 Узкая проверка: observability, Sentry, production-host и runtime-contract tests.
 Deploy: отдельный релиз без изменения feed-флагов.
 
-## P2 — lifecycle объявлений, два последовательных release
+## P2 — lifecycle объявлений, последовательные release
 
 Три миграции нельзя выпускать одним пакетом из-за общего ограничения не более
-двух миграций. Поэтому P2 физически разделён на P2a и P2b.
+двух миграций. Поэтому P2 физически разделён на P2a и P2b. P2b дополнительно
+разделён на P2b1/P2b2, чтобы не превышать 1 500 production-строк и не смешивать
+подготовку данных с runtime fencing.
 
 ### P2a — additive schema, миграции 0020–0021
 
@@ -98,26 +100,44 @@ private artifacts, cleanup или GC.
 Deploy: только additive schema. Production продолжает работать старым кодом;
 новые поля nullable и не читаются runtime-логикой.
 
-### P2b — lifecycle/backfill/fencing, миграция 0022
+### P2b1 — lifecycle/index/backfill, миграция 0022
 
-Основные файлы:
+Точный состав:
 
 - migration 0022 с account due index;
-- listing_lifecycle.py;
-- backfill_listing_status_lifecycle.py;
-- status lifecycle/backfill/fencing tests;
-- только lifecycle-части marketplace models/services/tasks/views/admin.
+- `apps/marketplaces/listing_lifecycle.py`;
+- `backfill_listing_status_lifecycle.py`;
+- только account-index hunk в marketplace model;
+- только `AVITO_STATUS_LIFECYCLE_MODE` в env/base/production settings;
+- lifecycle/backfill/production-settings tests;
+- status/roadmap/manifest documentation.
 
-Не включать MarketplaceFeedRun, stable endpoint, feed intents и artifacts.
+Не включать marketplace services/tasks/views/admin, scheduler,
+`test_status_fencing.py`, MarketplaceFeedRun, stable endpoint, feed intents и
+artifacts.
 
 Узкая проверка:
 
 - test_listing_lifecycle.py;
-- test_status_fencing.py;
 - test_backfill_listing_status_lifecycle.py.
+- test_production_storage_settings.py lifecycle cases;
+- PostgreSQL upgrade/rollback/catalog migration contracts.
 
-Deploy: status mode legacy, новый scheduler выключен. P2b не начинается до
-закрытия PR/CI/deploy/observation gate P2a.
+Deploy: exact production setting `legacy`, ручной backfill не запускается,
+новый scheduler отсутствует. P2b1 не начинается до закрытия
+PR/CI/deploy/observation gate P2a.
+
+### P2b2 — runtime fencing/dual-write, без новой миграции
+
+Точный состав формируется отдельным hunk-review:
+
+- только lifecycle/fencing части marketplace services/tasks;
+- `test_status_fencing.py`;
+- без scheduler activation, views/admin, feed-run, stable endpoint, intents,
+  artifacts, cleanup и GC.
+
+Deploy: status mode по-прежнему `legacy`, scheduler выключен. P2b2 не
+начинается до закрытия PR/CI/deploy/observation gate P2b1.
 
 ## P3 — надёжный запуск фида, миграции 0023–0024
 

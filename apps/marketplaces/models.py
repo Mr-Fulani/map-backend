@@ -148,6 +148,17 @@ class MarketplaceAccount(SoftDeleteModel):
         verbose_name = 'Avito-аккаунт'
         verbose_name_plural = 'Avito-аккаунты'
         unique_together = [('tenant', 'marketplace', 'external_id')]
+        indexes = [
+            models.Index(
+                fields=['marketplace', 'status_batch_due_at', 'id'],
+                name='mkt_acct_provider_due',
+                condition=models.Q(
+                    deleted_at__isnull=True,
+                    is_active=True,
+                    status_batch_due_at__isnull=False,
+                ),
+            ),
+        ]
 
     def __str__(self):
         return f'{self.tenant.slug} / {self.name}'
