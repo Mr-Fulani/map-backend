@@ -14,7 +14,7 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: P2b1 завершён, P2b2 ждёт отдельной активации
+## Текущая фаза: P2b2 активирован
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
@@ -22,8 +22,9 @@ dead-man, работает в production commit `c2bc2eb`; check-in, test-fire �
 commit `decd480` без runtime-логики; schema, health, backup и monitor gates
 зелёные. P2b1 с чистой lifecycle-логикой, индексом и ручным backfill выложен в
 production commit `de0d202` с режимом `legacy`; schema, health, monitor и
-десятиминутное наблюдение зелёные. P2b2 с runtime fencing не начат и требует
-отдельной явной активации. P3 и последующие пакеты ждут закрытия всего P2.
+десятиминутное наблюдение зелёные. P2b2 с runtime fencing активирован отдельным
+решением пользователя 2026-08-21 и выполняется без смены production-режима.
+P3 и последующие пакеты ждут закрытия всего P2.
 
 Готово только когда:
 
@@ -113,7 +114,7 @@ Deploy: status mode остаётся `legacy`, новый scheduler выключ
 manual monitor, health и десятиминутное наблюдение подтверждены на production
 commit `de0d202`. Backfill apply не запускался.
 
-#### P2b2. Runtime fencing/dual-write — ждёт отдельной активации
+#### P2b2. Runtime fencing/dual-write — активирован
 
 Содержимое:
 
@@ -124,8 +125,15 @@ commit `de0d202`. Backfill apply не запускался.
 - без scheduler activation, private storage и feed-run логики.
 
 Проверки: status-fencing tests, весь Marketplace suite и полный backend test.
-PR/CI/deploy/observation gate P2b1 закрыт. P2b2 всё равно не начинается без
-отдельного явного разрешения пользователя.
+Локальный gate закрыт 2026-08-21: 15 status-fencing, 292 Marketplace и 1 937
+backend-тестов прошли; migration drift, OpenAPI, flake8 и mypy зелёные.
+PR/CI/deploy/observation gate P2b1 закрыт. P2b2 активирован пользователем
+2026-08-21; production-режим остаётся `legacy`, PR/release ещё не закрыты.
+
+Отдельный дефект, не расширяющий P2b2: пользователь сообщил, что в Avito нет
+активных объявлений, а дашборд показывает 10 активных листингов. После P2b2
+нужно отдельно установить источник метрики, сверить локальные статусы с Avito
+и исправить подтверждённую причину.
 
 ### P3. Надёжная запись задания на отправку
 

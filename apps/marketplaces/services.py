@@ -5,19 +5,166 @@ from typing import Any, TypedDict
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Q
 from django.utils import timezone
 
+from apps.marketplaces.listing_lifecycle import (
+    clear_remote_observation,
+    release_status_check,
+)
 from apps.marketplaces.models import (
     AvitoAccountStatus,
     CategoryMapping,
     Listing,
     ListingStats,
+    MarketplaceAccount,
 )
 from apps.marketplaces.price_utils import (
     compute_price,
     effective_category_margin,
     effective_margin,
 )
+
+
+_LOCAL_STATUS_RECHECK_DELAY = datetime.timedelta(minutes=10)
+
+
+class _ListingExpectedState(TypedDict):
+    expected_status: str
+    expected_account_id: int
+    expected_external_id: str | None
+    expected_deleted_at: datetime.datetime | None
+
+
+def _status_lifecycle_dual_write_enabled() -> bool:
+    return settings.AVITO_STATUS_LIFECYCLE_MODE == 'dual_write'
+
+
+def _listing_expected_state(listing: Listing) -> _ListingExpectedState:
+    return {
+        'expected_status': listing.status,
+        'expected_account_id': listing.account_id,
+        'expected_external_id': listing.external_id,
+        'expected_deleted_at': listing.deleted_at,
+    }
+
+
+def _local_status_due_at(listing: Listing):
+    if listing.status == Listing.STATUS_ACTIVE or (
+        listing.status == Listing.STATUS_ARCHIVING and bool(listing.external_id)
+    ):
+        return timezone.now() + _LOCAL_STATUS_RECHECK_DELAY
+    return None
+
+
+def _min_nudge_account_status_due(account_id: int, due_at) -> int:
+    if due_at is None:
+        return 0
+    return MarketplaceAccount.objects.filter(
+        pk=account_id,
+        is_active=True,
+    ).filter(
+        Q(status_batch_due_at__isnull=True)
+        | Q(status_batch_due_at__gt=due_at),
+    ).update(status_batch_due_at=due_at)
+
+
+def _copy_listing_row(target: Listing, source: Listing) -> None:
+    for model_field in Listing._meta.concrete_fields:
+        setattr(target, model_field.attname, getattr(source, model_field.attname))
+    target._state.fields_cache.clear()
+
+
+def _save_local_listing_intent(
+    listing: Listing,
+    update_fields,
+    *,
+    expected_status: str,
+    expected_account_id: int,
+    expected_external_id: str | None,
+    expected_deleted_at,
+    reset_provider_identity: bool = False,
+    require_target_account_active: bool = False,
+) -> bool:
+    """Apply a local transition after fencing older provider observations."""
+
+    fields = tuple(dict.fromkeys(update_fields))
+    if not _status_lifecycle_dual_write_enabled():
+        listing.save(update_fields=fields)
+        return True
+
+    intended_values: dict[str, object] = {}
+    for field_name in fields:
+        intended_values[field_name] = getattr(listing, field_name)
+
+    if reset_provider_identity:
+        listing.external_id = None
+        listing.external_url = ''
+        intended_values['external_id'] = None
+        intended_values['external_url'] = ''
+        fields = tuple(dict.fromkeys((*fields, 'external_id', 'external_url')))
+
+    intended_account_id = listing.account_id
+    account_ids = sorted({expected_account_id, intended_account_id})
+
+    with transaction.atomic():
+        locked_accounts = list(
+            MarketplaceAccount.all_objects.select_for_update(of=('self',))
+            .filter(
+                pk__in=account_ids,
+                tenant_id=listing.tenant_id,
+            )
+            .order_by('pk')
+        )
+        accounts_by_id = {account.pk: account for account in locked_accounts}
+        target_account = accounts_by_id.get(intended_account_id)
+        if (
+            len(accounts_by_id) != len(account_ids)
+            or target_account is None
+            or target_account.deleted_at is not None
+            or (require_target_account_active and not target_account.is_active)
+        ):
+            return False
+        current = (
+            Listing.all_objects.select_for_update(of=('self',))
+            .filter(pk=listing.pk)
+            .first()
+        )
+        if current is None or not (
+            current.status == expected_status
+            and current.account_id == expected_account_id
+            and current.external_id == expected_external_id
+            and current.deleted_at == expected_deleted_at
+        ):
+            if current is not None:
+                _copy_listing_row(listing, current)
+            return False
+
+        for field_name, value in intended_values.items():
+            setattr(current, field_name, value)
+        if reset_provider_identity:
+            observation_fields = clear_remote_observation().apply_to(current)
+            claim_fields = release_status_check(
+                next_status_check_at=None,
+            ).apply_to(current)
+            lifecycle_fields = tuple(dict.fromkeys((
+                *observation_fields,
+                *claim_fields,
+            )))
+        else:
+            lifecycle_fields = release_status_check(
+                next_status_check_at=_local_status_due_at(current),
+            ).apply_to(current)
+        saved_fields = tuple(dict.fromkeys((*fields, *lifecycle_fields)))
+        current.save(update_fields=saved_fields)
+        for field_name in saved_fields:
+            setattr(listing, field_name, getattr(current, field_name))
+        listing._state.fields_cache.clear()
+
+        due_at = current.next_status_check_at
+        if due_at is not None:
+            _min_nudge_account_status_due(current.account_id, due_at)
+        return True
 
 
 class CategoryMappingService:
@@ -156,11 +303,17 @@ class ListingService:
                 'Неизвестный бренд нельзя отправить в Avito. Выберите значение из '
                 'справочника Avito или запросите добавление бренда в поддержке Avito.'
             )
+        expected = _listing_expected_state(listing)
         listing.status = Listing.STATUS_QUEUED
-        listing.save(update_fields=['status'])
+        applied = _save_local_listing_intent(
+            listing,
+            ('status',),
+            **expected,
+        )
 
-        lid = listing.pk
-        transaction.on_commit(lambda: _enqueue_publish_or_update(lid, is_new=True))
+        if applied:
+            lid = listing.pk
+            transaction.on_commit(lambda: _enqueue_publish_or_update(lid, is_new=True))
         return listing
 
     @staticmethod
@@ -186,13 +339,19 @@ class ListingService:
                 f'Публикация доступна для draft/rejected/archived/limit_reached, '
                 f'текущий статус: {listing.status}'
             )
+        expected = _listing_expected_state(listing)
         listing.status = Listing.STATUS_QUEUED
         # Сбрасываем причину прошлого отклонения, чтобы старый текст не висел
         # на карточке, пока идёт новая публикация.
         listing.rejection_reason = ''
-        listing.save(update_fields=['status', 'rejection_reason'])
-        lid = listing.pk
-        transaction.on_commit(lambda: _enqueue_publish_or_update(lid, is_new=True))
+        applied = _save_local_listing_intent(
+            listing,
+            ('status', 'rejection_reason'),
+            **expected,
+        )
+        if applied:
+            lid = listing.pk
+            transaction.on_commit(lambda: _enqueue_publish_or_update(lid, is_new=True))
         return listing
 
     @staticmethod
@@ -203,10 +362,16 @@ class ListingService:
             raise InvalidListingStatus(f'Листинг уже в статусе {listing.status}')
         # Честный статус: «Снимается» — переключим в «В архиве» только после
         # подтверждения снятия от Avito (autoload пакетный, не мгновенный).
+        expected = _listing_expected_state(listing)
         listing.status = Listing.STATUS_ARCHIVING
-        listing.save(update_fields=['status'])
-        lid = listing.pk
-        transaction.on_commit(lambda: _enqueue_unpublish(lid))
+        applied = _save_local_listing_intent(
+            listing,
+            ('status',),
+            **expected,
+        )
+        if applied:
+            lid = listing.pk
+            transaction.on_commit(lambda: _enqueue_unpublish(lid))
         return listing
 
     @staticmethod
@@ -215,10 +380,16 @@ class ListingService:
         listing = ListingService.get_for_tenant(listing_id, tenant)
         if listing.status == Listing.STATUS_DELETED:
             raise InvalidListingStatus('Листинг уже удалён')
+        expected = _listing_expected_state(listing)
         listing.status = Listing.STATUS_DELETED
-        listing.save(update_fields=['status'])
-        lid = listing.pk
-        transaction.on_commit(lambda: _enqueue_delete(lid))
+        applied = _save_local_listing_intent(
+            listing,
+            ('status',),
+            **expected,
+        )
+        if applied:
+            lid = listing.pk
+            transaction.on_commit(lambda: _enqueue_delete(lid))
         return listing
 
     @staticmethod
@@ -294,6 +465,7 @@ class ListingService:
             raise InvalidListingStatus(
                 f'Нельзя редактировать листинг в статусе {listing.status}'
             )
+        expected = _listing_expected_state(listing)
         update_fields = []
         if title is not None:
             listing.title = title[:300]
@@ -302,7 +474,11 @@ class ListingService:
             listing.description_ai = description_ai
             update_fields.append('description_ai')
         if update_fields:
-            listing.save(update_fields=update_fields)
+            _save_local_listing_intent(
+                listing,
+                update_fields,
+                **expected,
+            )
         return listing
 
     @staticmethod
@@ -319,7 +495,9 @@ class ListingService:
         ):
             raise InvalidListingStatus(f'Нельзя редактировать листинг в статусе {listing.status}')
 
+        expected = _listing_expected_state(listing)
         update_fields = []
+        account_changed = False
         if 'account_id' in data:
             from apps.marketplaces.models import MarketplaceAccount
             try:
@@ -337,6 +515,7 @@ class ListingService:
             ).exclude(pk=listing.pk).exists()
             if exists:
                 raise ListingAccountConflict('Для этого товара уже есть листинг на выбранном аккаунте')
+            account_changed = account.pk != listing.account_id
             listing.account = account
             update_fields.append('account')
             if listing.placement_address and listing.placement_address.account_id != account.pk:
@@ -358,8 +537,14 @@ class ListingService:
             update_fields.append('ad_type')
 
         if update_fields:
-            listing.save(update_fields=update_fields)
-            if active_price_only:
+            applied = _save_local_listing_intent(
+                listing,
+                update_fields,
+                reset_provider_identity=account_changed,
+                require_target_account_active=account_changed,
+                **expected,
+            )
+            if active_price_only and applied:
                 transaction.on_commit(lambda: _enqueue_price_update(listing.pk))
         return listing
 
@@ -376,6 +561,7 @@ class ListingService:
                 'В поле «ID адреса Avito» указан ID аккаунта, а не ID адреса размещения. '
                 'Выберите адрес из справочника или укажите корректный ID адреса из профиля Avito.'
             )
+        expected = _listing_expected_state(listing)
         update_fields = []
         for field in (
             'address_override',
@@ -394,7 +580,11 @@ class ListingService:
             )
             update_fields.append('placement_address')
         if update_fields:
-            listing.save(update_fields=update_fields)
+            _save_local_listing_intent(
+                listing,
+                update_fields,
+                **expected,
+            )
         return listing
 
     @staticmethod
@@ -444,7 +634,56 @@ class ListingService:
             raise ListingBulkLimitExceeded(
                 f'Массовая операция допускает не более {settings.API_BULK_MAX_ITEMS} листингов.',
             )
-        return qs.filter(pk__in=target_ids).update(**updates)
+        target_qs = qs.filter(pk__in=target_ids)
+        if not _status_lifecycle_dual_write_enabled():
+            return target_qs.update(**updates)
+
+        account_ids = sorted(set(
+            target_qs.values_list('account_id', flat=True),
+        ))
+        with transaction.atomic():
+            locked_accounts = list(
+                MarketplaceAccount.all_objects.select_for_update(of=('self',))
+                .filter(pk__in=account_ids)
+                .order_by('pk')
+                .only('pk')
+            )
+            locked_account_ids = {account.pk for account in locked_accounts}
+            rows = list(
+                target_qs.filter(account_id__in=locked_account_ids)
+                .select_for_update(of=('self',))
+                .order_by('pk')
+                .values('pk', 'account_id', 'status', 'external_id')
+            )
+            locked_ids = [row['pk'] for row in rows]
+            locked_qs = Listing.objects.filter(pk__in=locked_ids)
+            inactive_lifecycle = release_status_check(
+                next_status_check_at=None,
+            ).as_update_kwargs()
+            updated = locked_qs.update(**updates, **inactive_lifecycle)
+
+            short_due = timezone.now() + _LOCAL_STATUS_RECHECK_DELAY
+            due_ids = [
+                row['pk']
+                for row in rows
+                if row['status'] == Listing.STATUS_ACTIVE or (
+                    row['status'] == Listing.STATUS_ARCHIVING
+                    and bool(row['external_id'])
+                )
+            ]
+            if due_ids:
+                due_id_set = set(due_ids)
+                locked_qs.filter(pk__in=due_ids).update(
+                    **release_status_check(
+                        next_status_check_at=short_due,
+                    ).as_update_kwargs(),
+                )
+                due_accounts = {
+                    row['account_id'] for row in rows if row['pk'] in due_id_set
+                }
+                for account_id in due_accounts:
+                    _min_nudge_account_status_due(account_id, short_due)
+            return updated
 
     @staticmethod
     def bulk_action(tenant, data: dict) -> BulkActionResult:
@@ -591,8 +830,19 @@ class ListingService:
         count = 0
         for listing in listings:
             lid = int(listing.pk)
-            transaction.on_commit(partial(_enqueue_unpublish, lid))
-            count += 1
+            if not _status_lifecycle_dual_write_enabled():
+                transaction.on_commit(partial(_enqueue_unpublish, lid))
+                count += 1
+                continue
+            expected = _listing_expected_state(listing)
+            listing.status = Listing.STATUS_ARCHIVING
+            if _save_local_listing_intent(
+                listing,
+                ('status',),
+                **expected,
+            ):
+                transaction.on_commit(partial(_enqueue_unpublish, lid))
+                count += 1
         return count
 
     @staticmethod
@@ -633,7 +883,6 @@ class ListingService:
         listing = Listing.all_objects.filter(
             tenant=product.tenant, product=product, account=account,
         ).first()
-        created = listing is None
         if listing is None:
             listing = Listing.objects.create(
                 tenant=product.tenant,
@@ -644,25 +893,33 @@ class ListingService:
                 description_ai=product.description_ai,
                 status=Listing.STATUS_DRAFT,
             )
-        elif listing.deleted_at is not None:
-            listing.restore()
-            listing.status = Listing.STATUS_DRAFT
-            listing.save(update_fields=['status', 'updated_at'])
-
-        if not created:
+        else:
+            expected = _listing_expected_state(listing)
             new_price = compute_price(product.price, effective_margin(listing))
-            if change_type == 'price_only':
-                listing.price_on_listing = new_price
-                listing.save(update_fields=['price_on_listing'])
-                if auto_publish:
-                    transaction.on_commit(lambda: _enqueue_price_update(listing.pk))
-                return listing
-
+            update_fields = ['price_on_listing']
+            reset_provider_identity = listing.deleted_at is not None
+            if reset_provider_identity:
+                listing.deleted_at = None
+                listing.status = Listing.STATUS_DRAFT
+                update_fields.extend(['deleted_at', 'status', 'updated_at'])
             listing.price_on_listing = new_price
-            listing.save(update_fields=['price_on_listing'])
+            applied = _save_local_listing_intent(
+                listing,
+                update_fields,
+                reset_provider_identity=reset_provider_identity,
+                **expected,
+            )
+            if auto_publish and applied:
+                if change_type == 'price_only':
+                    transaction.on_commit(lambda: _enqueue_price_update(listing.pk))
+                else:
+                    transaction.on_commit(
+                        lambda: _enqueue_publish_or_update(listing.pk, False),
+                    )
+            return listing
 
         if auto_publish:
-            transaction.on_commit(lambda: _enqueue_publish_or_update(listing.pk, created))
+            transaction.on_commit(lambda: _enqueue_publish_or_update(listing.pk, True))
         return listing
 
 

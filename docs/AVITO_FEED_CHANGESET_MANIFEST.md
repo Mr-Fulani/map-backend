@@ -137,7 +137,9 @@ apply не запускался, новый scheduler отсутствует. PR
   artifacts, cleanup и GC.
 
 Deploy: status mode по-прежнему `legacy`, scheduler выключен. Gate P2b1
-закрыт, но P2b2 не начинается без отдельной явной активации.
+закрыт; P2b2 активирован пользователем 2026-08-21. Локальный P2b2 gate
+закрыт: 15 status-fencing, 292 Marketplace и 1 937 backend-тестов прошли;
+новых миграций нет. PR/CI/deploy gate ещё не закрыт.
 
 ## P3 — надёжный запуск фида, миграции 0023–0024
 
