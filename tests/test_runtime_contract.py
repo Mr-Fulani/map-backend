@@ -547,8 +547,8 @@ def test_ci_bootstraps_the_hash_locked_compatible_pip_toolchain():
     ci_tools_input = (ROOT / 'requirements/ci-tools.in').read_text()
 
     assert ci_tools_install < lock_recompile
-    assert 'pip==26.1.2\n' in ci_tools_input
-    assert 'pip-tools==7.6.0' in ci_tools_input
+    assert 'pip==26.2.1\n' in ci_tools_input
+    assert 'pip-tools==7.6.1' in ci_tools_input
     assert 'pip install --upgrade' not in CI_WORKFLOW
 
 

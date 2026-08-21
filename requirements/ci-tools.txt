@@ -400,8 +400,8 @@ pip-requirements-parser==32.0.1 \
     # via
     #   cyclonedx-bom
     #   pip-audit
-pip-tools==7.6.0 \
-    --hash=sha256:4bd99155b6d8de358a214b0865e1a2855a453570c1a83d40f7b564870b8657be
+pip-tools==7.6.1 \
+    --hash=sha256:6111c8b4b07fd14b7223ca921485b0e96cf66e20bf94da95eeed9845f510cb8f
     # via -r requirements/ci-tools.in
 platformdirs==4.11.1 \
     --hash=sha256:2efd27d363e8dd2e661639ffb398865a5e0a46442a11d266bf375a0e0c10e386
@@ -646,8 +646,8 @@ wheel==0.47.0 \
     # via pip-tools
 
 # The following packages are considered to be unsafe in a requirements file:
-pip==26.1.2 \
-    --hash=sha256:382ff9f685ee3bc25864f820aa50505825f10f5458ffff07e30a6d96e5715cab
+pip==26.2.1 \
+    --hash=sha256:71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e
     # via
     #   -r requirements/ci-tools.in
     #   pip-api
