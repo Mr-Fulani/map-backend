@@ -14,13 +14,14 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: P2a, безопасное расширение схемы
+## Текущая фаза: выделение P2b после P2a release
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
-проверены. Активирован только P2a: nullable schema expansion `0020`–`0021` без
-runtime-логики. P2b и все последующие пакеты не смешиваются с ним и ждут
-отдельного release gate.
+проверены. P2a nullable schema expansion `0020`–`0021` выложен в production
+commit `decd480` без runtime-логики; schema, health, backup и monitor gates
+зелёные. Следующим отдельно выделяется P2b. P3 и последующие пакеты не
+смешиваются с ним и ждут закрытия всего P2.
 
 Готово только когда:
 
@@ -71,7 +72,7 @@ Deploy: foundation и Cron dead-man работают в production на commit `
 P2 разделён на два последовательных release, потому что общий пакет содержит
 три миграции, а execution rules разрешают не более двух.
 
-#### P2a. Additive schema expansion — активен
+#### P2a. Additive schema expansion — завершён
 
 Содержимое:
 
@@ -86,10 +87,11 @@ P2 разделён на два последовательных release, пот
 - весь Marketplace suite и полный backend test;
 - migration drift, flake8, mypy и OpenAPI.
 
-Deploy: только схема. Старый код продолжает работать, новые поля остаются
-`NULL`, ни один новый worker или режим не включается.
+Deploy: production commit `decd480`, только схема. Старый код продолжает
+работать, новые поля остаются `NULL`, ни один новый worker или режим не
+включён. Production monitor и десятиминутное наблюдение зелёные.
 
-#### P2b. Lifecycle/backfill/fencing — после P2a gate
+#### P2b. Lifecycle/backfill/fencing — следующий активный пакет
 
 Содержимое:
 
