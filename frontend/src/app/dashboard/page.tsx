@@ -277,7 +277,7 @@ function AnalyticsWidget({
               <BarChart3 className="h-5 w-5" />
               Результат за 30 дней
             </CardTitle>
-            <CardDescription className="mt-1">Просмотры и обращения по объявлениям.</CardDescription>
+            <CardDescription className="mt-1">Уникальные и все просмотры, контакты по объявлениям.</CardDescription>
           </div>
           <Button asChild size="sm" variant="ghost">
             <Link href="/dashboard/analytics">Вся аналитика <ArrowRight className="h-4 w-4" /></Link>
@@ -290,21 +290,21 @@ function AnalyticsWidget({
         ) : (
           <div className="space-y-5">
             <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
-              <PulseMetric title="Просмотры" value={analytics.summary?.views} icon={<Eye className="h-4 w-4" />} />
+              <PulseMetric title="Уникальные просмотры" value={analytics.summary?.views} icon={<Eye className="h-4 w-4" />} />
               <PulseMetric title="Контакты" value={analytics.summary?.contacts} icon={<Phone className="h-4 w-4" />} />
-              <PulseMetric title="Показы" value={analytics.summary?.impressions} icon={<BarChart3 className="h-4 w-4" />} />
-              <PulseMetric title="Средний CTR" value={analytics.summary?.avg_ctr} suffix="%" icon={<Activity className="h-4 w-4" />} />
+              <PulseMetric title="Все просмотры" value={analytics.summary?.impressions} icon={<BarChart3 className="h-4 w-4" />} />
+              <PulseMetric title="Доля уникальных" value={analytics.summary?.avg_ctr} suffix="%" icon={<Activity className="h-4 w-4" />} />
             </div>
             <div
               className="h-56 min-w-0"
               role="img"
-              aria-label="Динамика просмотров и контактов за 30 дней"
+              aria-label="Динамика уникальных просмотров и контактов за 30 дней"
               aria-describedby="dashboard-chart-description"
             >
               {!hasChartData ? (
                 <div className="flex h-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed text-center text-muted-foreground">
                   <BarChart3 className="h-8 w-8 opacity-40" />
-                  <p className="text-sm">Статистика появится после первых показов.</p>
+                  <p className="text-sm">Статистика появится после первых просмотров.</p>
                 </div>
               ) : (
                 <ResponsiveContainer width="100%" height="100%">
@@ -316,7 +316,7 @@ function AnalyticsWidget({
                       labelFormatter={(value) => formatDay(String(value))}
                       formatter={(value, name) => [
                         Number(value).toLocaleString('ru-RU'),
-                        name === 'views' ? 'Просмотры' : 'Контакты',
+                        name === 'views' ? 'Уникальные просмотры' : 'Контакты',
                       ]}
                     />
                     <Line type="monotone" dataKey="views" stroke="#6366f1" strokeWidth={2} dot={false} />
@@ -326,11 +326,11 @@ function AnalyticsWidget({
               )}
             </div>
             <p id="dashboard-chart-description" className="sr-only">
-              Линейный график показывает ежедневное количество просмотров и контактов за последние 30 дней.
+              Линейный график показывает ежедневное количество уникальных просмотров и контактов за последние 30 дней.
             </p>
             <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground" aria-label="Легенда графика">
               <span className="inline-flex items-center gap-2">
-                <span className="h-0.5 w-5 bg-indigo-500" aria-hidden="true" /> Просмотры
+                <span className="h-0.5 w-5 bg-indigo-500" aria-hidden="true" /> Уникальные просмотры
               </span>
               <span className="inline-flex items-center gap-2">
                 <span className="h-0.5 w-5 bg-green-500" aria-hidden="true" /> Контакты
@@ -338,8 +338,8 @@ function AnalyticsWidget({
             </div>
             <div className="sr-only">
               <table>
-                <caption>Ежедневные просмотры и контакты за последние 30 дней</caption>
-                <thead><tr><th>Дата</th><th>Просмотры</th><th>Контакты</th></tr></thead>
+                <caption>Ежедневные уникальные просмотры и контакты за последние 30 дней</caption>
+                <thead><tr><th>Дата</th><th>Уникальные просмотры</th><th>Контакты</th></tr></thead>
                 <tbody>
                   {analytics.daily.slice(0, 30).map((point) => (
                     <tr key={point.date}>

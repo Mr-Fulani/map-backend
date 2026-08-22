@@ -1,3 +1,4 @@
+from datetime import timedelta
 from decimal import Decimal
 
 import pytest
@@ -224,6 +225,76 @@ def test_dashboard_summary_contract_aggregates_actionable_tenant_data():
             'usage_reporting': 'not_available_yet',
         },
     }
+
+
+@pytest.mark.django_db
+def test_dashboard_labels_expired_manual_autoload_date_as_unconfirmed():
+    tenant, _, token = make_tenant('dashboard-manual-avito-expiry')
+    account = make_account(tenant)
+    manual_end = timezone.localdate() - timedelta(days=2)
+    account.autoload_subscription_ends_at = manual_end
+    account.save(update_fields=['autoload_subscription_ends_at'])
+    checked_at = timezone.now()
+    AvitoAccountStatus.objects.create(
+        tenant=tenant,
+        account=account,
+        connection_status=AvitoAccountStatus.CONNECTION_CONNECTED,
+        autoload_status=AvitoAccountStatus.AUTOLOAD_ENABLED,
+        feed_configured=False,
+        profile_checked_at=checked_at,
+        tariff_status=AvitoAccountStatus.TARIFF_NOT_FOUND,
+        tariff_checked_at=checked_at,
+    )
+
+    response = Client().get(URL, HTTP_AUTHORIZATION=f'Bearer {token}')
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    account_data = data['marketplaces']['avito'][0]
+    assert account_data['subscription_source'] == 'manual'
+    assert account_data['subscription_ends_at'] == manual_end.isoformat()
+    warning = next(
+        item for item in data['attention']
+        if item['code'] == 'avito_account_health'
+    )
+    assert warning['metadata']['reasons'] == [
+        'feed_not_configured',
+        'manual_subscription_date_expired',
+    ]
+    assert 'Указанная вручную дата' in warning['message']
+    assert 'Проверьте актуальный срок в Avito' in warning['message']
+    assert 'До окончания тарифа осталось 0 дн.' not in warning['message']
+
+
+@pytest.mark.django_db
+def test_dashboard_keeps_tariff_wording_for_avito_confirmed_expiry():
+    tenant, _, token = make_tenant('dashboard-api-avito-expiry')
+    account = make_account(tenant)
+    checked_at = timezone.now()
+    AvitoAccountStatus.objects.create(
+        tenant=tenant,
+        account=account,
+        connection_status=AvitoAccountStatus.CONNECTION_CONNECTED,
+        autoload_status=AvitoAccountStatus.AUTOLOAD_ENABLED,
+        feed_configured=True,
+        profile_checked_at=checked_at,
+        tariff_status=AvitoAccountStatus.TARIFF_ACTIVE,
+        tariff_ends_at=checked_at + timedelta(days=3),
+        tariff_checked_at=checked_at,
+    )
+
+    response = Client().get(URL, HTTP_AUTHORIZATION=f'Bearer {token}')
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    account_data = data['marketplaces']['avito'][0]
+    assert account_data['subscription_source'] == 'avito_tariff'
+    warning = next(
+        item for item in data['attention']
+        if item['code'] == 'avito_account_health'
+    )
+    assert warning['metadata']['reasons'] == ['tariff_expiring']
+    assert warning['message'] == 'До окончания тарифа осталось 3 дн.'
 
 
 @pytest.mark.django_db

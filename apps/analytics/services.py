@@ -1,6 +1,6 @@
 """Bounded, tenant-scoped aggregation for the main customer dashboard."""
 
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Any
 
@@ -300,6 +300,8 @@ def _analytics(tenant, *, active_listing_count: int) -> dict[str, Any]:
         'date_from': date_from.isoformat(),
         'date_to': date_to.isoformat(),
         'summary': {
+            # Compatibility field names predate the Avito stats mapping:
+            # views=uniqViews, impressions=all views, avg_ctr=unique share.
             'views': views,
             'contacts': contacts,
             'impressions': impressions,
@@ -562,7 +564,36 @@ def _avito_warning(account_data: dict[str, Any]) -> tuple[str, list[str], list[s
         add('tariff_unavailable', 'Статус тарифа временно недоступен.')
     days_left = account_data['days_left']
     if days_left is not None and days_left <= 7:
-        add('tariff_expiring', f'До окончания тарифа осталось {days_left} дн.')
+        subscription_source = account_data['subscription_source']
+        if subscription_source == 'avito_tariff':
+            add('tariff_expiring', f'До окончания тарифа осталось {days_left} дн.')
+        elif subscription_source == 'manual':
+            raw_end = account_data['subscription_ends_at']
+            try:
+                manual_end = date.fromisoformat(raw_end) if raw_end else None
+            except ValueError:
+                manual_end = None
+            if manual_end is not None and manual_end < timezone.localdate():
+                add(
+                    'manual_subscription_date_expired',
+                    (
+                        'Указанная вручную дата окончания '
+                        f'Автозагрузки ({manual_end:%d.%m.%Y}) уже прошла. '
+                        'Проверьте актуальный срок в Avito.'
+                    ),
+                )
+            elif days_left == 0:
+                add(
+                    'manual_subscription_date_expiring',
+                    'Указанная вручную дата окончания '
+                    'Автозагрузки — сегодня.',
+                )
+            else:
+                add(
+                    'manual_subscription_date_expiring',
+                    'По указанной вручную дате до окончания '
+                    f'Автозагрузки осталось {days_left} дн.',
+                )
     remaining = account_data['placements_remaining']
     total = account_data['placements_total']
     if remaining is not None and total and remaining / total <= 0.2:
@@ -607,6 +638,8 @@ def _marketplaces(tenant) -> tuple[dict[str, Any], list[dict[str, Any]]]:
             'profile_stale': status_data['profile_stale'],
             'tariff_status': status_data['tariff_status'],
             'tariff_stale': status_data['tariff_stale'],
+            'subscription_ends_at': status_data['subscription_ends_at'],
+            'subscription_source': status_data['subscription_source'],
             'days_left': status_data['days_left'],
             'placements_remaining': status_data['placements_remaining'],
             'placements_total': status_data['placements_total'],

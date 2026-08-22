@@ -130,6 +130,8 @@ export interface DashboardAvitoAccount {
   profile_stale: boolean;
   tariff_status: string;
   tariff_stale: boolean;
+  subscription_ends_at: string | null;
+  subscription_source: 'avito_tariff' | 'manual' | 'unavailable';
   days_left: number | null;
   placements_remaining: number | null;
   placements_total: number | null;
