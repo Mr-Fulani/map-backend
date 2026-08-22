@@ -3,6 +3,8 @@ import hashlib
 import json
 
 import requests
+from django.db import transaction
+from django.utils.timezone import now
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers
 from rest_framework import status
@@ -33,6 +35,7 @@ from apps.tenants.serializers import (
     APIKeyCreateSerializer,
     APIKeyCreatedSerializer,
     APIKeySerializer,
+    CatalogDomainSelectionSerializer,
     CatalogDomainSerializer,
     RegisterSerializer,
     TenantSerializer,
@@ -257,6 +260,77 @@ class CatalogDomainListView(APIView):
                 'domain_slug': domain.slug,
                 'is_enabled': enabling.is_enabled,
             },
+        })
+
+    @extend_schema(
+        request=CatalogDomainSelectionSerializer,
+        responses={
+            200: _success_response(
+                'CatalogDomainSelectionResponse',
+                CatalogDomainSerializer(many=True),
+            ),
+        },
+    )
+    def put(self, request):
+        serializer = CatalogDomainSelectionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        selected_slug_list = serializer.validated_data['enabled_domain_slugs']
+        selected_slugs = set(selected_slug_list)
+        domains = list(
+            CatalogDomain.objects.filter(is_active=True).exclude(
+                slug__in=['mixed', 'unknown'],
+            ).order_by('sort_order', 'name')
+        )
+        domains_by_slug = {domain.slug: domain for domain in domains}
+        unknown_slugs = sorted(selected_slugs - domains_by_slug.keys())
+        if unknown_slugs:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'validation_error',
+                    'message': 'Неизвестные направления каталога: ' + ', '.join(unknown_slugs),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        previously_enabled = set(
+            TenantCatalogDomain.objects.filter(
+                tenant=request.tenant,
+                is_enabled=True,
+            ).values_list('domain__slug', flat=True)
+        )
+        selected_domains = [domains_by_slug[slug] for slug in selected_slug_list]
+        with transaction.atomic():
+            TenantCatalogDomain.objects.filter(tenant=request.tenant).update(
+                is_enabled=False,
+                updated_at=now(),
+            )
+            for domain in selected_domains:
+                TenantCatalogDomain.objects.update_or_create(
+                    tenant=request.tenant,
+                    domain=domain,
+                    defaults={'is_enabled': True},
+                )
+            if selected_slugs - previously_enabled:
+                from apps.products.services import ProductCategorySeedService
+                for domain in selected_domains:
+                    if domain.slug not in previously_enabled:
+                        ProductCategorySeedService.seed_tenant_primary_categories(
+                            request.tenant,
+                            domain,
+                        )
+
+        enabled_ids = {domain.pk for domain in selected_domains}
+        return Response({
+            'status': 'ok',
+            'data': CatalogDomainSerializer(
+                domains,
+                many=True,
+                context={
+                    'tenant': request.tenant,
+                    'enabled_domain_ids': enabled_ids,
+                },
+            ).data,
         })
 
 

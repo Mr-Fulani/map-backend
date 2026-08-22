@@ -36,6 +36,7 @@ import {
   claimSettingsLoadGroups,
   type SettingsLoadGroup,
 } from '@/lib/settings-page-loader';
+import { updateCatalogCategoryBranch } from '@/lib/catalog-settings-state';
 
 interface ApiKey {
   id: number;
@@ -458,6 +459,8 @@ export default function SettingsPage() {
   const telegramPollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settingsPageMountedRef = useRef(true);
   const claimedSettingsLoadsRef = useRef(new Set<SettingsLoadGroup>());
+  const catalogCategoryMutationInFlightRef = useRef(false);
+  const catalogDomainMutationInFlightRef = useRef(false);
 
   useEffect(() => {
     settingsPageMountedRef.current = true;
@@ -1078,6 +1081,8 @@ export default function SettingsPage() {
   }
 
   async function toggleCatalogCategory(category: CatalogCategory) {
+    if (catalogCategoryMutationInFlightRef.current) return;
+    catalogCategoryMutationInFlightRef.current = true;
     setSavingCatalogCategoryId(category.id);
     try {
       // Тоггл действует на всю ветку: авто-классификация рассматривает только
@@ -1085,6 +1090,12 @@ export default function SettingsPage() {
       const res = await productApi.toggleCatalogCategoryBranch(category.id, !category.is_active);
       const data = res.data.data ?? {};
       const affected = data.affected_categories ?? 1;
+      const isActive = typeof data.is_active === 'boolean'
+        ? data.is_active
+        : !category.is_active;
+      setCatalogCategories((current) => (
+        updateCatalogCategoryBranch(current, category.id, isActive)
+      ));
       if (category.is_active) {
         toast.success(
           affected > 1
@@ -1094,10 +1105,10 @@ export default function SettingsPage() {
       } else {
         toast.success(affected > 1 ? `Включена ветка: ${affected} категорий` : 'Категория включена');
       }
-      await loadCatalogCategories();
     } catch {
       toast.error('Не удалось изменить статус категории');
     } finally {
+      catalogCategoryMutationInFlightRef.current = false;
       setSavingCatalogCategoryId(null);
     }
   }
@@ -1121,24 +1132,73 @@ export default function SettingsPage() {
   }
 
   async function setCatalogDomainEnabled(domainSlug: string, isEnabled: boolean) {
+    if (catalogDomainMutationInFlightRef.current) return;
+    catalogDomainMutationInFlightRef.current = true;
     setSavingCatalogDomainSlug(domainSlug);
     try {
-      await tenantApi.setCatalogDomainEnabled(domainSlug, isEnabled);
-      const res = await tenantApi.catalogDomains();
-      const refreshedDomains: CatalogDomain[] = res.data.data ?? res.data;
-      setCatalogDomains(refreshedDomains);
+      const res = await tenantApi.setCatalogDomainEnabled(domainSlug, isEnabled);
+      const saved = res.data.data ?? res.data;
+      setCatalogDomains((current) => current.map((domain) => (
+        domain.slug === domainSlug
+          ? { ...domain, is_enabled_for_tenant: Boolean(saved.is_enabled) }
+          : domain
+      )));
+      if (isEnabled) {
+        try {
+          const categoriesRes = await productApi.catalogCategories();
+          const categories: CatalogCategory[] = categoriesRes.data.data ?? categoriesRes.data;
+          categories.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+          setCatalogCategories(categories);
+        } catch {
+          toast.warning('Направление включено, но список категорий не обновился. Откройте раздел повторно.');
+        }
+      } else {
+        setCatalogCategories((current) => current.filter(
+          (category) => category.root_domain_slug !== domainSlug,
+        ));
+      }
       if (!isEnabled && domainSlug === activeNewCatalogCategoryDomain) {
-        const nextDomain = refreshedDomains.find(
-          (domain) => domain.is_enabled_for_tenant,
+        const nextDomain = catalogDomains.find(
+          (domain) => domain.slug !== domainSlug && domain.is_enabled_for_tenant,
         );
         setNewCatalogCategoryDomain(nextDomain?.slug ?? '');
         setNewCatalogCategoryParent('');
       }
-      await loadCatalogCategories();
       toast.success(isEnabled ? 'Корневая категория включена' : 'Корневая категория отключена');
     } catch {
       toast.error('Не удалось изменить корневую категорию');
     } finally {
+      catalogDomainMutationInFlightRef.current = false;
+      setSavingCatalogDomainSlug(null);
+    }
+  }
+
+  async function keepOnlyAutoPartsCatalogDomain() {
+    if (catalogDomainMutationInFlightRef.current) return;
+    catalogDomainMutationInFlightRef.current = true;
+    setSavingCatalogDomainSlug('__auto_parts_only__');
+    try {
+      const res = await tenantApi.replaceCatalogDomainSelection(['auto_parts']);
+      const refreshedDomains: CatalogDomain[] = res.data.data ?? res.data;
+      setCatalogDomains(refreshedDomains);
+      setCatalogCategories((current) => current.filter(
+        (category) => category.root_domain_slug === 'auto_parts',
+      ));
+      try {
+        const categoriesRes = await productApi.catalogCategories();
+        const categories: CatalogCategory[] = categoriesRes.data.data ?? categoriesRes.data;
+        categories.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+        setCatalogCategories(categories);
+      } catch {
+        toast.warning('Направления сохранены, но список категорий не обновился. Откройте раздел повторно.');
+      }
+      setNewCatalogCategoryDomain('auto_parts');
+      setNewCatalogCategoryParent('');
+      toast.success('Оставлено только направление «Автозапчасти»');
+    } catch {
+      toast.error('Не удалось сохранить направления каталога');
+    } finally {
+      catalogDomainMutationInFlightRef.current = false;
       setSavingCatalogDomainSlug(null);
     }
   }
@@ -2453,7 +2513,31 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2 rounded-lg border p-3">
-                <p className="text-xs font-medium text-muted-foreground">Направления каталога</p>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-medium text-muted-foreground">Направления каталога</p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={keepOnlyAutoPartsCatalogDomain}
+                    disabled={
+                      savingCatalogDomainSlug !== null
+                      || !domainOptions.some((domain) => domain.slug === 'auto_parts')
+                      || (
+                        enabledDomainOptions.length === 1
+                        && enabledDomainOptions[0]?.slug === 'auto_parts'
+                      )
+                    }
+                  >
+                    {savingCatalogDomainSlug === '__auto_parts_only__' && (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    )}
+                    Оставить только автозапчасти
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Отключённые направления исчезают из каталога, но товары и настройки не удаляются.
+                </p>
                 <div className="flex flex-wrap gap-2">
                   {domainOptions.filter((domain) => !['mixed', 'unknown'].includes(domain.slug)).map((domain) => {
                     const isSaving = savingCatalogDomainSlug === domain.slug;
@@ -2553,6 +2637,7 @@ export default function SettingsPage() {
                   ).map(({ category, depth }) => {
                     const isEditing = editingCatalogCategoryId === category.id;
                     const isSaving = savingCatalogCategoryId === category.id;
+                    const isAnyCategorySaving = savingCatalogCategoryId !== null;
                     return (
                       <div
                         key={category.id}
@@ -2659,7 +2744,7 @@ export default function SettingsPage() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => startCatalogCategoryEdit(category)}
-                                disabled={isSaving}
+                                disabled={isAnyCategorySaving}
                               >
                                 Редактировать
                               </Button>
@@ -2667,7 +2752,7 @@ export default function SettingsPage() {
                                 size="sm"
                                 variant="outline"
                                 onClick={() => toggleCatalogCategory(category)}
-                                disabled={isSaving}
+                                disabled={isAnyCategorySaving}
                                 title={category.is_active
                                   ? 'Отключить категорию со всеми подкатегориями — они перестанут участвовать в авто-классификации, товары будут переклассифицированы'
                                   : 'Включить категорию со всеми подкатегориями'}
@@ -2679,7 +2764,7 @@ export default function SettingsPage() {
                                 size="sm"
                                 variant="destructive"
                                 onClick={() => removeCatalogCategory(category)}
-                                disabled={isSaving}
+                                disabled={isAnyCategorySaving}
                               >
                                 Удалить
                               </Button>
