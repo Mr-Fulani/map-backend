@@ -1927,11 +1927,15 @@ def check_moderation_task(self, listing_id: int):
         if avito_status == 'active':
             changed = listing.status != Listing.STATUS_ACTIVE
             listing.status = Listing.STATUS_ACTIVE
-            _write_log(
-                listing.tenant, 'moderation', 'ok',
-                f'Объявление «{listing.title or listing.product.name}» прошло модерацию Avito',
-                listing=listing,
-            )
+            if changed:
+                _write_log(
+                    listing.tenant, 'moderation', 'ok',
+                    (
+                        f'Объявление «{listing.title or listing.product.name}» '
+                        'прошло модерацию Avito'
+                    ),
+                    listing=listing,
+                )
         elif avito_status in ('rejected', 'blocked'):
             rejection_reason = data.get('rejection_reason', '')
             changed = (
@@ -1940,18 +1944,25 @@ def check_moderation_task(self, listing_id: int):
             )
             listing.status = Listing.STATUS_REJECTED
             listing.rejection_reason = rejection_reason
-            reason_txt = f': {listing.rejection_reason}' if listing.rejection_reason else ''
-            _notify_error(
-                listing.tenant,
-                f'Объявление «{listing.title or listing.product.name}» отклонено при модерации Avito'
-                + reason_txt,
-                listing=listing,
-            )
-            _write_log(
-                listing.tenant, 'moderation', 'warn',
-                f'Отклонено модерацией{reason_txt}',
-                listing=listing,
-            )
+            if changed:
+                reason_txt = (
+                    f': {listing.rejection_reason}'
+                    if listing.rejection_reason else ''
+                )
+                _notify_error(
+                    listing.tenant,
+                    (
+                        f'Объявление «{listing.title or listing.product.name}» '
+                        'отклонено при модерации Avito'
+                        + reason_txt
+                    ),
+                    listing=listing,
+                )
+                _write_log(
+                    listing.tenant, 'moderation', 'warn',
+                    f'Отклонено модерацией{reason_txt}',
+                    listing=listing,
+                )
         listing.last_sync_at = checked_at
         listing.save(update_fields=['status', 'rejection_reason', 'last_sync_at'])
         if avito_status in ('rejected', 'blocked'):
