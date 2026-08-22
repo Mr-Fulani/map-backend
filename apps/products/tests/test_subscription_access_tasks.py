@@ -60,6 +60,14 @@ def test_inactive_datasource_is_rejected_at_api_worker_and_beat_boundaries():
         credentials=b'opaque',
         is_active=True,
     )
+    uploaded_file = DataSourceConnection.objects.create(
+        tenant=tenant,
+        name='Uploaded inventory.xlsx',
+        type=DataSourceConnection.TYPE_CSV,
+        credentials=b'opaque',
+        is_active=True,
+        last_sync_status=DataSourceConnection.STATUS_OK,
+    )
     machine_key = create_operator_key(tenant)
 
     with patch('apps.products.views.import_from_datasource.delay') as product_delay:
@@ -87,6 +95,46 @@ def test_inactive_datasource_is_rejected_at_api_worker_and_beat_boundaries():
     human_delay.assert_not_called()
     beat_delay.assert_called_once_with(active.pk)
     assert beat_result == {'connections_queued': 1}
+
+    uploaded_file.refresh_from_db()
+    assert uploaded_file.last_sync_status == DataSourceConnection.STATUS_OK
+    assert uploaded_file.last_error == ''
+
+
+@pytest.mark.django_db
+def test_uploaded_file_import_is_a_clean_worker_noop():
+    tenant, _ = TenantService.create_tenant(
+        'Uploaded Source',
+        'uploaded-source',
+        'uploaded-source@test.com',
+        'pass12345',
+    )
+    connection = DataSourceConnection.objects.create(
+        tenant=tenant,
+        name='Inventory.xlsx',
+        type=DataSourceConnection.TYPE_CSV,
+        credentials=b'opaque',
+        last_sync_status=DataSourceConnection.STATUS_OK,
+    )
+
+    with (
+        patch('apps.products.tasks.get_adapter') as get_adapter,
+        patch('apps.products.tasks.metric_count') as metric_count,
+    ):
+        result = import_from_datasource(connection.pk)
+
+    assert result == {
+        'skipped': True,
+        'reason': 'file_upload_source_not_pollable',
+    }
+    get_adapter.assert_not_called()
+    metric_count.assert_called_once_with(
+        'map.sync.attempt',
+        attributes={'source_type': DataSourceConnection.TYPE_CSV, 'outcome': 'skipped'},
+    )
+    connection.refresh_from_db()
+    assert connection.last_sync_status == DataSourceConnection.STATUS_OK
+    assert connection.last_error == ''
 
 
 @pytest.mark.django_db

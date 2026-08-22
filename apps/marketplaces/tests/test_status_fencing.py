@@ -603,9 +603,12 @@ def test_legacy_moderation_does_not_touch_additive_lifecycle_fields(settings):
     listing = _listing('legacy')
     settings.AVITO_STATUS_LIFECYCLE_MODE = 'legacy'
 
-    with patch(
-        'apps.marketplaces.tasks.AvitoAdapter.get_status',
-        return_value={'status': 'active'},
+    with (
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_status',
+            return_value={'status': 'active'},
+        ),
+        patch('apps.marketplaces.tasks._write_log') as write_log,
     ):
         result = check_moderation_task(listing.pk)
 
@@ -615,3 +618,51 @@ def test_legacy_moderation_does_not_touch_additive_lifecycle_fields(settings):
     assert listing.remote_status_checked_at is None
     assert listing.next_status_check_at is None
     assert listing.status_check_claim_token is None
+    write_log.assert_not_called()
+
+
+def test_legacy_moderation_logs_only_a_real_status_transition(settings):
+    from apps.marketplaces.tasks import check_moderation_task
+
+    listing = _listing('legacy-transition', status=Listing.STATUS_PENDING)
+    settings.AVITO_STATUS_LIFECYCLE_MODE = 'legacy'
+
+    with (
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_status',
+            return_value={'status': 'active'},
+        ),
+        patch('apps.marketplaces.tasks._write_log') as write_log,
+    ):
+        result = check_moderation_task(listing.pk)
+
+    listing.refresh_from_db()
+    assert result == {'status': 'active', 'changed': True}
+    assert listing.status == Listing.STATUS_ACTIVE
+    write_log.assert_called_once()
+
+
+def test_legacy_rejection_does_not_repeat_log_or_notification(settings):
+    from apps.marketplaces.tasks import check_moderation_task
+
+    listing = _listing('legacy-rejected', status=Listing.STATUS_REJECTED)
+    listing.rejection_reason = 'Неверная категория'
+    listing.save(update_fields=['rejection_reason'])
+    settings.AVITO_STATUS_LIFECYCLE_MODE = 'legacy'
+
+    with (
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_status',
+            return_value={
+                'status': 'rejected',
+                'rejection_reason': 'Неверная категория',
+            },
+        ),
+        patch('apps.marketplaces.tasks._write_log') as write_log,
+        patch('apps.marketplaces.tasks._notify_error') as notify_error,
+    ):
+        result = check_moderation_task(listing.pk)
+
+    assert result == {'status': 'rejected', 'changed': False}
+    write_log.assert_not_called()
+    notify_error.assert_not_called()

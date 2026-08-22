@@ -49,6 +49,19 @@ def import_from_datasource(self, connection_id: int):
             'reason': 'connection_not_found_or_inactive',
         }
 
+    # Uploaded CSV/Excel files are processed synchronously by CSVUploadView.
+    # Keep this worker-side guard as a boundary for already queued tasks and
+    # direct callers; a file connection has no remote source to poll.
+    if connection.type == DataSourceConnection.TYPE_CSV:
+        metric_count(
+            'map.sync.attempt',
+            attributes={'source_type': connection.type, 'outcome': 'skipped'},
+        )
+        return {
+            'skipped': True,
+            'reason': 'file_upload_source_not_pollable',
+        }
+
     tenant = connection.tenant
     from apps.billing.services import LimitChecker
     can_import, reason = LimitChecker().can_import_sku(tenant, count=0)

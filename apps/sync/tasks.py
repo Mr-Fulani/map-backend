@@ -15,9 +15,14 @@ def sync_all_tenants():
     from apps.datasources.models import DataSourceConnection
     from apps.products.tasks import import_from_datasource
 
+    # CSV/Excel connections represent files that were already processed by
+    # CSVUploadView.  They do not expose a pollable upstream and calling the
+    # generic import task for them only produces retries and false failures.
     connections = DataSourceConnection.objects.filter(
         tenant__is_active=True,
         is_active=True,
+    ).exclude(
+        type=DataSourceConnection.TYPE_CSV,
     ).values_list('pk', flat=True)
 
     for conn_id in connections:
