@@ -1202,11 +1202,35 @@ class AvitoAccountStatusService:
             )
             if expiry_threshold is not None and state.get('expiry') != expiry_threshold:
                 level = LEVEL_CRITICAL if days_left <= 1 else LEVEL_ERROR
+                if status_obj.tariff_ends_at:
+                    expiry_message = (
+                        f'Avito ({status_obj.account.name}): до окончания '
+                        f'тарифа осталось {days_left} дн.'
+                    )
+                else:
+                    manual_end = status_obj.account.autoload_subscription_ends_at
+                    if manual_end and manual_end < timezone.localdate():
+                        expiry_message = (
+                            f'Avito ({status_obj.account.name}): указанная вручную '
+                            'дата окончания Автозагрузки '
+                            f'{manual_end:%d.%m.%Y} уже прошла. '
+                            'Проверьте актуальный срок в Avito.'
+                        )
+                    elif days_left == 0:
+                        expiry_message = (
+                            f'Avito ({status_obj.account.name}): указанная вручную '
+                            'дата окончания Автозагрузки — сегодня.'
+                        )
+                    else:
+                        expiry_message = (
+                            f'Avito ({status_obj.account.name}): по указанной вручную '
+                            'дате до окончания Автозагрузки '
+                            f'осталось {days_left} дн.'
+                        )
                 cls._queue_notification(
                     status_obj,
                     level,
-                    f'Avito ({status_obj.account.name}): до окончания тарифа '
-                    f'осталось {days_left} дн.',
+                    expiry_message,
                 )
                 state['expiry'] = expiry_threshold
 

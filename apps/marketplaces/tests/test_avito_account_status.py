@@ -192,6 +192,32 @@ class TestAvitoAccountStatusService:
         assert status_obj.notification_state['expiry'] == 7
         assert status_obj.notification_state['placements'] == 10
 
+    def test_manual_expiry_notification_does_not_call_date_a_tariff(self):
+        """Ручная дата не выдаётся за подтверждённый Avito тариф."""
+        tenant, _ = make_tenant('avito-manual-expiry-notification')
+        account = make_account(tenant)
+        account.autoload_subscription_ends_at = (
+            timezone.localdate() - timedelta(days=1)
+        )
+        account.save(update_fields=['autoload_subscription_ends_at'])
+        status_obj = AvitoAccountStatus.objects.create(
+            tenant=tenant,
+            account=account,
+            autoload_status=AvitoAccountStatus.AUTOLOAD_ENABLED,
+            tariff_status=AvitoAccountStatus.TARIFF_NOT_FOUND,
+        )
+
+        with patch.object(
+            AvitoAccountStatusService, '_queue_notification',
+        ) as queue_notification:
+            AvitoAccountStatusService._notify_thresholds(status_obj)
+
+        queue_notification.assert_called_once()
+        message = queue_notification.call_args.args[2]
+        assert 'указанная вручную' in message
+        assert 'уже прошла' in message
+        assert 'до окончания тарифа' not in message
+
     def test_auth_and_inactive_tariff_notifications_are_deduplicated(self):
         """Критичные состояния подключения и тарифа не создают спам."""
         tenant, _ = make_tenant('avito-critical-dedup')

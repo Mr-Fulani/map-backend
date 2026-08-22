@@ -92,13 +92,13 @@ export default function AnalyticsPage() {
   const summary = data?.summary;
   const daily = data?.daily ?? [];
 
-  const hasData = daily.some((d) => d.views > 0 || d.contacts > 0);
+  const hasData = daily.some((d) => d.views > 0 || d.contacts > 0 || d.impressions > 0);
 
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Аналитика</h1>
-        <p className="text-muted-foreground">Просмотры, контакты и CTR листингов на Avito</p>
+        <p className="text-muted-foreground">Уникальные и все просмотры, а также контакты на Avito</p>
       </div>
 
       {/* Фильтр дат */}
@@ -133,7 +133,7 @@ export default function AnalyticsPage() {
           <>
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Просмотры</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">Уникальные просмотры</CardTitle>
                 <Eye className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -153,7 +153,7 @@ export default function AnalyticsPage() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Показы</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">Все просмотры</CardTitle>
                 <BarChart3 className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
@@ -163,11 +163,12 @@ export default function AnalyticsPage() {
 
             <Card>
               <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <CardTitle className="text-sm font-medium text-muted-foreground">Средний CTR</CardTitle>
+                <CardTitle className="text-sm font-medium text-muted-foreground">Доля уникальных</CardTitle>
                 <TrendingUp className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
                 <div className="text-2xl font-bold">{summary?.avg_ctr ?? 0}%</div>
+                <p className="mt-1 text-xs text-muted-foreground">Уникальные / все просмотры</p>
               </CardContent>
             </Card>
 
@@ -187,7 +188,7 @@ export default function AnalyticsPage() {
       {/* График */}
       <Card>
         <CardHeader>
-          <CardTitle>Просмотры и контакты по дням</CardTitle>
+          <CardTitle>Уникальные, все просмотры и контакты по дням</CardTitle>
         </CardHeader>
         <CardContent>
           {loading ? (
@@ -214,16 +215,16 @@ export default function AnalyticsPage() {
                   labelFormatter={(v) => new Date(v as string).toLocaleDateString('ru-RU')}
                   formatter={(value, name) => {
                     const labels: Record<string, string> = {
-                      views: 'Просмотры',
+                      views: 'Уникальные просмотры',
                       contacts: 'Контакты',
-                      impressions: 'Показы',
+                      impressions: 'Все просмотры',
                     };
                     const label = labels[name as string] ?? String(name);
                     return [Number(value).toLocaleString('ru-RU'), label];
                   }}
                 />
                 <Legend
-                  formatter={(v) => (({ views: 'Просмотры', contacts: 'Контакты', impressions: 'Показы' } as Record<string, string>)[v] ?? v)}
+                  formatter={(v) => (({ views: 'Уникальные просмотры', contacts: 'Контакты', impressions: 'Все просмотры' } as Record<string, string>)[v] ?? v)}
                 />
                 <Line type="monotone" dataKey="views" stroke="#6366f1" strokeWidth={2} dot={false} />
                 <Line type="monotone" dataKey="contacts" stroke="#22c55e" strokeWidth={2} dot={false} />

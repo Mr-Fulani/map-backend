@@ -141,6 +141,10 @@ class DashboardAvitoAccountSerializer(serializers.Serializer):
     profile_stale = serializers.BooleanField()
     tariff_status = serializers.CharField()
     tariff_stale = serializers.BooleanField()
+    subscription_ends_at = serializers.DateField(allow_null=True)
+    subscription_source = serializers.ChoiceField(
+        choices=['avito_tariff', 'manual', 'unavailable'],
+    )
     days_left = serializers.IntegerField(allow_null=True)
     placements_remaining = serializers.IntegerField(allow_null=True)
     placements_total = serializers.IntegerField(allow_null=True)
