@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 from xml.etree import ElementTree as ET
 
 import pytest
+import requests
 import responses as responses_lib
 from django.core.cache.backends.locmem import LocMemCache
 from django.utils.timezone import now
@@ -13,7 +14,12 @@ from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
 from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
 from apps.marketplaces.adapters.avito.error_handler import backoff
-from apps.marketplaces.adapters.avito.adapter import AvitoAdapter, _avito_request
+from apps.marketplaces.adapters.avito.adapter import (
+    AmbiguousFeedSubmissionError,
+    AvitoAdapter,
+    FeedUploadError,
+    _avito_request,
+)
 from apps.marketplaces.adapters.avito.feed_builder import build_feed, get_ad_id
 from apps.marketplaces.adapters.avito import rate_limiter
 from apps.marketplaces.adapters.avito.rate_limiter import (
@@ -266,6 +272,43 @@ class TestAvitoAdapterNetworkBounds:
         adapter._auth = MagicMock()
         adapter._auth.get_token.return_value = 'token'
         return adapter
+
+    def test_latest_upload_strict_keeps_empty_success_authoritative(self):
+        response = MagicMock(ok=True)
+        response.json.return_value = {'uploads': []}
+
+        with patch(
+            'apps.marketplaces.adapters.avito.adapter._avito_request',
+            return_value=response,
+        ):
+            result = self._adapter().get_latest_upload(strict=True)
+
+        assert result == {}
+
+    def test_latest_upload_strict_propagates_network_and_json_failures(self):
+        adapter = self._adapter()
+        with patch(
+            'apps.marketplaces.adapters.avito.adapter._avito_request',
+            side_effect=requests.Timeout('provider timeout'),
+        ):
+            with pytest.raises(requests.Timeout, match='provider timeout'):
+                adapter.get_latest_upload(strict=True)
+
+        malformed = MagicMock(ok=True)
+        malformed.json.return_value = []
+        with patch(
+            'apps.marketplaces.adapters.avito.adapter._avito_request',
+            return_value=malformed,
+        ):
+            with pytest.raises(ValueError, match='top-level JSON'):
+                adapter.get_latest_upload(strict=True)
+
+    def test_latest_upload_legacy_mode_swallows_network_failure(self):
+        with patch(
+            'apps.marketplaces.adapters.avito.adapter._avito_request',
+            side_effect=requests.Timeout('legacy provider timeout'),
+        ):
+            assert self._adapter().get_latest_upload() == {}
 
     def test_feed_item_error_pagination_stops_at_hard_page_limit(self, settings):
         settings.AVITO_API_MAX_PAGES = 2
@@ -775,8 +818,6 @@ class TestAvitoAdapterFeedStorage:
         assert key == f'dev/feeds/feed-path-co/avito/test-account-{account.pk}/feed.xml'
 
     def test_trigger_autoload_raises_when_avito_rejects_upload(self):
-        from apps.marketplaces.adapters.avito.adapter import FeedUploadError
-
         tenant = make_tenant('autoload-upload-fail-co')
         account = make_account(tenant)
 
@@ -787,6 +828,49 @@ class TestAvitoAdapterFeedStorage:
             mock_post.return_value.text = 'autoload is not connected'
 
             with pytest.raises(FeedUploadError, match='Autoload не принял фид'):
+                adapter._trigger_autoload()
+
+    @pytest.mark.parametrize('status_code', (400, 401, 403, 404, 422))
+    def test_trigger_autoload_treats_known_client_rejections_as_safe(
+        self,
+        status_code,
+    ):
+        tenant = make_tenant(f'autoload-safe-rejection-{status_code}-co')
+        account = make_account(tenant)
+        response = MagicMock(status_code=status_code)
+
+        with patch(
+            'apps.marketplaces.adapters.avito.adapter._avito_request',
+            return_value=response,
+        ):
+            adapter = AvitoAdapter(account)
+            adapter._auth.get_token = MagicMock(return_value='tok')
+
+            with pytest.raises(FeedUploadError) as error:
+                adapter._trigger_autoload()
+
+        assert type(error.value) is FeedUploadError
+
+    @pytest.mark.parametrize('status_code', (408, 425, 500, 502, 503, 504))
+    def test_trigger_autoload_marks_unknown_provider_outcome_ambiguous(
+        self,
+        status_code,
+    ):
+        tenant = make_tenant(f'autoload-ambiguous-{status_code}-co')
+        account = make_account(tenant)
+        response = MagicMock(status_code=status_code)
+
+        with patch(
+            'apps.marketplaces.adapters.avito.adapter._avito_request',
+            return_value=response,
+        ):
+            adapter = AvitoAdapter(account)
+            adapter._auth.get_token = MagicMock(return_value='tok')
+
+            with pytest.raises(
+                AmbiguousFeedSubmissionError,
+                match='неоднозначный ответ',
+            ):
                 adapter._trigger_autoload()
 
     def test_get_feed_results_raises_when_autoload_profile_is_unavailable(self):

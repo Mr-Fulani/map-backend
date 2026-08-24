@@ -8,6 +8,7 @@ from apps.marketplaces.models import (
     CategoryMapping,
     Listing,
     MarketplaceAccount,
+    MarketplaceFeedRun,
 )
 
 
@@ -49,6 +50,32 @@ class MarketplaceAccountAdmin(ModelAdmin):
     list_filter = ['tenant', 'marketplace', 'is_active']
     search_fields = ['name', 'tenant__slug']
     readonly_fields = ['credentials_enc', 'created_at', 'updated_at']
+
+
+@admin.register(MarketplaceFeedRun)
+class MarketplaceFeedRunAdmin(ModelAdmin):
+    """Read-only diagnostics for durable provider feed generations."""
+
+    list_display = [
+        'id', 'account', 'marketplace', 'state', 'revision',
+        'submission_reconcile_attempt', 'total_count', 'published_count',
+        'rejected_count', 'pending_count', 'next_attempt_at', 'finished_at',
+    ]
+    list_filter = ['marketplace', 'state']
+    search_fields = [
+        'id', 'account__name', 'account__external_id',
+        'tenant__slug', 'provider_run_id',
+    ]
+    readonly_fields = [field.name for field in MarketplaceFeedRun._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(AvitoAccountStatus)

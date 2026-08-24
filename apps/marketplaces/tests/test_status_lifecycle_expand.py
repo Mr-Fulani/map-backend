@@ -356,7 +356,7 @@ def test_existing_marketplace_rows_survive_upgrade_from_0019():
 
     executor = MigrationExecutor(connection)
     executor.migrate([
-        ('marketplaces', '0022_account_status_lifecycle_concurrent_index'),
+        ('marketplaces', '0024_feed_run_listing_concurrent_index'),
     ])
 
     upgraded_account = MarketplaceAccount.objects.get(pk=account_pk)

@@ -1,4 +1,5 @@
 import datetime
+from dataclasses import dataclass
 import html
 import logging
 import re
@@ -29,6 +30,22 @@ logger = logging.getLogger(__name__)
 
 AVITO_API_BASE = 'https://api.avito.ru'
 _STATS_CHUNK = 200  # максимум item_ids за один запрос к Stats API
+_FEED_ITEM_ERROR_PAGE_SIZE = 100
+_FEED_ITEM_ERROR_MESSAGE_LIMIT = 100
+_FEED_ITEM_ERROR_TEXT_LIMIT = 2000
+_FEED_ITEM_AD_ID_LIMIT = 100
+
+
+@dataclass(frozen=True)
+class FeedItemErrorPage:
+    """One bounded page of blocking Autoload item errors."""
+
+    errors: dict[str, str]
+    next_page: int | None
+
+    @property
+    def terminal(self) -> bool:
+        return self.next_page is None
 
 
 def _avito_request(requester, *args, operation: str = 'other', **kwargs):
@@ -73,8 +90,10 @@ def _avito_request(requester, *args, operation: str = 'other', **kwargs):
 
 def _strip_html(text: str) -> str:
     """Убирает HTML-теги и спецсимволы из текста сообщения отчёта Avito."""
-    no_tags = re.sub(r'<[^>]+>', ' ', text or '')
-    return re.sub(r'\s+', ' ', html.unescape(no_tags)).strip()
+    decoded = html.unescape(text or '')
+    no_tags = re.sub(r'<[^>]+>', ' ', decoded)
+    no_controls = re.sub(r'[\x00-\x1f\x7f-\x9f]', ' ', no_tags)
+    return re.sub(r'\s+', ' ', no_controls).strip()
 
 
 def _format_avito_message(message: dict) -> str:
@@ -85,10 +104,16 @@ def _format_avito_message(message: dict) -> str:
         return ''
     if description_value is not None and not isinstance(description_value, str):
         return ''
-    title = (title_value or '').strip()
+    title = _strip_html(title_value or '')
     description = _strip_html(description_value or '')
     text = f'{title} {description}'.strip()
     return f'• {text}' if text else ''
+
+
+def _bounded_feed_item_error(messages: list[str]) -> str:
+    """Join sanitized provider messages without growing task/DB payloads."""
+
+    return '\n'.join(messages)[:_FEED_ITEM_ERROR_TEXT_LIMIT].rstrip()
 
 
 def _json_object(value, context: str) -> dict:
@@ -107,6 +132,24 @@ def _json_list(value, context: str) -> list:
 
 class FeedUploadError(Exception):
     """Не удалось загрузить фид на S3 или уведомить Avito."""
+
+
+class AmbiguousFeedSubmissionError(FeedUploadError):
+    """Avito may have accepted the non-idempotent Autoload POST."""
+
+
+_AUTOLOAD_SAFE_REJECTION_STATUSES = frozenset({
+    400,
+    401,
+    403,
+    404,
+    405,
+    409,
+    410,
+    413,
+    415,
+    422,
+})
 
 
 def _key_part(value: object, fallback: str) -> str:
@@ -238,8 +281,13 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         # повторила попытку после открытия окна.
         if resp.status_code == 429:
             raise RateLimitError(retry_after=AUTOLOAD_RATE_LIMIT_RETRY_AFTER)
-        raise FeedUploadError(
-            f'Avito Autoload не принял фид: HTTP {resp.status_code}.'
+        if resp.status_code in _AUTOLOAD_SAFE_REJECTION_STATUSES:
+            raise FeedUploadError(
+                f'Avito Autoload не принял фид: HTTP {resp.status_code}.'
+            )
+        raise AmbiguousFeedSubmissionError(
+            'Avito Autoload вернул неоднозначный ответ: '
+            f'HTTP {resp.status_code}; требуется сверка запуска.'
         )
 
     def is_autoload_active(self) -> bool:
@@ -422,13 +470,14 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         handle_avito_error(resp)
         return resp.json().get('items', [])
 
-    def get_latest_upload(self) -> dict:
+    def get_latest_upload(self, *, strict: bool = False) -> dict:
         """
         Возвращает последнюю загрузку Autoload (v4): {upload_id, status, stats, ...} или {}.
 
         status: 'processing' (Avito ещё обрабатывает фид), 'success', 'success_warning'.
-        Нужно, чтобы не отклонять объявления, пока загрузка не завершена.
-        Сетевые сбои не пробрасывает — возвращает {}.
+        Legacy-вызовы превращают сетевые/JSON-сбои в ``{}``. В строгом режиме
+        ошибки пробрасываются durable-оркестратору, чтобы outage нельзя было
+        принять за доказанное отсутствие загрузки.
         """
         token = self._auth.get_token(self.account)
         try:
@@ -440,12 +489,101 @@ class AvitoAdapter(BaseMarketplaceAdapter):
                 params={'per_page': 1, 'page': 1}, timeout=30,
             )
             if not resp.ok:
+                if strict:
+                    handle_avito_error(resp)
                 return {}
-            uploads = resp.json().get('uploads', [])
-        except (requests.RequestException, ValueError, KeyError):
+            payload = resp.json()
+            if strict:
+                payload = _json_object(payload, 'latest upload response')
+                uploads = _json_list(payload.get('uploads'), 'latest upload list')
+                if any(not isinstance(upload, dict) for upload in uploads):
+                    raise ValueError('Avito latest upload list must contain objects')
+            else:
+                uploads = payload.get('uploads', [])
+        except (requests.RequestException, ValueError, KeyError, TypeError, AttributeError):
+            if strict:
+                raise
             return {}
         # Список приходит свежими сверху, но не полагаемся на это — берём по времени.
         return max(uploads, key=lambda u: u.get('started_at', ''), default={}) if uploads else {}
+
+    def get_feed_item_error_page(self, page: int) -> FeedItemErrorPage:
+        """Return exactly one validated page of blocking feed item errors."""
+
+        if isinstance(page, bool) or not isinstance(page, int) or not 1 <= page <= 100:
+            raise ValueError('Avito feed item errors page must be between 1 and 100')
+
+        token = self._auth.get_token(self.account)
+        resp = _avito_request(
+            requests.get,
+            f'{AVITO_API_BASE}/autoload/v4/uploads/last_successful/items',
+            operation='feed_poll',
+            headers={'Authorization': f'Bearer {token}'},
+            params={'per_page': _FEED_ITEM_ERROR_PAGE_SIZE, 'page': page},
+            timeout=30,
+        )
+        if resp.status_code == 401:
+            self._auth.invalidate(self.account)
+        if not resp.ok:
+            handle_avito_error(resp)
+
+        body = _json_object(resp.json(), 'feed item errors')
+        items = _json_list(body.get('items'), 'feed item errors items')
+        if len(items) > _FEED_ITEM_ERROR_PAGE_SIZE:
+            raise ValueError('Avito feed item errors page exceeds 100 items')
+
+        result: dict[str, str] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError('Avito feed item errors item must be an object')
+            ad_id = item.get('ad_id')
+            if not isinstance(ad_id, str) or not 0 < len(ad_id) <= _FEED_ITEM_AD_ID_LIMIT:
+                continue
+            item_messages = _json_list(
+                item.get('messages'), 'feed item error messages',
+            )
+            if len(item_messages) > _FEED_ITEM_ERROR_MESSAGE_LIMIT:
+                raise ValueError('Avito feed item error exceeds 100 messages')
+            if not all(isinstance(message, dict) for message in item_messages):
+                raise ValueError('Avito feed item error message must be an object')
+            if not any(message.get('type') == 'error' for message in item_messages):
+                continue
+            messages = [
+                _format_avito_message(message)
+                for message in item_messages
+                if message.get('type') in ('error', 'alarm')
+            ]
+            messages = [message for message in messages if message]
+            if not messages:
+                continue
+            combined = _bounded_feed_item_error(messages)
+            if ad_id in result:
+                combined = _bounded_feed_item_error([result[ad_id], combined])
+            result[ad_id] = combined
+
+        meta = body.get('meta') or {}
+        if not isinstance(meta, dict):
+            raise ValueError('Avito feed item errors metadata must be an object')
+        total_pages = meta.get('pages', 1)
+        if (
+            isinstance(total_pages, bool)
+            or not isinstance(total_pages, int)
+            or total_pages < 1
+        ):
+            raise ValueError('Avito feed item errors page count must be positive')
+        reported_page = meta.get('page')
+        if reported_page is not None and reported_page != page:
+            raise ValueError('Avito feed item errors metadata page mismatch')
+        per_page = meta.get('per_page')
+        if per_page is not None and (
+            isinstance(per_page, bool)
+            or not isinstance(per_page, int)
+            or not 1 <= per_page <= _FEED_ITEM_ERROR_PAGE_SIZE
+        ):
+            raise ValueError('Avito feed item errors per_page exceeds 100')
+
+        next_page = page + 1 if page < total_pages else None
+        return FeedItemErrorPage(errors=result, next_page=next_page)
 
     def get_feed_item_errors(self, ad_ids: list[str]) -> dict[str, str]:
         """
@@ -459,75 +597,31 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         """
         if not ad_ids:
             return {}
-        token = self._auth.get_token(self.account)
-        headers = {'Authorization': f'Bearer {token}'}
         wanted = set(ad_ids)
         result: dict[str, str] = {}
         max_pages = min(100, max(1, int(settings.AVITO_API_MAX_PAGES)))
+        page = 1
         try:
-            page = 1
             while page <= max_pages:
-                resp = _avito_request(
-                    requests.get,
-                    f'{AVITO_API_BASE}/autoload/v4/uploads/last_successful/items',
-                    operation='feed_poll',
-                    headers=headers, params={'per_page': 100, 'page': page}, timeout=30,
-                )
-                if not resp.ok:
-                    break
-                body = _json_object(resp.json(), 'feed item errors')
-                items = _json_list(body.get('items'), 'feed item errors items')
-                for item in items[:100]:
-                    if not isinstance(item, dict):
-                        logger.warning('Avito feed item errors contains a non-object item; stopping pagination.')
-                        return result
-                    ad_id = item.get('ad_id')
-                    if ad_id not in wanted:
-                        continue
-                    item_messages = _json_list(
-                        item.get('messages'), 'feed item error messages',
-                    )
-                    selected_messages = item_messages[:100]
-                    if not all(isinstance(message, dict) for message in selected_messages):
-                        logger.warning('Avito feed item errors contains a malformed message; item skipped.')
-                        continue
-                    # Реальной ошибкой считаем только type=error; warning/alarm
-                    # (напр. авто-определение SparePartType) — не повод отклонять.
-                    if not any(m.get('type') == 'error' for m in selected_messages):
-                        continue
-                    messages = [
-                        _format_avito_message(m)
-                        for m in selected_messages
-                        if m.get('type') in ('error', 'alarm')
-                    ]
-                    messages = [message for message in messages if message]
-                    if messages:
-                        result[ad_id] = '\n'.join(messages)
-                meta = body.get('meta')
-                if meta is None:
-                    meta = {}
-                if not isinstance(meta, dict):
-                    logger.warning('Avito feed item errors returned malformed pagination metadata.')
-                    break
-                total_pages = meta.get('pages', 1)
-                if (
-                    isinstance(total_pages, bool)
-                    or not isinstance(total_pages, int)
-                    or total_pages < 1
-                ):
-                    logger.warning('Avito feed item errors returned invalid page count.')
-                    break
-                if page >= total_pages:
+                page_result = self.get_feed_item_error_page(page)
+                result.update({
+                    ad_id: reason
+                    for ad_id, reason in page_result.errors.items()
+                    if ad_id in wanted
+                })
+                if page_result.terminal:
                     break
                 if page == max_pages:
                     logger.warning(
-                        'Avito feed item errors pagination stopped at hard limit %d/%d.',
+                        'Avito feed item errors pagination stopped at hard limit %d.',
                         max_pages,
-                        total_pages,
                     )
                     break
-                page += 1
-        except (requests.RequestException, ValueError, KeyError, TypeError):
+                next_page = page_result.next_page
+                if next_page is None:
+                    break
+                page = next_page
+        except Exception:
             return result
         return result
 

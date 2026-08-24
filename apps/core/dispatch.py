@@ -35,6 +35,7 @@ DURABLE_TASK_QUEUES = {
     'apps.ai_agent.tasks.generate_description_task': 'ai_generate',
     'apps.image_search.tasks.search_images_for_product': 'image_search',
     'apps.media_processing.tasks.process_media_job': 'media_processing',
+    'apps.marketplaces.tasks.process_marketplace_feed_run_step': 'avito_publish',
     'apps.web_research.tasks.schedule_web_research_fallback': 'part_parsing',
     'apps.web_research.tasks.run_web_research': 'part_parsing',
 }

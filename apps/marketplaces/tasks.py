@@ -1,10 +1,13 @@
 import datetime
+import hashlib
+import html
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import TracebackType
 from typing import Protocol, cast
 
+import requests
 from celery import shared_task
 from django.conf import settings
 from django.core.cache import caches
@@ -18,12 +21,23 @@ from apps.anti_ban.ramp_up import GradualRampUp
 from apps.anti_ban.velocity import VelocityController
 from apps.billing.services import LimitChecker
 from apps.core.advisory_lock import try_session_advisory_lock
-from apps.marketplaces.adapters.avito.adapter import AvitoAdapter, FeedUploadError
+from apps.core.dispatch import enqueue_durable_task
+from apps.core.http_responses import TrustedResponseError
+from apps.marketplaces.adapters.avito.adapter import (
+    AmbiguousFeedSubmissionError,
+    AvitoAdapter,
+    FeedUploadError,
+)
 from apps.marketplaces.adapters.avito.error_handler import (
+    AvitoError,
     ServerError,
     backoff,
 )
-from apps.marketplaces.adapters.avito.feed_builder import get_ad_id
+from apps.marketplaces.adapters.avito.feed_builder import (
+    build_feed,
+    build_stop_feed,
+    get_ad_id,
+)
 from apps.marketplaces.adapters.avito.rate_limiter import (
     AUTOLOAD_RATE_LIMIT_RETRY_AFTER,
     RateLimitError,
@@ -35,7 +49,30 @@ from apps.marketplaces.listing_lifecycle import (
     normalize_remote_status,
     release_status_check,
 )
-from apps.marketplaces.models import Listing, MarketplaceAccount
+from apps.marketplaces.feed_workflow import (
+    FeedRunClaim,
+    FeedRunConflict,
+    FeedRunSnapshot,
+    FeedSubmissionOutcomeUncertain,
+    FeedWorkflowError,
+    StaleFeedRunClaim,
+    apply_poll_page,
+    apply_report_page,
+    cancel_feed_runs_for_inactive_owners,
+    claim_due_run_for_account,
+    create_or_supersede_feed_run,
+    finish_feed_run,
+    load_poll_batch,
+    mark_feed_submission_unknown,
+    mark_feed_submitted,
+    persist_feed_submission_boundary,
+    record_provider_run_observation,
+    reset_poll_round,
+    retry_step,
+    start_reporting,
+    validate_feed_submission_owner,
+)
+from apps.marketplaces.models import Listing, MarketplaceAccount, MarketplaceFeedRun
 from apps.notifications.services import LEVEL_CRITICAL, LEVEL_ERROR, LEVEL_SUCCESS
 
 
@@ -50,6 +87,16 @@ _POLL_RETRY_DELAY = datetime.timedelta(minutes=30)
 _FEED_POLL_BATCH_SIZE = 100
 _FEED_POLL_BATCH_DELAY_SECONDS = 30
 _MAX_PROVIDER_REASON_LENGTH = 2000
+_DURABLE_FEED_TASK_NAME = (
+    'apps.marketplaces.tasks.process_marketplace_feed_run_step'
+)
+_DURABLE_FEED_RECOVERY_BATCH_SIZE = 100
+_DURABLE_FEED_SUBMISSION_DELAY = datetime.timedelta(minutes=5)
+_DURABLE_FEED_SUBMISSION_RECONCILE_HORIZON = datetime.timedelta(hours=2)
+_DURABLE_FEED_SUBMISSION_NEGATIVE_THRESHOLD = 4
+_DURABLE_FEED_REPORT_DELAY = datetime.timedelta(seconds=30)
+_DURABLE_FEED_UPLOAD_CLOCK_SKEW = datetime.timedelta(minutes=5)
+_MAX_DURABLE_FEED_PAYLOAD_LISTINGS = 10_000
 _LISTING_EXPIRY_THRESHOLDS = (0, 1, 3, 7, 14)
 _LISTING_EXPIRY_NOTICE_CACHE_MIN = datetime.timedelta(days=7)
 _LISTING_EXPIRY_NOTICE_CACHE_MAX = datetime.timedelta(days=60)
@@ -77,6 +124,15 @@ class _ListingStatusClaim:
 
 def _status_lifecycle_dual_write_enabled() -> bool:
     return settings.AVITO_STATUS_LIFECYCLE_MODE == 'dual_write'
+
+
+def _durable_feed_run_enabled() -> bool:
+    """Enable the durable feed owner only after lifecycle fencing is active."""
+
+    return (
+        settings.MARKETPLACE_FEED_RUN_MODE == 'durable'
+        and _status_lifecycle_dual_write_enabled()
+    )
 
 
 def _bounded_provider_reason(value: object) -> str:
@@ -787,7 +843,11 @@ def _send_listing_to_review(listing: Listing, reason: str) -> None:
 RATE_LIMIT_RETRY_COUNTDOWN = AUTOLOAD_RATE_LIMIT_RETRY_AFTER
 
 
-def _account_feed_listings(account) -> list:
+def _account_feed_listings(
+    account: MarketplaceAccount,
+    *,
+    limit: int | None = None,
+) -> list[Listing]:
     """
     Полное состояние фида аккаунта в одной автозагрузке (фид-координатор):
     ВСЕ объявления, которые должны быть активны (active/pending/queued).
@@ -796,12 +856,23 @@ def _account_feed_listings(account) -> list:
     в файле (Avito архивирует то, чего нет), поэтому archived/deleted сюда НЕ
     включаем — они уйдут в архив на стороне Avito.
     """
-    return list(
+    queryset = (
         Listing.objects.filter(
             account=account,
-            status__in=[Listing.STATUS_ACTIVE, Listing.STATUS_PENDING, Listing.STATUS_QUEUED],
-        ).select_related('tenant', 'product', 'account').order_by('created_at', 'pk')
+            status__in=[
+                Listing.STATUS_ACTIVE,
+                Listing.STATUS_PENDING,
+                Listing.STATUS_QUEUED,
+            ],
+        )
+        .select_related('tenant', 'product', 'account')
+        .order_by('created_at', 'pk')
     )
+    if limit is not None:
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1:
+            raise ValueError('limit must be a positive integer.')
+        queryset = queryset[:limit]
+    return list(queryset)
 
 
 def _flush_account_or_stop(account) -> None:
@@ -1318,6 +1389,519 @@ def delete_listing_task(self, listing_id: int):
     request_feed_flush(listing.account)
 
 
+def _enqueue_feed_run_revision(
+    run_id: uuid.UUID | str,
+    revision: int,
+    *,
+    available_at: datetime.datetime,
+):
+    """Persist one immutable feed wake-up in the generic durable outbox."""
+
+    generation_id = uuid.UUID(str(run_id))
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+        raise ValueError('revision must be a non-negative integer.')
+    return enqueue_durable_task(
+        _DURABLE_FEED_TASK_NAME,
+        args=[str(generation_id), revision],
+        deduplication_key=f'feed-run:{generation_id}:rev:{revision}',
+        available_at=available_at,
+        max_run_attempts=25,
+        execution_timeout_seconds=180,
+    )
+
+
+def _enqueue_feed_run_snapshot(snapshot: FeedRunSnapshot):
+    if snapshot.state in MarketplaceFeedRun.ACTIVE_STATES:
+        if snapshot.next_attempt_at is None:
+            return None
+        available_at = snapshot.next_attempt_at
+    elif snapshot.state in {
+        MarketplaceFeedRun.State.SUCCEEDED,
+        MarketplaceFeedRun.State.FAILED,
+        MarketplaceFeedRun.State.OUTCOME_UNCERTAIN,
+    }:
+        # The same allowlisted leaf delivers the deterministic terminal digest.
+        available_at = now()
+    else:
+        return None
+    return _enqueue_feed_run_revision(
+        snapshot.run_id,
+        snapshot.revision,
+        available_at=available_at,
+    )
+
+
+def _feed_payload_bytes(feed_listings: list[Listing]) -> bytes:
+    """Build the exact immutable byte sequence whose digest owns a run."""
+
+    return build_feed(feed_listings) if feed_listings else build_stop_feed()
+
+
+def _mark_feed_submission_boundary(
+    claim: FeedRunClaim,
+    *,
+    provider_predecessor_run_id: str = '',
+    submitted_at: datetime.datetime,
+) -> FeedRunClaim:
+    """Persist the pre-POST boundary while retaining this exact lease.
+
+    SUBMIT_UNKNOWN is intentionally entered *before* the non-idempotent POST.
+    A worker crash can then never leave a PREPARING row whose provider outcome
+    is ambiguous. Revision fencing still advances even though ownership stays
+    with the current worker.
+    """
+
+    boundary = persist_feed_submission_boundary(
+        claim,
+        provider_predecessor_run_id=provider_predecessor_run_id,
+        submitted_at=submitted_at,
+        now=now(),
+    )
+    if boundary is None:
+        raise StaleFeedRunClaim('Feed submission boundary claim is stale.')
+    return boundary
+
+
+def _clear_rejected_feed_submission_boundary(
+    claim: FeedRunClaim,
+) -> FeedRunClaim:
+    """Return a provider-rejected attempt to safe PREPARING state."""
+
+    transition_at = now()
+    changed = MarketplaceFeedRun.objects.filter(
+        pk=claim.run_id,
+        account_id=claim.account_id,
+        tenant_id=claim.tenant_id,
+        marketplace=claim.marketplace,
+        account_identity_digest=claim.account_identity_digest,
+        state=MarketplaceFeedRun.State.SUBMIT_UNKNOWN,
+        revision=claim.revision,
+        claim_token=claim.claim_token,
+        claimed_until=claim.claimed_until,
+        claimed_until__gt=transition_at,
+        submitted_at=claim.submitted_at,
+    ).update(
+        state=MarketplaceFeedRun.State.PREPARING,
+        submitted_at=None,
+        provider_predecessor_run_id=None,
+        provider_result_deadline_at=None,
+        submission_reconcile_attempt=0,
+        revision=F('revision') + 1,
+        last_error='',
+        updated_at=transition_at,
+    )
+    if changed != 1:
+        raise StaleFeedRunClaim('Rejected feed submission claim is stale.')
+    return replace(
+        claim,
+        state=MarketplaceFeedRun.State.PREPARING,
+        revision=claim.revision + 1,
+        submitted_at=None,
+        provider_predecessor_run_id=None,
+        provider_result_deadline_at=None,
+    )
+
+
+def _reschedule_coalesced_flush_after_conflict(account_id: int) -> None:
+    """Keep one deferred flush while an older generation owns the account."""
+
+    countdown = int(_DURABLE_FEED_SUBMISSION_DELAY.total_seconds())
+    marker = f'avito:flush_scheduled:{account_id}'
+    if cache.add(marker, 1, timeout=countdown + 60):
+        coalesced_flush_task.apply_async(args=[account_id], countdown=countdown)
+
+
+def _record_feed_run_summary(snapshot: FeedRunSnapshot, *, error: str = '') -> None:
+    """Write one account-level audit row for a terminal feed generation."""
+
+    from apps.sync.models import SyncLog
+
+    failed = snapshot.state != MarketplaceFeedRun.State.SUCCEEDED
+    status = SyncLog.STATUS_ERROR if failed else SyncLog.STATUS_OK
+    message = (
+        f'Фид {snapshot.marketplace} завершён: опубликовано '
+        f'{snapshot.published_count}, отклонено {snapshot.rejected_count}, '
+        f'прочих завершённых {snapshot.other_resolved_count}, '
+        f'ожидает {snapshot.pending_count}.'
+    )
+    if error:
+        message = f'{message} {_bounded_provider_reason(error)}'
+    SyncLog.objects.create(
+        tenant_id=snapshot.tenant_id,
+        event_type=(
+            SyncLog.EVENT_LISTING_ERROR if failed else SyncLog.EVENT_LISTING_PUBLISH
+        ),
+        status=status,
+        message=message,
+        payload={
+            'feed_generation_id': str(snapshot.run_id),
+            'marketplace': snapshot.marketplace,
+            'state': snapshot.state,
+            'total_count': snapshot.total_count,
+            'published_count': snapshot.published_count,
+            'rejected_count': snapshot.rejected_count,
+            'other_resolved_count': snapshot.other_resolved_count,
+            'pending_count': snapshot.pending_count,
+        },
+    )
+
+
+def _send_feed_run_digest(run: MarketplaceFeedRun) -> None:
+    """Synchronously execute the idempotent terminal notification leaf."""
+
+    from apps.notifications.tasks import send_notification_task
+
+    failed = run.state != MarketplaceFeedRun.State.SUCCEEDED
+    message = (
+        f'Обработка фида {run.marketplace} завершена: '
+        f'опубликовано {run.published_count}, '
+        f'отклонено {run.rejected_count}, '
+        f'прочих завершённых '
+        f'{run.total_count - run.published_count - run.rejected_count - run.pending_count}, '
+        f'ожидает {run.pending_count}.'
+    )
+    if run.last_error:
+        message = f'{message} {html.escape(_bounded_provider_reason(run.last_error))}'
+    # This is deliberately synchronous inside BackgroundJobDispatch. Provider
+    # delivery has its own deterministic event/channel idempotency rows, while
+    # a retryable failure keeps this durable dispatch pending.
+    send_notification_task.run(
+        run.tenant_id,
+        LEVEL_ERROR if failed else LEVEL_SUCCESS,
+        message,
+        payload={
+            'feed_generation_id': str(run.pk),
+            'state': run.state,
+        },
+        event_key=(
+            f'marketplace-feed-run:{run.pk}:terminal:'
+            f'{run.state}:rev:{run.revision}'
+        ),
+    )
+
+
+def _finish_durable_feed_run(
+    claim: FeedRunClaim,
+    *,
+    state: str,
+    error: object = '',
+    increment_submission_attempt: bool = False,
+) -> FeedRunSnapshot:
+    safe_error = _bounded_provider_reason(error)
+    with transaction.atomic():
+        snapshot = finish_feed_run(
+            claim,
+            state=state,
+            error=safe_error,
+            increment_submission_attempt=increment_submission_attempt,
+            now=now(),
+        )
+        _record_feed_run_summary(snapshot, error=safe_error)
+        _enqueue_feed_run_snapshot(snapshot)
+    return snapshot
+
+
+def _retry_durable_feed_step(
+    claim: FeedRunClaim,
+    error: object,
+    *,
+    delay: datetime.timedelta = _POLL_RETRY_DELAY,
+    increment_report_attempt: bool = False,
+    increment_submission_attempt: bool = False,
+) -> FeedRunSnapshot:
+    retry_at = now() + max(delay, datetime.timedelta(seconds=1))
+    with transaction.atomic():
+        snapshot = retry_step(
+            claim,
+            next_attempt_at=retry_at,
+            error=_bounded_provider_reason(error),
+            increment_report_attempt=increment_report_attempt,
+            increment_submission_attempt=increment_submission_attempt,
+            now=now(),
+        )
+        _enqueue_feed_run_snapshot(snapshot)
+    return snapshot
+
+
+def _record_durable_feed_payload_limit(
+    account: MarketplaceAccount,
+) -> dict[str, int | str]:
+    """Record one bounded account-level error without per-listing fan-out."""
+
+    result: dict[str, int | str] = {
+        'status': 'payload_limit_exceeded',
+        'limit': _MAX_DURABLE_FEED_PAYLOAD_LISTINGS,
+        'observed_at_least': _MAX_DURABLE_FEED_PAYLOAD_LISTINGS + 1,
+    }
+    _write_log(
+        account.tenant,
+        'listing_error',
+        'error',
+        (
+            f'Фид Avito для аккаунта #{account.pk} не отправлен: '
+            f'полный payload превышает лимит '
+            f'{_MAX_DURABLE_FEED_PAYLOAD_LISTINGS} объявлений '
+            f'(обнаружено не менее '
+            f'{_MAX_DURABLE_FEED_PAYLOAD_LISTINGS + 1}).'
+        ),
+    )
+    return result
+
+
+def _provider_predecessor_from_strict_read(
+    account: MarketplaceAccount,
+    upload: object,
+) -> str:
+    """Return the authoritative latest upload id, or ``''`` for no upload."""
+
+    if not isinstance(upload, dict):
+        raise ValueError('Latest provider upload must be an object.')
+    if not upload:
+        return ''
+    raw_run_id = upload.get('upload_id')
+    if raw_run_id in (None, ''):
+        raise ValueError('Latest provider upload has no upload_id.')
+    provider_run_id = str(raw_run_id).strip()
+    if not provider_run_id or len(provider_run_id) > 200:
+        raise ValueError('Latest provider upload has an invalid upload_id.')
+    expected_account_id = str(account.external_id)
+    for field_name in ('account_id', 'user_id', 'owner_id'):
+        observed_account_id = upload.get(field_name)
+        if (
+            observed_account_id not in (None, '')
+            and str(observed_account_id) != expected_account_id
+        ):
+            raise ValueError('Latest provider upload belongs to another account.')
+    return provider_run_id
+
+
+def _retry_pre_submission_baseline(
+    task,
+    claim: FeedRunClaim,
+    error: object,
+) -> dict:
+    """Release a proven pre-POST attempt; no ambiguous provider work exists."""
+
+    retries = int(getattr(getattr(task, 'request', None), 'retries', 0))
+    max_retries = int(getattr(task, 'max_retries', 0))
+    if task is not None and retries >= max_retries:
+        snapshot = _finish_durable_feed_run(
+            claim,
+            state=MarketplaceFeedRun.State.FAILED,
+            error=error,
+        )
+        return {'status': 'failed_pre_submission', 'run_id': str(snapshot.run_id)}
+
+    retry_delay = _provider_retry_delay(error)
+    try:
+        retry_step(
+            claim,
+            next_attempt_at=now() + retry_delay,
+            error=error,
+            now=now(),
+        )
+    except (FeedRunConflict, StaleFeedRunClaim, FeedWorkflowError):
+        return {'status': 'stale_before_submission', 'run_id': str(claim.run_id)}
+    if task is None:
+        return {'status': 'pre_submission_retry', 'run_id': str(claim.run_id)}
+    raise task.retry(
+        exc=error if isinstance(error, Exception) else RuntimeError(str(error)),
+        countdown=max(1, int(retry_delay.total_seconds())),
+    )
+
+
+def _coalesced_flush_durable(task, account: MarketplaceAccount):
+    """Submit one exact feed generation without replaying ambiguous POSTs."""
+
+    # Local writers use the same account-first lock order.  The byte snapshot
+    # and generation tags therefore describe one coherent local intent.
+    payload_limit_exceeded = False
+    try:
+        with transaction.atomic():
+            locked_account = (
+                MarketplaceAccount.objects.select_for_update(of=('self',))
+                .select_related('tenant')
+                .get(pk=account.pk, tenant__is_active=True)
+            )
+            feed_listings = _account_feed_listings(
+                locked_account,
+                limit=_MAX_DURABLE_FEED_PAYLOAD_LISTINGS + 1,
+            )
+            if len(feed_listings) > _MAX_DURABLE_FEED_PAYLOAD_LISTINGS:
+                # The capped probe deliberately does not count the whole table:
+                # the exact value is irrelevant once the accepted ceiling is
+                # crossed, and an unbounded count would add avoidable DB work.
+                payload_limit_exceeded = True
+            else:
+                payload = _feed_payload_bytes(feed_listings)
+                payload_sha256 = hashlib.sha256(payload).hexdigest()
+                run = create_or_supersede_feed_run(
+                    locked_account.pk,
+                    payload_sha256=payload_sha256,
+                    now=now(),
+                )
+    except FeedSubmissionOutcomeUncertain:
+        # An earlier POST may have succeeded. Retrying under another run UUID
+        # is still a blind provider replay, so only manual reconciliation may
+        # release this account-level hold.
+        return {'status': 'manual_reconciliation_required'}
+    except FeedRunConflict:
+        # Never overwrite the shared provider feed object while a submitted or
+        # claimed generation still owns it. Preserve one deferred flush marker
+        # so local changes are sent after that generation resolves.
+        _reschedule_coalesced_flush_after_conflict(account.pk)
+        return {'status': 'active_feed_run'}
+    except MarketplaceAccount.DoesNotExist:
+        return {'status': 'inactive_account'}
+
+    if payload_limit_exceeded:
+        return _record_durable_feed_payload_limit(locked_account)
+
+    claim = claim_due_run_for_account(
+        locked_account.pk,
+        expected_generation_id=run.run_id,
+        expected_revision=run.revision,
+        now=now(),
+    )
+    if claim is None:
+        return {'status': 'stale', 'run_id': str(run.run_id)}
+
+    adapter = AvitoAdapter(locked_account)
+    try:
+        # Uploading the immutable object is before the non-idempotent provider
+        # boundary. A proven S3 failure may be retried by the flush owner.
+        adapter._upload_to_s3(payload)
+    except FeedUploadError as exc:
+        if task.request.retries >= task.max_retries:
+            snapshot = _finish_durable_feed_run(
+                claim,
+                state=MarketplaceFeedRun.State.FAILED,
+                error=exc,
+            )
+            return {'status': 'failed', 'run_id': str(snapshot.run_id)}
+        retry_delay = datetime.timedelta(seconds=backoff(task.request.retries))
+        # Do not enqueue the generic step: PREPARING is exclusively owned by
+        # this flush task. Its bounded Celery retry creates a fresh snapshot.
+        retry_step(
+            claim,
+            next_attempt_at=now() + retry_delay,
+            error=exc,
+            now=now(),
+        )
+        raise task.retry(exc=exc, countdown=int(retry_delay.total_seconds()))
+
+    try:
+        if not validate_feed_submission_owner(claim, now=now()):
+            return {'status': 'stale_before_submission', 'run_id': str(run.run_id)}
+        predecessor_upload = adapter.get_latest_upload(strict=True)
+        provider_predecessor_run_id = _provider_predecessor_from_strict_read(
+            locked_account,
+            predecessor_upload,
+        )
+    except (
+        FeedUploadError,
+        AvitoError,
+        ServerError,
+        RateLimitError,
+        requests.RequestException,
+        TrustedResponseError,
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        # The strict read is before the persisted boundary and before POST.
+        # It is therefore safe to retry, but never safe to invent a baseline.
+        return _retry_pre_submission_baseline(task, claim, exc)
+
+    submitted_at = now()
+    try:
+        claim = _mark_feed_submission_boundary(
+            claim,
+            provider_predecessor_run_id=provider_predecessor_run_id,
+            submitted_at=submitted_at,
+        )
+    except StaleFeedRunClaim:
+        # The immutable object exists, but the account was revalidated under
+        # lock and did not authorize the non-idempotent provider POST.
+        return {'status': 'stale_before_submission', 'run_id': str(run.run_id)}
+    try:
+        adapter._trigger_autoload()
+    except RateLimitError as exc:
+        if task.request.retries >= task.max_retries:
+            snapshot = _finish_durable_feed_run(
+                claim,
+                state=MarketplaceFeedRun.State.FAILED,
+                error=exc,
+            )
+            return {'status': 'failed', 'run_id': str(snapshot.run_id)}
+        claim = _clear_rejected_feed_submission_boundary(claim)
+        retry_seconds = max(1, int(exc.retry_after))
+        retry_step(
+            claim,
+            next_attempt_at=now() + datetime.timedelta(seconds=retry_seconds),
+            error=exc,
+            now=now(),
+        )
+        raise task.retry(exc=exc, countdown=retry_seconds)
+    except (
+        AmbiguousFeedSubmissionError,
+        requests.RequestException,
+        TrustedResponseError,
+        ServerError,
+    ) as exc:
+        # The POST may have crossed the wire. Never submit it again blindly;
+        # reconcile only against a provider run that started after this run.
+        uncertain_at = now()
+        with transaction.atomic():
+            snapshot = mark_feed_submission_unknown(
+                claim,
+                submitted_at=submitted_at,
+                next_attempt_at=uncertain_at + _DURABLE_FEED_SUBMISSION_DELAY,
+                error=exc,
+                now=uncertain_at,
+            )
+            MarketplaceAccount.objects.filter(pk=locked_account.pk).update(
+                last_feed_flush_at=uncertain_at,
+            )
+            _enqueue_feed_run_snapshot(snapshot)
+        return {'status': 'submission_unknown', 'run_id': str(snapshot.run_id)}
+    except FeedUploadError as exc:
+        # A concrete HTTP response proves this POST was rejected. Do not turn
+        # a provider/account error into 10k per-listing notifications.
+        snapshot = _finish_durable_feed_run(
+            claim,
+            state=MarketplaceFeedRun.State.FAILED,
+            error=exc,
+        )
+        return {'status': 'failed', 'run_id': str(snapshot.run_id)}
+
+    transition_at = now()
+    with transaction.atomic():
+        snapshot = mark_feed_submitted(
+            claim,
+            payload_sha256=payload_sha256,
+            provider_run_id=None,
+            submitted_at=submitted_at,
+            next_attempt_at=transition_at + _DURABLE_FEED_SUBMISSION_DELAY,
+            now=transition_at,
+        )
+        MarketplaceAccount.objects.filter(pk=locked_account.pk).update(
+            last_feed_flush_at=submitted_at,
+        )
+        _enqueue_feed_run_snapshot(snapshot)
+    _write_log(
+        locked_account.tenant,
+        'feed_flush',
+        'ok',
+        (
+            f'Фид загружен: {snapshot.total_count} новых объявлений для '
+            f'{locked_account.name}, ожидаем Avito'
+        ),
+    )
+    return {'status': 'submitted', 'run_id': str(snapshot.run_id)}
+
+
 def _promote_queued_feed_rows(account: MarketplaceAccount) -> int:
     queryset = Listing.objects.filter(
         account=account,
@@ -1367,13 +1951,54 @@ def coalesced_flush_task(self, account_id: int):
     # Промотируем «в очереди» → «на модерации»: они входят в этот фид.
     _promote_queued_feed_rows(account)
 
-    pending = list(
-        Listing.objects.filter(
+    pending_queryset = Listing.objects.filter(
+        account=account,
+        status=Listing.STATUS_PENDING,
+        external_id__isnull=True,
+    ).select_related('tenant', 'product')
+
+    if _durable_feed_run_enabled():
+        has_pending = pending_queryset.exists()
+        # The durable owner materializes the complete payload exactly once,
+        # under the account lock. These probes only decide feed versus STOP.
+        has_feed_listings = has_pending or Listing.objects.filter(
             account=account,
-            status=Listing.STATUS_PENDING,
-            external_id__isnull=True,
-        ).select_related('tenant', 'product')
-    )
+            status__in=[
+                Listing.STATUS_ACTIVE,
+                Listing.STATUS_PENDING,
+                Listing.STATUS_QUEUED,
+            ],
+        ).exists()
+        has_removals = (
+            not has_feed_listings
+            and Listing.objects.filter(
+                account=account,
+                external_id__isnull=False,
+                status__in=[Listing.STATUS_ARCHIVING, Listing.STATUS_DELETED],
+            ).exists()
+        )
+        if not has_feed_listings and not has_removals:
+            return
+
+        if has_pending and not AvitoAdapter(account).is_autoload_active():
+            limit_probe = _account_feed_listings(
+                account,
+                limit=_MAX_DURABLE_FEED_PAYLOAD_LISTINGS + 1,
+            )
+            if len(limit_probe) > _MAX_DURABLE_FEED_PAYLOAD_LISTINGS:
+                return _record_durable_feed_payload_limit(account)
+            for listing in pending_queryset:
+                _reject_listing(
+                    listing,
+                    'Автозагрузка Avito не подключена или профиль Autoload '
+                    'недоступен. Подключите Автозагрузку в настройках Avito '
+                    'и повторите публикацию.',
+                )
+            return
+
+        return _coalesced_flush_durable(self, account)
+
+    pending = list(pending_queryset)
     feed_listings = _account_feed_listings(account)
     # Есть что снять с публикации? (последнее активное ушло в архив/удаление —
     # нужно отправить уменьшенный фид или STOP, даже если новых публикаций нет.)
@@ -1411,6 +2036,685 @@ def coalesced_flush_task(self, account_id: int):
                 _reject_listing(listing, reason)
             return
         raise self.retry(exc=exc, countdown=backoff(self.request.retries))
+
+
+def _latest_upload_observation(
+    account: MarketplaceAccount,
+    claim: FeedRunClaim,
+    upload: object,
+) -> tuple[str, str] | None:
+    """Validate one account-scoped, post-boundary provider observation."""
+
+    if not isinstance(upload, dict):
+        return None
+    provider_run_id = str(upload.get('upload_id') or '').strip()
+    if not provider_run_id or len(provider_run_id) > 200:
+        return None
+    started_at = parse_datetime(str(upload.get('started_at') or ''))
+    # ``submitted_at`` is the closest durable boundary before the ambiguous
+    # provider POST. PREPARING rows cannot bind observations at all. Avito can
+    # report timestamps at second precision and its clock can lag ours, so a
+    # bounded skew is allowed; anything older remains fail-closed.
+    evidence_floor = claim.submitted_at
+    if (
+        started_at is None
+        or started_at.utcoffset() is None
+        or evidence_floor is None
+        or started_at < evidence_floor - _DURABLE_FEED_UPLOAD_CLOCK_SKEW
+    ):
+        return None
+    expected_account_id = str(account.external_id)
+    for field_name in ('account_id', 'user_id', 'owner_id'):
+        observed_account_id = upload.get(field_name)
+        if (
+            observed_account_id not in (None, '')
+            and str(observed_account_id) != expected_account_id
+        ):
+            return None
+    status = str(upload.get('status') or '').strip().casefold()
+    if not status:
+        return None
+    return provider_run_id, status
+
+
+def _latest_upload_evidence(
+    account: MarketplaceAccount,
+    claim: FeedRunClaim,
+    upload: object,
+) -> tuple[str, str] | None:
+    """Validate temporal/account evidence; callers bind exact identity."""
+
+    return _latest_upload_observation(account, claim, upload)
+
+
+def _strict_latest_upload_observation(
+    account: MarketplaceAccount,
+    claim: FeedRunClaim,
+) -> tuple[str, str] | None:
+    upload = AvitoAdapter(account).get_latest_upload(strict=True)
+    return _latest_upload_observation(account, claim, upload)
+
+
+def _provider_retry_delay(error: object) -> datetime.timedelta:
+    if isinstance(error, RateLimitError):
+        return datetime.timedelta(seconds=max(1, int(error.retry_after)))
+    return _POLL_RETRY_DELAY
+
+
+def _record_submission_negative_or_fail(
+    claim: FeedRunClaim,
+    error: object,
+) -> FeedRunSnapshot:
+    """Count one authoritative negative read and eventually stop fail-closed.
+
+    A successful provider response that contains no upload attributable to the
+    exact pre-POST boundary is evidence only of absence at that instant.  It
+    must never authorize another non-idempotent POST.  We therefore reconcile
+    for a bounded horizon, then require an operator to resolve the uncertain
+    outcome manually.
+    """
+
+    transition_at = now()
+    negative_count = claim.submission_reconcile_attempt + 1
+    horizon_reached = (
+        claim.submitted_at is not None
+        and transition_at >= (
+            claim.submitted_at + _DURABLE_FEED_SUBMISSION_RECONCILE_HORIZON
+        )
+    )
+    if (
+        horizon_reached
+        and negative_count >= _DURABLE_FEED_SUBMISSION_NEGATIVE_THRESHOLD
+    ):
+        return _finish_durable_feed_run(
+            claim,
+            state=MarketplaceFeedRun.State.OUTCOME_UNCERTAIN,
+            error=(
+                'outcome_uncertain: exact provider submission evidence was '
+                'not found within the reconciliation horizon; manual '
+                'reconciliation is required and automatic POST retry is disabled. '
+                f'Last observation: {_bounded_provider_reason(error)}'
+            ),
+            increment_submission_attempt=True,
+        )
+    return _retry_durable_feed_step(
+        claim,
+        error,
+        increment_submission_attempt=True,
+    )
+
+
+def _read_latest_upload_or_retry(
+    claim: FeedRunClaim,
+    account: MarketplaceAccount,
+) -> tuple[str, str] | FeedRunSnapshot:
+    try:
+        upload = AvitoAdapter(account).get_latest_upload(strict=True)
+    except (
+        FeedUploadError,
+        AvitoError,
+        ServerError,
+        RateLimitError,
+        requests.RequestException,
+        TrustedResponseError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        return _retry_durable_feed_step(
+            claim,
+            exc,
+            delay=_provider_retry_delay(exc),
+            increment_report_attempt=(
+                claim.state == MarketplaceFeedRun.State.REPORTING
+            ),
+        )
+    evidence = _latest_upload_evidence(account, claim, upload)
+    if evidence is None:
+        if claim.state == MarketplaceFeedRun.State.SUBMIT_UNKNOWN:
+            return _record_submission_negative_or_fail(
+                claim,
+                'Нет точного подтверждения запуска фида у провайдера.',
+            )
+        return _retry_durable_feed_step(
+            claim,
+            'Нет точного подтверждения запуска фида у провайдера.',
+            increment_report_attempt=(
+                claim.state == MarketplaceFeedRun.State.REPORTING
+            ),
+        )
+    return evidence
+
+
+def _process_submission_unknown(
+    claim: FeedRunClaim,
+    account: MarketplaceAccount,
+) -> dict:
+    evidence = _read_latest_upload_or_retry(claim, account)
+    if isinstance(evidence, FeedRunSnapshot):
+        return {
+            'status': (
+                'outcome_uncertain'
+                if evidence.state == MarketplaceFeedRun.State.OUTCOME_UNCERTAIN
+                else 'retry_wait'
+            ),
+            'run_id': str(claim.run_id),
+        }
+    provider_run_id, provider_status = evidence
+    if claim.provider_predecessor_run_id is None:
+        snapshot = _finish_durable_feed_run(
+            claim,
+            state=MarketplaceFeedRun.State.OUTCOME_UNCERTAIN,
+            error=(
+                'outcome_uncertain: ambiguous submission has no authoritative '
+                'pre-POST provider baseline; manual reconciliation is required.'
+            ),
+        )
+        return {'status': 'outcome_uncertain', 'run_id': str(snapshot.run_id)}
+    if provider_run_id == claim.provider_predecessor_run_id:
+        snapshot = _record_submission_negative_or_fail(
+            claim,
+            'Площадка всё ещё возвращает запуск, существовавший до POST.',
+        )
+        return {
+            'status': (
+                'outcome_uncertain'
+                if snapshot.state == MarketplaceFeedRun.State.OUTCOME_UNCERTAIN
+                else 'retry_wait'
+            ),
+            'run_id': str(snapshot.run_id),
+        }
+    if provider_status not in {'processing', 'success', 'success_warning'}:
+        _retry_durable_feed_step(
+            claim,
+            f'Неподтверждённый статус запуска фида: {provider_status}.',
+        )
+        return {'status': 'retry_wait', 'run_id': str(claim.run_id)}
+    transition_at = now()
+    with transaction.atomic():
+        snapshot = record_provider_run_observation(
+            claim,
+            provider_run_id=provider_run_id,
+            next_attempt_at=(
+                transition_at
+                + datetime.timedelta(seconds=_FEED_POLL_BATCH_DELAY_SECONDS)
+            ),
+            now=transition_at,
+        )
+        _enqueue_feed_run_snapshot(snapshot)
+    return {
+        'status': 'provider_run_bound',
+        'run_id': str(snapshot.run_id),
+        'provider_status': provider_status,
+    }
+
+
+_PROVIDER_SUCCESS_STATUSES = frozenset({'success', 'success_warning'})
+_PROVIDER_READ_EXCEPTIONS = (
+    FeedUploadError,
+    AvitoError,
+    ServerError,
+    RateLimitError,
+    requests.RequestException,
+    TrustedResponseError,
+    AttributeError,
+    KeyError,
+    TypeError,
+    ValueError,
+)
+
+
+def _provider_result_deadline_reached(claim: FeedRunClaim) -> bool:
+    deadline = claim.provider_result_deadline_at
+    return deadline is None or now() >= deadline
+
+
+def _finish_provider_result_uncertain(
+    claim: FeedRunClaim,
+    reason: object,
+) -> dict:
+    snapshot = _finish_durable_feed_run(
+        claim,
+        state=MarketplaceFeedRun.State.OUTCOME_UNCERTAIN,
+        error=(
+            'outcome_uncertain: provider result provenance could not be '
+            f'completed automatically; manual reconciliation is required. {reason}'
+        ),
+    )
+    return {'status': 'outcome_uncertain', 'run_id': str(snapshot.run_id)}
+
+
+def _retry_provider_result_read(
+    claim: FeedRunClaim,
+    error: object,
+) -> dict:
+    _retry_durable_feed_step(
+        claim,
+        error,
+        delay=_provider_retry_delay(error),
+    )
+    return {'status': 'retry_wait', 'run_id': str(claim.run_id)}
+
+
+def _process_polling_feed_run(
+    claim: FeedRunClaim,
+    account: MarketplaceAccount,
+) -> dict:
+    if _provider_result_deadline_reached(claim):
+        return _finish_provider_result_uncertain(
+            claim,
+            'The exact 48-hour provider-result deadline was reached.',
+        )
+
+    try:
+        before = _strict_latest_upload_observation(account, claim)
+    except _PROVIDER_READ_EXCEPTIONS as exc:
+        return _retry_provider_result_read(claim, exc)
+    if before is None:
+        return _retry_provider_result_read(
+            claim,
+            'Нет доказуемого запуска фида после сохранённой границы отправки.',
+        )
+    provider_run_id, provider_status = before
+
+    if not claim.provider_run_id:
+        predecessor = claim.provider_predecessor_run_id
+        if predecessor is None:
+            return _finish_provider_result_uncertain(
+                claim,
+                'The submission has no authoritative pre-POST provider baseline.',
+            )
+        if provider_run_id == predecessor:
+            return _retry_provider_result_read(
+                claim,
+                'Площадка всё ещё возвращает запуск, существовавший до POST.',
+            )
+        transition_at = now()
+        with transaction.atomic():
+            snapshot = record_provider_run_observation(
+                claim,
+                provider_run_id=provider_run_id,
+                next_attempt_at=(
+                    transition_at
+                    + datetime.timedelta(seconds=_FEED_POLL_BATCH_DELAY_SECONDS)
+                ),
+                now=transition_at,
+            )
+            _enqueue_feed_run_snapshot(snapshot)
+        return {
+            'status': 'provider_run_bound',
+            'run_id': str(snapshot.run_id),
+            'provider_status': provider_status,
+        }
+
+    if provider_run_id != claim.provider_run_id:
+        return _finish_provider_result_uncertain(
+            claim,
+            'The provider latest-upload identity moved away from the bound run.',
+        )
+    if provider_status == 'processing':
+        return _retry_provider_result_read(
+            claim,
+            'Площадка продолжает обрабатывать точный запуск фида.',
+        )
+    if provider_status not in _PROVIDER_SUCCESS_STATUSES:
+        return _retry_provider_result_read(
+            claim,
+            f'Запуск фида ещё не подтверждён: {provider_status}.',
+        )
+
+    # The provider report is the generation-wide rejection authority. It must
+    # complete before any global ad-id endpoint can mutate local listings.
+    if claim.report_completed_at is None:
+        transition_at = now()
+        with transaction.atomic():
+            snapshot = start_reporting(
+                claim,
+                provider_run_id=provider_run_id,
+                next_attempt_at=transition_at + _DURABLE_FEED_REPORT_DELAY,
+                now=transition_at,
+            )
+            _enqueue_feed_run_snapshot(snapshot)
+        return {'status': 'reporting', 'run_id': str(snapshot.run_id)}
+
+    batch = load_poll_batch(claim, limit=_FEED_POLL_BATCH_SIZE, now=now())
+    if not batch:
+        transition_at = now()
+        if claim.pending_count:
+            with transaction.atomic():
+                snapshot = reset_poll_round(
+                    claim,
+                    next_attempt_at=transition_at + _POLL_RETRY_DELAY,
+                    now=transition_at,
+                )
+                _enqueue_feed_run_snapshot(snapshot)
+            return {'status': 'poll_round_wait', 'run_id': str(snapshot.run_id)}
+        snapshot = _finish_durable_feed_run(
+            claim,
+            state=MarketplaceFeedRun.State.SUCCEEDED,
+        )
+        return {'status': 'completed', 'run_id': str(snapshot.run_id)}
+
+    local_ids = {get_ad_id(listing): listing.pk for listing in batch}
+    try:
+        results = AvitoAdapter(account).get_feed_results(list(local_ids))
+    except _PROVIDER_READ_EXCEPTIONS as exc:
+        return _retry_provider_result_read(claim, exc)
+
+    try:
+        after = _strict_latest_upload_observation(account, claim)
+    except _PROVIDER_READ_EXCEPTIONS as exc:
+        return _retry_provider_result_read(claim, exc)
+    if after != before:
+        return _finish_provider_result_uncertain(
+            claim,
+            'The exact upload changed while a provider ID page was being read.',
+        )
+    if _provider_result_deadline_reached(claim):
+        return _finish_provider_result_uncertain(
+            claim,
+            'The exact 48-hour deadline was reached before the ID page commit.',
+        )
+
+    resolved: dict[int, str] = {}
+    if isinstance(results, list):
+        for item in results[:_FEED_POLL_BATCH_SIZE]:
+            if not isinstance(item, dict):
+                continue
+            listing_id = local_ids.get(str(item.get('ad_id') or ''))
+            external_id = str(item.get('avito_id') or '').strip()
+            if listing_id is not None and external_id:
+                resolved[listing_id] = external_id
+
+    transition_at = now()
+    with transaction.atomic():
+        applied = apply_poll_page(
+            claim,
+            batch_listing_ids=[listing.pk for listing in batch],
+            resolved_external_ids=resolved,
+            last_listing_id=batch[-1].pk,
+            next_attempt_at=(
+                transition_at
+                + datetime.timedelta(seconds=_FEED_POLL_BATCH_DELAY_SECONDS)
+            ),
+            occurred_at=transition_at,
+        )
+        _enqueue_feed_run_snapshot(applied.snapshot)
+    return {
+        'status': 'poll_page_applied',
+        'run_id': str(claim.run_id),
+        'page_size': len(batch),
+        'published': applied.published_count,
+    }
+
+
+def _retry_reporting_or_fail(claim: FeedRunClaim, error: object) -> dict:
+    if claim.report_attempt >= 24:
+        return _finish_provider_result_uncertain(
+            claim,
+            (
+                'The exact report exceeded its bounded retry budget. '
+                f'Last error: {_bounded_provider_reason(error)}'
+            ),
+        )
+    _retry_durable_feed_step(
+        claim,
+        error,
+        increment_report_attempt=True,
+    )
+    return {'status': 'retry_wait', 'run_id': str(claim.run_id)}
+
+
+def _process_reporting_feed_run(
+    claim: FeedRunClaim,
+    account: MarketplaceAccount,
+) -> dict:
+    if _provider_result_deadline_reached(claim):
+        return _finish_provider_result_uncertain(
+            claim,
+            'The exact 48-hour provider-result deadline was reached during reporting.',
+        )
+    max_pages = min(100, max(1, int(settings.AVITO_API_MAX_PAGES)))
+    if claim.report_page > max_pages:
+        return _finish_provider_result_uncertain(
+            claim,
+            'The provider report exceeds the bounded 10,000-listing page limit.',
+        )
+
+    try:
+        before = _strict_latest_upload_observation(account, claim)
+    except _PROVIDER_READ_EXCEPTIONS as exc:
+        return _retry_reporting_or_fail(claim, exc)
+    if before is None:
+        return _retry_reporting_or_fail(
+            claim,
+            'Нельзя доказать, что отчёт относится к текущему поколению фида.',
+        )
+    provider_run_id, provider_status = before
+    if provider_run_id != claim.provider_run_id:
+        return _finish_provider_result_uncertain(
+            claim,
+            'The provider latest-upload identity moved away from the reporting run.',
+        )
+    if provider_status not in _PROVIDER_SUCCESS_STATUSES:
+        return _retry_reporting_or_fail(
+            claim,
+            f'Точный запуск фида ещё не завершён: {provider_status}.',
+        )
+
+    try:
+        page = AvitoAdapter(account).get_feed_item_error_page(claim.report_page)
+    except _PROVIDER_READ_EXCEPTIONS as exc:
+        return _retry_reporting_or_fail(claim, exc)
+    if page.next_page is not None and page.next_page > max_pages:
+        return _finish_provider_result_uncertain(
+            claim,
+            'The provider report exceeds the bounded 10,000-listing page limit.',
+        )
+
+    try:
+        after = _strict_latest_upload_observation(account, claim)
+    except _PROVIDER_READ_EXCEPTIONS as exc:
+        return _retry_reporting_or_fail(claim, exc)
+    if after != before:
+        return _finish_provider_result_uncertain(
+            claim,
+            'The exact upload changed while a provider report page was being read.',
+        )
+    if _provider_result_deadline_reached(claim):
+        return _finish_provider_result_uncertain(
+            claim,
+            'The exact 48-hour deadline was reached before the report page commit.',
+        )
+
+    transition_at = now()
+    with transaction.atomic():
+        applied = apply_report_page(
+            claim,
+            current_page=claim.report_page,
+            errors_by_ad_id=page.errors,
+            next_page=page.next_page,
+            next_attempt_at=(
+                transition_at + _DURABLE_FEED_REPORT_DELAY
+                if page.next_page is not None
+                else None
+            ),
+            occurred_at=transition_at,
+        )
+        if applied.snapshot.state in MarketplaceFeedRun.TERMINAL_STATES:
+            _record_feed_run_summary(applied.snapshot)
+        _enqueue_feed_run_snapshot(applied.snapshot)
+    return {
+        'status': (
+            'completed'
+            if applied.snapshot.state == MarketplaceFeedRun.State.SUCCEEDED
+            else (
+                'report_completed'
+                if applied.snapshot.report_completed_at is not None
+                else 'report_page_applied'
+            )
+        ),
+        'run_id': str(applied.snapshot.run_id),
+        'rejected': applied.rejected_count,
+    }
+
+
+def _enqueue_current_feed_run(account_id: int) -> dict:
+    current_time = now()
+    run = (
+        MarketplaceFeedRun.objects.filter(
+            account_id=account_id,
+            marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+            state__in=MarketplaceFeedRun.ACTIVE_STATES,
+            next_attempt_at__isnull=False,
+            next_attempt_at__lte=current_time,
+            account__deleted_at__isnull=True,
+            account__is_active=True,
+            account__tenant__is_active=True,
+            tenant__is_active=True,
+        )
+        .filter(
+            Q(claim_token__isnull=True)
+            | Q(claimed_until__isnull=True)
+            | Q(claimed_until__lte=current_time),
+        )
+        .only('pk', 'revision', 'next_attempt_at')
+        .first()
+    )
+    if run is None:
+        return {'status': 'not_due'}
+    dispatch = _enqueue_feed_run_revision(
+        run.pk,
+        run.revision,
+        available_at=cast(datetime.datetime, run.next_attempt_at),
+    )
+    return {'status': 'enqueued', 'dispatch_id': str(dispatch.pk)}
+
+
+@shared_task(
+    name=_DURABLE_FEED_TASK_NAME,
+    queue='avito_publish',
+)
+def process_marketplace_feed_run_step(run_id: str, revision: int, /):
+    """Execute one exact durable feed revision; stale deliveries are no-ops."""
+
+    try:
+        generation_id = uuid.UUID(str(run_id))
+        if str(generation_id) != str(run_id):
+            raise ValueError('run_id must be canonical UUID text.')
+        if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+            raise ValueError('revision must be a non-negative integer.')
+        expected_revision = revision
+    except (TypeError, ValueError, OverflowError):
+        return {'status': 'invalid'}
+    if not _durable_feed_run_enabled():
+        return {'status': 'disabled'}
+
+    run = (
+        MarketplaceFeedRun.objects.select_related('account', 'tenant')
+        .filter(pk=generation_id)
+        .first()
+    )
+    if run is None or run.revision != expected_revision:
+        return {'status': 'stale'}
+    if run.state in {
+        MarketplaceFeedRun.State.SUCCEEDED,
+        MarketplaceFeedRun.State.FAILED,
+        MarketplaceFeedRun.State.OUTCOME_UNCERTAIN,
+    }:
+        _send_feed_run_digest(run)
+        return {'status': 'digest_delivered', 'run_id': str(run.pk)}
+
+    claim = claim_due_run_for_account(
+        run.account_id,
+        expected_generation_id=generation_id,
+        expected_revision=expected_revision,
+        now=now(),
+    )
+    if claim is None:
+        return {'status': 'stale'}
+    account = (
+        MarketplaceAccount.objects.select_related('tenant')
+        .filter(pk=claim.account_id, tenant__is_active=True)
+        .first()
+    )
+    if account is None:
+        return {'status': 'stale'}
+
+    try:
+        if claim.state == MarketplaceFeedRun.State.PREPARING:
+            # PREPARING is strictly before the persisted provider boundary.
+            # Recovery has proof no POST was attempted and must never invent
+            # an ambiguous timestamp or submit outside the flush owner.
+            snapshot = _finish_durable_feed_run(
+                claim,
+                state=MarketplaceFeedRun.State.FAILED,
+                error='Flush worker was lost before the provider submission boundary.',
+            )
+            return {'status': 'failed_pre_submission', 'run_id': str(snapshot.run_id)}
+        if claim.state == MarketplaceFeedRun.State.SUBMIT_UNKNOWN:
+            return _process_submission_unknown(claim, account)
+        if claim.state == MarketplaceFeedRun.State.POLLING:
+            return _process_polling_feed_run(claim, account)
+        if claim.state == MarketplaceFeedRun.State.REPORTING:
+            return _process_reporting_feed_run(claim, account)
+        snapshot = _finish_durable_feed_run(
+            claim,
+            state=MarketplaceFeedRun.State.FAILED,
+            error=f'Unsupported durable feed state: {claim.state}.',
+        )
+        return {'status': 'failed', 'run_id': str(snapshot.run_id)}
+    except (FeedRunConflict, StaleFeedRunClaim, FeedWorkflowError):
+        return {'status': 'stale'}
+
+
+@shared_task(
+    name='apps.marketplaces.tasks.dispatch_due_marketplace_feed_runs',
+    queue='avito_update',
+)
+def dispatch_due_marketplace_feed_runs():
+    """Recover at most 100 due feed runs without taking their domain leases."""
+
+    if not _durable_feed_run_enabled():
+        return {'selected': 0, 'enqueued': 0, 'cancelled': 0, 'status': 'disabled'}
+    current_time = now()
+    cancelled = cancel_feed_runs_for_inactive_owners(
+        limit=_DURABLE_FEED_RECOVERY_BATCH_SIZE,
+        now=current_time,
+    )
+    rows = list(
+        MarketplaceFeedRun.objects.filter(
+            marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+            state__in=MarketplaceFeedRun.ACTIVE_STATES,
+            next_attempt_at__isnull=False,
+            next_attempt_at__lte=current_time,
+            account__deleted_at__isnull=True,
+            account__is_active=True,
+            account__tenant__is_active=True,
+            tenant__is_active=True,
+        )
+        .filter(
+            Q(claim_token__isnull=True)
+            | Q(claimed_until__isnull=True)
+            | Q(claimed_until__lte=current_time),
+        )
+        .order_by('next_attempt_at', 'pk')
+        .values_list('pk', 'revision', 'next_attempt_at')
+        [:_DURABLE_FEED_RECOVERY_BATCH_SIZE]
+    )
+    dispatch_ids = []
+    for run_id, revision, available_at in rows:
+        dispatch = _enqueue_feed_run_revision(
+            run_id,
+            revision,
+            available_at=cast(datetime.datetime, available_at),
+        )
+        dispatch_ids.append(dispatch.pk)
+    return {
+        'selected': len(rows),
+        'enqueued': len(dispatch_ids),
+        'cancelled': len(cancelled),
+        'dispatch_ids': [str(dispatch_id) for dispatch_id in dispatch_ids],
+    }
 
 
 def _feed_errors_are_current(account) -> bool:
@@ -1637,6 +2941,8 @@ def poll_feed_results_task(self, account_id: int):
 
     Запускается через 5 мин после coalesced_flush_task; при необходимости повторяет.
     """
+    if _durable_feed_run_enabled():
+        return _enqueue_current_feed_run(account_id)
     if _status_lifecycle_dual_write_enabled():
         return _poll_feed_results_dual_write(self, account_id)
 
