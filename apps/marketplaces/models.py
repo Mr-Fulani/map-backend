@@ -6,6 +6,26 @@ from apps.core.models import SoftDeleteModel, TimestampedModel
 from apps.tenants.models import Tenant
 
 
+_MARKETPLACE_FEED_ACTIVE_STATES = (
+    'preparing',
+    'submit_unknown',
+    'polling',
+    'reporting',
+    'retry_wait',
+)
+_MARKETPLACE_FEED_OWNERSHIP_STATES = (
+    *_MARKETPLACE_FEED_ACTIVE_STATES,
+    'outcome_uncertain',
+)
+_MARKETPLACE_FEED_TERMINAL_STATES = (
+    'succeeded',
+    'failed',
+    'outcome_uncertain',
+    'superseded',
+    'cancelled',
+)
+
+
 class AvitoCategory(models.Model):
     """Категория Avito из официального справочника."""
 
@@ -168,6 +188,212 @@ class MarketplaceAccount(SoftDeleteModel):
         self.is_active = False
         self.save(update_fields=['is_active', 'updated_at'])
         super().soft_delete()
+
+
+class MarketplaceFeedRun(TimestampedModel):
+    """Durable, provider-neutral ownership record for one feed generation.
+
+    The UUID is the immutable generation identity stamped onto included
+    listings. Mutable progress uses ``revision`` for compare-and-swap
+    fencing, so a delayed worker cannot apply an older cursor or report page.
+    """
+
+    class State(models.TextChoices):
+        PREPARING = 'preparing', 'Подготовка'
+        SUBMIT_UNKNOWN = 'submit_unknown', 'Результат отправки неизвестен'
+        POLLING = 'polling', 'Ожидание обработки'
+        REPORTING = 'reporting', 'Получение отчёта'
+        RETRY_WAIT = 'retry_wait', 'Ожидание повтора'
+        SUCCEEDED = 'succeeded', 'Завершено'
+        FAILED = 'failed', 'Ошибка'
+        OUTCOME_UNCERTAIN = 'outcome_uncertain', 'Результат отправки требует сверки'
+        SUPERSEDED = 'superseded', 'Заменено новым запуском'
+        CANCELLED = 'cancelled', 'Отменено'
+
+    ACTIVE_STATES = _MARKETPLACE_FEED_ACTIVE_STATES
+    OWNERSHIP_STATES = _MARKETPLACE_FEED_OWNERSHIP_STATES
+    TERMINAL_STATES = _MARKETPLACE_FEED_TERMINAL_STATES
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='marketplace_feed_runs',
+        verbose_name='Тенант',
+    )
+    account = models.ForeignKey(
+        MarketplaceAccount,
+        on_delete=models.CASCADE,
+        related_name='feed_runs',
+        verbose_name='Аккаунт маркетплейса',
+    )
+    marketplace = models.CharField(
+        max_length=50,
+        editable=False,
+        verbose_name='Маркетплейс на момент запуска',
+    )
+    state = models.CharField(
+        max_length=20,
+        choices=State.choices,
+        default=State.PREPARING,
+        editable=False,
+        verbose_name='Состояние',
+    )
+    revision = models.PositiveBigIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Ревизия состояния',
+    )
+    account_identity_digest = models.CharField(
+        max_length=64,
+        editable=False,
+        verbose_name='Отпечаток идентичности аккаунта',
+    )
+    payload_sha256 = models.CharField(
+        max_length=64,
+        blank=True,
+        editable=False,
+        verbose_name='SHA-256 отправленного фида',
+    )
+    provider_run_id = models.CharField(
+        max_length=200,
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='ID запуска у площадки',
+    )
+    provider_predecessor_run_id = models.CharField(
+        max_length=200,
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='ID предыдущего запуска у площадки',
+    )
+    submitted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Фид отправлен',
+    )
+    provider_result_deadline_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Крайний срок сверки результата площадки',
+    )
+    submission_reconcile_attempt = models.PositiveSmallIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Подтверждённых отрицательных сверок отправки',
+    )
+    poll_cursor_listing_id = models.PositiveBigIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Курсор проверки листингов',
+    )
+    poll_round = models.PositiveIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Раунд проверки',
+    )
+    report_page = models.PositiveIntegerField(
+        default=1,
+        editable=False,
+        verbose_name='Следующая страница отчёта',
+    )
+    report_attempt = models.PositiveSmallIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Попытка получения отчёта',
+    )
+    report_completed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Отчёт площадки полностью обработан',
+    )
+    next_attempt_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Следующая попытка',
+    )
+    claim_token = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Токен владельца запуска',
+    )
+    claimed_until = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Lease запуска истекает',
+    )
+    total_count = models.PositiveIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Всего листингов',
+    )
+    published_count = models.PositiveIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Опубликовано',
+    )
+    rejected_count = models.PositiveIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Отклонено',
+    )
+    pending_count = models.PositiveIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Ожидает обработки',
+    )
+    last_error = models.TextField(
+        max_length=2000,
+        blank=True,
+        editable=False,
+        verbose_name='Последняя ошибка',
+    )
+    finished_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Завершено',
+    )
+
+    class Meta:
+        verbose_name = 'Запуск фида маркетплейса'
+        verbose_name_plural = 'Запуски фидов маркетплейсов'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['account'],
+                condition=models.Q(state__in=_MARKETPLACE_FEED_OWNERSHIP_STATES),
+                name='uniq_mkt_feed_owner_account',
+            ),
+            models.UniqueConstraint(
+                fields=['account', 'provider_run_id'],
+                condition=(
+                    models.Q(provider_run_id__isnull=False)
+                    & ~models.Q(provider_run_id='')
+                ),
+                name='uniq_mkt_feed_provider_ref',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['marketplace', 'next_attempt_at', 'id'],
+                name='mkt_feed_due_idx',
+                condition=models.Q(
+                    state__in=_MARKETPLACE_FEED_ACTIVE_STATES,
+                    next_attempt_at__isnull=False,
+                ),
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.marketplace}:{self.account_id} [{self.state}] {self.pk}'
 
 
 class AvitoAccountStatus(TimestampedModel):
@@ -419,6 +645,16 @@ class Listing(SoftDeleteModel):
         MarketplaceAccount, on_delete=models.CASCADE,
         related_name='listings', verbose_name='Аккаунт Avito',
     )
+    feed_run = models.ForeignKey(
+        MarketplaceFeedRun,
+        null=True,
+        blank=True,
+        db_index=False,
+        editable=False,
+        on_delete=models.SET_NULL,
+        related_name='listings',
+        verbose_name='Поколение фида',
+    )
     external_id = models.CharField(
         max_length=100, null=True, blank=True, unique=True, verbose_name='ID объявления Avito',
     )
@@ -514,6 +750,15 @@ class Listing(SoftDeleteModel):
                     external_id__isnull=False,
                     next_status_check_at__isnull=False,
                 ) & ~models.Q(external_id=''),
+            ),
+            models.Index(
+                fields=['feed_run', 'status', 'id'],
+                name='mkt_lst_feed_pending',
+                condition=models.Q(
+                    deleted_at__isnull=True,
+                    external_id__isnull=True,
+                    feed_run__isnull=False,
+                ),
             ),
         ]
 
