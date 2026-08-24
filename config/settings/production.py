@@ -149,6 +149,21 @@ if AVITO_STATUS_LIFECYCLE_MODE not in {'legacy', 'dual_write'}:
     raise ImproperlyConfigured(
         'AVITO_STATUS_LIFECYCLE_MODE должен быть legacy или dual_write.',
     )
+MARKETPLACE_FEED_RUN_MODE = _required_env(
+    'MARKETPLACE_FEED_RUN_MODE',
+).lower()
+if MARKETPLACE_FEED_RUN_MODE not in {'legacy', 'durable'}:
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_RUN_MODE должен быть legacy или durable.',
+    )
+if (
+    MARKETPLACE_FEED_RUN_MODE == 'durable'
+    and AVITO_STATUS_LIFECYCLE_MODE != 'dual_write'
+):
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_RUN_MODE=durable требует '
+        'AVITO_STATUS_LIFECYCLE_MODE=dual_write.',
+    )
 
 database_url = _required_env('DATABASE_URL')
 if 'map_password' in database_url:

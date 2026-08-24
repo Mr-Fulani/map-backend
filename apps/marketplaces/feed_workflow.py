@@ -16,7 +16,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 from django.conf import settings
 from django.db import transaction
@@ -1017,7 +1017,7 @@ def _resolved_external_ids(
     return result
 
 
-def _normalized_report_errors(values: Mapping[uuid.UUID, object]) -> dict[uuid.UUID, str]:
+def _normalized_report_errors(values: Mapping[Any, object]) -> dict[uuid.UUID, str]:
     if not isinstance(values, Mapping) or len(values) > MAX_POLL_BATCH_SIZE:
         raise ValueError(f'errors_by_ad_id must be a mapping of at most {MAX_POLL_BATCH_SIZE} rows.')
     result: dict[uuid.UUID, str] = {}
@@ -1728,7 +1728,7 @@ def apply_report_page(
     claim: FeedRunClaim,
     *,
     current_page: int,
-    errors_by_ad_id: Mapping[uuid.UUID, object],
+    errors_by_ad_id: Mapping[Any, object],
     next_page: int | None,
     next_attempt_at: datetime | None,
     occurred_at: datetime,
@@ -1829,7 +1829,7 @@ def apply_report_page(
             # A complete rejection report is not proof that every listing was
             # resolved.  Return unresolved rows to a fresh bounded poll round;
             # declaring success here would strand them forever.
-            updates = {
+            updates: dict[str, object] = {
                 **counters,
                 'state': MarketplaceFeedRun.State.POLLING,
                 'poll_cursor_listing_id': 0,
@@ -1948,7 +1948,6 @@ def reconcile_uncertain_feed_run(
     now: datetime | None = None,
     *,
     allow_tombstone: bool = False,
-    restore_owner: bool = False,
 ) -> FeedRunSnapshot:
     """Resolve one fail-closed submission after independent operator review.
 
@@ -1956,10 +1955,7 @@ def reconcile_uncertain_feed_run(
     exact terminal revision, locks account before run, and revalidates the
     provider identity.  Direct callers remain live-owner-only by default.
     An explicit tombstone option may close a rejected submission for an
-    inactive/soft-deleted owner without restoring it.  The stronger restore
-    option is accepted only for a provider-confirmed submission and atomically
-    reactivates the account, restoring exactly its soft-delete cascade when a
-    tombstone exists, before polling resumes.  Neither path changes the
+    inactive/soft-deleted owner without restoring it. Neither path changes the
     generation's listing membership or provider identities.
     """
 
@@ -1982,14 +1978,10 @@ def reconcile_uncertain_feed_run(
         )
     if not isinstance(allow_tombstone, bool):
         raise ValueError('allow_tombstone must be a boolean.')
-    if not isinstance(restore_owner, bool):
-        raise ValueError('restore_owner must be a boolean.')
     if allow_tombstone and resolution != RECONCILIATION_PROVIDER_NOT_ACCEPTED:
         raise ValueError(
             'allow_tombstone is allowed only for provider_not_accepted.',
         )
-    if restore_owner and resolution != RECONCILIATION_PROVIDER_ACCEPTED:
-        raise ValueError('restore_owner is allowed only for provider_accepted.')
     if resolution == RECONCILIATION_PROVIDER_ACCEPTED:
         normalized_provider_run_id = _provider_run_id(provider_run_id)
     else:
@@ -2010,16 +2002,10 @@ def reconcile_uncertain_feed_run(
         raise FeedAccountUnavailable(
             f'Marketplace account {account_id} belongs to an inactive tenant.',
         )
-    if restore_owner and not inactive_owner:
-        raise FeedAccountUnavailable(
-            f'Marketplace account {account_id} is not inactive.',
-        )
-    unavailable_owner_allowed = inactive_owner and (
-        restore_owner
-        or (
-            allow_tombstone
-            and resolution == RECONCILIATION_PROVIDER_NOT_ACCEPTED
-        )
+    unavailable_owner_allowed = (
+        inactive_owner
+        and allow_tombstone
+        and resolution == RECONCILIATION_PROVIDER_NOT_ACCEPTED
     )
     if not _live(account) and not unavailable_owner_allowed:
         raise FeedAccountUnavailable(
@@ -2047,45 +2033,6 @@ def reconcile_uncertain_feed_run(
         raise FeedRunConflict(
             'An uncertain feed run without a submission timestamp cannot be reconciled.',
         )
-
-    tombstone_deleted_at = account.deleted_at
-    if unavailable_owner_allowed:
-        # Lock order is an invariant shared with deletion and provider workers:
-        # account -> exact feed run -> every listing owned by the account.
-        list(
-            Listing.all_objects.select_for_update()
-            .filter(account_id=account.pk)
-            .order_by('pk')
-            .values_list('pk', flat=True)
-        )
-    if restore_owner:
-        restored = MarketplaceAccount.all_objects.filter(
-            pk=account.pk,
-            tenant_id=account.tenant_id,
-            marketplace=account.marketplace,
-            external_id=account.external_id,
-            deleted_at=tombstone_deleted_at,
-            is_active=False,
-        ).update(
-            deleted_at=None,
-            is_active=True,
-            updated_at=transition_at,
-        )
-        if restored != 1:
-            raise FeedRunConflict(
-                'Marketplace account changed during owner restoration.',
-            )
-        if tombstone_deleted_at is not None:
-            Listing.all_objects.filter(
-                account_id=account.pk,
-                tenant_id=account.tenant_id,
-                deleted_at=tombstone_deleted_at,
-            ).update(
-                deleted_at=None,
-                updated_at=transition_at,
-            )
-        account.deleted_at = None
-        account.is_active = True
 
     updates: dict[str, object] = {
         'revision': F('revision') + 1,

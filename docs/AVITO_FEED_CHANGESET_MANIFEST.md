@@ -173,10 +173,12 @@ migrations/scheduler/queue/settings нет.
 - feed_workflow.py;
 - reconcile_marketplace_feed_run.py;
 - feed run/workflow/recovery/payload tests;
-- только feed-run части models/tasks/services/retention/admin;
+- только feed-run части models/tasks/admin;
 - billing/plan части только при необходимости предела 10 000 объявлений.
 
 Не включать stable endpoint и private storage.
+Не включать retention-удаление, отвязывание feed run или GC: история P3
+сохраняется до отдельной активации P7.
 
 Узкая проверка:
 

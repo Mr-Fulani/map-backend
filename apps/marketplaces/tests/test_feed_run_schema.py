@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 import pytest
+from django.contrib import admin
 from django.contrib.postgres.operations import AddIndexConcurrently
 from django.db import IntegrityError, connection, migrations, models, transaction
 from django.db.migrations.loader import MigrationLoader
@@ -432,3 +433,14 @@ def test_feed_run_partial_indexes_are_valid_in_postgresql_catalog():
         feed_run_indexes = cursor.fetchall()
 
     assert feed_run_indexes == [('mkt_lst_feed_pending', found['mkt_lst_feed_pending'][5])]
+
+
+def test_feed_run_admin_is_registered_read_only():
+    model_admin = admin.site._registry[MarketplaceFeedRun]
+
+    assert model_admin.has_add_permission(None) is False
+    assert model_admin.has_change_permission(None) is False
+    assert model_admin.has_delete_permission(None) is False
+    assert set(model_admin.readonly_fields) == {
+        field.name for field in MarketplaceFeedRun._meta.fields
+    }

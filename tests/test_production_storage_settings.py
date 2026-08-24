@@ -57,6 +57,7 @@ def _production_environment() -> dict[str, str]:
         'EMAIL_HTTP_PROXY_URL': 'http://egress_proxy:3128',
         'PUBLIC_HTTP_PROXY_URL': 'http://egress_proxy:3128',
         'AVITO_STATUS_LIFECYCLE_MODE': 'legacy',
+        'MARKETPLACE_FEED_RUN_MODE': 'legacy',
     }
 
 
@@ -90,6 +91,84 @@ def test_production_accepts_explicit_avito_lifecycle_modes(value):
     )
     result = subprocess.run(
         [sys.executable, '-c', command],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('value', ('', 'enabled', 'true', 'dual_write'))
+def test_production_requires_explicit_valid_marketplace_feed_run_mode(value):
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_RUN_MODE'] = value
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'MARKETPLACE_FEED_RUN_MODE' in result.stderr
+
+
+@pytest.mark.parametrize('value', ('legacy', ' LEGACY '))
+def test_production_accepts_explicit_legacy_marketplace_feed_run_mode(value):
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_RUN_MODE'] = value
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            'import config.settings.production as settings; '
+            'assert settings.MARKETPLACE_FEED_RUN_MODE == "legacy"',
+        ],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_production_durable_feed_run_requires_dual_write_lifecycle():
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_RUN_MODE'] = 'durable'
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'AVITO_STATUS_LIFECYCLE_MODE=dual_write' in result.stderr
+
+
+def test_production_accepts_durable_feed_run_with_dual_write_lifecycle():
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_RUN_MODE'] = 'durable'
+    environment['AVITO_STATUS_LIFECYCLE_MODE'] = 'dual_write'
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
         cwd=ROOT,
         env=environment,
         capture_output=True,

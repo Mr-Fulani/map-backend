@@ -716,7 +716,7 @@ AVITO_API_RESPONSE_MAX_BYTES = min(
     max(1, int(os.environ.get('AVITO_API_RESPONSE_MAX_BYTES', str(5 * 1024 * 1024)))),
 )
 AVITO_API_MAX_PAGES = min(
-    100, max(1, int(os.environ.get('AVITO_API_MAX_PAGES', '50'))),
+    100, max(1, int(os.environ.get('AVITO_API_MAX_PAGES', '100'))),
 )
 AVITO_TREE_MAX_DEPTH = min(
     32, max(1, int(os.environ.get('AVITO_TREE_MAX_DEPTH', '12'))),
@@ -736,6 +736,13 @@ AVITO_STATUS_LIFECYCLE_MODE = os.environ.get(
 if AVITO_STATUS_LIFECYCLE_MODE not in {'legacy', 'dual_write'}:
     raise ValueError(
         'AVITO_STATUS_LIFECYCLE_MODE должен быть legacy или dual_write.',
+    )
+MARKETPLACE_FEED_RUN_MODE = os.environ.get(
+    'MARKETPLACE_FEED_RUN_MODE', 'legacy',
+).strip().lower()
+if MARKETPLACE_FEED_RUN_MODE not in {'legacy', 'durable'}:
+    raise ValueError(
+        'MARKETPLACE_FEED_RUN_MODE должен быть legacy или durable.',
     )
 TRUSTED_API_RESPONSE_MAX_BYTES = min(
     5 * 1024 * 1024,
