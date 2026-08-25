@@ -104,6 +104,16 @@ class Tenant(TimestampedModel):
     def __str__(self):
         return self.name
 
+    def delete(self, *args, **kwargs):
+        """Refuse destructive cascades around live marketplace ownership."""
+
+        from django.db.models.deletion import ProtectedError
+
+        raise ProtectedError(
+            'Tenant hard deletion is disabled; use a reviewed archival workflow.',
+            {self},
+        )
+
     @property
     def supports_auto_parts_enrichment(self) -> bool:
         domain = CatalogDomain.objects.filter(slug=self.catalog_domain).first()

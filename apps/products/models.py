@@ -2,6 +2,7 @@ import uuid
 
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
+from django.utils import timezone
 
 from apps.core.models import SoftDeleteModel, TimestampedModel
 from apps.datasources.models import DataSourceConnection
@@ -293,10 +294,72 @@ class Product(SoftDeleteModel):
         return f'{self.article} — {self.name}'
 
     def soft_delete(self):
-        self.listings.all().delete()
-        self.sync_excluded = True
-        self.save(update_fields=['sync_excluded', 'updated_at'])
-        super().soft_delete()
+        """Hide the product and its listings under account-first feed fencing."""
+
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            capture_product_feed_generations,
+            locked_product_feed_write,
+        )
+
+        for _attempt in range(3):
+            generations = capture_product_feed_generations((self.pk,))
+            generation = generations.get(self.pk)
+            if generation is None:
+                return
+            if generation.deleted_at is not None:
+                self.deleted_at = generation.deleted_at
+                self.sync_excluded = True
+                return
+            try:
+                with locked_product_feed_write((generation,)) as locked:
+                    current = locked[self.pk]
+                    current.listings.all().delete()
+                    current.sync_excluded = True
+                    current.deleted_at = timezone.now()
+                    current.save(update_fields=[
+                        'sync_excluded', 'deleted_at', 'updated_at',
+                    ])
+                    self.sync_excluded = current.sync_excluded
+                    self.deleted_at = current.deleted_at
+                    self.updated_at = current.updated_at
+                return
+            except StaleProductFeedWrite:
+                continue
+        raise StaleProductFeedWrite(
+            f'Product {self.pk} changed repeatedly during soft delete.',
+        )
+
+    def restore(self):
+        """Restore visibility under the same product feed generation fence."""
+
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            capture_product_feed_generations,
+            locked_product_feed_write,
+        )
+
+        for _attempt in range(3):
+            generations = capture_product_feed_generations((self.pk,))
+            generation = generations.get(self.pk)
+            if generation is None:
+                return
+            if generation.deleted_at is None:
+                self.deleted_at = None
+                return
+            try:
+                with locked_product_feed_write((generation,)) as locked:
+                    current = locked[self.pk]
+                    current.deleted_at = None
+                    current.save(update_fields=['deleted_at', 'updated_at'])
+                    self.deleted_at = None
+                    self.updated_at = current.updated_at
+                return
+            except StaleProductFeedWrite:
+                continue
+        raise StaleProductFeedWrite(
+            f'Product {self.pk} changed repeatedly during restore.',
+        )
 
 
 class ProductCatalogClassification(TimestampedModel):

@@ -698,7 +698,9 @@ class AvitoAdapter(BaseMarketplaceAdapter):
                 combined = _bounded_feed_item_error([result[ad_id], combined])
             result[ad_id] = combined
 
-        meta = body.get('meta') or {}
+        meta = body.get('meta')
+        if meta is None:
+            meta = {}
         if not isinstance(meta, dict):
             raise ValueError('Avito feed item errors metadata must be an object')
         total_pages = meta.get('pages', 1)

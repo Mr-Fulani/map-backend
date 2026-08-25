@@ -29,8 +29,21 @@ class ListingAdmin(ModelAdmin):
     list_filter = ['tenant', 'status', 'account']
     search_fields = ['title', 'external_id', 'tenant__slug']
     readonly_fields = [
+        # Workflow state and feed-visible values must pass through the fenced
+        # ListingService/task paths, never through generic admin writes.
+        'tenant', 'product', 'account', 'feed_run', 'status',
         'external_id', 'external_url', 'publish_idempotency_key',
-        'published_at', 'last_sync_at', 'created_at', 'updated_at',
+        'title', 'description_ai', 'price_on_listing', 'margin_pct',
+        'ad_type', 'placement_address', 'address_override',
+        'seller_address_id_override', 'manager_name_override',
+        'contact_phone_override', 'bulk_address',
+        'bulk_seller_address_id', 'bulk_manager_name',
+        'bulk_contact_phone', 'bulk_placement_address',
+        'rejection_reason', 'retry_count', 'next_retry_at',
+        'published_at', 'last_sync_at', 'remote_status',
+        'remote_status_checked_at', 'next_status_check_at',
+        'status_check_claim_token', 'status_check_claimed_until',
+        'deleted_at', 'created_at', 'updated_at',
     ]
 
     @admin.display(description='Ссылка Avito')
@@ -42,15 +55,27 @@ class ListingAdmin(ModelAdmin):
             return format_html('<a href="{}" target="_blank">открыть</a>', obj.external_url)
         return '—'
 
+    def has_delete_permission(self, request, obj=None):
+        return False
+
 
 @admin.register(MarketplaceAccount)
 class MarketplaceAccountAdmin(ModelAdmin):
-    """Администрирование аккаунтов Avito тенантов."""
+    """Read-only diagnostics; mutations use the fenced service path."""
 
     list_display = ['name', 'tenant', 'marketplace', 'is_active', 'external_id']
     list_filter = ['tenant', 'marketplace', 'is_active']
     search_fields = ['name', 'tenant__slug']
-    readonly_fields = ['credentials_enc', 'created_at', 'updated_at']
+    readonly_fields = [field.name for field in MarketplaceAccount._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(MarketplaceFeedRun)
@@ -158,3 +183,13 @@ class CategoryMappingAdmin(ModelAdmin):
     list_display = ['tenant', 'marketplace', 'category_source', 'category_target', 'category_id']
     list_filter = ['tenant', 'marketplace']
     search_fields = ['category_source', 'tenant__slug']
+    readonly_fields = [field.name for field in CategoryMapping._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False

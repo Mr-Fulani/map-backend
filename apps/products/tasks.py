@@ -1,6 +1,7 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 import logging
 import time
+from typing import TypedDict
 from urllib.parse import unquote, urlparse
 
 from celery import shared_task
@@ -17,6 +18,48 @@ from apps.products.services import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class _ProductListingExpectedState(TypedDict):
+    expected_status: str
+    expected_account_id: int
+    expected_external_id: str | None
+    expected_deleted_at: datetime | None
+    expected_product_updated_at: datetime
+
+
+def _product_listing_expected_state(
+    listing,
+    product,
+) -> _ProductListingExpectedState:
+    return {
+        'expected_status': listing.status,
+        'expected_account_id': listing.account_id,
+        'expected_external_id': listing.external_id,
+        'expected_deleted_at': listing.deleted_at,
+        'expected_product_updated_at': product.updated_at,
+    }
+
+
+def _save_product_listing_intent(
+    listing,
+    update_fields,
+    *,
+    expected_state: _ProductListingExpectedState,
+) -> bool:
+    """Compare-and-apply a product-driven intent through the shared fence."""
+
+    from apps.marketplaces.services import _save_local_listing_intent
+
+    return _save_local_listing_intent(
+        listing,
+        update_fields,
+        expected_status=expected_state['expected_status'],
+        expected_account_id=expected_state['expected_account_id'],
+        expected_external_id=expected_state['expected_external_id'],
+        expected_deleted_at=expected_state['expected_deleted_at'],
+        expected_product_updated_at=expected_state['expected_product_updated_at'],
+    )
 
 
 def _write_sync_log(tenant, event_type: str, status: str, message: str) -> None:
@@ -88,10 +131,15 @@ def import_from_datasource(self, connection_id: int):
             items = adapter.fetch_changes(since=since, limit=limit, offset=offset)
             if not items:
                 break
-            for item in items:
-                product, status, change_type = ProductService.upsert_from_source(
-                    tenant, connection, item,
-                )
+            # A source page is one domain transaction. The service acquires
+            # account/endpoint locks before product locks and advances each
+            # affected account cursor at most once for the entire page.
+            page_results = ProductService.upsert_batch_from_source(
+                tenant,
+                connection,
+                items,
+            )
+            for product, status, change_type in page_results:
                 counts[status] += 1
                 if status == 'updated' and change_type:
                     sync_product_listings_task.delay(product.pk, change_type)
@@ -195,14 +243,35 @@ def reclassify_products_for_categories(self, tenant_id: int, category_ids: list[
     )
     reclassified = 0
     for product in qs.iterator():
-        try:
-            product.catalog_category = None
-            product.save(update_fields=['catalog_category', 'updated_at'])
-            ProductEnrichmentService.get_product_tenant_category(product)
-            ProductEnrichmentService.classify_product_catalog_domain(product)
-            reclassified += 1
-        except Exception:
-            logger.exception('Не удалось переклассифицировать product=%s', product.pk)
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            capture_product_feed_generations,
+            locked_product_feed_write,
+        )
+
+        for attempt in range(3):
+            generation = capture_product_feed_generations((product.pk,)).get(product.pk)
+            if generation is None:
+                break
+            try:
+                with locked_product_feed_write((generation,)) as locked:
+                    current = locked[product.pk]
+                    current.catalog_category = None
+                    current.save(update_fields=['catalog_category', 'updated_at'])
+                    ProductEnrichmentService._classify_product_catalog_domain_locked(
+                        current,
+                    )
+                    reclassified += 1
+                break
+            except StaleProductFeedWrite:
+                if attempt == 2:
+                    logger.warning(
+                        'Товар менялся во время переклассификации product=%s',
+                        product.pk,
+                    )
+            except Exception:
+                logger.exception('Не удалось переклассифицировать product=%s', product.pk)
+                break
     return {'reclassified': reclassified}
 
 
@@ -239,27 +308,45 @@ def sync_product_listings_task(self, product_id: int, change_type: str):
     )
 
     if change_type == 'price_only':
+        applied_count = 0
         for listing in listings:
+            expected_state = _product_listing_expected_state(listing, product)
             listing.price_on_listing = product.price
-            listing.save(update_fields=['price_on_listing'])
-            update_price_task.delay(listing.pk)
-        if listings:
+            applied = _save_product_listing_intent(
+                listing,
+                ('price_on_listing',),
+                expected_state=expected_state,
+            )
+            if applied:
+                update_price_task.delay(listing.pk)
+                applied_count += 1
+        if applied_count:
             msg = (
                 f'Цена изменена: «{product.name}» ({product.brand}) → {product.price} ₽. '
-                f'Листингов обновлено: {len(listings)}.'
+                f'Листингов обновлено: {applied_count}.'
             )
             send_notification_task.delay(tenant.pk, LEVEL_ERROR, msg)
 
     elif change_type == 'stock_only':
         if product.stock_qty == 0:
+            applied_count = 0
             for listing in listings:
-                listing.status = Listing.STATUS_ARCHIVED
-                listing.save(update_fields=['status'])
-                unpublish_listing_task.delay(listing.pk)
-            if listings:
+                # This records a local removal intent. Only the provider
+                # result may later confirm the terminal archived state.
+                expected_state = _product_listing_expected_state(listing, product)
+                listing.status = Listing.STATUS_ARCHIVING
+                applied = _save_product_listing_intent(
+                    listing,
+                    ('status',),
+                    expected_state=expected_state,
+                )
+                if applied:
+                    unpublish_listing_task.delay(listing.pk)
+                    applied_count += 1
+            if applied_count:
                 msg = (
                     f'Товар закончился: «{product.name}» ({product.brand}) — 0 шт. '
-                    f'Снято листингов: {len(listings)}.'
+                    f'Снято листингов: {applied_count}.'
                 )
                 send_notification_task.delay(tenant.pk, LEVEL_ERROR, msg)
         else:
@@ -271,9 +358,15 @@ def sync_product_listings_task(self, product_id: int, change_type: str):
 
     elif change_type in ('content', 'category'):
         for listing in listings:
+            expected_state = _product_listing_expected_state(listing, product)
             listing.price_on_listing = product.price
-            listing.save(update_fields=['price_on_listing'])
-            update_listing_task.delay(listing.pk)
+            applied = _save_product_listing_intent(
+                listing,
+                ('price_on_listing',),
+                expected_state=expected_state,
+            )
+            if applied:
+                update_listing_task.delay(listing.pk)
 
 
 @shared_task(bind=True, max_retries=3, default_retry_delay=60,

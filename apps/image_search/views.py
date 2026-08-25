@@ -194,8 +194,7 @@ class ImageDetailView(APIView):
         """Помечает изображение как отклонённое (сохраняет sha256/url для дедупликации)."""
         product = _get_product(product_pk, request.tenant)
         image = _get_image(product, image_pk)
-        image.status = ProductImage.Status.REJECTED
-        image.save(update_fields=['status'])
+        moderation.reject(image, reviewed_by=human_user_or_none(request))
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

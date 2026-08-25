@@ -86,7 +86,7 @@ class TenantAdmin(ModelAdmin):
     readonly_fields = [
         'get_owner_phone', 'get_telegram', 'get_subscription_info', 'get_enabled_domains',
         'get_sku_count', 'get_active_listings_count', 'ai_credits_used', 'get_brave_quota',
-        'created_at', 'updated_at',
+        'is_active', 'created_at', 'updated_at',
     ]
     actions = ['extend_trial_14_days']
     inlines = [TenantCatalogDomainInline, TenantUserInline]
@@ -114,6 +114,11 @@ class TenantAdmin(ModelAdmin):
             'classes': ['collapse'],
         }),
     ]
+
+    def has_delete_permission(self, request, obj=None):
+        """Tenant removal requires a reviewed lifecycle workflow."""
+
+        return False
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)

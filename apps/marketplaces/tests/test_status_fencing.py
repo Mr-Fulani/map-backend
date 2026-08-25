@@ -410,6 +410,13 @@ def test_feed_poll_uses_durable_row_due_instead_of_task_retry_budget():
 
     with (
         patch('apps.marketplaces.tasks.AvitoAdapter.get_feed_results', return_value=[]),
+        patch(
+            'apps.marketplaces.tasks._feed_errors_are_current',
+            return_value=True,
+        ),
+        patch(
+            'apps.marketplaces.tasks.schedule_avito_feed_item_error_reconciliation',
+        ) as schedule_report,
         patch('apps.marketplaces.tasks.poll_feed_results_task.apply_async') as schedule_poll,
     ):
         result = poll_feed_results_task(listing.account_id)
@@ -427,6 +434,7 @@ def test_feed_poll_uses_durable_row_due_instead_of_task_retry_budget():
         listing.next_status_check_at - timezone.now()
     ) <= datetime.timedelta(minutes=30, seconds=1)
     assert listing.account.status_batch_due_at is None
+    schedule_report.assert_called_once_with(listing.account)
     schedule_poll.assert_called_once_with(
         args=[listing.account_id],
         countdown=30 * 60,

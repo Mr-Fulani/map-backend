@@ -79,16 +79,19 @@ def test_periodic_setup_registers_minute_feed_intent_scanner():
     assert periodic.interval.period == 'minutes'
 
 
-def test_dual_write_scanner_observes_without_changing_legacy_delivery(settings):
+def test_dual_write_scanner_runs_legacy_repair_without_private_dispatch(settings):
     settings.MARKETPLACE_FEED_INGRESS_MODE = 'dual_write'
 
     result = dispatch_due_marketplace_feed_intents()
 
     assert result == {
-        'status': 'shadow_observed',
+        'status': 'legacy_repair',
         'selected': 0,
         'enqueued': 0,
+        'owned': 0,
+        'failed': 0,
         'batch_limit': 100,
+        'revisions': [],
     }
     assert BackgroundJobDispatch.objects.count() == 0
 
