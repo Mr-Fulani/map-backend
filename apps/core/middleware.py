@@ -123,6 +123,8 @@ class TenantMiddleware:
         return None
 
     def _is_public_path(self, path):
+        if path == '/marketplace-feeds/v1/feed.xml':
+            return True
         PUBLIC_PREFIXES = (
             '/admin/',
             '/api/docs/',

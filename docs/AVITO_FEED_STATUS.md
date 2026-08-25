@@ -1,6 +1,6 @@
 # Текущее состояние работ по фидам Avito
 
-Обновлено: 2026-08-21.
+Обновлено: 2026-08-25.
 
 Исходный WIP сохранён как локальный `not-for-merge` snapshot:
 
@@ -18,8 +18,11 @@ P0 сохранён commit `646ee62d3113042fb0d283c4257e65d5611caa40`.
 P1 observability был выделен по hunks, проверен, merged через PR `#225` и
 дополнен Sentry Cron dead-man collector через PR `#226`. Полный P1 работает в
 production на commit `c2bc2eb102c5caa7610cd15e2a8dfac8193e0a34`; feed-код и
-feed-флаги P1 не менял. Активный пакет P2 разделён на P2a и P2b, чтобы каждый
-release соблюдал ограничение не более двух миграций.
+feed-флаги P1 не менял. P2 завершён последовательными legacy-only release.
+P3 merged через PR `#244` и выложен выключенным на production commit
+`f1881f123a0bbd4fc2534ba746eaff19af8f851b`. Активный P4 физически выделен,
+локально проверен и готовится одним PR; его runtime activation в этот release
+не входит.
 
 Этот файл — единственный источник правды о текущей стадии работ. Roadmap
 находится в [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а обязательные
@@ -28,9 +31,9 @@ release соблюдал ограничение не более двух миг�
 Точная карта разделения файлов и тестов:
 [`AVITO_FEED_CHANGESET_MANIFEST.md`](AVITO_FEED_CHANGESET_MANIFEST.md).
 
-## Решение: новые механизмы заморожены
+## Решение: механизмы после активного P4 заморожены
 
-До отдельного решения владельца продукта запрещено:
+До отдельного решения владельца продукта запрещено выходить за границы P4:
 
 - добавлять новые механизмы фидов, миграции и режимы настроек;
 - продолжать `0039`, автоматическое удаление старых файлов и private serving;
@@ -68,9 +71,13 @@ MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
 MARKETPLACE_FEED_STORAGE_MODE=legacy_public
 ```
 
-В текущем production commit эти имена ещё не определены в Django/Compose и
-отсутствуют в `.env`: альтернативного runtime-пути нет, поэтому система
-legacy-only по конструкции. P2a не добавляет и не читает эти переключатели.
+Текущий production commit P3 определяет `MARKETPLACE_FEED_RUN_MODE=legacy` и
+оставляет lifecycle в `legacy`; durable owner не активирован. P4 при deploy
+добавит только явные безопасные значения
+`MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false`,
+`MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS=3600` и
+`MARKETPLACE_FEED_STORAGE_MODE=legacy_public`. HMAC keyring и stable URL не
+нужны, пока stable bridge выключен.
 
 ## Фактическая стадия snapshot
 
@@ -423,13 +430,54 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный шаг
 
-P0, P1, P2a, P2b1, P2b2 и P2c завершены и работают в production.
-Runtime fencing P2b2 и tenant visibility P2c выложены в режиме
-`legacy`, lifecycle scheduler не активирован. Bounded canary не подтвердил
-дефект счётчика: Avito повторно подтвердил все 10 active listings.
-P2c добавил время provider-проверки и уведомления о сроке; первые два
-Telegram notice доставлены. P3 не начинается без нового решения
-пользователя.
+P0–P3 завершены. P3 работает в production на exact commit `f1881f1`, но его
+новый durable runner выключен: владельцем отправки остаётся legacy-код. P4
+выделен в ветку `codex/p4-stable-feed-endpoint`; следующий release добавляет
+схему и код stable endpoint в выключенном состоянии. Реальный Avito 307 canary
+и изменение Autoload-профиля требуют отдельного решения после deploy.
+
+### Локальная проверка P4 перед PR
+
+P4 содержит одну миграцию `0025`, stable capability endpoint,
+account-scoped inspect/prepare/migrate/reconcile workflow и защиту смены
+credentials/состояния аккаунта. В package нет миграций `0026+`, feed intents,
+private artifact serving/storage, cleanup, GC, `0039` или worker activation.
+
+Фактические gates финального runtime-среза:
+
+```text
+pytest -q \
+  apps/marketplaces/tests/test_migrate_marketplace_feed_profile_command.py \
+  apps/marketplaces/tests/test_feed_endpoint_schema.py \
+  apps/marketplaces/tests/test_feed_endpoint_route.py \
+  apps/marketplaces/tests/test_feed_profile_migration.py
+результат: 105 passed in 23.80s
+
+pytest -q
+результат: 2198 passed, 1 skipped in 859.65s
+
+python manage.py makemigrations --check --dry-run
+результат: No changes detected
+
+clean PostgreSQL: migrate --noinput
+результат: marketplaces.0025 и все остальные миграции применены успешно
+
+upgrade/rollback PostgreSQL:
+marketplaces.0024 -> 0025 -> 0024 -> 0025
+результат: все четыре перехода успешны
+
+flake8 по всем изменённым Python-файлам
+mypy: 646 source files
+mypy --check-untyped-defs: 335 source files
+git diff --check
+frontend ESLint и TypeScript typecheck
+результат: exit 0
+```
+
+Настройки release остаются
+`legacy/legacy/disabled/false/legacy_public`; signing keys отсутствуют. P4
+ещё не считается production-deployed до зелёных PR/main CI, schema deploy и
+post-deploy health/setting checks.
 
 ### Локальная проверка P2b2 перед PR
 
@@ -626,8 +674,9 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
 | P2b2 monitor/health/log observation | `VERIFIED` 2026-08-21 |
 | Avito 0 / dashboard 10: bounded provider canary | `VERIFIED`; Avito API подтверждает все 10 active |
 | P2c tenant status clarity/expiry notices | `DEPLOYED_LEGACY_ONLY`, PR `#234`, production `1f05367` |
-| Физическое разделение diff на commits/PR P3–P7 | `NOT_STARTED` |
-| Проверки и deploy пакетов P3–P5 | `NOT_STARTED` |
+| P3 durable feed foundation `0023`–`0024` | `DEPLOYED_OFF`, PR `#244`, production `f1881f1` |
+| P4 stable endpoint/profile `0025` | `LOCAL_VERIFIED`, PR/deploy pending |
+| P5 feed intents/recovery | `NOT_STARTED` |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |
 | P7 cleanup/GC/0039 | `FROZEN` |
 

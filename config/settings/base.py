@@ -4,6 +4,14 @@ from pathlib import Path
 
 import dj_database_url
 
+from apps.marketplaces.feed_endpoint import (
+    FeedEndpointConfigurationError,
+    PUBLIC_FEED_PATH,
+    canonical_marketplace_feed_cdn_origin,
+    canonical_marketplace_feed_public_base_url,
+    parse_marketplace_feed_url_signing_keys,
+)
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', '')
@@ -744,6 +752,34 @@ if MARKETPLACE_FEED_RUN_MODE not in {'legacy', 'durable'}:
     raise ValueError(
         'MARKETPLACE_FEED_RUN_MODE должен быть legacy или durable.',
     )
+_MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED_RAW = os.environ.get(
+    'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED', 'false',
+).strip().lower()
+if _MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED_RAW not in {'true', 'false'}:
+    raise ValueError(
+        'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED must be true or false.',
+    )
+MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED = (
+    _MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED_RAW == 'true'
+)
+_MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS_RAW = os.environ.get(
+    'MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS', '3600',
+).strip()
+if (
+    not _MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS_RAW.isascii()
+    or not _MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS_RAW.isdecimal()
+):
+    raise ValueError(
+        'MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS must be an integer.',
+    )
+MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS = int(
+    _MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS_RAW,
+)
+if not 300 <= MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS <= 86_400:
+    raise ValueError(
+        'MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS must be between '
+        '300 and 86400.',
+    )
 TRUSTED_API_RESPONSE_MAX_BYTES = min(
     5 * 1024 * 1024,
     max(1, int(os.environ.get('TRUSTED_API_RESPONSE_MAX_BYTES', str(5 * 1024 * 1024)))),
@@ -978,6 +1014,26 @@ BILLING_GRACE_PERIOD_DAYS = min(
 )
 SITE_URL = os.environ.get('SITE_URL', 'http://localhost:8000')
 FRONTEND_URL = os.environ.get('FRONTEND_URL', 'http://localhost:3000')
+MARKETPLACE_FEED_STORAGE_MODE = os.environ.get(
+    'MARKETPLACE_FEED_STORAGE_MODE',
+    'legacy_public',
+).strip().lower()
+if MARKETPLACE_FEED_STORAGE_MODE not in {'legacy_public', 'stable_bridge'}:
+    raise ValueError(
+        'MARKETPLACE_FEED_STORAGE_MODE must be legacy_public or stable_bridge; '
+        'private_generation is reserved for a later release.',
+    )
+MARKETPLACE_FEED_URL_SIGNING_KEYS = parse_marketplace_feed_url_signing_keys(
+    os.environ.get('MARKETPLACE_FEED_URL_SIGNING_KEYS', ''),
+)
+MARKETPLACE_FEED_URL_SIGNING_PRIMARY_KEY_ID = os.environ.get(
+    'MARKETPLACE_FEED_URL_SIGNING_PRIMARY_KEY_ID',
+    '',
+).strip()
+MARKETPLACE_FEED_PUBLIC_BASE_URL = (
+    os.environ.get('MARKETPLACE_FEED_PUBLIC_BASE_URL', '').strip()
+    or f'{SITE_URL.rstrip("/")}{PUBLIC_FEED_PATH}'
+)
 # This endpoint is deliberately outside the application failure domain.  It is
 # a required production infrastructure provider, performs no bucket/object
 # operation and lets a forward recovery validate DNS/TLS/egress while ingress

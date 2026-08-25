@@ -89,7 +89,8 @@ interface AvitoAccountHealth {
 
 interface AutoloadCheck {
   activated: boolean;
-  feed_url: string;
+  feed_url: string | null;
+  feed_endpoint_managed?: boolean;
   stale?: boolean;
   status?: AvitoAccountHealth;
 }
@@ -1963,7 +1964,7 @@ export default function SettingsPage() {
                                   {al.feed_url}
                                 </code>
                                 <button
-                                  onClick={() => copyFeedUrl(acc.id, al.feed_url)}
+                                  onClick={() => copyFeedUrl(acc.id, al.feed_url!)}
                                   className="shrink-0 text-muted-foreground hover:text-foreground"
                                   title="Скопировать"
                                 >

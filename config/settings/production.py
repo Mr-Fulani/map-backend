@@ -164,6 +164,105 @@ if (
         'MARKETPLACE_FEED_RUN_MODE=durable требует '
         'AVITO_STATUS_LIFECYCLE_MODE=dual_write.',
     )
+marketplace_feed_profile_migration_enabled_raw = _required_env(
+    'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED',
+).lower()
+if marketplace_feed_profile_migration_enabled_raw not in {'true', 'false'}:
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED должен быть true или false.',
+    )
+MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED = (
+    marketplace_feed_profile_migration_enabled_raw == 'true'
+)
+marketplace_feed_profile_source_settlement_seconds_raw = _required_env(
+    'MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS',
+)
+if (
+    not marketplace_feed_profile_source_settlement_seconds_raw.isascii()
+    or not marketplace_feed_profile_source_settlement_seconds_raw.isdecimal()
+):
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS должен быть целым '
+        'числом.',
+    )
+MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS = int(
+    marketplace_feed_profile_source_settlement_seconds_raw,
+)
+if not 300 <= MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS <= 86_400:
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS должен быть от '
+        '300 до 86400.',
+    )
+MARKETPLACE_FEED_STORAGE_MODE = _required_env(
+    'MARKETPLACE_FEED_STORAGE_MODE',
+).lower()
+if MARKETPLACE_FEED_STORAGE_MODE not in {'legacy_public', 'stable_bridge'}:
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_STORAGE_MODE должен быть legacy_public или '
+        'stable_bridge; private_generation ещё недоступен.',
+    )
+if (
+    MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED
+    and MARKETPLACE_FEED_STORAGE_MODE != 'stable_bridge'
+):
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=true требует '
+        'MARKETPLACE_FEED_STORAGE_MODE=stable_bridge.',
+    )
+if (
+    MARKETPLACE_FEED_STORAGE_MODE == 'stable_bridge'
+    or MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED
+):
+    MARKETPLACE_FEED_PUBLIC_BASE_URL = _required_env(
+        'MARKETPLACE_FEED_PUBLIC_BASE_URL',
+    )
+try:
+    canonical_feed_public_base_url = canonical_marketplace_feed_public_base_url(
+        MARKETPLACE_FEED_PUBLIC_BASE_URL,
+    )
+    expected_feed_public_base_url = canonical_marketplace_feed_public_base_url(
+        f'{SITE_URL}{PUBLIC_FEED_PATH}',
+    )
+except FeedEndpointConfigurationError as exc:
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_PUBLIC_BASE_URL должен быть точным HTTPS URL '
+        f'с path {PUBLIC_FEED_PATH} без credentials/query/fragment.',
+    ) from exc
+if canonical_feed_public_base_url != expected_feed_public_base_url:
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_PUBLIC_BASE_URL должен использовать точный '
+        'production SITE_URL origin.',
+    )
+if (
+    MARKETPLACE_FEED_STORAGE_MODE == 'stable_bridge'
+    or MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED
+):
+    try:
+        canonical_marketplace_feed_cdn_origin(YC_CDN_DOMAIN)
+    except FeedEndpointConfigurationError as exc:
+        raise ImproperlyConfigured(
+            'YC_CDN_DOMAIN должен быть пустым или безопасным HTTPS authority.',
+        ) from exc
+    raw_feed_signing_keys = _required_env(
+        'MARKETPLACE_FEED_URL_SIGNING_KEYS',
+    )
+    try:
+        MARKETPLACE_FEED_URL_SIGNING_KEYS = (
+            parse_marketplace_feed_url_signing_keys(raw_feed_signing_keys)
+        )
+    except ValueError as exc:
+        raise ImproperlyConfigured(str(exc)) from exc
+    MARKETPLACE_FEED_URL_SIGNING_PRIMARY_KEY_ID = _required_env(
+        'MARKETPLACE_FEED_URL_SIGNING_PRIMARY_KEY_ID',
+    )
+    if (
+        MARKETPLACE_FEED_URL_SIGNING_PRIMARY_KEY_ID
+        not in MARKETPLACE_FEED_URL_SIGNING_KEYS
+    ):
+        raise ImproperlyConfigured(
+            'MARKETPLACE_FEED_URL_SIGNING_PRIMARY_KEY_ID отсутствует в '
+            'MARKETPLACE_FEED_URL_SIGNING_KEYS.',
+        )
 
 database_url = _required_env('DATABASE_URL')
 if 'map_password' in database_url:

@@ -1,6 +1,6 @@
 # Roadmap надёжной отправки фидов Avito
 
-Обновлено: 2026-08-21.
+Обновлено: 2026-08-25.
 
 Текущий статус: [`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md).
 Правила выполнения:
@@ -14,7 +14,7 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: P2c tenant visibility выложен в production
+## Текущая фаза: P4 локально проверен, release выключенным кодом впереди
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
@@ -29,8 +29,9 @@ P2c follow-up с provider truth, временем последней Avito-пр�
 tenant notices выложен в production commit `1f05367` без изменения
 feed-режима. Первый плановый цикл повторно подтвердил 10 active
 объявлений и доставил два разных Telegram notice для порога 14 дней.
-P3 и последующие пакеты не начинаются без нового отдельного решения
-пользователя.
+P3 merged через PR `#244`, выложен в production commit `f1881f1` и остаётся
+выключенным (`MARKETPLACE_FEED_RUN_MODE=legacy`). P4 активирован пользователем,
+физически выделен и прошёл локальные тесты; PR, CI и deploy ещё впереди.
 
 Готово только когда:
 
@@ -164,7 +165,7 @@ drift, OpenAPI, flake8 и оба mypy gate зелёные. PR `#234`, PR CI
 `1f05367` работает в режиме `legacy`; exact topology, readiness,
 backup, manual monitor `32512208535` и десятиминутное наблюдение зелёные.
 
-### P3. Надёжная запись задания на отправку
+### P3. Надёжная запись задания на отправку — завершён, выключен
 
 Содержимое:
 
@@ -183,10 +184,10 @@ backup, manual monitor `32512208535` и десятиминутное наблю�
 - сбой брокера, остановка worker и повторная доставка;
 - полный backend test.
 
-Deploy: код выкладывается выключенным. Legacy остаётся единственным владельцем
-отправки.
+Deploy: PR `#244`, production commit `f1881f1`; schema `0023`–`0024`
+применена, код выключен. Legacy остаётся единственным владельцем отправки.
 
-### P4. Стабильная ссылка и профиль Autoload
+### P4. Стабильная ссылка и профиль Autoload — локально проверен
 
 Содержимое:
 
@@ -204,6 +205,11 @@ Deploy: код выкладывается выключенным. Legacy ост�
 Deploy: только с выключенным
 `MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false` и
 `MARKETPLACE_FEED_STORAGE_MODE=legacy_public`. Включение — отдельное решение.
+
+Локальный gate: 105 P4-тестов и полный backend (`2198 passed, 1 skipped`)
+зелёные; clean/upgrade/rollback/reapply PostgreSQL `0025`, migration drift,
+flake8, frontend ESLint/typecheck и `git diff --check` прошли. Следующий шаг —
+один PR, затем schema deploy без изменения legacy-режима.
 
 ### P5. Учёт изменений и восстановление legacy-отправки
 

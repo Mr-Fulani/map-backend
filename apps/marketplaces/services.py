@@ -246,6 +246,132 @@ class InvalidMarketplaceCredentials(Exception):
     """Credentials маркетплейса не прошли проверку через API."""
 
 
+class MarketplaceAccountFeedConflict(Exception):
+    """Изменение аккаунта конфликтует с активным feed-процессом."""
+
+
+def _assert_account_identity_mutation_safe(account) -> None:
+    """Не даёт сменить credentials поверх уже отправленного durable run."""
+
+    from apps.marketplaces.feed_workflow import (
+        FeedSubmissionOutcomeUncertain,
+        assert_no_submitted_feed_owner,
+    )
+
+    try:
+        assert_no_submitted_feed_owner(
+            account.pk,
+            reason='Marketplace account credentials or provider identity changed.',
+        )
+    except FeedSubmissionOutcomeUncertain:
+        raise MarketplaceAccountFeedConflict(
+            'Нельзя изменить подключение: результат предыдущей отправки '
+            'фида ещё не подтверждён. Сначала выполните ручную сверку запуска.',
+        ) from None
+
+
+def _lock_marketplace_feed_endpoint(account_id: int):
+    """Блокирует endpoint сразу после блокировки его аккаунта-владельца."""
+
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    return (
+        MarketplaceFeedEndpoint.objects.select_for_update()
+        .filter(account_id=account_id)
+        .first()
+    )
+
+
+def _assert_feed_endpoint_identity_mutation_safe(endpoint) -> None:
+    """Запрещает смену identity после начала изменения профиля Avito."""
+
+    if endpoint is None:
+        return
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    if endpoint.profile_state in {
+        MarketplaceFeedEndpoint.ProfileState.MIGRATING,
+        MarketplaceFeedEndpoint.ProfileState.BRIDGE_READY,
+        MarketplaceFeedEndpoint.ProfileState.UPDATE_UNKNOWN,
+        MarketplaceFeedEndpoint.ProfileState.VERIFIED,
+    }:
+        raise MarketplaceAccountFeedConflict(
+            'Нельзя изменить подключение, пока stable feed endpoint '
+            'используется или сверяется с профилем площадки.',
+        )
+
+
+def _assert_feed_endpoint_availability_mutation_safe(
+    endpoint,
+    *,
+    destructive: bool = False,
+) -> None:
+    """Защищает доступность аккаунта около изменения профиля Avito."""
+
+    if endpoint is None:
+        return
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    if endpoint.profile_state in {
+        MarketplaceFeedEndpoint.ProfileState.MIGRATING,
+        MarketplaceFeedEndpoint.ProfileState.UPDATE_UNKNOWN,
+    } or (
+        destructive
+        and endpoint.profile_state in {
+            MarketplaceFeedEndpoint.ProfileState.BRIDGE_READY,
+            MarketplaceFeedEndpoint.ProfileState.VERIFIED,
+        }
+    ):
+        raise MarketplaceAccountFeedConflict(
+            'Нельзя отключить аккаунт во время миграции feed-профиля. '
+            'Сначала завершите или сверите миграцию.',
+        )
+
+
+def _fence_marketplace_feed_endpoint_identity(account, endpoint) -> None:
+    """Отзывает уже заблокированную capability после смены credentials."""
+
+    if endpoint is None:
+        return
+    from apps.marketplaces.feed_workflow import account_identity_digest
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    max_revision = (1 << 63) - 1
+    if (
+        endpoint.capability_revision >= max_revision
+        or endpoint.profile_revision >= max_revision
+    ):
+        raise OverflowError('Marketplace feed endpoint revision is exhausted.')
+
+    endpoint.owner_identity_digest = account_identity_digest(account)
+    endpoint.capability_revision += 1
+    endpoint.previous_token_key_id = ''
+    endpoint.serve_enabled = False
+    endpoint.profile_state = MarketplaceFeedEndpoint.ProfileState.MANUAL_REVIEW
+    endpoint.profile_fingerprint = ''
+    endpoint.profile_verified_at = None
+    endpoint.profile_revision += 1
+    endpoint.save(update_fields=(
+        'owner_identity_digest',
+        'capability_revision',
+        'previous_token_key_id',
+        'serve_enabled',
+        'profile_state',
+        'profile_fingerprint',
+        'profile_verified_at',
+        'profile_revision',
+        'updated_at',
+    ))
+
+
+def _invalidate_avito_access_token_after_commit(account) -> None:
+    """Удаляет старый OAuth token только после успешного commit credentials."""
+
+    from apps.marketplaces.adapters.avito.auth import AvitoAuthManager
+
+    transaction.on_commit(partial(AvitoAuthManager().invalidate, account))
+
+
 class BulkActionItem(TypedDict):
     id: int
     status: str
@@ -964,9 +1090,21 @@ class MarketplaceAccountService:
         Автоматически запрашивает реальный Avito user_id через API.
         При конфликте external_id бросает AccountAlreadyExists.
         """
-        from apps.datasources.encryption import encrypt
         from apps.marketplaces.models import MarketplaceAccount
 
+        if (
+            data.get('marketplace') == MarketplaceAccount.MARKETPLACE_AVITO
+            and getattr(
+                settings,
+                'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED',
+                False,
+            )
+        ):
+            raise MarketplaceAccountFeedConflict(
+                'Подключение новых Avito-аккаунтов временно приостановлено '
+                'на время миграции Autoload-профилей.',
+            )
+        from apps.datasources.encryption import encrypt
         credentials_enc = encrypt({
             'client_id': data['client_id'],
             'client_secret': data['client_secret'],
@@ -979,12 +1117,24 @@ class MarketplaceAccountService:
             deleted_at__isnull=False,
         ).first()
         if deleted_account is not None:
-            account = deleted_account
-            account.name = data['name']
-            account.credentials_enc = credentials_enc
-            account.is_active = True
-            account.restore()
-            account.save(update_fields=['name', 'credentials_enc', 'is_active', 'updated_at'])
+            with transaction.atomic():
+                account = (
+                    MarketplaceAccount.all_objects.select_for_update()
+                    .get(pk=deleted_account.pk)
+                )
+                feed_endpoint = _lock_marketplace_feed_endpoint(account.pk)
+                _assert_feed_endpoint_identity_mutation_safe(feed_endpoint)
+                _assert_account_identity_mutation_safe(account)
+                account.name = data['name']
+                account.credentials_enc = credentials_enc
+                account.is_active = True
+                account.deleted_at = None
+                account.save(update_fields=(
+                    'name', 'credentials_enc', 'is_active', 'deleted_at',
+                    'updated_at',
+                ))
+                _fence_marketplace_feed_endpoint_identity(account, feed_endpoint)
+                _invalidate_avito_access_token_after_commit(account)
         else:
             try:
                 account = MarketplaceAccount.objects.create(
@@ -1012,16 +1162,30 @@ class MarketplaceAccountService:
     def update_credentials(account, data: dict):
         """Полностью обновляет аккаунт: имя, marketplace, external_id и credentials."""
         from apps.datasources.encryption import encrypt
-        account.name = data['name']
-        account.marketplace = data['marketplace']
         credentials_enc = encrypt({
             'client_id': data['client_id'],
             'client_secret': data['client_secret'],
         })
-        account.external_id = MarketplaceAccountService._fetch_avito_user_id(credentials_enc)
-        account.credentials_enc = credentials_enc
+        external_id = MarketplaceAccountService._fetch_avito_user_id(credentials_enc)
         try:
-            account.save(update_fields=['name', 'marketplace', 'external_id', 'credentials_enc'])
+            with transaction.atomic():
+                account = (
+                    type(account).all_objects.select_for_update()
+                    .get(pk=account.pk)
+                )
+                feed_endpoint = _lock_marketplace_feed_endpoint(account.pk)
+                _assert_feed_endpoint_identity_mutation_safe(feed_endpoint)
+                _assert_account_identity_mutation_safe(account)
+                account.name = data['name']
+                account.marketplace = data['marketplace']
+                account.external_id = external_id
+                account.credentials_enc = credentials_enc
+                account.save(update_fields=(
+                    'name', 'marketplace', 'external_id', 'credentials_enc',
+                    'updated_at',
+                ))
+                _fence_marketplace_feed_endpoint_identity(account, feed_endpoint)
+                _invalidate_avito_access_token_after_commit(account)
         except IntegrityError:
             raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
         return account
@@ -1029,27 +1193,36 @@ class MarketplaceAccountService:
     @staticmethod
     def update_partial(account, data: dict):
         """Частично обновляет аккаунт: is_active, name и настройки размещения."""
-        update_fields = []
-        if 'is_active' in data:
-            account.is_active = bool(data['is_active'])
-            update_fields.append('is_active')
-        if 'name' in data:
-            account.name = str(data['name'])[:200]
-            update_fields.append('name')
-        for field in (
-            'default_address',
-            'default_seller_address_id',
-            'default_manager_name',
-            'default_contact_phone',
-        ):
-            if field in data:
-                setattr(account, field, str(data[field] or '').strip())
-                update_fields.append(field)
-        if 'autoload_subscription_ends_at' in data:
-            account.autoload_subscription_ends_at = data['autoload_subscription_ends_at']
-            update_fields.append('autoload_subscription_ends_at')
-        if update_fields:
-            account.save(update_fields=update_fields)
+        with transaction.atomic():
+            account = (
+                type(account).all_objects.select_for_update()
+                .get(pk=account.pk)
+            )
+            update_fields = []
+            was_active = account.is_active
+            if 'is_active' in data:
+                account.is_active = bool(data['is_active'])
+                update_fields.append('is_active')
+            if 'name' in data:
+                account.name = str(data['name'])[:200]
+                update_fields.append('name')
+            for field in (
+                'default_address',
+                'default_seller_address_id',
+                'default_manager_name',
+                'default_contact_phone',
+            ):
+                if field in data:
+                    setattr(account, field, str(data[field] or '').strip())
+                    update_fields.append(field)
+            if 'autoload_subscription_ends_at' in data:
+                account.autoload_subscription_ends_at = data['autoload_subscription_ends_at']
+                update_fields.append('autoload_subscription_ends_at')
+            if was_active and not account.is_active:
+                endpoint = _lock_marketplace_feed_endpoint(account.pk)
+                _assert_feed_endpoint_availability_mutation_safe(endpoint)
+            if update_fields:
+                account.save(update_fields=(*update_fields, 'updated_at'))
         return account
 
 

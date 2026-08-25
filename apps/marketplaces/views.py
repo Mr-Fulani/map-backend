@@ -61,6 +61,7 @@ from apps.marketplaces.services import (
     InvalidListingStatus,
     ListingNotFound,
     ListingService,
+    MarketplaceAccountFeedConflict,
     MarketplaceAccountService,
 )
 from apps.tenants.permissions import TenantAdminPermission, TenantAdminWritePermission
@@ -195,6 +196,12 @@ class MarketplaceAccountListView(APIView):
             account = MarketplaceAccountService.create(request.tenant, serializer.validated_data)
         except AccountAlreadyExists as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+        except MarketplaceAccountFeedConflict as exc:
+            return Response({
+                'status': 'error',
+                'code': 'feed_owner_conflict',
+                'message': str(exc),
+            }, status=status.HTTP_409_CONFLICT)
         except InvalidMarketplaceCredentials as exc:
             return Response({
                 'status': 'error',
@@ -246,6 +253,12 @@ class MarketplaceAccountDetailView(APIView):
             account = MarketplaceAccountService.update_credentials(account, serializer.validated_data)
         except AccountAlreadyExists as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+        except MarketplaceAccountFeedConflict as exc:
+            return Response({
+                'status': 'error',
+                'code': 'feed_owner_conflict',
+                'message': str(exc),
+            }, status=status.HTTP_409_CONFLICT)
         except InvalidMarketplaceCredentials as exc:
             return Response({
                 'status': 'error',
@@ -299,7 +312,14 @@ class MarketplaceAccountDetailView(APIView):
         serializer = MarketplaceAccountPlacementSerializer(data=placement_fields, partial=True)
         serializer.is_valid(raise_exception=True)
         data = {**request.data, **serializer.validated_data}
-        account = MarketplaceAccountService.update_partial(account, data)
+        try:
+            account = MarketplaceAccountService.update_partial(account, data)
+        except MarketplaceAccountFeedConflict as exc:
+            return Response({
+                'status': 'error',
+                'code': 'feed_profile_conflict',
+                'message': str(exc),
+            }, status=status.HTTP_409_CONFLICT)
         return Response(MarketplaceAccountSerializer(account).data)
 
     @extend_schema(
@@ -312,9 +332,14 @@ class MarketplaceAccountDetailView(APIView):
         account = self._get_account(pk, request.tenant)
         if account is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
-        with transaction.atomic():
-            Listing.objects.filter(account=account, tenant=request.tenant).delete()
+        try:
             account.soft_delete()
+        except MarketplaceAccountFeedConflict as exc:
+            return Response({
+                'status': 'error',
+                'code': 'feed_profile_conflict',
+                'message': str(exc),
+            }, status=status.HTTP_409_CONFLICT)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -330,7 +355,13 @@ class AutoloadStatusView(APIView):
             name='MarketplaceAccountAutoloadStatusResponse',
             fields={
                 'activated': serializers.BooleanField(read_only=True),
-                'feed_url': serializers.URLField(read_only=True),
+                'feed_url': serializers.URLField(
+                    read_only=True,
+                    allow_null=True,
+                ),
+                'feed_endpoint_managed': serializers.BooleanField(
+                    read_only=True,
+                ),
                 'stale': serializers.BooleanField(read_only=True),
                 'status': AvitoAccountStatusSerializer(read_only=True),
                 'activate_url': serializers.URLField(
@@ -343,9 +374,8 @@ class AutoloadStatusView(APIView):
         """
         Проверяет активирован ли Avito Autoload для аккаунта.
 
-        Возвращает:
-          {"activated": true, "feed_url": "https://..."}  — если профиль найден
-          {"activated": false, "feed_url": "https://...", "activate_url": "https://www.avito.ru/autoload/settings"}
+        Legacy-аккаунт получает прежний публичный URL. Для managed endpoint
+        capability URL не раскрывается: ``feed_url`` равен ``null``.
         """
         try:
             account = MarketplaceAccount.objects.get(pk=pk, tenant=request.tenant)
@@ -353,13 +383,22 @@ class AutoloadStatusView(APIView):
             return Response(status=status.HTTP_404_NOT_FOUND)
 
         from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
+        from apps.marketplaces.models import MarketplaceFeedEndpoint
 
         status_obj = AvitoAccountStatusService.refresh(account)
         snapshot = AvitoAccountStatusSerializer(status_obj).data
         activated = status_obj.autoload_status == status_obj.AUTOLOAD_ENABLED
+        feed_endpoint_managed = MarketplaceFeedEndpoint.objects.filter(
+            account_id=account.pk,
+        ).exists()
         payload = {
             'activated': activated,
-            'feed_url': AvitoAdapter(account)._feed_public_url(),
+            'feed_url': (
+                None
+                if feed_endpoint_managed
+                else AvitoAdapter(account)._feed_public_url()
+            ),
+            'feed_endpoint_managed': feed_endpoint_managed,
             'stale': snapshot['profile_stale'],
             'status': snapshot,
         }
