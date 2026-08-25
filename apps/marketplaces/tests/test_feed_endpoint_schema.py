@@ -141,7 +141,8 @@ def test_feed_endpoint_model_is_dark_provider_neutral_bridge_schema():
         'token_key_id', 'previous_token_key_id', 'owner_identity_digest',
         'capability_revision', 'serve_enabled', 'storage_mode', 'legacy_object_key',
         'legacy_profile_url', 'profile_state', 'profile_fingerprint',
-        'profile_revision', 'profile_verified_at',
+        'profile_revision', 'profile_verified_at', 'current_artifact',
+        'artifact_revision', 'artifact_promoted_at',
     )
     for name in lifecycle_fields:
         assert MarketplaceFeedEndpoint._meta.get_field(name).editable is False, name
@@ -153,9 +154,24 @@ def test_feed_endpoint_model_is_dark_provider_neutral_bridge_schema():
     assert MarketplaceFeedEndpoint._meta.get_field(
         'source_intent_revision',
     ).default == 0
-    assert {
-        'current_artifact', 'artifact_revision', 'artifact_promoted_at',
-    }.isdisjoint(field_names)
+
+    current_artifact = MarketplaceFeedEndpoint._meta.get_field('current_artifact')
+    assert isinstance(current_artifact, models.ForeignKey)
+    assert current_artifact.remote_field.on_delete is models.PROTECT
+    assert current_artifact.null is True
+    assert current_artifact.blank is True
+    assert current_artifact.db_index is False
+
+    artifact_revision = MarketplaceFeedEndpoint._meta.get_field('artifact_revision')
+    assert isinstance(artifact_revision, models.PositiveBigIntegerField)
+    assert artifact_revision.default == 0
+
+    artifact_promoted_at = MarketplaceFeedEndpoint._meta.get_field(
+        'artifact_promoted_at',
+    )
+    assert artifact_promoted_at.null is True
+    assert artifact_promoted_at.blank is True
+    assert artifact_promoted_at.default is NOT_PROVIDED
 
 
 def test_feed_endpoint_constraints_and_index_are_named_and_bounded():
@@ -172,7 +188,7 @@ def test_feed_endpoint_constraints_and_index_are_named_and_bounded():
         'mkt_feed_ep_profile_baseline',
         'mkt_feed_ep_servable_baseline',
         'mkt_feed_ep_serve_guard',
-        'mkt_feed_ep_private_dark',
+        'mkt_feed_ep_art_bundle',
     }
     assert {
         constraint.name for constraint in MarketplaceFeedEndpoint._meta.constraints
@@ -182,12 +198,24 @@ def test_feed_endpoint_constraints_and_index_are_named_and_bounded():
         for name in expected_constraints
     )
 
-    indexes = MarketplaceFeedEndpoint._meta.indexes
-    assert len(indexes) == 1
-    assert indexes[0].name == 'mkt_feed_ep_state_updated'
-    assert indexes[0].fields == ['profile_state', 'updated_at', 'public_id']
+    indexes = {index.name: index for index in MarketplaceFeedEndpoint._meta.indexes}
+    assert set(indexes) == {
+        'mkt_feed_ep_state_updated',
+        'mkt_feed_ep_current_art',
+    }
+    assert indexes['mkt_feed_ep_state_updated'].fields == [
+        'profile_state', 'updated_at', 'public_id',
+    ]
+    current_artifact_index = indexes['mkt_feed_ep_current_art']
+    assert current_artifact_index.fields == ['current_artifact', 'public_id']
+    assert current_artifact_index.condition == models.Q(
+        current_artifact__isnull=False,
+    )
 
-    for named_object in (*MarketplaceFeedEndpoint._meta.constraints, *indexes):
+    for named_object in (
+        *MarketplaceFeedEndpoint._meta.constraints,
+        *indexes.values(),
+    ):
         assert len(named_object.name) <= 30
         predicate = getattr(named_object, 'condition', None)
         if predicate is not None:

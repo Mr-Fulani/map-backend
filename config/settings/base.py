@@ -12,6 +12,51 @@ from apps.marketplaces.feed_endpoint import (
     parse_marketplace_feed_url_signing_keys,
 )
 
+
+_SAFE_FEED_ARTIFACT_BUCKET_CHARACTERS = frozenset(
+    'abcdefghijklmnopqrstuvwxyz0123456789.-',
+)
+
+
+def _is_safe_feed_artifact_bucket(value: str) -> bool:
+    """Validate one lowercase DNS-style bucket name without network I/O."""
+
+    if (
+        not 3 <= len(value) <= 63
+        or value[0] not in 'abcdefghijklmnopqrstuvwxyz0123456789'
+        or value[-1] not in 'abcdefghijklmnopqrstuvwxyz0123456789'
+        or any(
+            character not in _SAFE_FEED_ARTIFACT_BUCKET_CHARACTERS
+            for character in value
+        )
+        or '..' in value
+        or '.-' in value
+        or '-.' in value
+    ):
+        return False
+    labels = value.split('.')
+    return not (
+        len(labels) == 4
+        and all(label.isascii() and label.isdecimal() for label in labels)
+    )
+
+
+def _strict_feed_artifact_int(
+    name: str,
+    default: int,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw_value = os.environ.get(name, str(default)).strip()
+    if not raw_value.isascii() or not raw_value.isdecimal():
+        raise ValueError(f'{name} must be an ASCII integer.')
+    value = int(raw_value)
+    if not minimum <= value <= maximum:
+        raise ValueError(f'{name} must be between {minimum} and {maximum}.')
+    return value
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', '')
@@ -759,6 +804,65 @@ if MARKETPLACE_FEED_INGRESS_MODE not in {'legacy', 'dual_write'}:
     raise ValueError(
         'MARKETPLACE_FEED_INGRESS_MODE must be legacy or dual_write.',
     )
+MARKETPLACE_FEED_ARTIFACT_MODE = os.environ.get(
+    'MARKETPLACE_FEED_ARTIFACT_MODE', 'disabled',
+).strip().lower()
+if MARKETPLACE_FEED_ARTIFACT_MODE not in {
+    'disabled', 'shadow', 'canary', 'active',
+}:
+    raise ValueError(
+        'MARKETPLACE_FEED_ARTIFACT_MODE must be disabled, shadow, canary, '
+        'or active.',
+    )
+MARKETPLACE_FEED_ARTIFACT_BUCKET = os.environ.get(
+    'MARKETPLACE_FEED_ARTIFACT_BUCKET', '',
+).strip()
+if (
+    MARKETPLACE_FEED_ARTIFACT_BUCKET
+    and not _is_safe_feed_artifact_bucket(MARKETPLACE_FEED_ARTIFACT_BUCKET)
+):
+    raise ValueError(
+        'MARKETPLACE_FEED_ARTIFACT_BUCKET must be a safe lowercase S3 bucket.',
+    )
+MARKETPLACE_FEED_ARTIFACT_ACCESS_KEY_ID = os.environ.get(
+    'MARKETPLACE_FEED_ARTIFACT_ACCESS_KEY_ID', '',
+).strip()
+MARKETPLACE_FEED_ARTIFACT_SECRET_ACCESS_KEY = os.environ.get(
+    'MARKETPLACE_FEED_ARTIFACT_SECRET_ACCESS_KEY', '',
+).strip()
+MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER = os.environ.get(
+    'MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER', '',
+).strip()
+MARKETPLACE_FEED_ARTIFACT_KMS_KEY_ID = os.environ.get(
+    'MARKETPLACE_FEED_ARTIFACT_KMS_KEY_ID', '',
+).strip()
+if MARKETPLACE_FEED_ARTIFACT_MODE != 'disabled' and not all((
+    MARKETPLACE_FEED_ARTIFACT_BUCKET,
+    MARKETPLACE_FEED_ARTIFACT_ACCESS_KEY_ID,
+    MARKETPLACE_FEED_ARTIFACT_SECRET_ACCESS_KEY,
+    MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER,
+    MARKETPLACE_FEED_ARTIFACT_KMS_KEY_ID,
+)):
+    raise ValueError(
+        'MARKETPLACE_FEED_ARTIFACT_BUCKET, '
+        'MARKETPLACE_FEED_ARTIFACT_ACCESS_KEY_ID, '
+        'MARKETPLACE_FEED_ARTIFACT_SECRET_ACCESS_KEY, '
+        'MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER and '
+        'MARKETPLACE_FEED_ARTIFACT_KMS_KEY_ID are required unless artifact '
+        'mode is disabled.',
+    )
+MARKETPLACE_FEED_ARTIFACT_MAX_BYTES = _strict_feed_artifact_int(
+    'MARKETPLACE_FEED_ARTIFACT_MAX_BYTES',
+    268_435_456,
+    minimum=1,
+    maximum=1_073_741_824,
+)
+MARKETPLACE_FEED_REDIRECT_TTL_SECONDS = _strict_feed_artifact_int(
+    'MARKETPLACE_FEED_REDIRECT_TTL_SECONDS',
+    120,
+    minimum=30,
+    maximum=300,
+)
 _MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED_RAW = os.environ.get(
     'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED', 'false',
 ).strip().lower()
@@ -1025,10 +1129,12 @@ MARKETPLACE_FEED_STORAGE_MODE = os.environ.get(
     'MARKETPLACE_FEED_STORAGE_MODE',
     'legacy_public',
 ).strip().lower()
-if MARKETPLACE_FEED_STORAGE_MODE not in {'legacy_public', 'stable_bridge'}:
+if MARKETPLACE_FEED_STORAGE_MODE not in {
+    'legacy_public', 'stable_bridge', 'private_generation',
+}:
     raise ValueError(
-        'MARKETPLACE_FEED_STORAGE_MODE must be legacy_public or stable_bridge; '
-        'private_generation is reserved for a later release.',
+        'MARKETPLACE_FEED_STORAGE_MODE must be legacy_public, stable_bridge '
+        'or private_generation.',
     )
 MARKETPLACE_FEED_URL_SIGNING_KEYS = parse_marketplace_feed_url_signing_keys(
     os.environ.get('MARKETPLACE_FEED_URL_SIGNING_KEYS', ''),

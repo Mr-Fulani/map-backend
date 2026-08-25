@@ -8,7 +8,11 @@ from apps.marketplaces.models import (
     CategoryMapping,
     Listing,
     MarketplaceAccount,
+    MarketplaceFeedArtifact,
+    MarketplaceFeedArtifactUploadAttempt,
     MarketplaceFeedEndpoint,
+    MarketplaceFeedFetchEvidence,
+    MarketplaceFeedPutReconciliationAudit,
     MarketplaceFeedRun,
 )
 
@@ -119,6 +123,140 @@ class MarketplaceFeedEndpointAdmin(ModelAdmin):
     ]
     list_select_related = ['account', 'account__tenant']
     readonly_fields = [field.name for field in MarketplaceFeedEndpoint._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(MarketplaceFeedArtifact)
+class MarketplaceFeedArtifactAdmin(ModelAdmin):
+    """Read-only metadata without exposing private object locators."""
+
+    list_display = [
+        'id', 'account', 'endpoint', 'run', 'upload_attempt',
+        'listing_count', 'size_bytes', 'verified_at',
+    ]
+    list_filter = ['content_type', 'verification_method']
+    search_fields = [
+        'id', 'run__id', 'account__name', 'account__external_id',
+        'account__tenant__slug',
+    ]
+    list_select_related = ['account', 'account__tenant', 'endpoint', 'run']
+    exclude = ['storage_bucket', 'object_key', 'object_version_id']
+    readonly_fields = [
+        field.name
+        for field in MarketplaceFeedArtifact._meta.fields
+        if field.name not in {'storage_bucket', 'object_key', 'object_version_id'}
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(MarketplaceFeedArtifactUploadAttempt)
+class MarketplaceFeedArtifactUploadAttemptAdmin(ModelAdmin):
+    """Read-only upload journal with all private object locators hidden."""
+
+    list_display = [
+        'id', 'account', 'endpoint', 'run', 'attempt_no', 'state',
+        'put_resolution_source', 'revision', 'projection_count', 'size_bytes',
+        'created_at', 'updated_at',
+    ]
+    list_filter = ['state', 'put_resolution_source', 'content_type']
+    search_fields = [
+        'id', 'run__id', 'account__name', 'account__external_id',
+        'account__tenant__slug',
+    ]
+    list_select_related = ['account', 'account__tenant', 'endpoint', 'run']
+    exclude = [
+        'storage_bucket', 'expected_bucket_owner', 'object_key',
+        'object_version_id',
+    ]
+    readonly_fields = [
+        field.name
+        for field in MarketplaceFeedArtifactUploadAttempt._meta.fields
+        if field.name not in {
+            'storage_bucket', 'expected_bucket_owner', 'object_key',
+            'object_version_id',
+        }
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(MarketplaceFeedPutReconciliationAudit)
+class MarketplaceFeedPutReconciliationAuditAdmin(ModelAdmin):
+    """Read-only, locator-free evidence for reviewed PUT reconciliation."""
+
+    list_display = [
+        'id', 'attempt', 'outcome', 'to_state', 'pre_revision',
+        'post_revision', 'version_id_captured', 'decision_at', 'created_at',
+    ]
+    list_filter = ['outcome', 'to_state', 'version_id_captured']
+    search_fields = [
+        'id', 'attempt__id', 'attempt__run__id',
+        'attempt__account__name', 'attempt__account__external_id',
+        'attempt__account__tenant__slug',
+    ]
+    list_select_related = [
+        'attempt', 'attempt__account', 'attempt__account__tenant',
+        'attempt__run',
+    ]
+    readonly_fields = [
+        field.name
+        for field in MarketplaceFeedPutReconciliationAudit._meta.fields
+    ]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(MarketplaceFeedFetchEvidence)
+class MarketplaceFeedFetchEvidenceAdmin(ModelAdmin):
+    """Read-only redirect evidence without capability or storage material."""
+
+    list_display = [
+        'id', 'endpoint', 'artifact', 'request_method', 'redirect_status',
+        'capability_revision', 'endpoint_revision', 'source_intent_revision',
+        'run_revision', 'issued_at', 'redirect_expires_at',
+    ]
+    list_filter = ['request_method', 'redirect_status']
+    search_fields = [
+        'id', 'endpoint__public_id', 'artifact__id',
+        'endpoint__account__name', 'endpoint__account__external_id',
+        'endpoint__account__tenant__slug',
+    ]
+    list_select_related = [
+        'endpoint', 'endpoint__account', 'endpoint__account__tenant', 'artifact',
+    ]
+    readonly_fields = [
+        field.name for field in MarketplaceFeedFetchEvidence._meta.fields
+    ]
 
     def has_add_permission(self, request):
         return False

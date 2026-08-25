@@ -1,5 +1,8 @@
+import hashlib
 import io
-import uuid
+import tempfile
+from dataclasses import dataclass
+from typing import Any, BinaryIO, Iterable, cast
 from xml.etree import ElementTree as ET
 
 from django.conf import settings
@@ -16,6 +19,427 @@ _DEFAULT_CATEGORY = 'Запчасти и аксессуары'
 AVITO_TITLE_MAX_LENGTH = 200
 AVITO_DESCRIPTION_MAX_LENGTH = 7500
 
+# Legacy build_feed по публичному контракту возвращает bytes, поэтому размер
+# готового документа там всё равно один раз оказывается в памяти вызывающего
+# кода. Private artifact callers используют write_feed с отдельным disk-backed
+# sink и не делают финальный read(); в обоих путях полное ElementTree для 10 000
+# объявлений не создаётся.
+_FEED_SPOOL_MEMORY_BYTES = 1024 * 1024
+_FEED_BUILD_BATCH_SIZE = 500
+_MISSING = object()
+
+
+class FeedPayloadSizeExceeded(ValueError):
+    """The generated XML crossed the caller's explicit byte ceiling."""
+
+
+@dataclass(frozen=True, slots=True)
+class FeedWriteResult:
+    """Exact immutable metadata for bytes written to a caller-owned sink."""
+
+    listing_count: int
+    size_bytes: int
+    payload_sha256: str
+
+
+class _HashingBoundedWriter:
+    """Hash complete writes while refusing an oversized or partial sink."""
+
+    def __init__(self, sink: BinaryIO, *, max_bytes: int | None):
+        write = getattr(sink, 'write', None)
+        if not callable(write):
+            raise TypeError('Feed sink must expose a binary write() method.')
+        if max_bytes is not None and (
+            isinstance(max_bytes, bool)
+            or not isinstance(max_bytes, int)
+            or max_bytes < 1
+        ):
+            raise ValueError('Feed byte ceiling must be a positive integer.')
+        self._sink = sink
+        self._max_bytes = max_bytes
+        self._digest = hashlib.sha256()
+        self.size_bytes = 0
+
+    def write(self, chunk: bytes) -> None:
+        if not isinstance(chunk, bytes):
+            raise TypeError('Feed XML writer accepts bytes only.')
+        next_size = self.size_bytes + len(chunk)
+        if self._max_bytes is not None and next_size > self._max_bytes:
+            raise FeedPayloadSizeExceeded(
+                f'Feed XML exceeds the {self._max_bytes}-byte ceiling.',
+            )
+        written = self._sink.write(chunk)
+        if written != len(chunk):
+            raise OSError('Feed sink did not accept the complete byte chunk.')
+        self._digest.update(chunk)
+        self.size_bytes = next_size
+
+    @property
+    def payload_sha256(self) -> str:
+        return self._digest.hexdigest()
+
+
+def _cached_relation(instance, relation_name: str):
+    """Return a select_related value without accidentally issuing a query."""
+    state = getattr(instance, '_state', None)
+    fields_cache = getattr(state, 'fields_cache', None)
+    if fields_cache is None:
+        return _MISSING
+    return fields_cache.get(relation_name, _MISSING)
+
+
+def _prefetched_relation(instance, relation_name: str):
+    cache = getattr(instance, '_prefetched_objects_cache', None)
+    if cache is None:
+        return _MISSING
+    return cache.get(relation_name, _MISSING)
+
+
+def _batched(iterable, size: int):
+    batch = []
+    for item in iterable:
+        batch.append(item)
+        if len(batch) == size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+class _FeedBuildContext:
+    """Bounded, build-local caches for relations used by the Avito XML.
+
+    The coordinator already selects listing/product/account. The builder owns
+    the remaining fan-out relations and loads them per bounded batch, avoiding
+    queries per listing while not retaining all image model instances for a
+    10k feed at once.
+    """
+
+    def __init__(self):
+        self._category_mappings = {}
+        self._mapping_tenants_loaded = set()
+        self._categories = {}
+        self._category_specs = {}
+        self._addresses = {}
+        self._default_addresses = {}
+        self._images_by_product = {}
+
+    def prepare_batch(self, listings) -> None:
+        # These relations are batch-local. Keeping prior model instances would
+        # turn a 10k generation back into an O(N) ORM-object cache even though
+        # XML serialization itself is streaming.
+        self._categories = {}
+        self._category_specs = {}
+        self._addresses = {}
+        self._default_addresses = {}
+        self._load_category_mappings(listings)
+        self._load_categories(listings)
+        self._load_addresses(listings)
+        self._load_images(listings)
+
+    def _load_category_mappings(self, listings) -> None:
+        from apps.marketplaces.models import CategoryMapping
+
+        tenant_ids = set()
+        for listing in listings:
+            tenant_id = getattr(listing, 'tenant_id', None)
+            if tenant_id is None or tenant_id in self._mapping_tenants_loaded:
+                continue
+            tenant_ids.add(tenant_id)
+            tenant = _cached_relation(listing, 'tenant')
+            if tenant is _MISSING:
+                continue
+            prefetched = _prefetched_relation(tenant, 'category_mappings')
+            if prefetched is _MISSING:
+                continue
+            for mapping in prefetched:
+                if mapping.marketplace == CategoryMapping.MARKETPLACE_AVITO:
+                    self._category_mappings[
+                        (mapping.tenant_id, mapping.category_source)
+                    ] = mapping
+            self._mapping_tenants_loaded.add(tenant_id)
+
+        missing = tenant_ids - self._mapping_tenants_loaded
+        if not missing:
+            return
+        mappings = CategoryMapping.objects.filter(
+            tenant_id__in=missing,
+            marketplace=CategoryMapping.MARKETPLACE_AVITO,
+        ).order_by('pk')
+        for mapping in mappings:
+            self._category_mappings[
+                (mapping.tenant_id, mapping.category_source)
+            ] = mapping
+        self._mapping_tenants_loaded.update(missing)
+
+    def category_mapping(self, listing):
+        tenant_id = getattr(listing, 'tenant_id', None)
+        if tenant_id not in self._mapping_tenants_loaded:
+            return _get_category_mapping(listing)
+        product = listing.product
+        candidates = []
+        if product.category_1c:
+            candidates.append(product.category_1c)
+        category = self.category_for(listing)
+        if category is not None:
+            candidates.append(category.name)
+        for source in candidates:
+            mapping = self._category_mappings.get((tenant_id, source))
+            if mapping is not None:
+                return mapping
+        return None
+
+    def _register_category(self, category) -> int | None:
+        """Cache a loaded ancestry prefix and return its first missing parent."""
+
+        if category is None:
+            return None
+        category_id = getattr(category, 'pk', None)
+        if category_id is not None:
+            self._categories.setdefault(category_id, category)
+        parent = _cached_relation(category, 'parent')
+        if parent is not _MISSING:
+            return self._register_category(parent)
+        parent_id = getattr(category, 'parent_id', None)
+        if parent_id is not None and parent_id not in self._categories:
+            return parent_id
+        return None
+
+    def _load_categories(self, listings) -> None:
+        from apps.products.models import TenantCatalogCategory
+
+        wanted_ids = set()
+        for listing in listings:
+            product = listing.product
+            cached = _cached_relation(product, 'catalog_category')
+            if cached is not _MISSING:
+                missing_parent_id = self._register_category(cached)
+                if missing_parent_id is not None:
+                    wanted_ids.add(missing_parent_id)
+                continue
+            category_id = getattr(product, 'catalog_category_id', None)
+            if category_id is not None:
+                wanted_ids.add(category_id)
+
+        pending = wanted_ids - self._categories.keys()
+        while pending:
+            categories = list(TenantCatalogCategory.objects.filter(pk__in=pending))
+            if not categories:
+                break
+            for category in categories:
+                self._register_category(category)
+            pending = {
+                category.parent_id for category in categories
+                if category.parent_id is not None
+                and category.parent_id not in self._categories
+            }
+
+    def category_for(self, listing):
+        product = listing.product
+        cached = _cached_relation(product, 'catalog_category')
+        if cached is not _MISSING:
+            self._register_category(cached)
+            return cached
+        category_id = getattr(product, 'catalog_category_id', None)
+        if category_id is not None:
+            return self._categories.get(category_id)
+        # Supports lightweight, non-model objects used by adapter callers.
+        return getattr(product, 'catalog_category', None)
+
+    def parent_of(self, category):
+        cached = _cached_relation(category, 'parent')
+        if cached is not _MISSING:
+            self._register_category(cached)
+            return cached
+        parent_id = getattr(category, 'parent_id', None)
+        if parent_id is not None:
+            return self._categories.get(parent_id)
+        return getattr(category, 'parent', None)
+
+    def avito_spec(self, listing) -> dict:
+        category = self.category_for(listing)
+        if category is None:
+            return {}
+        key = getattr(category, 'pk', None) or id(category)
+        if key not in self._category_specs:
+            self._category_specs[key] = _resolve_avito_spec(category, self.parent_of)
+        return self._category_specs[key]
+
+    @staticmethod
+    def _register_explicit_address(address, addresses) -> None:
+        if address is not None and getattr(address, 'pk', None) is not None:
+            addresses[address.pk] = address
+
+    def _load_addresses(self, listings) -> None:
+        from django.db.models import Q
+
+        from apps.marketplaces.models import MarketplacePlacementAddress
+
+        explicit_ids = set()
+        account_ids_to_load = set()
+        for listing in listings:
+            for relation_name in ('placement_address', 'bulk_placement_address'):
+                cached = _cached_relation(listing, relation_name)
+                if cached is not _MISSING:
+                    self._register_explicit_address(cached, self._addresses)
+                    continue
+                address_id = getattr(listing, f'{relation_name}_id', None)
+                if address_id is not None and address_id not in self._addresses:
+                    explicit_ids.add(address_id)
+
+            account_id = getattr(listing, 'account_id', None)
+            if account_id is None or account_id in self._default_addresses:
+                continue
+            account = _cached_relation(listing, 'account')
+            if account is _MISSING:
+                account = None
+            prefetched = (
+                _prefetched_relation(account, 'placement_addresses')
+                if account is not None else _MISSING
+            )
+            if prefetched is not _MISSING:
+                prefetched_addresses = cast(Iterable[Any], prefetched)
+                defaults = sorted(
+                    (
+                        address for address in prefetched_addresses
+                        if address.is_active and address.is_default
+                    ),
+                    key=lambda address: (address.name, address.pk),
+                )
+                self._default_addresses[account_id] = defaults[0] if defaults else None
+                for address in prefetched_addresses:
+                    self._register_explicit_address(address, self._addresses)
+            else:
+                account_ids_to_load.add(account_id)
+
+        query = None
+        if explicit_ids:
+            query = Q(pk__in=explicit_ids)
+        if account_ids_to_load:
+            default_query = Q(
+                account_id__in=account_ids_to_load,
+                is_active=True,
+                is_default=True,
+            )
+            query = default_query if query is None else query | default_query
+        if query is not None:
+            addresses = MarketplacePlacementAddress.objects.filter(query).order_by(
+                'account_id', 'name', 'pk',
+            )
+            for address in addresses:
+                self._addresses[address.pk] = address
+                if (
+                    address.account_id in account_ids_to_load
+                    and address.is_active
+                    and address.is_default
+                    and address.account_id not in self._default_addresses
+                ):
+                    self._default_addresses[address.account_id] = address
+        for account_id in account_ids_to_load:
+            self._default_addresses.setdefault(account_id, None)
+
+    def placement_sources(self, listing):
+        def relation_value(relation_name):
+            cached = _cached_relation(listing, relation_name)
+            if cached is not _MISSING:
+                return cached
+            relation_id = getattr(listing, f'{relation_name}_id', None)
+            if relation_id is not None:
+                return self._addresses.get(relation_id)
+            return getattr(listing, relation_name, None)
+
+        return (
+            relation_value('placement_address'),
+            relation_value('bulk_placement_address'),
+            self._default_addresses.get(getattr(listing, 'account_id', None)),
+        )
+
+    def _load_images(self, listings) -> None:
+        from django.db.models import F, Prefetch, Window, prefetch_related_objects
+        from django.db.models.functions import RowNumber
+
+        from apps.media_processing.models import ProductImageVariant
+        from apps.products.media import PUBLISHABLE_IMAGE_STATUSES
+        from apps.products.models import ProductImage
+
+        self._images_by_product = {}
+        products = {}
+        missing_product_ids = set()
+        for listing in listings:
+            product = listing.product
+            product_id = getattr(product, 'pk', None)
+            if product_id is None or product_id in products:
+                continue
+            products[product_id] = product
+            prefetched = _prefetched_relation(product, 'images')
+            if prefetched is _MISSING:
+                missing_product_ids.add(product_id)
+                continue
+            publishable = [
+                image for image in prefetched
+                if image.status in PUBLISHABLE_IMAGE_STATUSES
+            ]
+            self._images_by_product[product_id] = sorted(
+                publishable,
+                key=lambda image: (
+                    not image.is_primary,
+                    image.position,
+                    image.pk or 0,
+                ),
+            )[:10]
+
+        for product_id in missing_product_ids:
+            self._images_by_product[product_id] = []
+        if missing_product_ids:
+            ranked_images = (
+                ProductImage.objects.filter(
+                    product_id__in=missing_product_ids,
+                    status__in=PUBLISHABLE_IMAGE_STATUSES,
+                )
+                .annotate(
+                    _feed_rank=Window(
+                        expression=RowNumber(),
+                        partition_by=[F('product_id')],
+                        order_by=[
+                            F('is_primary').desc(),
+                            F('position').asc(),
+                            F('pk').asc(),
+                        ],
+                    ),
+                )
+                .filter(_feed_rank__lte=10)
+                .order_by('product_id', '-is_primary', 'position', 'pk')
+            )
+            for image in ranked_images:
+                self._images_by_product[image.product_id].append(image)
+
+        images = [
+            image
+            for product_images in self._images_by_product.values()
+            for image in product_images
+        ]
+        images_without_variants = [
+            image for image in images
+            if _prefetched_relation(image, 'variants') is _MISSING
+        ]
+        if images_without_variants:
+            prefetch_related_objects(
+                images_without_variants,
+                Prefetch(
+                    'variants',
+                    queryset=ProductImageVariant.objects.filter(is_active=True).only(
+                        'id', 'product_image_id', 's3_key', 'is_active',
+                    ),
+                ),
+            )
+
+    def images_for(self, product):
+        product_id = getattr(product, 'pk', None)
+        if product_id is None:
+            prefetched = _prefetched_relation(product, 'images')
+            return prefetched
+        return self._images_by_product.get(product_id, _MISSING)
+
 
 def _limit_marketplace_text(value, max_length: int) -> str:
     """Enforce adapter limits even for legacy or manually edited listings."""
@@ -29,6 +453,46 @@ def _limit_marketplace_text(value, max_length: int) -> str:
     return text[:max_length].rstrip(' ,;:-')
 
 
+def write_feed(
+    listings,
+    sink: BinaryIO,
+    *,
+    max_bytes: int | None = None,
+) -> FeedWriteResult:
+    """Write one exact Avito XML generation to a caller-owned binary sink.
+
+    Relations are prepared in bounded batches and only one ``Ad`` element is
+    materialized at a time.  The sink stays open and positioned after the last
+    byte; private storage callers can therefore use a dedicated disk-backed
+    file without creating a second full-payload ``bytes`` object in memory.
+    """
+
+    writer = _HashingBoundedWriter(sink, max_bytes=max_bytes)
+    context = _FeedBuildContext()
+    listing_count = 0
+    writer.write(b"<?xml version='1.0' encoding='UTF-8'?>\n")
+    writer.write(b'<Ads formatVersion="3" target="Avito.ru">\n')
+
+    for batch in _batched(listings, _FEED_BUILD_BATCH_SIZE):
+        context.prepare_batch(batch)
+        for listing in batch:
+            ad = _build_feed_ad(listing, context)
+            # level=1 produces the same two/four-space indentation as the
+            # former whole-document ElementTree, but only for one Ad.
+            ET.indent(ad, space='  ', level=1)
+            writer.write(b'  ')
+            writer.write(ET.tostring(ad, encoding='UTF-8'))
+            writer.write(b'\n')
+            listing_count += 1
+
+    writer.write(b'</Ads>')
+    return FeedWriteResult(
+        listing_count=listing_count,
+        size_bytes=writer.size_bytes,
+        payload_sha256=writer.payload_sha256,
+    )
+
+
 def build_feed(listings: list) -> bytes:
     """
     Генерирует XML-фид в формате Avito Autoload (formatVersion=3) для списка листингов.
@@ -36,60 +500,87 @@ def build_feed(listings: list) -> bytes:
     В фид попадают только активные объявления. Снятие с публикации в Avito
     делается ОТСУТСТВИЕМ объявления в файле (Avito архивирует то, чего нет),
     а не тегом — поэтому archived/deleted сюда передавать не нужно.
-    Возвращает bytes в UTF-8 с XML-декларацией.
+    Возвращает bytes в UTF-8 с XML-декларацией. Private artifact code должен
+    использовать ``write_feed`` и disk-backed sink, чтобы не читать финальный
+    payload целиком в RAM.
     """
-    root = ET.Element('Ads', formatVersion='3', target='Avito.ru')
+    with tempfile.SpooledTemporaryFile(
+        max_size=_FEED_SPOOL_MEMORY_BYTES,
+        mode='w+b',
+    ) as buf:
+        write_feed(listings, cast(BinaryIO, buf))
+        buf.seek(0)
+        return buf.read()
 
-    for listing in listings:
-        product = listing.product
-        ad = ET.SubElement(root, 'Ad')
 
-        # Id — наш ключ идемпотентности; по нему сопоставляем с avito_id через API
-        ET.SubElement(ad, 'Id').text = str(listing.publish_idempotency_key)
-        ET.SubElement(ad, 'Title').text = _limit_marketplace_text(
-            listing.title or product.name or '', AVITO_TITLE_MAX_LENGTH,
-        )
-        ET.SubElement(ad, 'Description').text = _limit_marketplace_text(
-            listing.description_ai or getattr(product, 'description_1c', '') or '',
-            AVITO_DESCRIPTION_MAX_LENGTH,
-        )
-        ET.SubElement(ad, 'Price').text = str(int(listing.price_on_listing))
-        ET.SubElement(ad, 'Category').text = _get_avito_category(listing)
-        # AdType / GoodsType — обязательные параметры категории «Запчасти и аксессуары».
-        # Без них Avito отклоняет объявление при обработке фида (коды 1073/1123).
-        ET.SubElement(ad, 'AdType').text = (
-            getattr(listing, 'ad_type', '') or 'Товар приобретен на продажу'
-        )
-        ET.SubElement(ad, 'GoodsType').text = _get_goods_type(listing)
-        # ProductType («Тип товара») — обязателен для запчастей, но зависит от
-        # конкретной детали, поэтому отдаём только если задан в маппинге категории.
-        product_type = _get_product_type(listing)
-        if product_type:
-            ET.SubElement(ad, 'ProductType').text = product_type
-        # SparePartType («Вид запчасти», напр. «Автосвет») — обязателен, но Avito
-        # умеет определить его сам по названию; отдаём, если задан в маппинге.
-        spare_part_type = _get_spare_part_type(listing)
-        if spare_part_type:
-            ET.SubElement(ad, 'SparePartType').text = spare_part_type
-        # Под-вид (EngineSparePartType / BodySparePartType / …) — для категорий Avito,
-        # где он обязателен (Двигатель/Кузов/Трансмиссия). Берём из дерева Avito.
-        subtype_tag, subtype_value = _get_part_subtype(listing)
-        if subtype_tag and subtype_value:
-            ET.SubElement(ad, subtype_tag).text = subtype_value
-        # Brand (Производитель) и OEM (Номер детали) — обязательны для запчастей.
-        ET.SubElement(ad, 'Brand').text = _get_brand(listing)
-        ET.SubElement(ad, 'OEM').text = _get_oem(listing)
-        _add_placement(ad, listing)
-        ET.SubElement(ad, 'Condition').text = _CONDITION_MAP.get(
-            getattr(product, 'condition', ''), 'Новое'
-        )
-        ET.SubElement(ad, 'AllowEmail').text = 'Нет'
-        _add_images(ad, product)
+def _build_feed_ad(listing, context: _FeedBuildContext):
+    product = listing.product
+    mapping = context.category_mapping(listing)
+    spec = context.avito_spec(listing)
+    category = context.category_for(listing)
+    manual_address, bulk_address, account_address = context.placement_sources(listing)
 
-    ET.indent(root, space='  ')
-    buf = io.BytesIO()
-    ET.ElementTree(root).write(buf, encoding='UTF-8', xml_declaration=True)
-    return buf.getvalue()
+    ad = ET.Element('Ad')
+    # Id — наш ключ идемпотентности; по нему сопоставляем с avito_id через API
+    ET.SubElement(ad, 'Id').text = str(listing.publish_idempotency_key)
+    ET.SubElement(ad, 'Title').text = _limit_marketplace_text(
+        listing.title or product.name or '', AVITO_TITLE_MAX_LENGTH,
+    )
+    ET.SubElement(ad, 'Description').text = _limit_marketplace_text(
+        listing.description_ai or getattr(product, 'description_1c', '') or '',
+        AVITO_DESCRIPTION_MAX_LENGTH,
+    )
+    ET.SubElement(ad, 'Price').text = str(int(listing.price_on_listing))
+    ET.SubElement(ad, 'Category').text = _get_avito_category(
+        listing, mapping=mapping, spec=spec,
+    )
+    # AdType / GoodsType — обязательные параметры категории «Запчасти и аксессуары».
+    # Без них Avito отклоняет объявление при обработке фида (коды 1073/1123).
+    ET.SubElement(ad, 'AdType').text = (
+        getattr(listing, 'ad_type', '') or 'Товар приобретен на продажу'
+    )
+    ET.SubElement(ad, 'GoodsType').text = _get_goods_type(
+        listing, mapping=mapping, spec=spec,
+    )
+    # ProductType («Тип товара») — обязателен для запчастей, но зависит от
+    # конкретной детали, поэтому отдаём только если задан в маппинге категории.
+    product_type = _get_product_type(listing, mapping=mapping, spec=spec)
+    if product_type:
+        ET.SubElement(ad, 'ProductType').text = product_type
+    # SparePartType («Вид запчасти», напр. «Автосвет») — обязателен, но Avito
+    # умеет определить его сам по названию; отдаём, если задан в маппинге.
+    spare_part_type = _get_spare_part_type(listing, mapping=mapping, spec=spec)
+    if spare_part_type:
+        ET.SubElement(ad, 'SparePartType').text = spare_part_type
+    # Под-вид (EngineSparePartType / BodySparePartType / …) — для категорий Avito,
+    # где он обязателен (Двигатель/Кузов/Трансмиссия). Берём из дерева Avito.
+    subtype_tag, subtype_value = _get_part_subtype(
+        listing, spec=spec, category=category,
+    )
+    if subtype_tag and subtype_value:
+        ET.SubElement(ad, subtype_tag).text = subtype_value
+    # Brand (Производитель) и OEM (Номер детали) — обязательны для запчастей.
+    ET.SubElement(ad, 'Brand').text = _get_brand(listing)
+    ET.SubElement(ad, 'OEM').text = _get_oem(listing)
+    _add_placement(
+        ad,
+        listing,
+        mapping=mapping,
+        manual_address=manual_address,
+        bulk_address=bulk_address,
+        account_address=account_address,
+    )
+    ET.SubElement(ad, 'Condition').text = _CONDITION_MAP.get(
+        getattr(product, 'condition', ''), 'Новое'
+    )
+    ET.SubElement(ad, 'AllowEmail').text = 'Нет'
+    _add_images(
+        ad,
+        product,
+        images=context.images_for(product),
+        category=category,
+    )
+    return ad
 
 
 def get_ad_id(listing) -> str:
@@ -119,13 +610,18 @@ def _avito_spec(listing) -> dict:
     Резолвит catalog_category товара в лист Avito через category_map и берёт
     фиксированные значения полей и список обязательных полей из справочника.
     """
-    from apps.marketplaces.adapters.avito.category_map import (
-        avito_spec_for, leaf_spec_by_name, leaf_spec_by_slug,
-    )
     category = getattr(listing.product, 'catalog_category', None)
     if not category:
         return {}
-    parent = getattr(category, 'parent', None)
+    return _resolve_avito_spec(category, lambda node: getattr(node, 'parent', None))
+
+
+def _resolve_avito_spec(category, parent_of) -> dict:
+    from apps.marketplaces.adapters.avito.category_map import (
+        avito_spec_for, leaf_spec_by_name, leaf_spec_by_slug,
+    )
+
+    parent = parent_of(category)
     # 1) Базовая таксономия — через курируемый маппинг category_map.
     spec = avito_spec_for(getattr(category, 'name', ''), getattr(parent, 'name', ''))
     if spec:
@@ -140,7 +636,7 @@ def _avito_spec(listing) -> dict:
         if leaf:
             return {'slug': leaf.get('slug'), 'fixed': leaf.get('fixed', {}),
                     'required': leaf.get('required', [])}
-        node = getattr(node, 'parent', None)
+        node = parent_of(node)
     # 3) Легаси-фолбэк для записей без external_id — по имени (с предпочтением
     # легковой ветки при коллизии имён).
     by_name = leaf_spec_by_name()
@@ -150,52 +646,63 @@ def _avito_spec(listing) -> dict:
         if leaf:
             return {'slug': leaf.get('slug'), 'fixed': leaf.get('fixed', {}),
                     'required': leaf.get('required', [])}
-        node = getattr(node, 'parent', None)
+        node = parent_of(node)
     return {}
 
 
-def _avito_fixed(listing, tag: str) -> str:
+def _avito_fixed(listing, tag: str, *, spec=_MISSING) -> str:
     """Фиксированное значение поля Avito (tag) из маппинга категории, иначе пусто."""
-    return (_avito_spec(listing).get('fixed') or {}).get(tag, '')
+    if spec is _MISSING:
+        spec = _avito_spec(listing)
+    return (spec.get('fixed') or {}).get(tag, '')
 
 
-def _get_spare_part_type(listing) -> str:
+def _get_spare_part_type(listing, *, mapping=_MISSING, spec=_MISSING) -> str:
     """«Вид запчасти» (SparePartType): attributes_map тенанта → маппинг категории → пусто."""
-    mapping = _get_category_mapping(listing)
+    if mapping is _MISSING:
+        mapping = _get_category_mapping(listing)
     attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
     return _first_value(
         attributes.get('SparePartType'),
         attributes.get('spare_part_type'),
-        _avito_fixed(listing, 'SparePartType'),
+        _avito_fixed(listing, 'SparePartType', spec=spec),
     )
 
 
-def _get_avito_category(listing) -> str:
+def _get_avito_category(listing, *, mapping=_MISSING, spec=_MISSING) -> str:
     """Avito-категория: из спеки листа (fixed.Category) → маппинг → дефолт."""
-    fixed_category = _avito_fixed(listing, 'Category')
+    fixed_category = _avito_fixed(listing, 'Category', spec=spec)
     if fixed_category:
         return fixed_category
-    mapping = _get_category_mapping(listing)
+    if mapping is _MISSING:
+        mapping = _get_category_mapping(listing)
     if mapping:
         return mapping.category_target
     return _DEFAULT_CATEGORY
 
 
-def _get_part_subtype(listing) -> tuple[str | None, str]:
+def _get_part_subtype(
+    listing,
+    *,
+    spec=_MISSING,
+    category=_MISSING,
+) -> tuple[str | None, str]:
     """
     Вид запчасти 2-го уровня (EngineSparePartType / BodySparePartType / …) и значение.
 
     Если у листа Avito есть под-вид (в required) и товар стоит НИЖЕ листа в дереве
     Avito, то значение под-вида = имя категории товара (напр. «Патрубки вентиляции»).
     """
-    spec = _avito_spec(listing)
+    if spec is _MISSING:
+        spec = _avito_spec(listing)
     sub_tag = next(
         (t for t in (spec.get('required') or []) if t.endswith('SparePartType') and t != 'SparePartType'),
         None,
     )
     if not sub_tag:
         return None, ''
-    category = getattr(listing.product, 'catalog_category', None)
+    if category is _MISSING:
+        category = getattr(listing.product, 'catalog_category', None)
     if not category:
         return sub_tag, ''
     from apps.marketplaces.adapters.avito.category_map import leaf_spec_by_slug
@@ -210,18 +717,19 @@ def _get_part_subtype(listing) -> tuple[str | None, str]:
     return sub_tag, category.name
 
 
-def _get_goods_type(listing) -> str:
+def _get_goods_type(listing, *, mapping=_MISSING, spec=_MISSING) -> str:
     """
     Возвращает «Вид товара» (GoodsType) для категории «Запчасти и аксессуары».
 
     Берёт значение из attributes_map маппинга категории, иначе — дефолт «Запчасти».
     """
-    mapping = _get_category_mapping(listing)
+    if mapping is _MISSING:
+        mapping = _get_category_mapping(listing)
     attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
     return _first_value(
         attributes.get('GoodsType'),
         attributes.get('goods_type'),
-        _avito_fixed(listing, 'GoodsType'),
+        _avito_fixed(listing, 'GoodsType', spec=spec),
         'Запчасти',
     )
 
@@ -253,7 +761,24 @@ def _get_oem(listing) -> str:
     article = str(getattr(product, 'article', '') or '').strip()
     if article:
         return article
-    return f'NA{uuid.uuid4().hex[:10].upper()}'
+    # A durable feed generation must be byte-for-byte reproducible after a
+    # worker crash.  A random fallback made the same saved Listing produce a
+    # different payload and therefore a different artifact SHA on every
+    # rebuild.  Listing primary keys are platform-wide stable; hash the value
+    # with an explicit domain/version instead of exposing the raw identifier.
+    listing_id = getattr(listing, 'pk', None)
+    if (
+        isinstance(listing_id, bool)
+        or not isinstance(listing_id, int)
+        or listing_id < 1
+    ):
+        raise ValueError(
+            'A saved listing is required for the deterministic OEM fallback.',
+        )
+    fallback = hashlib.sha256(
+        f'avito-oem-fallback:v1:{listing_id}'.encode('ascii'),
+    ).hexdigest()[:10].upper()
+    return f'NA{fallback}'
 
 
 def product_has_oem(listing) -> bool:
@@ -261,19 +786,20 @@ def product_has_oem(listing) -> bool:
     return bool([x for x in (getattr(listing.product, 'oem_numbers', None) or []) if str(x).strip()])
 
 
-def _get_product_type(listing) -> str:
+def _get_product_type(listing, *, mapping=_MISSING, spec=_MISSING) -> str:
     """
     Возвращает «Тип товара» (ProductType): attributes_map тенанта → маппинг категории.
 
     Для запчастей это класс техники («Для автомобилей»), для шин/масел — конкретный
     тип («Легковые шины», «Моторные масла»). Если не задано — тег в фид не попадёт.
     """
-    mapping = _get_category_mapping(listing)
+    if mapping is _MISSING:
+        mapping = _get_category_mapping(listing)
     attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
     return _first_value(
         attributes.get('ProductType'),
         attributes.get('product_type'),
-        _avito_fixed(listing, 'ProductType'),
+        _avito_fixed(listing, 'ProductType', spec=spec),
     )
 
 
@@ -537,19 +1063,30 @@ def avito_field_warnings(listing) -> list[str]:
     return warnings
 
 
-def get_contact_fields(listing) -> tuple[str, str]:
+def get_contact_fields(
+    listing,
+    *,
+    mapping=_MISSING,
+    manual_address=_MISSING,
+    bulk_address=_MISSING,
+    account_address=_MISSING,
+) -> tuple[str, str]:
     """
     Возвращает (контактное лицо, телефон) по тем же приоритетам, что и фид.
 
     Используется фидом и валидацией публикации, чтобы не отправлять в Avito
     объявления с пустыми контактами.
     """
-    mapping = _get_category_mapping(listing)
+    if mapping is _MISSING:
+        mapping = _get_category_mapping(listing)
     attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
     account = listing.account
-    manual_address = getattr(listing, 'placement_address', None)
-    bulk_address = getattr(listing, 'bulk_placement_address', None)
-    account_address = _get_account_default_address(account)
+    if manual_address is _MISSING:
+        manual_address = getattr(listing, 'placement_address', None)
+    if bulk_address is _MISSING:
+        bulk_address = getattr(listing, 'bulk_placement_address', None)
+    if account_address is _MISSING:
+        account_address = _get_account_default_address(account)
 
     manager_name = _first_value(
         getattr(manual_address, 'manager_name', ''),
@@ -577,10 +1114,6 @@ def get_contact_fields(listing) -> tuple[str, str]:
 def _get_category_mapping(listing):
     try:
         from apps.marketplaces.models import CategoryMapping
-        qs = CategoryMapping.objects.filter(
-            tenant=listing.tenant,
-            marketplace=CategoryMapping.MARKETPLACE_AVITO,
-        )
         # Приоритет — категория из источника (1С). Если по ней маппинга нет,
         # пробуем по имени категории каталога: импортированные из дерева Avito
         # маппинги ключуются именно по имени листа (см. AvitoCatalogImporter).
@@ -590,6 +1123,23 @@ def _get_category_mapping(listing):
         catalog_category = getattr(listing.product, 'catalog_category', None)
         if catalog_category is not None:
             candidates.append(catalog_category.name)
+        prefetched = _prefetched_relation(listing.tenant, 'category_mappings')
+        if prefetched is not _MISSING:
+            by_source = {
+                mapping.category_source: mapping
+                for mapping in prefetched
+                if mapping.marketplace == CategoryMapping.MARKETPLACE_AVITO
+            }
+            for source in candidates:
+                mapping = by_source.get(source)
+                if mapping is not None:
+                    return mapping
+            return None
+
+        qs = CategoryMapping.objects.filter(
+            tenant=listing.tenant,
+            marketplace=CategoryMapping.MARKETPLACE_AVITO,
+        )
         for source in candidates:
             mapping = qs.filter(category_source=source).first()
             if mapping:
@@ -612,14 +1162,26 @@ def has_resolved_category(listing) -> bool:
     return _get_category_mapping(listing) is not None
 
 
-def _add_placement(ad, listing) -> None:
+def _add_placement(
+    ad,
+    listing,
+    *,
+    mapping=_MISSING,
+    manual_address=_MISSING,
+    bulk_address=_MISSING,
+    account_address=_MISSING,
+) -> None:
     """Добавляет адрес и контактные поля из листинга, категории или аккаунта."""
-    mapping = _get_category_mapping(listing)
+    if mapping is _MISSING:
+        mapping = _get_category_mapping(listing)
     attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
     account = listing.account
-    manual_address = getattr(listing, 'placement_address', None)
-    bulk_address = getattr(listing, 'bulk_placement_address', None)
-    account_address = _get_account_default_address(account)
+    if manual_address is _MISSING:
+        manual_address = getattr(listing, 'placement_address', None)
+    if bulk_address is _MISSING:
+        bulk_address = getattr(listing, 'bulk_placement_address', None)
+    if account_address is _MISSING:
+        account_address = _get_account_default_address(account)
 
     seller_address_id = _first_value(
         getattr(manual_address, 'seller_address_id', ''),
@@ -641,7 +1203,13 @@ def _add_placement(ad, listing) -> None:
         getattr(account_address, 'address', ''),
         getattr(account, 'default_address', ''),
     )
-    manager_name, contact_phone = get_contact_fields(listing)
+    manager_name, contact_phone = get_contact_fields(
+        listing,
+        mapping=mapping,
+        manual_address=manual_address,
+        bulk_address=bulk_address,
+        account_address=account_address,
+    )
 
     # Защита от мусорного значения: external_id аккаунта — это не ID адреса.
     # Avito такой SellerAddressID не находит, поэтому игнорируем и шлём текстовый адрес.
@@ -662,6 +1230,16 @@ def _get_account_default_address(account):
     if not account:
         return None
     try:
+        prefetched = _prefetched_relation(account, 'placement_addresses')
+        if prefetched is not _MISSING:
+            defaults = sorted(
+                (
+                    address for address in prefetched
+                    if address.is_active and address.is_default
+                ),
+                key=lambda address: (address.name, address.pk),
+            )
+            return defaults[0] if defaults else None
         return account.placement_addresses.filter(is_active=True, is_default=True).first()
     except Exception:
         return None
@@ -675,20 +1253,23 @@ def _first_value(*values) -> str:
     return ''
 
 
-def _add_images(ad, product) -> None:
+def _add_images(ad, product, *, images=_MISSING, category=_MISSING) -> None:
     """Добавляет в фид только одобренные/ручные/импортированные фото."""
     from apps.products.media import (
         get_product_image_delivery_key, get_publishable_product_images,
     )
 
+    if images is _MISSING:
+        images = get_publishable_product_images(product)
     urls = []
-    for image in get_publishable_product_images(product):
+    for image in images:
         url = _image_url(get_product_image_delivery_key(image), image.url_source)
         if url.startswith('http'):
             urls.append(url)
 
     if not urls:
-        category = getattr(product, 'catalog_category', None)
+        if category is _MISSING:
+            category = getattr(product, 'catalog_category', None)
         if category and category.default_image_s3_key:
             url = _image_url(category.default_image_s3_key, '')
             if url.startswith('http'):
