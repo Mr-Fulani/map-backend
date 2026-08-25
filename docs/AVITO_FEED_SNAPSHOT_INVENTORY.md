@@ -78,12 +78,12 @@ snapshot и не относится ни к одному пакету.
 | A | `apps/marketplaces/migrations/0023_marketplace_feed_run.py` | P3 |
 | A | `apps/marketplaces/migrations/0024_feed_run_listing_concurrent_index.py` | P3 |
 | A | `apps/marketplaces/migrations/0025_marketplace_feed_endpoint.py` | P4 |
-| A | `apps/marketplaces/migrations/0026_feed_dark_expand.py` | P5 |
+| A | `apps/marketplaces/migrations/0026_feed_intent_expand.py` | P5 |
 | A | `apps/marketplaces/migrations/0027_feed_intent_due_concurrent_index.py` | P5 |
 | A | `apps/marketplaces/migrations/0028_feed_run_source_intent_unique.py` | P5 |
-| A | `apps/marketplaces/migrations/0029_feed_endpoint_artifact_concurrent_index.py` | P5 |
-| A | `apps/marketplaces/migrations/0030_feed_run_artifact_concurrent_index.py` | P5 |
-| A | `apps/marketplaces/migrations/0031_feed_artifact_ownership_guards.py` | P5 |
+| A | `apps/marketplaces/migrations/0029_feed_endpoint_artifact_concurrent_index.py` | P6 FROZEN |
+| A | `apps/marketplaces/migrations/0030_feed_run_artifact_concurrent_index.py` | P6 FROZEN |
+| A | `apps/marketplaces/migrations/0031_feed_artifact_ownership_guards.py` | P6 FROZEN |
 | A | `apps/marketplaces/migrations/0032_feed_artifact_upload_attempt.py` | P6 FROZEN |
 | A | `apps/marketplaces/migrations/0033_feed_artifact_upload_guards.py` | P6 FROZEN |
 | A | `apps/marketplaces/migrations/0034_feed_put_reconciliation_audit.py` | P6 FROZEN |

@@ -21,7 +21,7 @@ from apps.anti_ban.ramp_up import GradualRampUp
 from apps.anti_ban.velocity import VelocityController
 from apps.billing.services import LimitChecker
 from apps.core.advisory_lock import try_session_advisory_lock
-from apps.core.dispatch import enqueue_durable_task
+from apps.core.dispatch import SafeRetryableDispatchError, enqueue_durable_task
 from apps.core.http_responses import TrustedResponseError
 from apps.marketplaces.adapters.avito.adapter import (
     AmbiguousFeedSubmissionError,
@@ -87,6 +87,13 @@ _POLL_RETRY_DELAY = datetime.timedelta(minutes=30)
 _FEED_POLL_BATCH_SIZE = 100
 _FEED_POLL_BATCH_DELAY_SECONDS = 30
 _MAX_PROVIDER_REASON_LENGTH = 2000
+_DURABLE_FEED_INTENT_TASK_NAME = (
+    'apps.marketplaces.tasks.process_marketplace_feed_intent'
+)
+_DURABLE_FEED_INTENT_SCANNER_TASK_NAME = (
+    'apps.marketplaces.tasks.dispatch_due_marketplace_feed_intents'
+)
+_DURABLE_FEED_INTENT_SCAN_BATCH_SIZE = 100
 _DURABLE_FEED_TASK_NAME = (
     'apps.marketplaces.tasks.process_marketplace_feed_run_step'
 )
@@ -133,6 +140,12 @@ def _durable_feed_run_enabled() -> bool:
         settings.MARKETPLACE_FEED_RUN_MODE == 'durable'
         and _status_lifecycle_dual_write_enabled()
     )
+
+
+def _durable_feed_ingress_enabled() -> bool:
+    """Enable only the dark exact-revision worker in explicit durable tests."""
+
+    return settings.MARKETPLACE_FEED_INGRESS_MODE == 'durable'
 
 
 def _bounded_provider_reason(value: object) -> str:
@@ -2555,6 +2568,193 @@ def _process_reporting_feed_run(
         ),
         'run_id': str(applied.snapshot.run_id),
         'rejected': applied.rejected_count,
+    }
+
+
+def _bounded_feed_intent_scan_limit(value: object) -> int:
+    if isinstance(value, bool):
+        return 1
+    try:
+        normalized = int(str(value))
+    except (TypeError, ValueError, OverflowError):
+        return _DURABLE_FEED_INTENT_SCAN_BATCH_SIZE
+    return max(1, min(normalized, _DURABLE_FEED_INTENT_SCAN_BATCH_SIZE))
+
+
+def _positive_feed_intent_argument(value: object) -> int | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        normalized = int(str(value))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if normalized <= 0 or str(normalized) != str(value):
+        return None
+    return normalized
+
+
+@shared_task(
+    name=_DURABLE_FEED_INTENT_TASK_NAME,
+    queue='avito_publish',
+)
+def process_marketplace_feed_intent(account_id: int, revision: int):
+    """Validate one exact desired revision without sending a feed."""
+
+    if not _durable_feed_ingress_enabled():
+        raise SafeRetryableDispatchError(
+            'Durable marketplace feed ingress is disabled; delivery retained.',
+        )
+    normalized_account_id = _positive_feed_intent_argument(account_id)
+    expected_revision = _positive_feed_intent_argument(revision)
+    if normalized_account_id is None or expected_revision is None:
+        return {'status': 'invalid'}
+
+    account = (
+        MarketplaceAccount.all_objects.select_related('tenant')
+        .only(
+            'pk',
+            'is_active',
+            'deleted_at',
+            'tenant__is_active',
+            'feed_intent_revision',
+            'feed_intent_dispatched_revision',
+        )
+        .filter(pk=normalized_account_id)
+        .first()
+    )
+    if account is None:
+        raise SafeRetryableDispatchError(
+            'Marketplace feed intent owner is temporarily unavailable.',
+        )
+    if (
+        account.deleted_at is not None
+        or not account.is_active
+        or not account.tenant.is_active
+    ):
+        raise SafeRetryableDispatchError(
+            'Marketplace feed intent owner is inactive; delivery retained.',
+        )
+
+    current_revision = int(account.feed_intent_revision)
+    dispatched_revision = int(account.feed_intent_dispatched_revision)
+    if dispatched_revision > current_revision:
+        return {'status': 'state_conflict'}
+    if expected_revision < current_revision:
+        return {'status': 'stale'}
+    if (
+        expected_revision > current_revision
+        or expected_revision > dispatched_revision
+    ):
+        return {'status': 'future_revision'}
+    return {
+        'status': 'not_activated',
+        'account_id': normalized_account_id,
+        'revision': expected_revision,
+    }
+
+
+@shared_task(
+    name=_DURABLE_FEED_INTENT_SCANNER_TASK_NAME,
+    queue='avito_publish',
+)
+def dispatch_due_marketplace_feed_intents(limit: int = 100):
+    """Observe shadow intents or dispatch the explicitly dark durable leaf."""
+
+    batch_limit = _bounded_feed_intent_scan_limit(limit)
+    dispatch_time = now()
+    mode = settings.MARKETPLACE_FEED_INGRESS_MODE
+    due_filter = dict(
+        marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+        deleted_at__isnull=True,
+        is_active=True,
+        tenant__is_active=True,
+        feed_intent_due_at__isnull=False,
+        feed_intent_due_at__lte=dispatch_time,
+        feed_intent_revision__gt=F('feed_intent_dispatched_revision'),
+    )
+    if mode == 'legacy':
+        return {
+            'status': 'legacy_inert',
+            'selected': 0,
+            'enqueued': 0,
+            'batch_limit': batch_limit,
+        }
+    if mode == 'dual_write':
+        selected = (
+            MarketplaceAccount.all_objects.filter(**due_filter)
+            .order_by('feed_intent_due_at', 'pk')
+            .values_list('pk', flat=True)[:batch_limit]
+        )
+        return {
+            'status': 'shadow_observed',
+            'selected': len(selected),
+            'enqueued': 0,
+            'batch_limit': batch_limit,
+        }
+    if not _durable_feed_ingress_enabled():
+        return {
+            'status': 'disabled',
+            'selected': 0,
+            'enqueued': 0,
+            'batch_limit': batch_limit,
+        }
+
+    with transaction.atomic():
+        accounts = list(
+            MarketplaceAccount.all_objects.select_for_update(
+                skip_locked=True,
+                of=('self',),
+            )
+            .filter(**due_filter)
+            .only(
+                'pk',
+                'feed_intent_revision',
+                'feed_intent_dispatched_revision',
+                'feed_intent_due_at',
+            )
+            .order_by('feed_intent_due_at', 'pk')[:batch_limit]
+        )
+        dispatch_ids = []
+        for account in accounts:
+            revision = int(account.feed_intent_revision)
+            dispatch = enqueue_durable_task(
+                _DURABLE_FEED_INTENT_TASK_NAME,
+                args=[account.pk, revision],
+                deduplication_key=f'feed-intent:{account.pk}:rev:{revision}',
+                available_at=dispatch_time,
+                max_run_attempts=5,
+                execution_timeout_seconds=180,
+            )
+            expected_args = [account.pk, revision]
+            if (
+                dispatch.task_name != _DURABLE_FEED_INTENT_TASK_NAME
+                or dispatch.queue != 'avito_publish'
+                or dispatch.args != expected_args
+                or dispatch.kwargs != {}
+            ):
+                raise RuntimeError(
+                    'Conflicting durable dispatch owns the feed-intent '
+                    'deduplication key.',
+                )
+            dispatch_ids.append(dispatch.pk)
+            account.feed_intent_dispatched_revision = revision
+            account.feed_intent_due_at = None
+
+        if accounts:
+            MarketplaceAccount.all_objects.bulk_update(
+                accounts,
+                (
+                    'feed_intent_dispatched_revision',
+                    'feed_intent_due_at',
+                ),
+            )
+
+    return {
+        'status': 'dispatched',
+        'selected': len(accounts),
+        'enqueued': len(dispatch_ids),
+        'batch_limit': batch_limit,
+        'dispatch_ids': [str(dispatch_id) for dispatch_id in dispatch_ids],
     }
 
 
