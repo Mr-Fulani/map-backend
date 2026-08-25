@@ -29,6 +29,52 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _explicit_env_allow_blank(name: str) -> str:
+    if name not in os.environ:
+        raise ImproperlyConfigured(
+            f'{name} должен быть явно задан в production.',
+        )
+    return os.environ[name].strip()
+
+
+def _strict_explicit_ascii_int(
+    name: str,
+    *,
+    minimum: int,
+    maximum: int,
+) -> int:
+    raw_value = _required_env(name)
+    if not raw_value.isascii() or not raw_value.isdecimal():
+        raise ImproperlyConfigured(
+            f'{name} должен быть целым ASCII-числом.',
+        )
+    value = int(raw_value)
+    if not minimum <= value <= maximum:
+        raise ImproperlyConfigured(
+            f'{name} должен быть от {minimum} до {maximum}.',
+        )
+    return value
+
+
+def _is_safe_feed_artifact_bucket(value: str) -> bool:
+    allowed = frozenset('abcdefghijklmnopqrstuvwxyz0123456789.-')
+    if (
+        not 3 <= len(value) <= 63
+        or value[0] not in 'abcdefghijklmnopqrstuvwxyz0123456789'
+        or value[-1] not in 'abcdefghijklmnopqrstuvwxyz0123456789'
+        or any(character not in allowed for character in value)
+        or '..' in value
+        or '.-' in value
+        or '-.' in value
+    ):
+        return False
+    labels = value.split('.')
+    return not (
+        len(labels) == 4
+        and all(label.isascii() and label.isdecimal() for label in labels)
+    )
+
+
 def _required_bool_env(name: str) -> bool:
     value = _required_env(name).lower()
     if value not in {'true', 'false'}:
@@ -179,6 +225,68 @@ if (
         'MARKETPLACE_FEED_INGRESS_MODE=dual_write требует '
         'AVITO_STATUS_LIFECYCLE_MODE=dual_write.',
     )
+MARKETPLACE_FEED_ARTIFACT_MODE = _required_env(
+    'MARKETPLACE_FEED_ARTIFACT_MODE',
+).lower()
+if MARKETPLACE_FEED_ARTIFACT_MODE not in {
+    'disabled', 'shadow', 'canary', 'active',
+}:
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_ARTIFACT_MODE должен быть disabled, shadow, canary '
+        'или active.',
+    )
+if MARKETPLACE_FEED_ARTIFACT_MODE == 'active':
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_ARTIFACT_MODE=active не входит в P6 canary.',
+    )
+MARKETPLACE_FEED_ARTIFACT_BUCKET = _explicit_env_allow_blank(
+    'MARKETPLACE_FEED_ARTIFACT_BUCKET',
+)
+if (
+    MARKETPLACE_FEED_ARTIFACT_BUCKET
+    and not _is_safe_feed_artifact_bucket(MARKETPLACE_FEED_ARTIFACT_BUCKET)
+):
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_ARTIFACT_BUCKET должен быть безопасным lowercase '
+        'S3 bucket name.',
+    )
+MARKETPLACE_FEED_ARTIFACT_ACCESS_KEY_ID = _explicit_env_allow_blank(
+    'MARKETPLACE_FEED_ARTIFACT_ACCESS_KEY_ID',
+)
+MARKETPLACE_FEED_ARTIFACT_SECRET_ACCESS_KEY = _explicit_env_allow_blank(
+    'MARKETPLACE_FEED_ARTIFACT_SECRET_ACCESS_KEY',
+)
+MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER = _explicit_env_allow_blank(
+    'MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER',
+)
+MARKETPLACE_FEED_ARTIFACT_KMS_KEY_ID = _explicit_env_allow_blank(
+    'MARKETPLACE_FEED_ARTIFACT_KMS_KEY_ID',
+)
+if MARKETPLACE_FEED_ARTIFACT_MODE != 'disabled' and not all((
+    MARKETPLACE_FEED_ARTIFACT_BUCKET,
+    MARKETPLACE_FEED_ARTIFACT_ACCESS_KEY_ID,
+    MARKETPLACE_FEED_ARTIFACT_SECRET_ACCESS_KEY,
+    MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER,
+    MARKETPLACE_FEED_ARTIFACT_KMS_KEY_ID,
+)):
+    raise ImproperlyConfigured(
+        'P6 private artifact mode требует '
+        'MARKETPLACE_FEED_ARTIFACT_BUCKET, '
+        'MARKETPLACE_FEED_ARTIFACT_ACCESS_KEY_ID, '
+        'MARKETPLACE_FEED_ARTIFACT_SECRET_ACCESS_KEY, '
+        'MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER и '
+        'MARKETPLACE_FEED_ARTIFACT_KMS_KEY_ID.',
+    )
+MARKETPLACE_FEED_ARTIFACT_MAX_BYTES = _strict_explicit_ascii_int(
+    'MARKETPLACE_FEED_ARTIFACT_MAX_BYTES',
+    minimum=1,
+    maximum=1_073_741_824,
+)
+MARKETPLACE_FEED_REDIRECT_TTL_SECONDS = _strict_explicit_ascii_int(
+    'MARKETPLACE_FEED_REDIRECT_TTL_SECONDS',
+    minimum=30,
+    maximum=300,
+)
 marketplace_feed_profile_migration_enabled_raw = _required_env(
     'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED',
 ).lower()
@@ -211,10 +319,31 @@ if not 300 <= MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS <= 86_400:
 MARKETPLACE_FEED_STORAGE_MODE = _required_env(
     'MARKETPLACE_FEED_STORAGE_MODE',
 ).lower()
-if MARKETPLACE_FEED_STORAGE_MODE not in {'legacy_public', 'stable_bridge'}:
+if MARKETPLACE_FEED_STORAGE_MODE not in {
+    'legacy_public', 'stable_bridge', 'private_generation',
+}:
     raise ImproperlyConfigured(
-        'MARKETPLACE_FEED_STORAGE_MODE должен быть legacy_public или '
-        'stable_bridge; private_generation ещё недоступен.',
+        'MARKETPLACE_FEED_STORAGE_MODE должен быть legacy_public, '
+        'stable_bridge или private_generation.',
+    )
+if MARKETPLACE_FEED_ARTIFACT_MODE == 'shadow' and (
+    MARKETPLACE_FEED_STORAGE_MODE != 'stable_bridge'
+    or MARKETPLACE_FEED_INGRESS_MODE != 'dual_write'
+):
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_ARTIFACT_MODE=shadow требует '
+        'MARKETPLACE_FEED_STORAGE_MODE=stable_bridge и '
+        'MARKETPLACE_FEED_INGRESS_MODE=dual_write.',
+    )
+if MARKETPLACE_FEED_ARTIFACT_MODE == 'canary' and (
+    MARKETPLACE_FEED_STORAGE_MODE != 'private_generation'
+    or MARKETPLACE_FEED_INGRESS_MODE != 'dual_write'
+    or MARKETPLACE_FEED_RUN_MODE != 'legacy'
+    or MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED
+):
+    raise ImproperlyConfigured(
+        'P6 canary требует private_generation, dual_write ingress, legacy '
+        'run mode и выключенную массовую миграцию профилей.',
     )
 if (
     MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED
@@ -225,7 +354,15 @@ if (
         'MARKETPLACE_FEED_STORAGE_MODE=stable_bridge.',
     )
 if (
-    MARKETPLACE_FEED_STORAGE_MODE == 'stable_bridge'
+    MARKETPLACE_FEED_STORAGE_MODE == 'private_generation'
+    and MARKETPLACE_FEED_ARTIFACT_MODE != 'canary'
+):
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_STORAGE_MODE=private_generation разрешён только '
+        'для ограниченного P6 canary.',
+    )
+if (
+    MARKETPLACE_FEED_STORAGE_MODE in {'stable_bridge', 'private_generation'}
     or MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED
 ):
     MARKETPLACE_FEED_PUBLIC_BASE_URL = _required_env(
@@ -249,7 +386,7 @@ if canonical_feed_public_base_url != expected_feed_public_base_url:
         'production SITE_URL origin.',
     )
 if (
-    MARKETPLACE_FEED_STORAGE_MODE == 'stable_bridge'
+    MARKETPLACE_FEED_STORAGE_MODE in {'stable_bridge', 'private_generation'}
     or MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED
 ):
     try:

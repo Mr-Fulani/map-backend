@@ -273,25 +273,35 @@ legacy инертен. P5 `dual_write` observation отдельно разреш
 backend (`2357 passed, 1 skipped`), оба mypy, flake8 и migration drift; до его
 deploy production environment остаётся legacy.
 
-### P6. Приватные файлы — отдельный экспериментальный проект
+### P6. Приватные файлы — активированный экспериментальный проект
 
 Содержимое:
 
-- миграции `0029`–`0035` (включая перенесённую artifact schema foundation);
+- две свёрнутые миграции `0029`–`0030` поверх production `0028` (artifact
+  schema и все P6 PostgreSQL guards);
 - versioned private bucket;
 - запись и проверка точной версии XML;
 - ручная сверка неизвестного результата.
 
-До начала обязательны:
+Release gate:
 
-- решение, что private storage действительно нужен сейчас;
-- отдельные credentials, IAM/KMS и presigner;
+- отдельные credentials, IAM/KMS и presigner, включая сверку folder owner
+  через `GetBucketAcl`;
 - реальный bucket canary;
 - тест 10 000 объявлений с памятью, диском и временем;
 - утверждённый способ восстановления.
 
-Deploy: только как выключенный эксперимент. Production activation не входит в
-этот пакет.
+P6 отдельно разрешён владельцем продукта 2026-08-25 и собирается одним PR.
+Первичный deploy выполняется только выключенным. После успешного release gate
+разрешён ручной canary ровно одного явно выбранного Avito-аккаунта с атомарным
+переключением и rollback без удаления объекта. Широкая production-активация,
+P7, retention delete, GC, удаление файлов и `0039` в пакет не входят.
+
+Локальный P6 gate закрыт: полный backend дал `2592 passed, 3 skipped`,
+flake8, оба mypy gate, migration drift и OpenAPI зелёные; свежая PostgreSQL
+база прошла `0029`–`0030` и rollback/reapply `0030 → 0028 → 0030`. Следующий
+gate — один PR/CI, выключенный deploy, реальная bucket/IAM/KMS preflight и
+ручной canary одного аккаунта.
 
 ### P7. Удаление старых файлов и DB-защита — backlog
 
@@ -334,7 +344,7 @@ P0 docs/inventory
   → P3 durable job foundation (off)
   → P4 stable endpoint/profile (off)
   → P5 dual-write observation
-  → отдельное решение о P6 private storage
+  → P6 private storage (off deploy → один ручной canary)
   → отдельное решение о P7 cleanup/GC/0039
 ```
 

@@ -81,6 +81,30 @@ def marketplace_feed_bridge(request):
     if endpoint is None:
         return _not_found()
 
+    if endpoint.storage_mode == MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION:
+        from apps.marketplaces.feed_artifact_clients import (
+            presign_private_feed_exact_version,
+        )
+        from apps.marketplaces.feed_artifact_serving import (
+            issue_private_feed_redirect,
+            private_feed_route_enabled,
+        )
+
+        if not private_feed_route_enabled(endpoint):
+            return _not_found()
+        try:
+            redirect = issue_private_feed_redirect(
+                public_id=public_id,
+                provided_capability=provided_key,
+                request_method=request.method,
+                presign_exact_version=presign_private_feed_exact_version,
+            )
+        except Exception:
+            # The unauthenticated capability route never leaks signing,
+            # storage or ownership failures to the caller.
+            return _not_found()
+        return _response(307, location=redirect.location)
+
     if (
         endpoint.storage_mode != MarketplaceFeedEndpoint.StorageMode.LEGACY_BRIDGE
         or endpoint.serve_enabled is not True

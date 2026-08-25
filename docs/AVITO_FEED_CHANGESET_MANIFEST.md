@@ -269,19 +269,31 @@ Foundation merged через PR `#246` и deployed exact commit `2e9958c` с
 settings. Deploy кода выполняется только с прежними legacy-флагами;
 `dual_write` — отдельный rollout после release gate.
 
-## P6 — private artifact experiment, миграции 0029–0035
+## P6 — private artifact experiment, миграции 0029–0030
 
 Основные файлы:
 
-- migrations 0029–0035;
+- `0029_private_feed_artifacts` и `0030_private_feed_artifact_guards`,
+  свёрнутые поверх production `0028`;
 - feed_artifact_storage.py, feed_artifact_promotion.py,
   feed_artifact_serving.py, feed_artifact_put_reconciliation.py;
+- feed_artifact_clients.py, feed_artifact_canary.py и ручная bounded
+  `canary_private_feed_artifact` management-команда;
+- `P6_PRIVATE_FEED_CANARY_RUNBOOK.md` с exact rollback и fail-closed
+  неизвестного PUT;
 - streaming writer/deterministic OEM части Avito feed builder;
-- только artifact settings/admin/model/retention части;
+- только artifact settings/admin/model части; retention delete не входит;
 - artifact upload/serving/promotion/reconciliation tests.
 
-Deploy: не входит в ближайший production release. Сначала отдельное решение,
-реальный bucket/IAM/KMS canary и нагрузочный тест.
+P6 разрешён 2026-08-25 одним PR. Deploy сначала выключенный; затем допустим
+только ручной canary одного Avito-аккаунта после реального bucket/IAM/KMS
+preflight и нагрузочного теста. Широкое включение и любые object delete/GC
+остаются вне пакета.
+
+Локальный acceptance закрыт: `2592 passed, 3 skipped`, flake8, оба mypy,
+migration drift, OpenAPI, свежие migrations `0029`–`0030` и их точный
+rollback/reapply зелёные. Cloud preflight, PR/CI, deploy и canary не считаются
+закрытыми этим локальным результатом.
 
 ## P7 — замороженный backlog, миграции 0036–0039
 

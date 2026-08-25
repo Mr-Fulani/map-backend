@@ -26,9 +26,9 @@ merged через PR `#246` и выложен в production commit
 `2e9958cd6a85aef0e712b6bed95d94836bdb8db7`; production остался в legacy.
 P5 writer/legacy-delivery activation merged через PR `#247`, выложен exact
 commit `9c23a6b37264fb26be9af78876af034b8d1cb508` и прошёл legacy-only production
-gate. Владелец продукта отдельно разрешил P5 `dual_write` observation rollout;
-его минимальный production settings gate и само переключение выполняются
-отдельно.
+gate. Settings-gate для парного P5 `dual_write` observation merged через PR
+`#248` в `54b87f286b1e6a318fda6acf1abfa266fdd48bd2`, но само production-переключение
+в этой стадии не выполняется.
 
 Этот файл — единственный источник правды о текущей стадии работ. Roadmap
 находится в [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а обязательные
@@ -37,26 +37,29 @@ gate. Владелец продукта отдельно разрешил P5 `du
 Точная карта разделения файлов и тестов:
 [`AVITO_FEED_CHANGESET_MANIFEST.md`](AVITO_FEED_CHANGESET_MANIFEST.md).
 
-## Решение: механизмы после активного P5 заморожены
+## Решение: активен только P6, P7 остаётся заморожен
 
-Пользователь отдельно активировал весь P5 и разрешил P5 `dual_write`
-observation rollout. До следующего отдельного решения запрещено выходить за
-границы P5:
+Пользователь отдельно активировал весь P6 2026-08-25: один PR, не более двух
+свёрнутых миграций поверх production `0028`, private bucket/IAM/presigner и
+ручной canary одного Avito-аккаунта. Это разрешение не активирует P7.
 
-- добавлять новые механизмы фидов, миграции и режимы настроек;
-- продолжать `0039`, автоматическое удаление старых файлов и private serving;
-- подключать durable worker/Avito owner или механизмы P6/P7;
-- включать feed-флаги кроме одновременно разрешённых P5 ingress/lifecycle
-  `dual_write` при run mode `legacy`.
+До отдельного нового решения запрещено:
 
-Разрешено только:
+- добавлять миграции после P6 `0030`, новые режимы или широкое worker wiring;
+- продолжать `0039`, retention delete, автоматическое удаление файлов или GC;
+- удалять, отвязывать или перезаписывать artifact/evidence записи и S3-версии;
+- переключать на private serving более одного явно выбранного аккаунта;
+- включать `MARKETPLACE_FEED_ARTIFACT_MODE=active` или массовую миграцию
+  Avito-профилей.
 
-- разделить текущий набор изменений на независимые пакеты;
-- запускать проверки и исправлять только обнаруженные ими ошибки;
-- сохранять bounded cleanup как `CODE_READY`; менять его дальше можно только
-  для ошибки, подтверждённой тестом, без добавления `0039`;
-- упрощать документацию;
-- удалять из пакета случайно попавшие или не относящиеся к нему изменения.
+В активном P6 разрешено:
+
+- private artifact schema, exact-version upload/readback и fail-closed serving;
+- отдельные IAM credentials, folder-owner/KMS/versioning preflight и presigner;
+- потоковый тест 10 000 объявлений и необходимые regression/test-fixes;
+- выключенный initial deploy, затем один ручной canary с точным rollback без
+  удаления объекта;
+- исключать из P6 случайно попавшие retention/GC/P7 изменения.
 
 ## Почему введена заморозка
 
@@ -803,11 +806,51 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
 | P4 stable endpoint/profile `0025` | `DEPLOYED_OFF`, PR `#245`, production `9061ebb` |
 | P5 feed-intent foundation `0026`–`0028` | `DEPLOYED_LEGACY_ONLY`, PR `#246`, production `2e9958c` |
 | P5 writer/legacy-delivery activation | `DEPLOYED_LEGACY_ONLY`, PR `#247`, production `9c23a6b` |
-| P5 dual-write observation rollout | `AUTHORIZED`, минимальный settings gate и переключение впереди |
-| Решение, нужен ли P6 сейчас | `NOT_STARTED` |
+| P5 dual-write observation rollout | settings gate `MERGED` PR `#248`; production read-only inspection подтверждает `dual_write/dual_write` на SHA `54b87f2` |
+| P6 private artifact experiment | `LOCAL_GATE_VERIFIED`, разрешён 2026-08-25; cloud preflight, PR/deploy и реальный canary ещё не закрыты |
 | P7 cleanup/GC/0039 | `FROZEN` |
 
 Физическое разделение не выполняется автоматически: общие файлы
 `models.py`, `services.py`, `tasks.py` и settings нужно делить по
 отдельным diff-hunks, после чего сразу проверять каждый получившийся пакет.
 Точная карта находится в `AVITO_FEED_CHANGESET_MANIFEST.md`.
+
+### Активированный пакет P6
+
+Владелец продукта отдельно разрешил P6 2026-08-25. Недеплоенные миграции
+`0029`–`0035` свёрнуты в две новые миграции поверх production `0028`:
+
+- `0029_private_feed_artifacts` — artifact schema и upload/reconciliation
+  ledger;
+- `0030_private_feed_artifact_guards` — PostgreSQL-защита promotion,
+  exact-version serving и rollback.
+
+Пакет готовится одним PR. Первичный production deploy обязан оставаться
+выключенным. После отдельной настройки versioned private bucket, IAM, KMS и
+presigner разрешён только ручной canary одного явно указанного Avito-аккаунта.
+Canary сохраняет прежний публичный URL фида, атомарно переключает только этот
+endpoint на проверенную точную версию XML и имеет rollback обратно на legacy
+без удаления объекта.
+
+Локально подтверждены:
+
+- полный backend: `2592 passed, 3 skipped` за `635.04s`; три skip —
+  integration backup и два намеренно замороженных P7 retention/GC теста;
+- focused settings/client/canary/storage: `179 passed`;
+- Flake8 по всему repository;
+- mypy: `685 source files`, strict mypy: `345 source files`;
+- migration drift: `No changes detected`; OpenAPI validation без warnings;
+- чистое применение `0029`–`0030` и rollback/reapply `0030 → 0028 → 0030`
+  на отдельной свежей PostgreSQL-базе;
+- потоковая генерация 10 000 объявлений в установленном лимите времени,
+  диска и памяти (`29.01s` в локальном Docker gate);
+- end-to-end PostgreSQL canary: STOP для пустой публикации, exact-version
+  upload/readback, атомарное promotion и legacy rollback.
+
+Cloud preflight сверяет реальный Yandex folder owner через `GetBucketAcl`,
+включённое versioning и точный default KMS key до любого canary PUT.
+
+Локальный gate закрыт. Реальная cloud preflight/canary, PR/CI и production
+наблюдение ещё не завершены, поэтому пакет пока не `DEPLOYED` и не
+`CANARY_VERIFIED`. P7, retention delete, GC, удаление объектов, `0039` и
+широкое production-включение в P6 не входят.

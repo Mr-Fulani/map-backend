@@ -1,4 +1,5 @@
 import uuid
+from datetime import timedelta
 
 from django.db import models, transaction
 
@@ -482,11 +483,38 @@ class MarketplaceFeedRun(TimestampedModel):
         editable=False,
         verbose_name='Завершено',
     )
+    feed_artifact = models.ForeignKey(
+        'MarketplaceFeedArtifact',
+        null=True,
+        blank=True,
+        db_index=False,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='feed_runs',
+        verbose_name='Проверенный артефакт фида',
+    )
+    artifact_upload_attempt = models.PositiveSmallIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Попытка загрузки артефакта',
+    )
     source_intent_revision = models.PositiveBigIntegerField(
         null=True,
         blank=True,
         editable=False,
         verbose_name='Исходная ревизия намерения фида',
+    )
+    endpoint_revision = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Ревизия stable endpoint при запуске',
+    )
+    predecessor_artifact_id = models.UUIDField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='ID предыдущего артефакта фида',
     )
 
     class Meta:
@@ -511,6 +539,37 @@ class MarketplaceFeedRun(TimestampedModel):
                 condition=models.Q(source_intent_revision__isnull=False),
                 name='uniq_mkt_feed_source_intent',
             ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        source_intent_revision__isnull=True,
+                        endpoint_revision__isnull=True,
+                        predecessor_artifact_id__isnull=True,
+                        feed_artifact__isnull=True,
+                        artifact_upload_attempt=0,
+                    )
+                    | models.Q(
+                        source_intent_revision__gte=1,
+                        endpoint_revision__gte=0,
+                    )
+                ),
+                name='mkt_feed_run_mode_bundle',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(feed_artifact__isnull=True)
+                    | models.Q(artifact_upload_attempt__gte=1)
+                ),
+                name='mkt_feed_run_art_attempt',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(feed_artifact__isnull=True)
+                    | models.Q(predecessor_artifact_id__isnull=True)
+                    | ~models.Q(feed_artifact=models.F('predecessor_artifact_id'))
+                ),
+                name='mkt_feed_run_art_distinct',
+            ),
         ]
         indexes = [
             models.Index(
@@ -520,6 +579,11 @@ class MarketplaceFeedRun(TimestampedModel):
                     state__in=_MARKETPLACE_FEED_ACTIVE_STATES,
                     next_attempt_at__isnull=False,
                 ),
+            ),
+            models.Index(
+                fields=['feed_artifact', 'id'],
+                name='mkt_feed_run_artifact',
+                condition=models.Q(feed_artifact__isnull=False),
             ),
         ]
 
@@ -798,10 +862,31 @@ class MarketplaceFeedEndpoint(TimestampedModel):
         editable=False,
         verbose_name='Профиль площадки проверен',
     )
+    current_artifact = models.ForeignKey(
+        'MarketplaceFeedArtifact',
+        null=True,
+        blank=True,
+        db_index=False,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='current_for_endpoints',
+        verbose_name='Текущий проверенный артефакт',
+    )
     source_intent_revision = models.PositiveBigIntegerField(
         default=0,
         editable=False,
         verbose_name='Текущая желаемая ревизия фида',
+    )
+    artifact_revision = models.PositiveBigIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Ревизия текущего артефакта',
+    )
+    artifact_promoted_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Артефакт назначен текущим',
     )
 
     class Meta:
@@ -887,7 +972,20 @@ class MarketplaceFeedEndpoint(TimestampedModel):
                             'verified',
                         ),
                     )
-                    | ~models.Q(legacy_object_key='')
+                    | (
+                        models.Q(storage_mode='legacy_bridge')
+                        & ~models.Q(legacy_object_key='')
+                    )
+                    | (
+                        models.Q(storage_mode='private_generation')
+                        & (
+                            (
+                                models.Q(serve_enabled=False)
+                                & ~models.Q(legacy_object_key='')
+                            )
+                            | models.Q(current_artifact__isnull=False)
+                        )
+                    )
                 ),
                 name='mkt_feed_ep_state_legacy',
             ),
@@ -933,17 +1031,34 @@ class MarketplaceFeedEndpoint(TimestampedModel):
                                 'verified',
                             ),
                         )
-                        & ~models.Q(legacy_object_key='')
+                        & (
+                            (
+                                models.Q(storage_mode='legacy_bridge')
+                                & ~models.Q(legacy_object_key='')
+                            )
+                            | (
+                                models.Q(storage_mode='private_generation')
+                                & models.Q(current_artifact__isnull=False)
+                            )
+                        )
                     )
                 ),
                 name='mkt_feed_ep_serve_guard',
             ),
             models.CheckConstraint(
                 condition=(
-                    models.Q(storage_mode='legacy_bridge')
-                    | models.Q(serve_enabled=False)
+                    models.Q(
+                        current_artifact__isnull=True,
+                        artifact_revision=0,
+                        artifact_promoted_at__isnull=True,
+                    )
+                    | models.Q(
+                        current_artifact__isnull=False,
+                        artifact_revision__gte=1,
+                        artifact_promoted_at__isnull=False,
+                    )
                 ),
-                name='mkt_feed_ep_private_dark',
+                name='mkt_feed_ep_art_bundle',
             ),
         ]
         indexes = [
@@ -951,10 +1066,948 @@ class MarketplaceFeedEndpoint(TimestampedModel):
                 fields=['profile_state', 'updated_at', 'public_id'],
                 name='mkt_feed_ep_state_updated',
             ),
+            models.Index(
+                fields=['current_artifact', 'public_id'],
+                name='mkt_feed_ep_current_art',
+                condition=models.Q(current_artifact__isnull=False),
+            ),
         ]
 
     def __str__(self):
         return f'{self.account_id} [{self.profile_state}] {self.public_id}'
+
+
+class MarketplaceFeedArtifactUploadAttempt(TimestampedModel):
+    """Durable, redaction-safe journal for one immutable object PUT attempt.
+
+    The row is prepared before crossing the object-storage boundary.  Its
+    projection metadata is the authoritative snapshot used to verify and
+    attach an artifact; mutable feed-run counters are deliberately not part of
+    that contract.
+    """
+
+    class State(models.TextChoices):
+        PREPARED = 'prepared', 'Подготовлена'
+        PUT_PENDING = 'put_pending', 'PUT выполняется или требует сверки'
+        VERSION_KNOWN = 'version_known', 'VersionId подтверждён'
+        VERIFIED = 'verified', 'Версия проверена чтением'
+        ATTACHED = 'attached', 'Артефакт атомарно привязан'
+        NO_OBJECT = 'no_object', 'Отсутствие объекта подтверждено'
+        ORPHANED = 'orphaned', 'Объект оставлен для безопасной очистки'
+        MANUAL_REVIEW = 'manual_review', 'Требуется ручная сверка'
+
+    class ResolutionSource(models.TextChoices):
+        PUT_RESPONSE = 'put_response', 'Ответ одиночного PUT'
+        OPERATOR_RECONCILIATION = (
+            'operator_reconciliation',
+            'Операторская сверка',
+        )
+
+    ACTIVE_STATES = (
+        State.PREPARED,
+        State.PUT_PENDING,
+        State.VERSION_KNOWN,
+        State.VERIFIED,
+    )
+    TERMINAL_STATES = (
+        State.ATTACHED,
+        State.NO_OBJECT,
+        State.ORPHANED,
+        State.MANUAL_REVIEW,
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    account = models.ForeignKey(
+        MarketplaceAccount,
+        db_index=False,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='feed_artifact_upload_attempts',
+        verbose_name='Аккаунт маркетплейса',
+    )
+    endpoint = models.ForeignKey(
+        MarketplaceFeedEndpoint,
+        db_index=False,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='artifact_upload_attempts',
+        verbose_name='Stable feed endpoint',
+    )
+    run = models.ForeignKey(
+        MarketplaceFeedRun,
+        db_index=False,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='artifact_upload_attempts',
+        verbose_name='Запуск фида',
+    )
+    attempt_no = models.PositiveSmallIntegerField(
+        editable=False,
+        verbose_name='Номер попытки загрузки',
+    )
+    revision = models.PositiveBigIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Ревизия журнала загрузки',
+    )
+    state = models.CharField(
+        max_length=20,
+        choices=State.choices,
+        default=State.PREPARED,
+        editable=False,
+        verbose_name='Состояние попытки загрузки',
+    )
+    put_resolution_source = models.CharField(
+        max_length=32,
+        choices=ResolutionSource.choices,
+        default='',
+        blank=True,
+        editable=False,
+        verbose_name='Источник разрешения PUT',
+    )
+    storage_bucket = models.CharField(
+        max_length=63,
+        editable=False,
+        verbose_name='Приватный bucket',
+    )
+    expected_bucket_owner = models.CharField(
+        max_length=255,
+        editable=False,
+        verbose_name='Ожидаемый владелец приватного bucket',
+    )
+    object_key = models.CharField(
+        max_length=255,
+        editable=False,
+        verbose_name='Ключ объекта',
+    )
+    payload_sha256 = models.CharField(
+        max_length=64,
+        editable=False,
+        verbose_name='SHA-256 содержимого',
+    )
+    size_bytes = models.PositiveBigIntegerField(
+        editable=False,
+        verbose_name='Размер объекта в байтах',
+    )
+    projection_count = models.PositiveIntegerField(
+        editable=False,
+        verbose_name='Количество листингов в проекции',
+    )
+    content_type = models.CharField(
+        max_length=64,
+        editable=False,
+        verbose_name='Content-Type объекта',
+    )
+    put_run_revision = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Ревизия запуска перед PUT',
+    )
+    object_version_id = models.CharField(
+        max_length=1024,
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Точный VersionId объекта',
+    )
+    put_started_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='PUT начат',
+    )
+    version_known_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='VersionId подтверждён',
+    )
+    verified_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Версия проверена',
+    )
+    attached_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Артефакт привязан',
+    )
+    resolved_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Попытка окончательно разрешена',
+    )
+    safe_error_code = models.CharField(
+        max_length=64,
+        blank=True,
+        editable=False,
+        verbose_name='Безопасный код ошибки',
+    )
+
+    class Meta:
+        verbose_name = 'Попытка загрузки артефакта фида'
+        verbose_name_plural = 'Попытки загрузки артефактов фида'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['run', 'attempt_no'],
+                name='uniq_mkt_upl_run_attempt',
+            ),
+            models.UniqueConstraint(
+                fields=['storage_bucket', 'object_key'],
+                name='uniq_mkt_upl_object',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(state__in=(
+                    'prepared',
+                    'put_pending',
+                    'version_known',
+                    'verified',
+                    'attached',
+                    'no_object',
+                    'orphaned',
+                    'manual_review',
+                )),
+                name='mkt_upl_state',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    put_resolution_source__in=(
+                        '',
+                        'put_response',
+                        'operator_reconciliation',
+                    ),
+                ),
+                name='mkt_upl_resolution_src',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(attempt_no__gte=1, attempt_no__lte=32767),
+                name='mkt_upl_attempt',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(payload_sha256__regex=r'^[0-9a-f]{64}$'),
+                name='mkt_upl_payload_sha',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(size_bytes__gte=1, size_bytes__lte=1073741824),
+                name='mkt_upl_size',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(projection_count__lte=10000),
+                name='mkt_upl_projection',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(content_type='application/xml'),
+                name='mkt_upl_content_type',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    storage_bucket__regex=(
+                        r'^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+                    ),
+                ),
+                name='mkt_upl_bucket',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    expected_bucket_owner__regex=(
+                        r'^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}$'
+                    ),
+                ),
+                name='mkt_upl_bucket_owner',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(object_key__startswith='private-feeds/v1/'),
+                name='mkt_upl_object_key',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(safe_error_code='')
+                    | models.Q(
+                        safe_error_code__regex=r'^[a-z][a-z0-9_]{0,63}$',
+                    )
+                ),
+                name='mkt_upl_error_code',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        put_run_revision__isnull=True,
+                        put_started_at__isnull=True,
+                    )
+                    | models.Q(
+                        put_run_revision__isnull=False,
+                        put_started_at__isnull=False,
+                    )
+                ),
+                name='mkt_upl_put_bundle',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        object_version_id__isnull=True,
+                        version_known_at__isnull=True,
+                    )
+                    | (
+                        models.Q(
+                            object_version_id__isnull=False,
+                            version_known_at__isnull=False,
+                        )
+                        & ~models.Q(object_version_id='')
+                        & ~models.Q(object_version_id__iregex=r'^null$')
+                    )
+                ),
+                name='mkt_upl_version_bundle',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(verified_at__isnull=True)
+                    | models.Q(object_version_id__isnull=False)
+                ),
+                name='mkt_upl_verified_version',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        state='prepared',
+                        put_run_revision__isnull=True,
+                        object_version_id__isnull=True,
+                        verified_at__isnull=True,
+                        attached_at__isnull=True,
+                        resolved_at__isnull=True,
+                        safe_error_code='',
+                    )
+                    | models.Q(
+                        state='put_pending',
+                        put_run_revision__isnull=False,
+                        object_version_id__isnull=True,
+                        verified_at__isnull=True,
+                        attached_at__isnull=True,
+                        resolved_at__isnull=True,
+                        safe_error_code='',
+                    )
+                    | models.Q(
+                        state='version_known',
+                        put_run_revision__isnull=False,
+                        object_version_id__isnull=False,
+                        verified_at__isnull=True,
+                        attached_at__isnull=True,
+                        resolved_at__isnull=True,
+                        safe_error_code='',
+                    )
+                    | models.Q(
+                        state='verified',
+                        put_run_revision__isnull=False,
+                        object_version_id__isnull=False,
+                        verified_at__isnull=False,
+                        attached_at__isnull=True,
+                        resolved_at__isnull=True,
+                        safe_error_code='',
+                    )
+                    | models.Q(
+                        state='attached',
+                        put_run_revision__isnull=False,
+                        object_version_id__isnull=False,
+                        verified_at__isnull=False,
+                        attached_at__isnull=False,
+                        resolved_at__isnull=False,
+                        safe_error_code='',
+                    )
+                    | (
+                        models.Q(
+                            state='no_object',
+                            object_version_id__isnull=True,
+                            verified_at__isnull=True,
+                            attached_at__isnull=True,
+                            resolved_at__isnull=False,
+                        )
+                        & ~models.Q(safe_error_code='')
+                    )
+                    | (
+                        models.Q(
+                            state='orphaned',
+                            put_run_revision__isnull=False,
+                            object_version_id__isnull=False,
+                            attached_at__isnull=True,
+                            resolved_at__isnull=False,
+                        )
+                        & ~models.Q(safe_error_code='')
+                    )
+                    | (
+                        models.Q(
+                            state='manual_review',
+                            attached_at__isnull=True,
+                            resolved_at__isnull=False,
+                        )
+                        & ~models.Q(safe_error_code='')
+                    )
+                ),
+                name='mkt_upl_state_bundle',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    (
+                        models.Q(put_started_at__isnull=True)
+                        | models.Q(put_started_at__gte=models.F('created_at'))
+                    )
+                    & (
+                        models.Q(version_known_at__isnull=True)
+                        | models.Q(version_known_at__gte=models.F('put_started_at'))
+                    )
+                    & (
+                        models.Q(verified_at__isnull=True)
+                        | models.Q(verified_at__gte=models.F('version_known_at'))
+                    )
+                    & (
+                        models.Q(attached_at__isnull=True)
+                        | models.Q(attached_at__gte=models.F('verified_at'))
+                    )
+                    & (
+                        models.Q(resolved_at__isnull=True)
+                        | models.Q(resolved_at__gte=models.F('created_at'))
+                    )
+                    & (
+                        models.Q(resolved_at__isnull=True)
+                        | models.Q(put_started_at__isnull=True)
+                        | models.Q(resolved_at__gte=models.F('put_started_at'))
+                    )
+                    & (
+                        models.Q(resolved_at__isnull=True)
+                        | models.Q(version_known_at__isnull=True)
+                        | models.Q(resolved_at__gte=models.F('version_known_at'))
+                    )
+                    & (
+                        models.Q(resolved_at__isnull=True)
+                        | models.Q(verified_at__isnull=True)
+                        | models.Q(resolved_at__gte=models.F('verified_at'))
+                    )
+                ),
+                name='mkt_upl_time_order',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['state', 'updated_at', 'id'],
+                name='mkt_upl_state_updated',
+            ),
+            models.Index(
+                fields=['account', '-created_at', 'id'],
+                name='mkt_upl_acct_created',
+            ),
+            models.Index(
+                fields=['endpoint', '-created_at', 'id'],
+                name='mkt_upl_ep_created',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.account_id} [{self.state}] {self.pk}'
+
+
+class MarketplaceFeedPutReconciliationAudit(models.Model):
+    """Immutable, locator-free evidence for an operator PUT decision."""
+
+    class Outcome(models.TextChoices):
+        NO_OBJECT_BY_REVIEWED_SETTLEMENT_POLICY = (
+            'no_object_by_reviewed_settlement_policy',
+            'Объект не найден после выдержки',
+        )
+        VERSION_KNOWN = 'version_known', 'VersionId подтверждён'
+        MANUAL_REVIEW = 'manual_review', 'Требуется ручная сверка'
+
+    FROM_STATE = MarketplaceFeedArtifactUploadAttempt.State.PUT_PENDING
+    TO_STATES = (
+        MarketplaceFeedArtifactUploadAttempt.State.NO_OBJECT,
+        MarketplaceFeedArtifactUploadAttempt.State.VERSION_KNOWN,
+        MarketplaceFeedArtifactUploadAttempt.State.MANUAL_REVIEW,
+    )
+    MANUAL_DECISION_CODES = (
+        'put_reconcile_delete_marker',
+        'put_reconcile_multiple_versions',
+        'put_reconcile_unusable_version',
+        'put_reconcile_malformed_listing',
+        'put_reconcile_page_limit',
+    )
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    attempt = models.OneToOneField(
+        MarketplaceFeedArtifactUploadAttempt,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='put_reconciliation_audit',
+        verbose_name='Попытка загрузки',
+    )
+    pre_revision = models.PositiveBigIntegerField(editable=False)
+    post_revision = models.PositiveBigIntegerField(editable=False)
+    from_state = models.CharField(max_length=20, editable=False)
+    to_state = models.CharField(max_length=20, editable=False)
+    outcome = models.CharField(
+        max_length=48,
+        choices=Outcome.choices,
+        editable=False,
+    )
+    decision_code = models.CharField(max_length=64, blank=True, editable=False)
+    version_id_captured = models.BooleanField(editable=False)
+    origin_process_identity_digest = models.CharField(max_length=64, editable=False)
+    operator_identity_digest = models.CharField(max_length=64, editable=False)
+    evidence_digest = models.CharField(max_length=64, editable=False)
+    digest_scheme_revision = models.CharField(max_length=64, editable=False)
+    identity_digest_key_revision = models.CharField(max_length=64, editable=False)
+    adapter_policy_revision = models.CharField(max_length=64, editable=False)
+    canary_policy_revision = models.CharField(max_length=64, editable=False)
+    origin_process_terminated_at = models.DateTimeField(editable=False)
+    reconciliation_started_at = models.DateTimeField(editable=False)
+    decision_at = models.DateTimeField(editable=False)
+    settlement_window_seconds = models.PositiveIntegerField(editable=False)
+    pages_scanned = models.PositiveSmallIntegerField(editable=False)
+    entries_scanned = models.PositiveSmallIntegerField(editable=False)
+    exact_version_count = models.PositiveSmallIntegerField(editable=False)
+    exact_delete_marker_count = models.PositiveSmallIntegerField(editable=False)
+    created_at = models.DateTimeField(auto_now_add=True, editable=False)
+
+    class Meta:
+        verbose_name = 'Аудит операторской PUT-сверки'
+        verbose_name_plural = 'Аудит PUT-сверок'
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(pre_revision__gte=1),
+                name='mkt_put_aud_pre_revision',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    post_revision=models.F('pre_revision') + 1,
+                ),
+                name='mkt_put_aud_revision_step',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(from_state='put_pending'),
+                name='mkt_put_aud_from_state',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    to_state__in=('no_object', 'version_known', 'manual_review'),
+                ),
+                name='mkt_put_aud_to_state',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        to_state='no_object',
+                        outcome='no_object_by_reviewed_settlement_policy',
+                        decision_code='reviewed_settlement_no_object',
+                        version_id_captured=False,
+                        exact_version_count=0,
+                        exact_delete_marker_count=0,
+                    )
+                    | models.Q(
+                        to_state='version_known',
+                        outcome='version_known',
+                        decision_code='',
+                        version_id_captured=True,
+                        exact_version_count=1,
+                        exact_delete_marker_count=0,
+                    )
+                    | (
+                        models.Q(
+                            to_state='manual_review',
+                            outcome='manual_review',
+                            decision_code__in=(
+                                'put_reconcile_delete_marker',
+                                'put_reconcile_multiple_versions',
+                                'put_reconcile_unusable_version',
+                                'put_reconcile_malformed_listing',
+                                'put_reconcile_page_limit',
+                            ),
+                        )
+                        & (
+                            models.Q(version_id_captured=False)
+                            | models.Q(
+                                version_id_captured=True,
+                                exact_version_count__gte=1,
+                            )
+                        )
+                    )
+                ),
+                name='mkt_put_aud_decision_bundle',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        origin_process_identity_digest__regex=r'^[0-9a-f]{64}$',
+                    )
+                    & models.Q(
+                        operator_identity_digest__regex=r'^[0-9a-f]{64}$',
+                    )
+                    & models.Q(evidence_digest__regex=r'^[0-9a-f]{64}$')
+                ),
+                name='mkt_put_aud_digests',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        digest_scheme_revision__regex=(
+                            r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$'
+                        ),
+                    )
+                    & models.Q(
+                        identity_digest_key_revision__regex=(
+                            r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$'
+                        ),
+                    )
+                    & models.Q(
+                        adapter_policy_revision__regex=(
+                            r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$'
+                        ),
+                    )
+                    & models.Q(
+                        canary_policy_revision__regex=(
+                            r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$'
+                        ),
+                    )
+                ),
+                name='mkt_put_aud_policy_tokens',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    settlement_window_seconds=900,
+                    pages_scanned__gte=1,
+                    pages_scanned__lte=4,
+                    entries_scanned__lte=400,
+                    exact_version_count__lte=400,
+                    exact_delete_marker_count__lte=400,
+                ),
+                name='mkt_put_aud_bounded_counts',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(exact_version_count__lte=models.F('entries_scanned'))
+                    & models.Q(
+                        exact_delete_marker_count__lte=models.F('entries_scanned'),
+                    )
+                    & models.Q(
+                        entries_scanned__gte=(
+                            models.F('exact_version_count')
+                            + models.F('exact_delete_marker_count')
+                        ),
+                    )
+                ),
+                name='mkt_put_aud_count_order',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        reconciliation_started_at__gte=(
+                            models.F('origin_process_terminated_at')
+                            + models.ExpressionWrapper(
+                                models.F('settlement_window_seconds')
+                                * models.Value(timedelta(seconds=1)),
+                                output_field=models.DurationField(),
+                            )
+                        ),
+                    )
+                    & models.Q(
+                        decision_at__gte=models.F('reconciliation_started_at'),
+                    )
+                ),
+                name='mkt_put_aud_time_order',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.attempt_id} [{self.outcome}] {self.pk}'
+
+
+class MarketplaceFeedArtifact(models.Model):
+    """Immutable metadata for one content-addressed, verified feed object."""
+
+    CONTENT_TYPE_XML = 'application/xml'
+    VERIFICATION_VERSION_READBACK_SHA256 = 'version_readback_sha256'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    created_at = models.DateTimeField(
+        auto_now_add=True,
+        editable=False,
+        verbose_name='Создано',
+    )
+    endpoint = models.ForeignKey(
+        MarketplaceFeedEndpoint,
+        db_index=False,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='artifacts',
+        verbose_name='Stable feed endpoint',
+    )
+    account = models.ForeignKey(
+        MarketplaceAccount,
+        db_index=False,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='feed_artifacts',
+        verbose_name='Аккаунт маркетплейса',
+    )
+    run = models.ForeignKey(
+        MarketplaceFeedRun,
+        db_index=False,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='artifacts',
+        verbose_name='Запуск фида',
+    )
+    upload_attempt = models.PositiveSmallIntegerField(
+        editable=False,
+        verbose_name='Попытка загрузки',
+    )
+    storage_bucket = models.CharField(
+        max_length=63,
+        editable=False,
+        verbose_name='Приватный bucket',
+    )
+    object_key = models.CharField(
+        max_length=255,
+        editable=False,
+        verbose_name='Ключ объекта',
+    )
+    object_version_id = models.CharField(
+        max_length=1024,
+        editable=False,
+        verbose_name='VersionId объекта',
+    )
+    payload_sha256 = models.CharField(
+        max_length=64,
+        editable=False,
+        verbose_name='SHA-256 содержимого',
+    )
+    size_bytes = models.PositiveBigIntegerField(
+        editable=False,
+        verbose_name='Размер объекта в байтах',
+    )
+    listing_count = models.PositiveIntegerField(
+        editable=False,
+        verbose_name='Количество листингов',
+    )
+    content_type = models.CharField(
+        max_length=64,
+        editable=False,
+        verbose_name='Content-Type объекта',
+    )
+    verification_method = models.CharField(
+        max_length=32,
+        editable=False,
+        verbose_name='Метод проверки объекта',
+    )
+    verified_at = models.DateTimeField(
+        editable=False,
+        verbose_name='Объект проверен',
+    )
+
+    class Meta:
+        verbose_name = 'Проверенный артефакт фида'
+        verbose_name_plural = 'Проверенные артефакты фидов'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['run', 'upload_attempt'],
+                name='uniq_mkt_art_run_attempt',
+            ),
+            models.UniqueConstraint(
+                fields=['storage_bucket', 'object_key'],
+                name='uniq_mkt_art_object',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(content_type='application/xml'),
+                name='mkt_art_content_type',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    verification_method='version_readback_sha256',
+                ),
+                name='mkt_art_verify_method',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(payload_sha256__regex=r'^[0-9a-f]{64}$'),
+                name='mkt_art_payload_sha',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(size_bytes__gte=1, size_bytes__lte=1073741824),
+                name='mkt_art_size',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(listing_count__lte=10000),
+                name='mkt_art_listing_count',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    upload_attempt__gte=1,
+                    upload_attempt__lte=32767,
+                ),
+                name='mkt_art_upload_attempt',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(object_version_id='')
+                    & ~models.Q(object_version_id__iregex=r'^null$')
+                ),
+                name='mkt_art_version_present',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    storage_bucket__regex=(
+                        r'^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$'
+                    ),
+                ),
+                name='mkt_art_bucket_format',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(object_key__startswith='private-feeds/v1/'),
+                name='mkt_art_object_key',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['endpoint', '-verified_at', 'id'],
+                name='mkt_art_ep_verified',
+            ),
+            models.Index(
+                fields=['account', '-verified_at', 'id'],
+                name='mkt_art_acct_verified',
+            ),
+            models.Index(
+                fields=['verified_at', 'id'],
+                name='mkt_art_verified',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.account_id} [{self.verified_at:%Y-%m-%d %H:%M:%S}] {self.pk}'
+
+
+class MarketplaceFeedFetchEvidence(models.Model):
+    """Append-only evidence for an authorized stable-feed redirect."""
+
+    class RequestMethod(models.TextChoices):
+        GET = 'GET', 'GET'
+        HEAD = 'HEAD', 'HEAD'
+
+    id = models.BigAutoField(primary_key=True)
+    issued_at = models.DateTimeField(
+        auto_now_add=True,
+        editable=False,
+        verbose_name='Redirect выдан',
+    )
+    endpoint = models.ForeignKey(
+        MarketplaceFeedEndpoint,
+        db_index=False,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='fetch_evidence',
+        verbose_name='Stable feed endpoint',
+    )
+    artifact = models.ForeignKey(
+        MarketplaceFeedArtifact,
+        db_index=False,
+        editable=False,
+        on_delete=models.PROTECT,
+        related_name='fetch_evidence',
+        verbose_name='Выданный артефакт',
+    )
+    request_method = models.CharField(
+        max_length=4,
+        choices=RequestMethod.choices,
+        editable=False,
+        verbose_name='HTTP-метод',
+    )
+    accepted_token_key_id = models.CharField(
+        max_length=32,
+        editable=False,
+        verbose_name='Принятый ID capability-ключа',
+    )
+    capability_revision = models.PositiveBigIntegerField(
+        editable=False,
+        verbose_name='Ревизия capability token',
+    )
+    endpoint_revision = models.PositiveBigIntegerField(
+        editable=False,
+        verbose_name='Ревизия stable endpoint',
+    )
+    source_intent_revision = models.PositiveBigIntegerField(
+        editable=False,
+        verbose_name='Ревизия намерения фида',
+    )
+    run_revision = models.PositiveBigIntegerField(
+        editable=False,
+        verbose_name='Ревизия запуска фида',
+    )
+    redirect_status = models.PositiveSmallIntegerField(
+        default=307,
+        editable=False,
+        verbose_name='HTTP-статус redirect',
+    )
+    redirect_expires_at = models.DateTimeField(
+        editable=False,
+        verbose_name='Redirect истекает',
+    )
+
+    class Meta:
+        verbose_name = 'Свидетельство выдачи артефакта фида'
+        verbose_name_plural = 'Свидетельства выдачи артефактов фида'
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(request_method__in=('GET', 'HEAD')),
+                name='mkt_fetch_method',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(redirect_status=307),
+                name='mkt_fetch_status',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(redirect_expires_at__gt=models.F('issued_at')),
+                name='mkt_fetch_expiry',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    accepted_token_key_id__regex=(
+                        r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$'
+                    ),
+                ),
+                name='mkt_fetch_key_id',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    capability_revision__gte=1,
+                    endpoint_revision__gte=1,
+                    source_intent_revision__gte=1,
+                    run_revision__gte=0,
+                ),
+                name='mkt_fetch_revisions',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    redirect_expires_at__lte=(
+                        models.F('issued_at') + timedelta(seconds=300)
+                    ),
+                ),
+                name='mkt_fetch_ttl',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['endpoint', '-issued_at', 'id'],
+                name='mkt_fetch_ep_issued',
+            ),
+            models.Index(
+                fields=['artifact', '-issued_at', 'id'],
+                name='mkt_fetch_art_issued',
+            ),
+            models.Index(
+                fields=['-issued_at', 'id'],
+                name='mkt_fetch_issued',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.endpoint_id} [{self.request_method} {self.redirect_status}] {self.pk}'
 
 
 class MarketplacePlacementAddress(TimestampedModel):
