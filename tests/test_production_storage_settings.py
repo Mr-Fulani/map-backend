@@ -184,8 +184,8 @@ def test_production_accepts_durable_feed_run_with_dual_write_lifecycle():
     assert result.returncode == 0, result.stderr
 
 
-@pytest.mark.parametrize('value', ('', 'dual_write', 'durable', 'enabled'))
-def test_p5_production_rejects_feed_ingress_activation(value):
+@pytest.mark.parametrize('value', ('', 'durable', 'enabled'))
+def test_p5_production_rejects_unknown_feed_ingress_mode(value):
     environment = _production_environment()
     environment['MARKETPLACE_FEED_INGRESS_MODE'] = value
 
@@ -203,16 +203,19 @@ def test_p5_production_rejects_feed_ingress_activation(value):
     assert 'MARKETPLACE_FEED_INGRESS_MODE' in result.stderr
 
 
-def test_p5_production_accepts_only_explicit_legacy_feed_ingress():
+@pytest.mark.parametrize('value', ('legacy', 'dual_write'))
+def test_p5_production_accepts_explicit_feed_ingress_modes(value):
     environment = _production_environment()
-    environment['MARKETPLACE_FEED_INGRESS_MODE'] = ' LEGACY '
+    environment['MARKETPLACE_FEED_INGRESS_MODE'] = f' {value.upper()} '
+    if value == 'dual_write':
+        environment['AVITO_STATUS_LIFECYCLE_MODE'] = 'dual_write'
 
     result = subprocess.run(
         [
             sys.executable,
             '-c',
             'import config.settings.production as settings; '
-            'assert settings.MARKETPLACE_FEED_INGRESS_MODE == "legacy"',
+            f'assert settings.MARKETPLACE_FEED_INGRESS_MODE == "{value}"',
         ],
         cwd=ROOT,
         env=environment,
@@ -223,6 +226,24 @@ def test_p5_production_accepts_only_explicit_legacy_feed_ingress():
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_p5_production_dual_write_ingress_requires_dual_write_lifecycle():
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_INGRESS_MODE'] = 'dual_write'
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'AVITO_STATUS_LIFECYCLE_MODE=dual_write' in result.stderr
 
 
 @pytest.mark.parametrize('value', ('', 'enabled', '1', 'yes'))

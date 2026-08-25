@@ -30,8 +30,12 @@ checksum зафиксированы, но это пока не схема «buil
 
 До отдельно утверждённого rollout будущие feed-настройки не могут отличаться от
 `legacy/legacy/disabled/false/legacy_public` для run, ingress, artifact,
-profile migration и storage соответственно. P0 не добавляет эти настройки в
-runtime и не меняет production environment.
+profile migration и storage соответственно. Для отдельно разрешённого P5
+observation допустим только
+`legacy/dual_write/disabled/false/legacy_public` вместе с
+`AVITO_STATUS_LIFECYCLE_MODE=dual_write`. Rollback атомарно возвращает ingress
+и lifecycle в `legacy`; durable run, stable/private storage и profile migration
+не включаются.
 
 ## 1. Подготовка production host
 

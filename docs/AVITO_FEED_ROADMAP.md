@@ -14,7 +14,7 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: P5 activation локально проверен, legacy-only release впереди
+## Текущая фаза: P5 activation deployed, dual-write observation разрешён
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
@@ -34,8 +34,11 @@ P3 merged через PR `#244`, выложен в production commit `f1881f1` и
 выложен выключенным в production commit `9061ebb`. P5 schema/intent foundation
 merged через PR `#246` и выложен в production commit `2e9958c` в legacy-only
 режиме. Отдельный P5 activation package с writer fencing, reconciliation и
-legacy delivery repair прошёл 208 focused и полный backend gate; один PR, CI и
-legacy-only deploy ещё впереди. `dual_write` в этот release не включается.
+legacy delivery repair merged через PR `#247` и выложен exact commit `9c23a6b`.
+PR/push-main CI, encrypted backup, health/topology, Celery ping, scanner cycles
+и отсутствие свежих critical/500 ошибок подтверждены. Владелец продукта
+отдельно разрешил P5 `dual_write` observation; минимальный settings gate и
+атомарное переключение ingress/lifecycle выполняются следующим шагом.
 
 Готово только когда:
 
@@ -254,12 +257,21 @@ Deploy foundation: PR `#246`, production commit `2e9958c`, только `legacy`
 
 - ровно 20 production-файлов, новых миграций и production settings нет;
 - P6/P7, private storage/serving, cleanup/GC и `0039` не входят;
-- production deploy остаётся `legacy/legacy/disabled/false/legacy_public`;
-- `dual_write` включается только отдельным rollout после merge/deploy gate.
+- initial production deploy остаётся
+  `legacy/legacy/disabled/false/legacy_public`;
+- разрешённый observation меняет только ingress и lifecycle на `dual_write`,
+  оставляя run `legacy`, а rollback одновременно возвращает оба режима.
 
 Локальный gate: 208 focused tests, полный backend (`2356 passed, 1 skipped`),
 flake8, mypy для 665 и strict mypy для 338 source files, migration drift и
 `git diff --check` прошли.
+
+Release gate закрыт: PR `#247`, production `9c23a6b`, все десять контейнеров
+healthy с restart count `0`, readiness/topology/Celery зелёные, scanner в
+legacy инертен. P5 `dual_write` observation отдельно разрешён 2026-08-25.
+Минимальный production settings gate локально прошёл 150 focused tests, полный
+backend (`2357 passed, 1 skipped`), оба mypy, flake8 и migration drift; до его
+deploy production environment остаётся legacy.
 
 ### P6. Приватные файлы — отдельный экспериментальный проект
 

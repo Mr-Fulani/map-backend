@@ -186,7 +186,10 @@ targets, если daemon занят чужим проектом.
       с результатами; следующий пакет не используется для исправления текущего.
 - [ ] Production feed contract остаётся
       `legacy/legacy/disabled/false/legacy_public` для run, ingress, artifact,
-      profile migration и storage.
+      profile migration и storage, либо для отдельно утверждённого P5
+      observation — `legacy/dual_write/disabled/false/legacy_public` вместе с
+      `AVITO_STATUS_LIFECYCLE_MODE=dual_write` и готовым атомарным rollback обоих
+      режимов в `legacy`.
 - [ ] Cleanup, `0039`, private serving, GC, object deletion, новые
       migrations/modes и worker activation отсутствуют, если соответствующий
       roadmap package не был отдельно активирован.

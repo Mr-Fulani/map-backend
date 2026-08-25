@@ -24,7 +24,11 @@ P3 merged через PR `#244` и выложен выключенным на pro
 выложен выключенным на production commit `9061ebb`. Безопасный P5 foundation
 merged через PR `#246` и выложен в production commit
 `2e9958cd6a85aef0e712b6bed95d94836bdb8db7`; production остался в legacy.
-P5 writer/legacy-delivery activation выделен отдельно и локально проверен.
+P5 writer/legacy-delivery activation merged через PR `#247`, выложен exact
+commit `9c23a6b37264fb26be9af78876af034b8d1cb508` и прошёл legacy-only production
+gate. Владелец продукта отдельно разрешил P5 `dual_write` observation rollout;
+его минимальный production settings gate и само переключение выполняются
+отдельно.
 
 Этот файл — единственный источник правды о текущей стадии работ. Roadmap
 находится в [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а обязательные
@@ -35,14 +39,15 @@ P5 writer/legacy-delivery activation выделен отдельно и лока
 
 ## Решение: механизмы после активного P5 заморожены
 
-Пользователь отдельно активировал весь P5 одним PR и разрешил превышение
-обычных лимитов по строкам, миграциям и подсистемам. До следующего отдельного
-решения запрещено выходить за границы P5:
+Пользователь отдельно активировал весь P5 и разрешил P5 `dual_write`
+observation rollout. До следующего отдельного решения запрещено выходить за
+границы P5:
 
 - добавлять новые механизмы фидов, миграции и режимы настроек;
 - продолжать `0039`, автоматическое удаление старых файлов и private serving;
-- подключать новую систему к рабочему Celery worker или Avito;
-- включать в production новые feed-флаги.
+- подключать durable worker/Avito owner или механизмы P6/P7;
+- включать feed-флаги кроме одновременно разрешённых P5 ingress/lifecycle
+  `dual_write` при run mode `legacy`.
 
 Разрешено только:
 
@@ -434,16 +439,44 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный шаг
 
-P0–P4 и безопасный P5 foundation завершены. Foundation работает в production
-на exact commit `2e9958c`, но ingress/lifecycle/run остаются `legacy`, profile
-migration выключена, artifact mode disabled, storage — `legacy_public`.
+P0–P4, P5 foundation и P5 writer/legacy-delivery activation завершены.
+Activation работает в production на exact commit `9c23a6b`; PR и push-main CI,
+encrypted backup, readiness, topology, Celery ping и несколько scanner cycles
+зелёные. Production пока сохраняет ingress/lifecycle/run `legacy`, profile
+migration выключена, artifact runtime отсутствует, storage — `legacy_public`.
 
-Отдельный P5 activation package локально проверен. Он подключает
-транзакционные writer-хуки, provider-result reconciliation, bounded report
-reconciler и надёжное восстановление legacy flush. Пакет не добавляет миграций,
-не меняет production settings и не включает новый runtime для клиентов. Его
-следующий шаг — один PR, CI и deploy строго в legacy-режиме. Включение
-`dual_write` остаётся отдельным rollout-решением после release gate.
+Активный шаг — отдельно разрешённый P5 `dual_write` observation. Минимальный
+settings gate разрешает только ingress `legacy|dual_write` и требует lifecycle
+`dual_write` для ingress `dual_write`. Фактический rollout одновременно меняет
+только ingress и lifecycle; run остаётся `legacy`. Атомарный rollback возвращает
+обе переменные в `legacy`. Durable run, stable/private storage, profile
+migration, P6/P7, cleanup/GC и `0039` не включаются.
+
+### Локальная проверка P5 dual-write production gate
+
+Срез меняет только production validation ingress-режима, pairing-тесты и
+документацию. Production environment по умолчанию остаётся `legacy`.
+
+```text
+pytest -q tests/test_production_storage_settings.py \
+  tests/test_runtime_contract.py
+результат: 150 passed in 131.02s
+
+pytest -q
+результат: 2357 passed, 1 skipped in 862.98s
+
+flake8 .
+mypy
+mypy --check-untyped-defs --exclude '(^|/)(tests?|migrations)/' \
+  apps config backup
+результат: exit 0; 665 и 338 source files соответственно
+
+python manage.py makemigrations --check --dry-run
+результат: No changes detected
+```
+
+Проверено, что неизвестные ingress-режимы отклоняются, `dual_write` принимается
+только вместе с lifecycle `dual_write`, а `legacy` остаётся допустимым rollback.
 
 ### Локальная проверка P5 writer/legacy-delivery activation
 
@@ -769,7 +802,8 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
 | P3 durable feed foundation `0023`–`0024` | `DEPLOYED_OFF`, PR `#244`, production `f1881f1` |
 | P4 stable endpoint/profile `0025` | `DEPLOYED_OFF`, PR `#245`, production `9061ebb` |
 | P5 feed-intent foundation `0026`–`0028` | `DEPLOYED_LEGACY_ONLY`, PR `#246`, production `2e9958c` |
-| P5 writer/legacy-delivery activation | `LOCAL_VERIFIED`, один PR/CI/deploy впереди; runtime остаётся legacy |
+| P5 writer/legacy-delivery activation | `DEPLOYED_LEGACY_ONLY`, PR `#247`, production `9c23a6b` |
+| P5 dual-write observation rollout | `AUTHORIZED`, минимальный settings gate и переключение впереди |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |
 | P7 cleanup/GC/0039 | `FROZEN` |
 
