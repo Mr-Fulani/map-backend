@@ -40,7 +40,9 @@
       runtime/deploy/health contracts успешны.
 - [ ] PostgreSQL migrations применились на чистом CI database;
       `makemigrations --check --dry-run` не нашёл drift.
-- [ ] Полный backend `pytest` и coverage gate успешны.
+- [ ] Все независимые backend `pytest` shards и отдельный migration/backup
+      integration shard успешны; объединённый coverage gate применил общий
+      порог ко всему покрытию.
 - [ ] OpenAPI сформирован с `--validate --fail-on-warn` без предупреждений.
 - [ ] Frontend установлен через `npm ci --strict-allow-scripts`; `npm audit`,
       production audit, `typecheck`, `lint`, `test:unit` и `build` успешны.
@@ -48,6 +50,12 @@
       digest-ам; Trivy не нашёл fixed HIGH/CRITICAL уязвимостей.
 - [ ] Backend, backup и frontend CycloneDX SBOM сохранены как CI artifacts.
 - [ ] CI proxy smoke test успешен.
+
+Workflow выполняет независимые backend, frontend и production-image gates
+параллельно, но сохраняет единый fail-closed check `CI / test`. Для release
+обязателен именно этот итоговый check; успешный отдельный shard не заменяет его.
+Duration-база `.github/pytest-durations.json` влияет только на баланс shard-ов,
+а не на состав тестов, и обновляется после заметного изменения длительностей.
 
 Локальные проверки полезны для быстрого feedback, но не заменяют CI:
 

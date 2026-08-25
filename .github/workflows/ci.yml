@@ -5,6 +5,8 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -18,9 +20,24 @@ defaults:
     shell: bash --noprofile --norc -euo pipefail {0}
 
 jobs:
-  test:
+  backend:
+    name: backend / ${{ matrix.suite }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 35
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - suite: static
+            shard: 0
+          - suite: regular-1
+            shard: 1
+          - suite: regular-2
+            shard: 2
+          - suite: regular-3
+            shard: 3
+          - suite: migrations
+            shard: 0
 
     services:
       db:
@@ -65,7 +82,7 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: '3.12.13'
-          cache: 'pip'
+          cache: pip
           cache-dependency-path: |
             requirements/base.in
             requirements/ci-tools.in
@@ -78,6 +95,7 @@ jobs:
             backup/requirements.txt
 
       - name: Установить проверенные CI-инструменты
+        if: ${{ matrix.suite == 'static' }}
         run: >-
           python -m pip install
           --require-hashes
@@ -85,6 +103,7 @@ jobs:
           --requirement requirements/ci-tools.txt
 
       - name: Проверить воспроизводимость Python lock-файлов
+        if: ${{ matrix.suite == 'static' }}
         run: |
           scripts/compile_requirements.sh
           lock_files=(
@@ -105,6 +124,7 @@ jobs:
           python -m pip check
 
       - name: Проверить production Python-зависимости на уязвимости
+        if: ${{ matrix.suite == 'static' }}
         run: |
           for lock_file in \
             requirements/prod.txt \
@@ -121,6 +141,7 @@ jobs:
           done
 
       - name: Сформировать воспроизводимые Python SBOM
+        if: ${{ matrix.suite == 'static' }}
         run: |
           mkdir -p "$RUNNER_TEMP/sbom"
           cyclonedx-py requirements \
@@ -135,14 +156,23 @@ jobs:
             backup/requirements.txt
 
       - name: Установить PostgreSQL client и ShellCheck
+        if: ${{ matrix.suite == 'static' }}
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y postgresql-client-16 shellcheck
 
+      - name: Установить PostgreSQL client
+        if: ${{ matrix.suite == 'migrations' }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y postgresql-client-16
+
       - name: Проверить линтером (flake8)
+        if: ${{ matrix.suite == 'static' }}
         run: flake8 .
 
       - name: Проверить application-wide backend type baseline (mypy)
+        if: ${{ matrix.suite == 'static' }}
         run: |
           mypy
           mypy --check-untyped-defs \
@@ -150,6 +180,7 @@ jobs:
             apps config backup
 
       - name: Проверить shell-скрипты
+        if: ${{ matrix.suite == 'static' }}
         run: >-
           shellcheck dev.sh deploy.sh scripts/backup.sh scripts/restore.sh
           scripts/compile_requirements.sh
@@ -167,12 +198,150 @@ jobs:
           scripts/rotate_backup_db_password.sh
 
       - name: Проверить runtime-контракты без запуска сервисов
+        if: ${{ matrix.suite == 'static' }}
         run: >-
           python -m pytest
           tests/test_runtime_contract.py
           tests/test_healthchecks.py
           tests/test_deploy_contract.py
           -q
+
+      - name: Проверить незаписанные изменения моделей
+        if: ${{ matrix.suite == 'static' }}
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Применить миграции для schema/OpenAPI gate
+        if: ${{ matrix.suite == 'static' }}
+        run: python manage.py migrate --noinput
+
+      - name: Проверить OpenAPI-схему
+        if: ${{ matrix.suite == 'static' }}
+        run: python manage.py spectacular --file /tmp/openapi-schema.yml --validate --fail-on-warn
+
+      - name: Запустить обычные тесты — shard ${{ matrix.shard }}/3
+        if: ${{ startsWith(matrix.suite, 'regular-') }}
+        env:
+          COVERAGE_FILE: ${{ runner.temp }}/coverage/.coverage.${{ matrix.suite }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/coverage"
+          python -m pytest \
+            --ignore-glob='**/test_*migration*.py' \
+            --ignore=tests/test_backup_postgres_integration.py \
+            --splits 3 \
+            --group "${{ matrix.shard }}" \
+            --splitting-algorithm least_duration \
+            --durations-path .github/pytest-durations.json \
+            --cov=apps \
+            --cov-config=.coveragerc \
+            --cov-report= \
+            --cov-fail-under=0
+          test -s "$COVERAGE_FILE"
+
+      - name: Подготовить основную БД для migration/backup integration gate
+        if: ${{ matrix.suite == 'migrations' }}
+        run: python manage.py migrate --noinput
+
+      - name: Запустить migration и backup integration тесты
+        if: ${{ matrix.suite == 'migrations' }}
+        env:
+          COVERAGE_FILE: ${{ runner.temp }}/coverage/.coverage.migrations
+        run: |
+          mkdir -p "$RUNNER_TEMP/coverage"
+          mapfile -t db_tests < <(
+            find apps tests -type f \
+              \( -name 'test_*migration*.py' \
+                 -o -path 'tests/test_backup_postgres_integration.py' \) \
+              -print | sort
+          )
+          test "${#db_tests[@]}" -gt 1
+          printf 'DB-isolated tests:\n%s\n' "${db_tests[*]}"
+          python -m pytest \
+            "${db_tests[@]}" \
+            --maxfail=1 \
+            --cov=apps \
+            --cov-config=.coveragerc \
+            --cov-report= \
+            --cov-fail-under=0
+          test -s "$COVERAGE_FILE"
+
+      - name: Сохранить данные покрытия shard-а
+        if: ${{ startsWith(matrix.suite, 'regular-') || matrix.suite == 'migrations' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-${{ matrix.suite }}-${{ github.sha }}
+          path: ${{ runner.temp }}/coverage/.coverage.${{ matrix.suite }}
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 3
+          compression-level: 1
+          overwrite: true
+
+      - name: Сохранить Python SBOM артефакты
+        if: ${{ matrix.suite == 'static' }}
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sbom-python-${{ github.sha }}
+          path: ${{ runner.temp }}/sbom/*.cdx.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+          overwrite: true
+
+  coverage:
+    name: coverage
+    needs: backend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Настроить Python 3.12.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12.13'
+          cache: pip
+          cache-dependency-path: requirements/dev.txt
+
+      - name: Установить проверенные dev-зависимости
+        run: >-
+          python -m pip install
+          --require-hashes
+          --only-binary=:all:
+          --requirement requirements/dev.txt
+
+      - name: Получить данные покрытия всех shard-ов
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: coverage-*-${{ github.sha }}
+          path: ${{ runner.temp }}/coverage
+          merge-multiple: true
+
+      - name: Объединить покрытие и применить единый порог
+        run: |
+          python -m coverage combine --keep "$RUNNER_TEMP/coverage"
+          python -m coverage report --fail-under=70
+          python -m coverage xml -o coverage.xml
+
+      - name: Загрузить покрытие
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: coverage.xml
+          disable_search: true
+          disable_telem: true
+          version: v11.3.1
+
+  runtime_images:
+    name: production images / runtime / Trivy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Установить checksum-проверенный Trivy 0.72.0
         env:
@@ -200,7 +369,20 @@ jobs:
           test "$("$RUNNER_TEMP/trivy-0.72.0" --version | head -n 1)" = \
             'Version: 0.72.0'
 
-      - name: Проверить Compose и собрать production images
+      - name: Сформировать ежедневный ключ базы Trivy
+        id: trivy-cache-key
+        run: echo "utc_day=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+
+      - name: Восстановить базу Trivy
+        id: trivy-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/trivy-cache/db
+          key: trivy-db-v0.72.0-${{ runner.os }}-${{ runner.arch }}-${{ steps.trivy-cache-key.outputs.utc_day }}
+          restore-keys: |
+            trivy-db-v0.72.0-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Проверить Compose, runtime и production images
         env:
           COMPOSE_PROJECT_NAME: saas-poster-ci-${{ github.run_id }}-${{ github.run_attempt }}
           POSTGRES_DB: map_db
@@ -289,26 +471,22 @@ jobs:
               "$image_id"
           done
 
-      - name: Проверить незаписанные изменения моделей
-        run: python manage.py makemigrations --check --dry-run
-
-      - name: Применить миграции
-        run: python manage.py migrate --noinput
-
-      - name: Проверить OpenAPI-схему
-        run: python manage.py spectacular --file /tmp/openapi-schema.yml --validate --fail-on-warn
-
-      - name: Запустить тесты
-        run: pytest --cov=apps --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml
-
-      - name: Загрузить покрытие
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: ${{ !cancelled() && hashFiles('coverage.xml') != '' }}
+      - name: Сохранить базу Trivy
+        if: ${{ success() && github.event_name == 'push' && steps.trivy-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          files: coverage.xml
-          disable_search: true
-          disable_telem: true
-          version: v11.3.1
+          path: ${{ runner.temp }}/trivy-cache/db
+          key: ${{ steps.trivy-cache.outputs.cache-primary-key }}
+
+  frontend:
+    name: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Настроить Node.js 24.18.0
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -352,12 +530,13 @@ jobs:
 
       - name: Сформировать frontend SBOM
         working-directory: frontend
-        run: >-
-          npm sbom
-          --omit=dev
-          --sbom-format=cyclonedx
-          --sbom-type=application
-          > "$RUNNER_TEMP/sbom/frontend.cdx.json"
+        run: |
+          mkdir -p "$RUNNER_TEMP/sbom"
+          npm sbom \
+            --omit=dev \
+            --sbom-format=cyclonedx \
+            --sbom-type=application \
+            > "$RUNNER_TEMP/sbom/frontend.cdx.json"
 
       - name: Проверить и собрать frontend
         working-directory: frontend
@@ -367,12 +546,46 @@ jobs:
           npm run test:unit
           npm run build
 
-      - name: Сохранить SBOM артефакты
+      - name: Сохранить frontend SBOM артефакт
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: sbom-${{ github.sha }}
-          path: ${{ runner.temp }}/sbom/*.cdx.json
+          name: sbom-frontend-${{ github.sha }}
+          path: ${{ runner.temp }}/sbom/frontend.cdx.json
           if-no-files-found: error
           retention-days: 14
           compression-level: 9
           overwrite: true
+
+  test:
+    name: test
+    if: ${{ always() }}
+    needs:
+      - backend
+      - coverage
+      - runtime_images
+      - frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Проверить все обязательные CI-gates
+        env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          RUNTIME_IMAGES_RESULT: ${{ needs.runtime_images.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+        run: |
+          results=(
+            "backend=$BACKEND_RESULT"
+            "coverage=$COVERAGE_RESULT"
+            "runtime_images=$RUNTIME_IMAGES_RESULT"
+            "frontend=$FRONTEND_RESULT"
+          )
+          printf '%s\n' "${results[@]}"
+          for result in \
+            "$BACKEND_RESULT" \
+            "$COVERAGE_RESULT" \
+            "$RUNTIME_IMAGES_RESULT" \
+            "$FRONTEND_RESULT"
+          do
+            test "$result" = success
+          done

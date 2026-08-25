@@ -285,7 +285,13 @@ def test_external_container_images_are_pinned_by_manifest_digest():
             assert image_pattern.fullmatch(service['image']), name
 
     ci_config = yaml.safe_load(CI_WORKFLOW)
-    for name, service in ci_config['jobs']['test']['services'].items():
+    ci_services = {
+        name: service
+        for job in ci_config['jobs'].values()
+        for name, service in job.get('services', {}).items()
+    }
+    assert {'db', 'redis'} <= ci_services.keys()
+    for name, service in ci_services.items():
         assert image_pattern.fullmatch(service['image']), name
 
 
@@ -430,8 +436,10 @@ def test_ci_actions_are_commit_pinned_and_job_is_bounded():
 
     assert 'permissions:\n  contents: read' in CI_WORKFLOW
     assert 'cancel-in-progress: true' in CI_WORKFLOW
-    assert 'runs-on: ubuntu-24.04' in CI_WORKFLOW
-    assert 'timeout-minutes: 60' in CI_WORKFLOW
+    ci_config = yaml.safe_load(CI_WORKFLOW)
+    for job_name, job in ci_config['jobs'].items():
+        assert job['runs-on'] == 'ubuntu-24.04', job_name
+        assert 0 < job['timeout-minutes'] <= 35, job_name
     assert 'persist-credentials: false' in CI_WORKFLOW
     assert (
         'django celery_worker celery_beat celery_worker_images frontend backup'
@@ -492,10 +500,14 @@ def test_ci_actions_are_commit_pinned_and_job_is_bounded():
     assert 'cyclonedx-py requirements' in CI_WORKFLOW
     assert 'npm sbom' in CI_WORKFLOW
     assert 'actions/upload-artifact@' in CI_WORKFLOW
+    assert 'actions/download-artifact@' in CI_WORKFLOW
+    assert 'actions/cache/restore@' in CI_WORKFLOW
+    assert 'actions/cache/save@' in CI_WORKFLOW
     assert 'codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f' in (
         CI_WORKFLOW
     )
     assert 'version: v11.3.1' in CI_WORKFLOW
+    assert '${{ success() && github.event_name == \'push\'' in CI_WORKFLOW
 
 
 def test_trivy_exceptions_are_exact_path_scoped_and_expiring():
@@ -527,7 +539,7 @@ def test_ci_scans_every_unique_production_image_and_its_service_images_match_ci(
     }
 
     assert scan_services == production_image_services
-    ci_services = yaml.safe_load(CI_WORKFLOW)['jobs']['test']['services']
+    ci_services = yaml.safe_load(CI_WORKFLOW)['jobs']['backend']['services']
     assert ci_services['db']['image'] == COMPOSE['services']['db']['image']
     assert ci_services['redis']['image'] == COMPOSE['services']['redis']['image']
     assert (
@@ -540,16 +552,116 @@ def test_ci_scans_every_unique_production_image_and_its_service_images_match_ci(
 
 
 def test_ci_bootstraps_the_hash_locked_compatible_pip_toolchain():
-    ci_tools_install = CI_WORKFLOW.index(
-        '--requirement requirements/ci-tools.txt'
+    ci_config = yaml.safe_load(CI_WORKFLOW)
+    lock_job = next(
+        job
+        for job in ci_config['jobs'].values()
+        if any(
+            'scripts/compile_requirements.sh' in str(step.get('run', ''))
+            for step in job.get('steps', [])
+        )
     )
-    lock_recompile = CI_WORKFLOW.index('scripts/compile_requirements.sh')
+    steps = lock_job['steps']
+    ci_tools_install = next(
+        index
+        for index, step in enumerate(steps)
+        if '--requirement requirements/ci-tools.txt' in str(step.get('run', ''))
+    )
+    lock_recompile = next(
+        index
+        for index, step in enumerate(steps)
+        if 'scripts/compile_requirements.sh' in str(step.get('run', ''))
+    )
     ci_tools_input = (ROOT / 'requirements/ci-tools.in').read_text()
 
     assert ci_tools_install < lock_recompile
     assert 'pip==26.2.1\n' in ci_tools_input
     assert 'pip-tools==7.6.1' in ci_tools_input
     assert 'pip install --upgrade' not in CI_WORKFLOW
+
+
+def test_ci_parallelizes_backend_and_fails_closed_through_stable_gate():
+    ci_config = yaml.safe_load(CI_WORKFLOW)
+    jobs = ci_config['jobs']
+    backend = jobs['backend']
+    suites = backend['strategy']['matrix']['include']
+    gate = jobs['test']
+
+    assert ci_config['name'] == 'CI'
+    assert backend['strategy']['fail-fast'] is True
+    assert {item['suite'] for item in suites} == {
+        'static',
+        'regular-1',
+        'regular-2',
+        'regular-3',
+        'migrations',
+    }
+    assert gate['name'] == 'test'
+    assert 'always()' in gate['if']
+    assert set(gate['needs']) == set(jobs) - {'test'}
+    assert 'strategy' not in gate
+    assert gate.get('continue-on-error') in (None, False)
+    gate_text = json.dumps(gate)
+    for dependency in gate['needs']:
+        assert f'needs.{dependency}.result' in gate_text
+    assert 'success' in gate_text
+
+
+def test_ci_shards_coverage_without_weakening_the_global_threshold():
+    durations = json.loads(
+        (ROOT / '.github/pytest-durations.json').read_text()
+    )
+
+    assert len(durations) >= 1500
+    assert all(isinstance(node_id, str) and node_id for node_id in durations)
+    assert all(
+        isinstance(value, (int, float)) and value >= 0
+        for value in durations.values()
+    )
+    assert 'pytest-split==0.11.0' in (ROOT / 'requirements/dev.in').read_text()
+    assert '--splitting-algorithm least_duration' in CI_WORKFLOW
+    assert '--durations-path .github/pytest-durations.json' in CI_WORKFLOW
+    assert '--cov-fail-under=0' in CI_WORKFLOW
+    assert 'coverage report --fail-under=70' in CI_WORKFLOW
+    assert 'coverage xml -o coverage.xml' in CI_WORKFLOW
+    assert 'include-hidden-files: true' in CI_WORKFLOW
+    assert 'merge-multiple: true' in CI_WORKFLOW
+    assert 'relative_files = True' in (ROOT / '.coveragerc').read_text()
+    assert '--ignore=tests/test_backup_postgres_integration.py' in CI_WORKFLOW
+    assert 'tests/test_backup_postgres_integration.py' in CI_WORKFLOW
+    assert 'xdist' not in CI_WORKFLOW
+    assert '--reuse-db' not in CI_WORKFLOW
+    backend_steps = yaml.safe_load(CI_WORKFLOW)['jobs']['backend']['steps']
+    migrate_step = next(
+        step
+        for step in backend_steps
+        if step['name'].startswith('Подготовить основную БД')
+    )
+    migration_step = next(
+        step
+        for step in backend_steps
+        if step['name'].startswith('Запустить migration')
+    )
+    assert backend_steps.index(migrate_step) < backend_steps.index(migration_step)
+    assert "-name 'test_*migration*.py'" in migration_step['run']
+    assert "-path 'tests/test_backup_postgres_integration.py'" in (
+        migration_step['run']
+    )
+    assert '"${db_tests[@]}"' in migration_step['run']
+
+
+def test_ci_parallel_artifacts_have_unique_names():
+    ci_config = yaml.safe_load(CI_WORKFLOW)
+    artifact_steps = []
+    for job in ci_config['jobs'].values():
+        for step in job.get('steps', []):
+            if str(step.get('uses', '')).startswith('actions/upload-artifact@'):
+                artifact_steps.append(step)
+
+    artifact_names = [step['with']['name'] for step in artifact_steps]
+    assert artifact_names
+    assert len(artifact_names) == len(set(artifact_names))
+    assert all(step['with'].get('overwrite') is True for step in artifact_steps)
 
 
 def test_deploy_uses_native_ssh_with_verified_host_key_and_bounded_runtime():

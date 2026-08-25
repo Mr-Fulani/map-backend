@@ -1,9 +1,16 @@
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEPLOY_SCRIPT = (ROOT / 'deploy.sh').read_text()
 DEPLOY_WORKFLOW = (ROOT / '.github/workflows/deploy.yml').read_text()
+CI_WORKFLOW = (ROOT / '.github/workflows/ci.yml').read_text()
+
+
+def _workflow_triggers(config):
+    return config.get('on', config.get(True))
 
 
 def test_deploy_is_gated_by_ci_and_uses_exact_commit():
@@ -14,6 +21,18 @@ def test_deploy_is_gated_by_ci_and_uses_exact_commit():
     assert 'github.event.workflow_run.head_sha' in DEPLOY_WORKFLOW
     assert 'deploy "$DEPLOY_SHA"' in DEPLOY_WORKFLOW
     assert 'bash -se' not in DEPLOY_WORKFLOW
+
+
+def test_deploy_tracks_the_stable_ci_workflow_name():
+    ci_config = yaml.safe_load(CI_WORKFLOW)
+    deploy_config = yaml.safe_load(DEPLOY_WORKFLOW)
+    deploy_triggers = _workflow_triggers(deploy_config)
+
+    assert ci_config['name'] == 'CI'
+    assert deploy_triggers['workflow_run'] == {
+        'workflows': ['CI'],
+        'types': ['completed'],
+    }
 
 
 def test_previous_sha_is_explicit_and_validated_before_docker_mutation():

@@ -1315,11 +1315,15 @@ pytest==9.0.3 \
     #   -r requirements/dev.in
     #   pytest-cov
     #   pytest-django
+    #   pytest-split
 pytest-cov==7.1.0 \
     --hash=sha256:a0461110b7865f9a271aa1b51e516c9a95de9d696734a2f71e3e78f46e1d4678
     # via -r requirements/dev.in
 pytest-django==4.13.0 \
     --hash=sha256:09374c12d947ca0f99e33726bcb720a6d0124f67058e1130586372bd109493e3
+    # via -r requirements/dev.in
+pytest-split==0.11.0 \
+    --hash=sha256:899d7c0f5730da91e2daf283860eb73b503259cb416851a65599368849c7f382
     # via -r requirements/dev.in
 python-crontab==3.3.0 \
     --hash=sha256:739a778b1a771379b75654e53fd4df58e5c63a9279a63b5dfe44c0fcc3ee7884
