@@ -5,8 +5,14 @@ from django.urls import path, include
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 from apps.core.admin_views import stats_view
+from apps.marketplaces.feed_endpoint_views import marketplace_feed_bridge
 
 urlpatterns = [
+    path(
+        'marketplace-feeds/v1/feed.xml',
+        marketplace_feed_bridge,
+        name='marketplace-feed-bridge',
+    ),
     path('admin/stats/', admin.site.admin_view(stats_view), name='admin-stats'),
     path('admin/', admin.site.urls),
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

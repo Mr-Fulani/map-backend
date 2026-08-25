@@ -11,7 +11,10 @@ from unittest.mock import patch
 from django.utils import timezone
 
 from apps.datasources.encryption import decrypt
-from apps.marketplaces.services import InvalidMarketplaceCredentials
+from apps.marketplaces.services import (
+    InvalidMarketplaceCredentials,
+    MarketplaceAccountFeedConflict,
+)
 from apps.marketplaces.models import MarketplaceAccount
 from apps.tenants.tests.auth import owner_access_token
 
@@ -198,6 +201,44 @@ class TestMarketplaceAccountAPI:
         resp = c.delete(f'/api/v1/accounts/{pk}/', HTTP_AUTHORIZATION=f'Bearer {key}')
         assert resp.status_code == 204
         assert not MarketplaceAccount.objects.filter(pk=pk).exists()
+
+    def test_profile_boundary_conflicts_return_409_for_patch_and_delete(self):
+        from django.test import Client
+        from apps.datasources.encryption import encrypt
+
+        tenant, key = make_tenant('acc-profile-boundary-conflict')
+        account = MarketplaceAccount.objects.create(
+            tenant=tenant,
+            name='Protected',
+            external_id='protected-profile',
+            credentials_enc=encrypt({'client_id': 'x', 'client_secret': 'y'}),
+        )
+        client = Client()
+
+        with patch(
+            'apps.marketplaces.views.MarketplaceAccountService.update_partial',
+            side_effect=MarketplaceAccountFeedConflict('migration active'),
+        ):
+            patch_response = client.patch(
+                f'/api/v1/accounts/{account.pk}/',
+                {'is_active': False},
+                content_type='application/json',
+                HTTP_AUTHORIZATION=f'Bearer {key}',
+            )
+        with patch.object(
+            MarketplaceAccount,
+            'soft_delete',
+            side_effect=MarketplaceAccountFeedConflict('migration active'),
+        ):
+            delete_response = client.delete(
+                f'/api/v1/accounts/{account.pk}/',
+                HTTP_AUTHORIZATION=f'Bearer {key}',
+            )
+
+        assert patch_response.status_code == 409
+        assert patch_response.json()['code'] == 'feed_profile_conflict'
+        assert delete_response.status_code == 409
+        assert delete_response.json()['code'] == 'feed_profile_conflict'
 
     def test_cannot_access_other_tenant_account(self):
         """GET чужого аккаунта возвращает 404."""

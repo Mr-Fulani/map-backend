@@ -1,6 +1,7 @@
 import datetime
 from dataclasses import dataclass
 import html
+import hmac
 import logging
 import re
 import time
@@ -134,6 +135,10 @@ class FeedUploadError(Exception):
     """Не удалось загрузить фид на S3 или уведомить Avito."""
 
 
+class FeedEndpointIdentityHold(FeedUploadError):
+    """The feed locator is fenced pending an explicit identity review."""
+
+
 class AmbiguousFeedSubmissionError(FeedUploadError):
     """Avito may have accepted the non-idempotent Autoload POST."""
 
@@ -150,6 +155,14 @@ _AUTOLOAD_SAFE_REJECTION_STATUSES = frozenset({
     415,
     422,
 })
+
+
+@dataclass(frozen=True)
+class FeedStorageLocator:
+    """One immutable key/URL pair used by a physical upload."""
+
+    object_key: str
+    public_url: str
 
 
 def _key_part(value: object, fallback: str) -> str:
@@ -218,7 +231,7 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         handle_avito_error(resp)
         return resp
 
-    def _feed_s3_key(self) -> str:
+    def _legacy_feed_s3_key(self) -> str:
         tenant_slug = _key_part(getattr(self.account.tenant, 'slug', ''), 'tenant')
         marketplace = _key_part(getattr(self.account, 'marketplace', ''), 'marketplace')
         account_slug = _key_part(getattr(self.account, 'name', ''), f'account-{self.account.pk}')
@@ -226,12 +239,132 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         prefix = str(getattr(settings, 'MEDIA_KEY_PREFIX', '') or '').strip('/')
         return f'{prefix}/{feed_key}' if prefix else feed_key
 
+    def _legacy_feed_locator(self) -> FeedStorageLocator:
+        from apps.marketplaces.feed_endpoint import (
+            FeedEndpointConfigurationError,
+            canonical_marketplace_feed_cdn_origin,
+        )
+
+        key = self._legacy_feed_s3_key()
+        bucket = str(getattr(settings, 'YC_S3_BUCKET', '') or '').strip()
+        if (
+            not bucket
+            or any(character.isspace() for character in bucket)
+            or any(character in bucket for character in '/?#\\')
+        ):
+            raise FeedUploadError('S3 feed bucket is not safely configured.')
+        try:
+            cdn_origin = canonical_marketplace_feed_cdn_origin(
+                getattr(settings, 'YC_CDN_DOMAIN', ''),
+            )
+        except FeedEndpointConfigurationError as exc:
+            raise FeedUploadError(
+                'S3 feed CDN authority is not safely configured.',
+            ) from exc
+        public_url = (
+            f'{cdn_origin}/{key}'
+            if cdn_origin
+            else f'https://storage.yandexcloud.net/{bucket}/{key}'
+        )
+        return FeedStorageLocator(object_key=key, public_url=public_url)
+
+    def _load_stable_feed_endpoint(self):
+        """Read and identity-check one endpoint generation, when provisioned."""
+
+        from apps.marketplaces.feed_workflow import account_identity_digest
+        from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+        endpoint = (
+            MarketplaceFeedEndpoint.objects.select_related(
+                'account', 'account__tenant',
+            )
+            .filter(account_id=self.account.pk)
+            .first()
+        )
+        if endpoint is None:
+            return None
+
+        stored_digest = str(endpoint.owner_identity_digest or '')
+        current_digest = account_identity_digest(endpoint.account)
+        adapter_digest = account_identity_digest(self.account)
+        current_owner_matches = hmac.compare_digest(stored_digest, current_digest)
+        adapter_owner_matches = hmac.compare_digest(stored_digest, adapter_digest)
+        owner_is_live = (
+            endpoint.account.deleted_at is None
+            and endpoint.account.is_active
+            and endpoint.account.tenant.is_active
+        )
+        if not (
+            current_owner_matches
+            & adapter_owner_matches
+            & owner_is_live
+            & (
+                endpoint.storage_mode
+                == MarketplaceFeedEndpoint.StorageMode.LEGACY_BRIDGE
+            )
+        ):
+            raise FeedEndpointIdentityHold(
+                'Feed endpoint identity requires manual review.',
+            )
+        return endpoint
+
+    def _stable_feed_locator(
+        self,
+        *,
+        require_serve_enabled: bool = False,
+    ) -> FeedStorageLocator | None:
+        """Resolve a physical object locator under the writer lifecycle."""
+
+        from apps.marketplaces.feed_endpoint import legacy_bridge_target_url
+        from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+        endpoint = self._load_stable_feed_endpoint()
+        if endpoint is None:
+            return None
+        servable_states = {
+            MarketplaceFeedEndpoint.ProfileState.BRIDGE_READY,
+            MarketplaceFeedEndpoint.ProfileState.MIGRATING,
+            MarketplaceFeedEndpoint.ProfileState.UPDATE_UNKNOWN,
+            MarketplaceFeedEndpoint.ProfileState.VERIFIED,
+        }
+        if (
+            endpoint.profile_state not in servable_states
+            or (require_serve_enabled and not endpoint.serve_enabled)
+        ):
+            raise FeedEndpointIdentityHold(
+                'Feed endpoint lifecycle requires manual review.',
+            )
+        target = legacy_bridge_target_url(endpoint)
+        if target is None:
+            raise FeedEndpointIdentityHold(
+                'Feed endpoint locator requires manual review.',
+            )
+        return FeedStorageLocator(
+            object_key=endpoint.legacy_object_key,
+            public_url=target,
+        )
+
+    def _provider_profile_feed_url(self) -> str:
+        """Keep normal onboarding outside the resumable migration writer."""
+
+        endpoint = self._load_stable_feed_endpoint()
+        if endpoint is None:
+            return self._legacy_feed_locator().public_url
+        raise FeedEndpointIdentityHold(
+            'Stable feed profile is owned by the migration workflow.',
+        )
+
+    def _resolve_feed_locator(self) -> FeedStorageLocator:
+        """Use one frozen endpoint locator, or the pre-rollout legacy fallback."""
+
+        return self._stable_feed_locator() or self._legacy_feed_locator()
+
+    def _feed_s3_key(self) -> str:
+        locator = self._stable_feed_locator()
+        return locator.object_key if locator is not None else self._legacy_feed_s3_key()
+
     def _feed_public_url(self) -> str:
-        bucket = settings.YC_S3_BUCKET
-        cdn = getattr(settings, 'YC_CDN_DOMAIN', '')
-        if cdn:
-            return f'https://{cdn}/{self._feed_s3_key()}'
-        return f'https://storage.yandexcloud.net/{bucket}/{self._feed_s3_key()}'
+        return self._provider_profile_feed_url()
 
     def _s3_client(self):
         return boto3.client(
@@ -248,20 +381,24 @@ class AvitoAdapter(BaseMarketplaceAdapter):
             raise FeedUploadError(
                 'S3 не настроен: задайте YC_S3_BUCKET, YC_S3_ACCESS_KEY, YC_S3_SECRET_KEY'
             )
+        locator = self._resolve_feed_locator()
         try:
             self._s3_client().put_object(
                 Bucket=settings.YC_S3_BUCKET,
-                Key=self._feed_s3_key(),
+                Key=locator.object_key,
                 Body=feed_bytes,
                 ContentType='application/xml',
                 ACL='public-read',
             )
         except (BotoCoreError, ClientError) as exc:
             raise FeedUploadError(f'Ошибка загрузки фида на S3: {exc}') from exc
-        return self._feed_public_url()
+        return locator.public_url
 
     def _trigger_autoload(self) -> None:
         """Уведомляет Avito о новом фиде через POST /autoload/v1/upload."""
+        # Re-read the endpoint after upload. A credential rotation between
+        # S3 PUT and this non-idempotent POST must stop at the provider boundary.
+        self._stable_feed_locator(require_serve_enabled=True)
         token = self._auth.get_token(self.account)
         resp = _avito_request(
             requests.post,

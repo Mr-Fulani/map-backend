@@ -19,9 +19,13 @@ def test_autoload_429_raises_rate_limit_with_numeric_retry_delay():
     ):
         adapter = AvitoAdapter(account)
         adapter._auth.get_token = MagicMock(return_value='token')
+        adapter._stable_feed_locator = MagicMock(return_value=None)
 
         with pytest.raises(RateLimitError) as error:
             adapter._trigger_autoload()
 
+    adapter._stable_feed_locator.assert_called_once_with(
+        require_serve_enabled=True,
+    )
     assert error.value.retry_after == AUTOLOAD_RATE_LIMIT_RETRY_AFTER
     assert isinstance(error.value.retry_after, int)

@@ -58,6 +58,9 @@ def _production_environment() -> dict[str, str]:
         'PUBLIC_HTTP_PROXY_URL': 'http://egress_proxy:3128',
         'AVITO_STATUS_LIFECYCLE_MODE': 'legacy',
         'MARKETPLACE_FEED_RUN_MODE': 'legacy',
+        'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED': 'false',
+        'MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS': '3600',
+        'MARKETPLACE_FEED_STORAGE_MODE': 'legacy_public',
     }
 
 
@@ -178,6 +181,172 @@ def test_production_accepts_durable_feed_run_with_dual_write_lifecycle():
     )
 
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('value', ('', 'enabled', '1', 'yes'))
+def test_production_requires_explicit_feed_profile_migration_boolean(value):
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED'] = value
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED' in result.stderr
+
+
+@pytest.mark.parametrize('value', ('', '299', '86401', '-1', '3.5', '٣٦٠٠'))
+def test_production_rejects_invalid_feed_profile_source_settlement(value):
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS'] = value
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS' in result.stderr
+
+
+@pytest.mark.parametrize('value', ('300', '3600', '86400'))
+def test_production_accepts_bounded_feed_profile_source_settlement(value):
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS'] = value
+
+    command = (
+        'import config.settings.production as settings; '
+        'assert settings.MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS '
+        f'== {value}'
+    )
+    result = subprocess.run(
+        [sys.executable, '-c', command],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+def _stable_bridge_environment() -> dict[str, str]:
+    environment = _production_environment()
+    environment.update({
+        'MARKETPLACE_FEED_STORAGE_MODE': 'stable_bridge',
+        'MARKETPLACE_FEED_PUBLIC_BASE_URL': (
+            'https://api.example.test/marketplace-feeds/v1/feed.xml'
+        ),
+        'MARKETPLACE_FEED_URL_SIGNING_KEYS': (
+            '{"feed-v1":"MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"}'
+        ),
+        'MARKETPLACE_FEED_URL_SIGNING_PRIMARY_KEY_ID': 'feed-v1',
+    })
+    return environment
+
+
+def test_production_feed_profile_migration_requires_stable_bridge_contract():
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED'] = 'true'
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'MARKETPLACE_FEED_STORAGE_MODE=stable_bridge' in result.stderr
+
+
+def test_production_accepts_profile_migration_with_bridge_contract():
+    environment = _stable_bridge_environment()
+    environment['MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED'] = 'true'
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            'import config.settings.production as settings; '
+            'assert settings.MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED is True; '
+            'assert len(settings.MARKETPLACE_FEED_URL_SIGNING_KEYS["feed-v1"]) == 32',
+        ],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('value', ('', 'public', 'private_generation', 'true'))
+def test_production_rejects_unavailable_marketplace_feed_storage_modes(value):
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_STORAGE_MODE'] = value
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'MARKETPLACE_FEED_STORAGE_MODE' in result.stderr
+
+
+@pytest.mark.parametrize(
+    ('name', 'value'),
+    (
+        ('MARKETPLACE_FEED_PUBLIC_BASE_URL', 'http://api.example.test/marketplace-feeds/v1/feed.xml'),
+        ('MARKETPLACE_FEED_PUBLIC_BASE_URL', 'https://api.example.test/other.xml'),
+        ('MARKETPLACE_FEED_PUBLIC_BASE_URL', 'https://api.example.test:8443/marketplace-feeds/v1/feed.xml'),
+        ('MARKETPLACE_FEED_PUBLIC_BASE_URL', 'https://feeds.example.test/marketplace-feeds/v1/feed.xml'),
+        ('MARKETPLACE_FEED_URL_SIGNING_KEYS', '{"feed-v1":"c2hvcnQ"}'),
+        ('MARKETPLACE_FEED_URL_SIGNING_PRIMARY_KEY_ID', 'missing'),
+        ('YC_CDN_DOMAIN', 'trusted.example.test@attacker.example'),
+    ),
+)
+def test_production_stable_bridge_fails_closed_on_invalid_contract(name, value):
+    environment = _stable_bridge_environment()
+    environment[name] = value
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert name in result.stderr
 
 
 def test_production_allows_explicitly_disabled_billing_without_credentials():

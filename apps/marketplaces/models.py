@@ -1,6 +1,6 @@
 import uuid
 
-from django.db import models
+from django.db import models, transaction
 
 from apps.core.models import SoftDeleteModel, TimestampedModel
 from apps.tenants.models import Tenant
@@ -184,10 +184,30 @@ class MarketplaceAccount(SoftDeleteModel):
         return f'{self.tenant.slug} / {self.name}'
 
     def soft_delete(self):
-        self.listings.all().delete()
-        self.is_active = False
-        self.save(update_fields=['is_active', 'updated_at'])
-        super().soft_delete()
+        if self.deleted_at is not None:
+            return
+        with transaction.atomic():
+            locked = type(self).all_objects.select_for_update().get(pk=self.pk)
+            if locked.deleted_at is not None:
+                self.deleted_at = locked.deleted_at
+                self.is_active = locked.is_active
+                return
+            from apps.marketplaces.services import (
+                _assert_feed_endpoint_availability_mutation_safe,
+                _lock_marketplace_feed_endpoint,
+            )
+
+            endpoint = _lock_marketplace_feed_endpoint(locked.pk)
+            _assert_feed_endpoint_availability_mutation_safe(
+                endpoint,
+                destructive=True,
+            )
+            locked.listings.all().delete()
+            locked.is_active = False
+            locked.save(update_fields=['is_active', 'updated_at'])
+            super(MarketplaceAccount, locked).soft_delete()
+            self.is_active = locked.is_active
+            self.deleted_at = locked.deleted_at
 
 
 class MarketplaceFeedRun(TimestampedModel):
@@ -556,6 +576,269 @@ class AvitoCategoryTreeSnapshot(TimestampedModel):
 
     def __str__(self):
         return f'{self.domain_slug}: {self.status} ({self.node_count})'
+
+
+class MarketplaceFeedEndpoint(TimestampedModel):
+    """Stable, provider-neutral public identity for one account feed.
+
+    Each provisioned row is rollout-sticky and freezes the exact legacy
+    object/profile locator so an account rename cannot move the feed underneath
+    its stable URL. Public serving is controlled by this row's lifecycle, live
+    owner generation, and ``serve_enabled`` flag.
+
+    Capability material is deliberately not stored. The current token is
+    derived from immutable identity, owner digest, capability revision, and
+    ``token_key_id`` by a domain-separated HMAC key ring. During a bounded key
+    rotation the verifier also accepts ``previous_token_key_id`` without
+    changing the capability revision.
+    """
+
+    class StorageMode(models.TextChoices):
+        LEGACY_BRIDGE = 'legacy_bridge', 'Мост к legacy-фиду'
+        PRIVATE_GENERATION = 'private_generation', 'Приватные поколения фида'
+
+    class ProfileState(models.TextChoices):
+        NEW = 'new', 'Создан'
+        BRIDGE_READY = 'bridge_ready', 'Legacy-мост готов'
+        MIGRATING = 'migrating', 'Профиль переводится'
+        UPDATE_UNKNOWN = 'update_unknown', 'Результат обновления неизвестен'
+        VERIFIED = 'verified', 'Stable URL подтверждён'
+        MANUAL_REVIEW = 'manual_review', 'Требуется ручная сверка'
+
+    public_id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False,
+        verbose_name='Публичный ID stable feed endpoint',
+    )
+    account = models.OneToOneField(
+        MarketplaceAccount,
+        on_delete=models.CASCADE,
+        related_name='feed_endpoint',
+        editable=False,
+        verbose_name='Аккаунт маркетплейса',
+    )
+    token_key_id = models.CharField(
+        max_length=32,
+        editable=False,
+        verbose_name='ID HMAC-ключа capability token',
+    )
+    previous_token_key_id = models.CharField(
+        max_length=32,
+        blank=True,
+        editable=False,
+        verbose_name='Предыдущий ID HMAC-ключа на время ротации',
+    )
+    owner_identity_digest = models.CharField(
+        max_length=64,
+        editable=False,
+        verbose_name='Отпечаток provider identity владельца',
+    )
+    capability_revision = models.PositiveBigIntegerField(
+        default=1,
+        editable=False,
+        verbose_name='Ревизия capability token',
+    )
+    serve_enabled = models.BooleanField(
+        default=False,
+        editable=False,
+        verbose_name='Публичная выдача разрешена',
+    )
+    storage_mode = models.CharField(
+        max_length=24,
+        choices=StorageMode.choices,
+        default=StorageMode.LEGACY_BRIDGE,
+        editable=False,
+        verbose_name='Режим хранения фида',
+    )
+    legacy_object_key = models.CharField(
+        max_length=1024,
+        blank=True,
+        editable=False,
+        verbose_name='Замороженный legacy object key',
+    )
+    legacy_profile_url = models.URLField(
+        max_length=2048,
+        blank=True,
+        editable=False,
+        verbose_name='Точный legacy URL в профиле площадки',
+    )
+    profile_state = models.CharField(
+        max_length=20,
+        choices=ProfileState.choices,
+        default=ProfileState.NEW,
+        editable=False,
+        verbose_name='Состояние миграции профиля',
+    )
+    profile_fingerprint = models.CharField(
+        max_length=64,
+        blank=True,
+        editable=False,
+        verbose_name='SHA-256 последнего проверенного профиля',
+    )
+    profile_revision = models.PositiveBigIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Ревизия состояния профиля',
+    )
+    profile_verified_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Профиль площадки проверен',
+    )
+
+    class Meta:
+        verbose_name = 'Stable feed endpoint маркетплейса'
+        verbose_name_plural = 'Stable feed endpoints маркетплейсов'
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    token_key_id__regex=r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$',
+                ),
+                name='mkt_feed_ep_key_id_format',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(previous_token_key_id='')
+                    | (
+                        models.Q(
+                            previous_token_key_id__regex=(
+                                r'^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$'
+                            ),
+                        )
+                        & ~models.Q(previous_token_key_id=models.F('token_key_id'))
+                    )
+                ),
+                name='mkt_feed_ep_prev_key',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(previous_token_key_id='')
+                    | models.Q(profile_state__in=('migrating', 'update_unknown'))
+                ),
+                name='mkt_feed_ep_prev_key_state',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    owner_identity_digest__regex=r'^[0-9a-f]{64}$',
+                ),
+                name='mkt_feed_ep_owner_digest',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(capability_revision__gte=1),
+                name='mkt_feed_ep_cap_revision',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    storage_mode__in=(
+                        'legacy_bridge',
+                        'private_generation',
+                    ),
+                ),
+                name='mkt_feed_ep_storage_mode',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(
+                    profile_state__in=(
+                        'new',
+                        'bridge_ready',
+                        'migrating',
+                        'update_unknown',
+                        'verified',
+                        'manual_review',
+                    ),
+                ),
+                name='mkt_feed_ep_profile_state',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(legacy_object_key='', legacy_profile_url='')
+                    | (
+                        ~models.Q(legacy_object_key='')
+                        & models.Q(legacy_profile_url__startswith='https://')
+                    )
+                ),
+                name='mkt_feed_ep_legacy_bundle',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(
+                        profile_state__in=(
+                            'bridge_ready',
+                            'migrating',
+                            'update_unknown',
+                            'verified',
+                        ),
+                    )
+                    | ~models.Q(legacy_object_key='')
+                ),
+                name='mkt_feed_ep_state_legacy',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(
+                        profile_fingerprint='',
+                        profile_verified_at__isnull=True,
+                    )
+                    | models.Q(
+                        profile_fingerprint__regex=r'^[0-9a-f]{64}$',
+                        profile_verified_at__isnull=False,
+                    )
+                ),
+                name='mkt_feed_ep_profile_baseline',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    ~models.Q(
+                        profile_state__in=(
+                            'bridge_ready',
+                            'migrating',
+                            'update_unknown',
+                            'verified',
+                        ),
+                    )
+                    | models.Q(
+                        profile_fingerprint__regex=r'^[0-9a-f]{64}$',
+                        profile_verified_at__isnull=False,
+                    )
+                ),
+                name='mkt_feed_ep_servable_baseline',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(serve_enabled=False)
+                    | (
+                        models.Q(
+                            profile_state__in=(
+                                'bridge_ready',
+                                'migrating',
+                                'update_unknown',
+                                'verified',
+                            ),
+                        )
+                        & ~models.Q(legacy_object_key='')
+                    )
+                ),
+                name='mkt_feed_ep_serve_guard',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(storage_mode='legacy_bridge')
+                    | models.Q(serve_enabled=False)
+                ),
+                name='mkt_feed_ep_private_dark',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['profile_state', 'updated_at', 'public_id'],
+                name='mkt_feed_ep_state_updated',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.account_id} [{self.profile_state}] {self.public_id}'
 
 
 class MarketplacePlacementAddress(TimestampedModel):

@@ -189,7 +189,8 @@ migrations/scheduler/queue/settings нет.
 - test_durable_feed_provenance.py;
 - test_durable_feed_tasks.py.
 
-Deploy: код и схема выключены; production run mode остаётся legacy.
+Deploy: PR `#244`, production commit `f1881f1`; код и схема выключены,
+production run mode остаётся legacy.
 
 ## P4 — stable endpoint и профиль Autoload, миграция 0025
 
@@ -206,6 +207,13 @@ Deploy: код и схема выключены; production run mode остаё�
 
 Deploy: profile migration false, storage legacy_public. Включение требует
 отдельного реального Avito 307 canary.
+
+Фактически выделенный P4 не содержит migrations `0026+`, ingress/feed-intent
+hunks, private artifacts, cleanup/GC или worker wiring. Локально прошли 105
+узких тестов, полный backend (`2198 passed, 1 skipped`), clean и P3-upgrade
+PostgreSQL, rollback/reapply `0025`, migration drift, flake8, frontend
+ESLint/typecheck, оба mypy gate и `git diff --check`. PR и deploy ещё не
+выполнены.
 
 ## P5 — feed intents и восстановление legacy, миграции 0026–0031
 

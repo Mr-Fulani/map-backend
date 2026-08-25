@@ -8,6 +8,7 @@ from apps.marketplaces.models import (
     CategoryMapping,
     Listing,
     MarketplaceAccount,
+    MarketplaceFeedEndpoint,
     MarketplaceFeedRun,
 )
 
@@ -67,6 +68,32 @@ class MarketplaceFeedRunAdmin(ModelAdmin):
         'tenant__slug', 'provider_run_id',
     ]
     readonly_fields = [field.name for field in MarketplaceFeedRun._meta.fields]
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+@admin.register(MarketplaceFeedEndpoint)
+class MarketplaceFeedEndpointAdmin(ModelAdmin):
+    """Read-only diagnostics for the dark stable-feed endpoint schema."""
+
+    list_display = [
+        'public_id', 'account', 'storage_mode', 'profile_state',
+        'profile_revision', 'serve_enabled', 'profile_verified_at', 'updated_at',
+    ]
+    list_filter = ['storage_mode', 'profile_state', 'serve_enabled']
+    search_fields = [
+        'public_id', 'account__name', 'account__external_id',
+        'account__tenant__slug',
+    ]
+    list_select_related = ['account', 'account__tenant']
+    readonly_fields = [field.name for field in MarketplaceFeedEndpoint._meta.fields]
 
     def has_add_permission(self, request):
         return False
