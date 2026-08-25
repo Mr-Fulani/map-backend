@@ -35,6 +35,7 @@ DURABLE_TASK_QUEUES = {
     'apps.ai_agent.tasks.generate_description_task': 'ai_generate',
     'apps.image_search.tasks.search_images_for_product': 'image_search',
     'apps.media_processing.tasks.process_media_job': 'media_processing',
+    'apps.marketplaces.tasks.process_marketplace_feed_intent': 'avito_publish',
     'apps.marketplaces.tasks.process_marketplace_feed_run_step': 'avito_publish',
     'apps.web_research.tasks.schedule_web_research_fallback': 'part_parsing',
     'apps.web_research.tasks.run_web_research': 'part_parsing',
@@ -67,6 +68,22 @@ _OUTCOME_UNCERTAIN_RESULT = {
 _NO_AUTOMATIC_REPLAY_TASKS = {
     'apps.ai_agent.tasks.generate_description_task',
     'apps.media_processing.tasks.process_media_job',
+}
+
+_MARKETPLACE_FEED_INTENT_TASK = (
+    'apps.marketplaces.tasks.process_marketplace_feed_intent'
+)
+_FEED_INTENT_RECOVERY_FINAL_CODES = {
+    'feed_intent_recovered',
+    'feed_intent_superseded',
+    'feed_intent_owner_missing',
+    'feed_intent_recovery_invalid',
+}
+_FEED_INTENT_DARK_RESULTS = {
+    'disabled',
+    'inactive',
+    'missing',
+    'not_activated',
 }
 
 
@@ -255,6 +272,263 @@ def publish_due_dispatches(limit: int = 200) -> dict:
         if publish_dispatch(dispatch_id):
             published += 1
     return {'selected': len(dispatch_ids), 'published': published}
+
+
+def _feed_intent_dispatch_needs_recovery(
+    dispatch: BackgroundJobDispatch,
+) -> bool:
+    if dispatch.task_name != _MARKETPLACE_FEED_INTENT_TASK:
+        return False
+    result = dispatch.result if isinstance(dispatch.result, dict) else {}
+    if result.get('reason_code') in _FEED_INTENT_RECOVERY_FINAL_CODES:
+        return False
+    if dispatch.status in {
+        BackgroundJobDispatch.Status.FAILED,
+        BackgroundJobDispatch.Status.CANCELLED,
+    }:
+        return True
+    return (
+        dispatch.status == BackgroundJobDispatch.Status.SUCCEEDED
+        and result.get('status') in _FEED_INTENT_DARK_RESULTS
+    )
+
+
+def _canonical_positive_dispatch_arg(
+    dispatch: BackgroundJobDispatch,
+    position: int,
+) -> int | None:
+    try:
+        value = dispatch.args[position]
+    except (IndexError, TypeError):
+        return None
+    if isinstance(value, bool):
+        return None
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if normalized <= 0 or str(normalized) != str(value):
+        return None
+    return normalized
+
+
+def _finish_feed_intent_recovery(
+    dispatch: BackgroundJobDispatch,
+    *,
+    reason_code: str,
+    source_revision: int | None,
+    desired_revision: int | None,
+) -> None:
+    dispatch.result = {
+        'reason_code': reason_code,
+        'source_revision': source_revision,
+        'desired_revision': desired_revision,
+    }
+    dispatch.save(update_fields=['result', 'updated_at'])
+
+
+def recover_terminal_feed_intent_dispatches(limit: int = 100) -> dict:
+    """Re-arm desired feed state after a terminal transport failure."""
+
+    from apps.marketplaces.feed_intents import (
+        FeedIntentRevisionDriftError,
+        nudge_undispatched_feed_intent,
+        rearm_feed_intent,
+    )
+    from apps.marketplaces.models import (
+        MarketplaceAccount,
+        MarketplaceFeedEndpoint,
+    )
+
+    recovery_time = now()
+    try:
+        batch_limit = max(1, min(int(limit), 100))
+    except (TypeError, ValueError, OverflowError):
+        batch_limit = 100
+    terminal_or_dark = (
+        Q(status__in=[
+            BackgroundJobDispatch.Status.FAILED,
+            BackgroundJobDispatch.Status.CANCELLED,
+        ])
+        | Q(
+            status=BackgroundJobDispatch.Status.SUCCEEDED,
+            result__status__in=sorted(_FEED_INTENT_DARK_RESULTS),
+        )
+    )
+    candidate_ids = list(
+        BackgroundJobDispatch.objects.filter(
+            terminal_or_dark,
+            task_name=_MARKETPLACE_FEED_INTENT_TASK,
+            available_at__lte=recovery_time,
+        ).filter(
+            Q(result__reason_code__isnull=True)
+            | ~Q(result__reason_code__in=sorted(
+                _FEED_INTENT_RECOVERY_FINAL_CODES,
+            )),
+        ).order_by('available_at', 'created_at', 'pk').values_list(
+            'pk', flat=True,
+        )[:batch_limit]
+    )
+    recovered = superseded = held = invalid = 0
+
+    for dispatch_id in candidate_ids:
+        snapshot = BackgroundJobDispatch.objects.filter(pk=dispatch_id).first()
+        if snapshot is None or not _feed_intent_dispatch_needs_recovery(snapshot):
+            continue
+        account_id = _canonical_positive_dispatch_arg(snapshot, 0)
+        source_revision = _canonical_positive_dispatch_arg(snapshot, 1)
+        if account_id is None or source_revision is None:
+            with transaction.atomic():
+                locked_dispatch = (
+                    BackgroundJobDispatch.objects.select_for_update()
+                    .filter(pk=dispatch_id)
+                    .first()
+                )
+                if (
+                    locked_dispatch is not None
+                    and _feed_intent_dispatch_needs_recovery(locked_dispatch)
+                ):
+                    _finish_feed_intent_recovery(
+                        locked_dispatch,
+                        reason_code='feed_intent_recovery_invalid',
+                        source_revision=None,
+                        desired_revision=None,
+                    )
+                    invalid += 1
+            continue
+
+        with transaction.atomic():
+            account = (
+                MarketplaceAccount.all_objects.select_for_update(of=('self',))
+                .select_related('tenant')
+                .filter(pk=account_id)
+                .first()
+            )
+            if account is None:
+                locked_dispatch = (
+                    BackgroundJobDispatch.objects.select_for_update()
+                    .filter(pk=dispatch_id)
+                    .first()
+                )
+                if (
+                    locked_dispatch is not None
+                    and _feed_intent_dispatch_needs_recovery(locked_dispatch)
+                ):
+                    _finish_feed_intent_recovery(
+                        locked_dispatch,
+                        reason_code='feed_intent_owner_missing',
+                        source_revision=source_revision,
+                        desired_revision=None,
+                    )
+                    invalid += 1
+                continue
+
+            endpoints = list(
+                MarketplaceFeedEndpoint.objects.select_for_update()
+                .only('public_id', 'account_id', 'source_intent_revision')
+                .filter(account_id=account_id)
+                .order_by('account_id')
+            )
+            locked_dispatch = (
+                BackgroundJobDispatch.objects.select_for_update()
+                .filter(pk=dispatch_id)
+                .first()
+            )
+            if (
+                locked_dispatch is None
+                or not _feed_intent_dispatch_needs_recovery(locked_dispatch)
+                or _canonical_positive_dispatch_arg(locked_dispatch, 0) != account_id
+                or _canonical_positive_dispatch_arg(locked_dispatch, 1)
+                != source_revision
+            ):
+                continue
+
+            if (
+                account.deleted_at is not None
+                or not account.is_active
+                or not account.tenant.is_active
+                or any(
+                    endpoint.source_intent_revision
+                    != account.feed_intent_revision
+                    for endpoint in endpoints
+                )
+            ):
+                locked_dispatch.available_at = recovery_time + timedelta(minutes=5)
+                locked_dispatch.save(update_fields=['available_at', 'updated_at'])
+                held += 1
+                continue
+
+            current_revision = int(account.feed_intent_revision)
+            dispatched_revision = int(account.feed_intent_dispatched_revision)
+            if dispatched_revision > source_revision:
+                _finish_feed_intent_recovery(
+                    locked_dispatch,
+                    reason_code='feed_intent_superseded',
+                    source_revision=source_revision,
+                    desired_revision=current_revision,
+                )
+                superseded += 1
+                continue
+            if (
+                dispatched_revision < source_revision
+                or current_revision < dispatched_revision
+            ):
+                locked_dispatch.available_at = recovery_time + timedelta(minutes=5)
+                locked_dispatch.save(update_fields=['available_at', 'updated_at'])
+                held += 1
+                continue
+
+            dispatch_result = (
+                locked_dispatch.result
+                if isinstance(locked_dispatch.result, dict)
+                else {}
+            )
+            if dispatch_result.get('status') == 'not_activated':
+                # P5 persists the checkpoint but does not activate a new sender.
+                locked_dispatch.available_at = recovery_time + timedelta(hours=1)
+                locked_dispatch.save(update_fields=['available_at', 'updated_at'])
+                held += 1
+                continue
+
+            try:
+                if current_revision == dispatched_revision == source_revision:
+                    desired_revision = rearm_feed_intent(
+                        account_id,
+                        source_revision,
+                        recovery_time,
+                    )
+                    if desired_revision is None:
+                        raise FeedIntentRevisionDriftError(
+                            'Feed intent recovery lost its exact revision CAS.',
+                        )
+                elif current_revision > dispatched_revision == source_revision:
+                    nudge_undispatched_feed_intent(account_id, recovery_time)
+                    desired_revision = current_revision
+                else:
+                    raise FeedIntentRevisionDriftError(
+                        'Feed intent recovery observed an invalid cursor state.',
+                    )
+            except (FeedIntentRevisionDriftError, OverflowError):
+                locked_dispatch.available_at = recovery_time + timedelta(minutes=5)
+                locked_dispatch.save(update_fields=['available_at', 'updated_at'])
+                held += 1
+                continue
+
+            _finish_feed_intent_recovery(
+                locked_dispatch,
+                reason_code='feed_intent_recovered',
+                source_revision=source_revision,
+                desired_revision=desired_revision,
+            )
+            recovered += 1
+
+    return {
+        'selected': len(candidate_ids),
+        'recovered': recovered,
+        'superseded': superseded,
+        'held': held,
+        'invalid': invalid,
+    }
 
 
 def claim_dispatch(dispatch_id, claim_token) -> BackgroundJobDispatch | None:

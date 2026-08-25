@@ -212,43 +212,38 @@ Deploy: profile migration false, storage legacy_public. Включение тр�
 hunks, private artifacts, cleanup/GC или worker wiring. Локально прошли 105
 узких тестов, полный backend (`2198 passed, 1 skipped`), clean и P3-upgrade
 PostgreSQL, rollback/reapply `0025`, migration drift, flake8, frontend
-ESLint/typecheck, оба mypy gate и `git diff --check`. PR и deploy ещё не
-выполнены.
+ESLint/typecheck, оба mypy gate и `git diff --check`. PR `#245` merged и
+deployed exact commit `9061ebb`; P4 остаётся выключенным.
 
-## P5 — feed intents и восстановление legacy, миграции 0026–0031
+## P5 — безопасный feed-intent foundation, миграции 0026–0028
 
 Основные файлы:
 
-- docs/AVITO_FEED_LEGACY_RECOVERY.md;
-- migrations 0026–0031;
-- feed_intents.py, feed_cursor_reconciliation.py,
-  feed_report_reconciler.py;
-- reconcile_legacy_feed_cursor.py;
-- intent/dispatch/legacy-repair/provider-result tests;
-- writer-части marketplace/products/image_search/media_processing/web_research;
-- связанные части core dispatch/retention и notifications;
-- ingress settings без включения private artifacts.
+- migrations 0026–0028;
+- feed_intents.py;
+- exact-revision dark scanner/worker и terminal dispatch recovery;
+- только intent/schema/dispatch/recovery/production-settings tests;
+- ingress setting, жёстко зафиксированный в production на `legacy`.
 
-Не включать upload ledger 0032+, GC или dispatch fence.
+Не включать writer cutover, legacy flush replacement, report reconciler,
+private artifact schema/storage, upload ledger, GC или dispatch fence.
 
 Узкая проверка:
 
 - test_feed_intents.py;
 - test_feed_intent_dispatch.py;
-- test_feed_flush_delivery_repair.py;
-- test_provider_result_feed_intents.py;
-- test_feed_intent_local_writers.py;
-- test_local_lifecycle_writers.py;
-- test_reconcile_legacy_feed_cursor.py;
-- product/image writer tests.
+- test_feed_intent_schema.py;
+- test_feed_intent_recovery.py;
+- production legacy-only settings contract.
 
-Deploy: сначала только legacy. Dual-write — отдельный canary после schema deploy.
+Deploy: только legacy. В этом release production-конфигурация отклоняет
+dual-write/durable; следующий activation package требует отдельного решения.
 
-## P6 — private artifact experiment, миграции 0032–0035
+## P6 — private artifact experiment, миграции 0029–0035
 
 Основные файлы:
 
-- migrations 0032–0035;
+- migrations 0029–0035;
 - feed_artifact_storage.py, feed_artifact_promotion.py,
   feed_artifact_serving.py, feed_artifact_put_reconciliation.py;
 - streaming writer/deterministic OEM части Avito feed builder;

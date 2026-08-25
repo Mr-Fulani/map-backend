@@ -62,6 +62,16 @@ class Command(BaseCommand):
                 'queue': 'notifications',
             },
             {
+                'name': 'dispatch_due_marketplace_feed_intents',
+                'task': (
+                    'apps.marketplaces.tasks.'
+                    'dispatch_due_marketplace_feed_intents'
+                ),
+                'schedule': every_1m,
+                'queue': 'avito_publish',
+                'expire_seconds': 50,
+            },
+            {
                 'name': 'dispatch_due_product_bulk_jobs',
                 'task': 'apps.products.tasks.dispatch_due_product_bulk_jobs',
                 'schedule': every_1m,

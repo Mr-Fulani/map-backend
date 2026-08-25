@@ -58,6 +58,7 @@ def _production_environment() -> dict[str, str]:
         'PUBLIC_HTTP_PROXY_URL': 'http://egress_proxy:3128',
         'AVITO_STATUS_LIFECYCLE_MODE': 'legacy',
         'MARKETPLACE_FEED_RUN_MODE': 'legacy',
+        'MARKETPLACE_FEED_INGRESS_MODE': 'legacy',
         'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED': 'false',
         'MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS': '3600',
         'MARKETPLACE_FEED_STORAGE_MODE': 'legacy_public',
@@ -172,6 +173,47 @@ def test_production_accepts_durable_feed_run_with_dual_write_lifecycle():
 
     result = subprocess.run(
         [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize('value', ('', 'dual_write', 'durable', 'enabled'))
+def test_p5_production_rejects_feed_ingress_activation(value):
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_INGRESS_MODE'] = value
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'import config.settings.production'],
+        cwd=ROOT,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'MARKETPLACE_FEED_INGRESS_MODE' in result.stderr
+
+
+def test_p5_production_accepts_only_explicit_legacy_feed_ingress():
+    environment = _production_environment()
+    environment['MARKETPLACE_FEED_INGRESS_MODE'] = ' LEGACY '
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            '-c',
+            'import config.settings.production as settings; '
+            'assert settings.MARKETPLACE_FEED_INGRESS_MODE == "legacy"',
+        ],
         cwd=ROOT,
         env=environment,
         capture_output=True,

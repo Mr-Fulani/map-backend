@@ -430,11 +430,50 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный шаг
 
-P0–P3 завершены. P3 работает в production на exact commit `f1881f1`, но его
-новый durable runner выключен: владельцем отправки остаётся legacy-код. P4
-выделен в ветку `codex/p4-stable-feed-endpoint`; следующий release добавляет
-схему и код stable endpoint в выключенном состоянии. Реальный Avito 307 canary
-и изменение Autoload-профиля требуют отдельного решения после deploy.
+P0–P4 завершены. P4 работает в production на exact commit `9061ebb`, но profile
+migration выключена и storage остаётся `legacy_public`. Активирован безопасный
+P5 foundation: только additive cursor schema `0026`–`0028`, intent-примитивы и
+dark scanner. Writer cutover и замена legacy flush вынесены из этого release.
+
+### Локальная проверка безопасного P5 foundation
+
+Фактически оставленный release не меняет legacy coordinator, provider I/O,
+товарные/listing writers, private storage, retention, cleanup или GC.
+Production отклоняет ingress-режимы кроме `legacy`.
+
+```text
+pytest -q apps/marketplaces/tests/test_feed_intents.py \
+  apps/marketplaces/tests/test_feed_intent_dispatch.py \
+  apps/marketplaces/tests/test_feed_intent_schema.py \
+  apps/core/tests/test_feed_intent_recovery.py \
+  tests/test_production_storage_settings.py
+результат на clean commit: 157 passed in 149.60s
+
+pytest
+результат: 2245 passed, 1 skipped in 812.06s
+
+mypy
+результат: Success, 654 source files
+
+mypy --check-untyped-defs --exclude '(^|/)(tests?|migrations)/' \
+  apps config backup
+результат: Success, 336 source files
+
+flake8 .
+результат: exit 0
+
+python manage.py makemigrations --check --dry-run
+результат: No changes detected
+
+PostgreSQL: marketplaces 0025 -> 0028 -> 0025 -> 0028
+результат: 0026, 0027 и 0028 применены, откатились и применились повторно
+```
+
+Предварительный полный writer-кандидат дал 149 passed / 28 failed. Неудачные
+части не включены: их исправление потребовало бы одновременно менять account
+deletion, credential rotation, bulk API, provider-result transitions и legacy
+delivery. Это отдельный activation-sensitive пакет, а не допустимый test-fix
+для выключенного schema release.
 
 ### Локальная проверка P4 перед PR
 
@@ -476,8 +515,8 @@ frontend ESLint и TypeScript typecheck
 
 Настройки release остаются
 `legacy/legacy/disabled/false/legacy_public`; signing keys отсутствуют. P4
-ещё не считается production-deployed до зелёных PR/main CI, schema deploy и
-post-deploy health/setting checks.
+deployed exact commit `9061ebb` с выключенной profile migration и
+`legacy_public`; активация по-прежнему требует отдельного решения.
 
 ### Локальная проверка P2b2 перед PR
 
@@ -675,8 +714,9 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
 | Avito 0 / dashboard 10: bounded provider canary | `VERIFIED`; Avito API подтверждает все 10 active |
 | P2c tenant status clarity/expiry notices | `DEPLOYED_LEGACY_ONLY`, PR `#234`, production `1f05367` |
 | P3 durable feed foundation `0023`–`0024` | `DEPLOYED_OFF`, PR `#244`, production `f1881f1` |
-| P4 stable endpoint/profile `0025` | `LOCAL_VERIFIED`, PR/deploy pending |
-| P5 feed intents/recovery | `NOT_STARTED` |
+| P4 stable endpoint/profile `0025` | `DEPLOYED_OFF`, PR `#245`, production `9061ebb` |
+| P5 feed-intent foundation `0026`–`0028` | `LOCAL_VERIFIED`, ожидает PR/release |
+| P5 writer/legacy-delivery activation | `DEFERRED`, требует отдельного решения |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |
 | P7 cleanup/GC/0039 | `FROZEN` |
 

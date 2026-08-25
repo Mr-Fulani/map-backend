@@ -164,6 +164,14 @@ if (
         'MARKETPLACE_FEED_RUN_MODE=durable требует '
         'AVITO_STATUS_LIFECYCLE_MODE=dual_write.',
     )
+MARKETPLACE_FEED_INGRESS_MODE = _required_env(
+    'MARKETPLACE_FEED_INGRESS_MODE',
+).lower()
+if MARKETPLACE_FEED_INGRESS_MODE != 'legacy':
+    raise ImproperlyConfigured(
+        'Этот P5 release разрешает в production только '
+        'MARKETPLACE_FEED_INGRESS_MODE=legacy.',
+    )
 marketplace_feed_profile_migration_enabled_raw = _required_env(
     'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED',
 ).lower()

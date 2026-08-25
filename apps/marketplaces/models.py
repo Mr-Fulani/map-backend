@@ -163,11 +163,39 @@ class MarketplaceAccount(SoftDeleteModel):
         editable=False,
         verbose_name='Lease проверки статусов истекает',
     )
+    # Durable desired-state cursor. The fields are additive and remain inert
+    # while MARKETPLACE_FEED_INGRESS_MODE=legacy.
+    feed_intent_revision = models.PositiveBigIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Ревизия требуемого состояния фида',
+    )
+    feed_intent_dispatched_revision = models.PositiveBigIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Последняя отправленная ревизия фида',
+    )
+    feed_intent_due_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Следующая отправка ревизии фида',
+    )
 
     class Meta:
         verbose_name = 'Avito-аккаунт'
         verbose_name_plural = 'Avito-аккаунты'
         unique_together = [('tenant', 'marketplace', 'external_id')]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(
+                    feed_intent_dispatched_revision__lte=models.F(
+                        'feed_intent_revision',
+                    ),
+                ),
+                name='mkt_acct_intent_order',
+            ),
+        ]
         indexes = [
             models.Index(
                 fields=['marketplace', 'status_batch_due_at', 'id'],
@@ -176,6 +204,15 @@ class MarketplaceAccount(SoftDeleteModel):
                     deleted_at__isnull=True,
                     is_active=True,
                     status_batch_due_at__isnull=False,
+                ),
+            ),
+            models.Index(
+                fields=['marketplace', 'feed_intent_due_at', 'id'],
+                name='mkt_acct_feed_intent_due',
+                condition=models.Q(
+                    deleted_at__isnull=True,
+                    is_active=True,
+                    feed_intent_due_at__isnull=False,
                 ),
             ),
         ]
@@ -382,6 +419,12 @@ class MarketplaceFeedRun(TimestampedModel):
         editable=False,
         verbose_name='Завершено',
     )
+    source_intent_revision = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Исходная ревизия намерения фида',
+    )
 
     class Meta:
         verbose_name = 'Запуск фида маркетплейса'
@@ -399,6 +442,11 @@ class MarketplaceFeedRun(TimestampedModel):
                     & ~models.Q(provider_run_id='')
                 ),
                 name='uniq_mkt_feed_provider_ref',
+            ),
+            models.UniqueConstraint(
+                fields=['account', 'source_intent_revision'],
+                condition=models.Q(source_intent_revision__isnull=False),
+                name='uniq_mkt_feed_source_intent',
             ),
         ]
         indexes = [
@@ -686,6 +734,11 @@ class MarketplaceFeedEndpoint(TimestampedModel):
         blank=True,
         editable=False,
         verbose_name='Профиль площадки проверен',
+    )
+    source_intent_revision = models.PositiveBigIntegerField(
+        default=0,
+        editable=False,
+        verbose_name='Текущая желаемая ревизия фида',
     )
 
     class Meta:

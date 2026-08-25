@@ -208,33 +208,38 @@ Deploy: только с выключенным
 
 Локальный gate: 105 P4-тестов и полный backend (`2198 passed, 1 skipped`)
 зелёные; clean/upgrade/rollback/reapply PostgreSQL `0025`, migration drift,
-flake8, frontend ESLint/typecheck и `git diff --check` прошли. Следующий шаг —
-один PR, затем schema deploy без изменения legacy-режима.
+flake8, frontend ESLint/typecheck и `git diff --check` прошли. PR `#245`
+выпущен в production commit `9061ebb`; legacy-режим не изменён.
 
-### P5. Учёт изменений и восстановление legacy-отправки
+### P5. Учёт изменений — безопасный foundation
 
 Содержимое:
 
-- миграции `0026`–`0031`;
-- запись намерения обновить фид вместе с изменением товара/объявления;
-- восстановление потерянного legacy-задания;
-- связанные writer/retention/admin guards.
+- миграции `0026`–`0028` только для cursor/schema foundation;
+- атомарные примитивы feed intent и exact-revision dark worker;
+- минутный scanner: в production `legacy` он строго инертен;
+- terminal-dispatch recovery для ещё не активированного durable leaf.
+
+Транзакционные writer-хуки, provider-result reconciliation и замена legacy
+flush-coordinator не входят в этот release. Их нельзя выпускать частично:
+они требуют отдельного P5 activation package, fault-test и разрешения после
+наблюдения additive schema.
 
 Проверки:
 
-- intent/writer/provider-result/legacy-repair tests;
+- intent/schema/dispatch/recovery и production-settings tests;
 - миграции на чистой и обновляемой PostgreSQL;
 - полный backend test;
 - staging fault test.
 
-Deploy: сначала `legacy`; затем отдельный наблюдаемый `dual_write` canary.
-Новая система не отправляет файлы в Avito.
+Deploy: только `legacy`; production settings отклоняют `dual_write` и
+`durable`. Новая система не отправляет файлы в Avito и не меняет legacy flush.
 
 ### P6. Приватные файлы — отдельный экспериментальный проект
 
 Содержимое:
 
-- миграции `0032`–`0035`;
+- миграции `0029`–`0035` (включая перенесённую artifact schema foundation);
 - versioned private bucket;
 - запись и проверка точной версии XML;
 - ручная сверка неизвестного результата.

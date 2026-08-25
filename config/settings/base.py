@@ -752,6 +752,13 @@ if MARKETPLACE_FEED_RUN_MODE not in {'legacy', 'durable'}:
     raise ValueError(
         'MARKETPLACE_FEED_RUN_MODE должен быть legacy или durable.',
     )
+MARKETPLACE_FEED_INGRESS_MODE = os.environ.get(
+    'MARKETPLACE_FEED_INGRESS_MODE', 'legacy',
+).strip().lower()
+if MARKETPLACE_FEED_INGRESS_MODE not in {'legacy', 'dual_write'}:
+    raise ValueError(
+        'MARKETPLACE_FEED_INGRESS_MODE must be legacy or dual_write.',
+    )
 _MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED_RAW = os.environ.get(
     'MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED', 'false',
 ).strip().lower()

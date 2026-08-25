@@ -104,8 +104,14 @@ def purge_retained_data_task():
 )
 def dispatch_due_background_jobs(limit: int = 200):
     """Recover pending deliveries and expired publisher/worker leases."""
-    from apps.core.dispatch import publish_due_dispatches
-    return publish_due_dispatches(limit=limit)
+    from apps.core.dispatch import (
+        publish_due_dispatches,
+        recover_terminal_feed_intent_dispatches,
+    )
+    feed_intent_recovery = recover_terminal_feed_intent_dispatches(limit=limit)
+    result = publish_due_dispatches(limit=limit)
+    result['feed_intent_recovery'] = feed_intent_recovery
+    return result
 
 
 @shared_task(

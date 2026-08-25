@@ -150,9 +150,11 @@ def test_feed_endpoint_model_is_dark_provider_neutral_bridge_schema():
     assert {'tenant', 'marketplace', 'token', 'token_digest', 'token_encrypted'}.isdisjoint(
         field_names,
     )
+    assert MarketplaceFeedEndpoint._meta.get_field(
+        'source_intent_revision',
+    ).default == 0
     assert {
-        'current_artifact', 'source_intent_revision', 'artifact_revision',
-        'artifact_promoted_at',
+        'current_artifact', 'artifact_revision', 'artifact_promoted_at',
     }.isdisjoint(field_names)
 
 
