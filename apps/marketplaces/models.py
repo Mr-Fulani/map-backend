@@ -223,6 +223,8 @@ class MarketplaceAccount(SoftDeleteModel):
     def soft_delete(self):
         if self.deleted_at is not None:
             return
+        from django.utils import timezone
+
         with transaction.atomic():
             locked = type(self).all_objects.select_for_update().get(pk=self.pk)
             if locked.deleted_at is not None:
@@ -230,21 +232,82 @@ class MarketplaceAccount(SoftDeleteModel):
                 self.is_active = locked.is_active
                 return
             from apps.marketplaces.services import (
+                _assert_legacy_feed_cursor_mutation_safe,
                 _assert_feed_endpoint_availability_mutation_safe,
                 _lock_marketplace_feed_endpoint,
             )
 
             endpoint = _lock_marketplace_feed_endpoint(locked.pk)
+            _assert_legacy_feed_cursor_mutation_safe(locked)
             _assert_feed_endpoint_availability_mutation_safe(
                 endpoint,
                 destructive=True,
             )
-            locked.listings.all().delete()
+            if (
+                Listing.all_objects.filter(account_id=locked.pk).filter(
+                    models.Q(status__in=[
+                        Listing.STATUS_ACTIVE,
+                        Listing.STATUS_PENDING,
+                        Listing.STATUS_QUEUED,
+                        Listing.STATUS_ARCHIVING,
+                    ])
+                    | (
+                        models.Q(external_id__isnull=False)
+                        & ~models.Q(external_id='')
+                        & ~models.Q(status=Listing.STATUS_ARCHIVED)
+                    )
+                ).exists()
+            ):
+                from apps.marketplaces.services import (
+                    MarketplaceAccountFeedConflict,
+                )
+
+                raise MarketplaceAccountFeedConflict(
+                    'Нельзя удалить аккаунт: для него ещё есть '
+                    'опубликованные или ожидающие объявления. '
+                    'Сначала снимите их с публикации и дождитесь '
+                    'подтверждения Avito.',
+                )
+            from apps.marketplaces.feed_workflow import (
+                OWNER_CHANGE_HOLD_SUBMITTED,
+                fence_account_feed_runs_for_owner_change,
+            )
+
+            fence_account_feed_runs_for_owner_change(
+                locked.pk,
+                reason='Marketplace account was soft-deleted.',
+                safe_state=MarketplaceFeedRun.State.CANCELLED,
+                submitted_policy=OWNER_CHANGE_HOLD_SUBMITTED,
+            )
+            deleted_at = timezone.now()
+            list(
+                locked.listings.select_for_update()
+                .order_by('pk')
+                .values_list('pk', flat=True)
+            )
+            locked.listings.update(
+                deleted_at=deleted_at,
+                next_status_check_at=None,
+                status_check_claim_token=None,
+                status_check_claimed_until=None,
+            )
             locked.is_active = False
-            locked.save(update_fields=['is_active', 'updated_at'])
-            super(MarketplaceAccount, locked).soft_delete()
+            locked.deleted_at = deleted_at
+            locked.status_batch_due_at = None
+            locked.status_batch_cooldown_until = None
+            locked.status_batch_claim_token = None
+            locked.status_batch_claimed_until = None
+            locked.save(update_fields=[
+                'is_active', 'deleted_at', 'status_batch_due_at',
+                'status_batch_cooldown_until', 'status_batch_claim_token',
+                'status_batch_claimed_until', 'updated_at',
+            ])
             self.is_active = locked.is_active
             self.deleted_at = locked.deleted_at
+            self.status_batch_due_at = None
+            self.status_batch_cooldown_until = None
+            self.status_batch_claim_token = None
+            self.status_batch_claimed_until = None
 
 
 class MarketplaceFeedRun(TimestampedModel):

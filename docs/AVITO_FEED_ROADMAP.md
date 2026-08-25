@@ -14,7 +14,7 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: P4 локально проверен, release выключенным кодом впереди
+## Текущая фаза: P5 activation локально проверен, legacy-only release впереди
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
@@ -30,8 +30,12 @@ tenant notices выложен в production commit `1f05367` без измене
 feed-режима. Первый плановый цикл повторно подтвердил 10 active
 объявлений и доставил два разных Telegram notice для порога 14 дней.
 P3 merged через PR `#244`, выложен в production commit `f1881f1` и остаётся
-выключенным (`MARKETPLACE_FEED_RUN_MODE=legacy`). P4 активирован пользователем,
-физически выделен и прошёл локальные тесты; PR, CI и deploy ещё впереди.
+выключенным (`MARKETPLACE_FEED_RUN_MODE=legacy`). P4 merged через PR `#245` и
+выложен выключенным в production commit `9061ebb`. P5 schema/intent foundation
+merged через PR `#246` и выложен в production commit `2e9958c` в legacy-only
+режиме. Отдельный P5 activation package с writer fencing, reconciliation и
+legacy delivery repair прошёл 208 focused и полный backend gate; один PR, CI и
+legacy-only deploy ещё впереди. `dual_write` в этот release не включается.
 
 Готово только когда:
 
@@ -232,8 +236,30 @@ flush-coordinator не входят в этот release. Их нельзя вы�
 - полный backend test;
 - staging fault test.
 
-Deploy: только `legacy`; production settings отклоняют `dual_write` и
-`durable`. Новая система не отправляет файлы в Avito и не меняет legacy flush.
+Deploy foundation: PR `#246`, production commit `2e9958c`, только `legacy`;
+новая система не отправляет файлы в Avito и не меняет legacy flush.
+
+### P5 activation. Writer fencing и надёжная legacy delivery
+
+Содержимое:
+
+- атомарные product/listing/image/category/address/account writer-хуки;
+- account-first lock order и exact-generation fencing;
+- provider-result и page-bounded feed-report reconciliation;
+- durable desired cursor и scanner-repair при сбое публикации legacy flush;
+- fail-closed hold после неоднозначного provider POST;
+- закрытие прямых feed-visible writer/delete путей в Django Admin.
+
+Границы:
+
+- ровно 20 production-файлов, новых миграций и production settings нет;
+- P6/P7, private storage/serving, cleanup/GC и `0039` не входят;
+- production deploy остаётся `legacy/legacy/disabled/false/legacy_public`;
+- `dual_write` включается только отдельным rollout после merge/deploy gate.
+
+Локальный gate: 208 focused tests, полный backend (`2356 passed, 1 skipped`),
+flake8, mypy для 665 и strict mypy для 338 source files, migration drift и
+`git diff --check` прошли.
 
 ### P6. Приватные файлы — отдельный экспериментальный проект
 

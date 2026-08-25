@@ -5,10 +5,11 @@ import logging
 import uuid
 from dataclasses import dataclass, replace
 from types import TracebackType
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 import requests
 from celery import shared_task
+from celery.exceptions import Retry
 from django.conf import settings
 from django.core.cache import caches
 from django.db import transaction
@@ -41,6 +42,9 @@ from apps.marketplaces.adapters.avito.feed_builder import (
 from apps.marketplaces.adapters.avito.rate_limiter import (
     AUTOLOAD_RATE_LIMIT_RETRY_AFTER,
     RateLimitError,
+)
+from apps.marketplaces.feed_report_reconciler import (
+    schedule_avito_feed_item_error_reconciliation,
 )
 from apps.marketplaces.listing_lifecycle import (
     claim_status_check,
@@ -107,10 +111,22 @@ _MAX_DURABLE_FEED_PAYLOAD_LISTINGS = 10_000
 _LISTING_EXPIRY_THRESHOLDS = (0, 1, 3, 7, 14)
 _LISTING_EXPIRY_NOTICE_CACHE_MIN = datetime.timedelta(days=7)
 _LISTING_EXPIRY_NOTICE_CACHE_MAX = datetime.timedelta(days=60)
+_FEED_PROJECTION_STATUSES = frozenset({
+    Listing.STATUS_ACTIVE,
+    Listing.STATUS_PENDING,
+})
 _AVITO_REMOTE_STATUS_ALIASES = {
     # Avito calls an ad that has left active publication ``old``.
     'old': Listing.REMOTE_STATUS_ARCHIVED,
 }
+
+
+class _StaleTaskListingIntent(RuntimeError):
+    """Roll back a feed revision when a task's Listing CAS loses."""
+
+
+class _StaleProviderListingResult(RuntimeError):
+    """Roll back a provider-result feed revision when its Listing CAS loses."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +162,19 @@ def _durable_feed_ingress_enabled() -> bool:
     """Enable only the dark exact-revision worker in explicit durable tests."""
 
     return settings.MARKETPLACE_FEED_INGRESS_MODE == 'durable'
+
+
+def _feed_ingress_dual_write_enabled() -> bool:
+    """Record local feed intent in shadow and active ingress modes."""
+
+    return settings.MARKETPLACE_FEED_INGRESS_MODE in {'dual_write', 'durable'}
+
+
+def _feed_projection_statuses() -> tuple[str, ...]:
+    statuses = [Listing.STATUS_ACTIVE, Listing.STATUS_PENDING]
+    if not _feed_ingress_dual_write_enabled():
+        statuses.append(Listing.STATUS_QUEUED)
+    return tuple(statuses)
 
 
 def _bounded_provider_reason(value: object) -> str:
@@ -501,21 +530,86 @@ def _apply_claimed_listing_values(
     claim: _ListingStatusClaim,
     *,
     values: dict[str, object],
+    observed_at: datetime.datetime,
     next_status_check_at: datetime.datetime | None,
     nudge_status_due: bool,
 ) -> int:
-    """Apply a provider result only if its frozen local intent is still live."""
+    """Apply a claimed provider result with its XML-membership intent."""
 
-    with transaction.atomic():
-        if not _lock_claim_account(claim):
-            return 0
-        affected = _claimed_listing_queryset(
-            claim,
-            lease_checked_at=now(),
-        ).update(**values)
-        if affected == 1 and nudge_status_due:
-            _min_nudge_account_status_due(claim, next_status_check_at)
-        return affected
+    target_status = str(values.get('status', claim.expected_status))
+    before_in_projection = claim.expected_status in _FEED_PROJECTION_STATUSES
+    after_in_projection = target_status in _FEED_PROJECTION_STATUSES
+    projection_membership_changed = (
+        before_in_projection != after_in_projection
+    )
+
+    try:
+        with transaction.atomic():
+            if not _lock_claim_account(claim):
+                return 0
+
+            snapshot = (
+                _claimed_listing_queryset(
+                    claim,
+                    lease_checked_at=now(),
+                )
+                .values('product_id')
+                .first()
+            )
+            if snapshot is None:
+                return 0
+
+            if (
+                projection_membership_changed
+                and _feed_ingress_dual_write_enabled()
+            ):
+                from apps.marketplaces.feed_intents import bump_feed_intents
+
+                bump_feed_intents([claim.account_id], observed_at)
+
+            if projection_membership_changed and after_in_projection:
+                from apps.products.models import Product
+
+                product_exists = (
+                    Product.all_objects.select_for_update(of=('self',))
+                    .filter(
+                        pk=snapshot['product_id'],
+                        tenant_id=claim.tenant_id,
+                        deleted_at__isnull=True,
+                    )
+                    .only('pk')
+                    .first()
+                    is not None
+                )
+                if not product_exists:
+                    raise _StaleProviderListingResult
+
+            locked_listing = (
+                _claimed_listing_queryset(
+                    claim,
+                    lease_checked_at=now(),
+                )
+                .select_for_update(of=('self',))
+                .only('pk')
+                .first()
+            )
+            if locked_listing is None:
+                raise _StaleProviderListingResult
+
+            affected = _claimed_listing_queryset(
+                claim,
+                lease_checked_at=now(),
+            ).update(**values)
+            if affected != 1:
+                raise _StaleProviderListingResult
+            if nudge_status_due:
+                _min_nudge_account_status_due(
+                    claim,
+                    next_status_check_at,
+                )
+            return 1
+    except _StaleProviderListingResult:
+        return 0
 
 
 def _apply_claimed_status_result(
@@ -537,6 +631,7 @@ def _apply_claimed_status_result(
     return _apply_claimed_listing_values(
         claim,
         values=values,
+        observed_at=checked_at,
         next_status_check_at=next_status_check_at,
         nudge_status_due=True,
     )
@@ -551,9 +646,10 @@ def _release_status_claim(
     with transaction.atomic():
         if not _lock_claim_account(claim):
             return 0
+        released_at = now()
         affected = _claimed_listing_queryset(
             claim,
-            lease_checked_at=now(),
+            lease_checked_at=released_at,
         ).update(**release_status_check(
             next_status_check_at=next_status_check_at,
         ).as_update_kwargs())
@@ -727,24 +823,24 @@ def _save_local_listing_intent(
     reset_provider_identity: bool = False,
     expected_status: str | None = None,
     expected_external_id: str | None | object = ...,
+    feed_projection_changed: bool = False,
 ) -> bool:
-    """Persist a local intent and revoke an older in-flight provider read."""
+    """Persist a local intent and revoke any in-flight provider observation.
 
-    business_fields = tuple(update_fields)
-    if not _status_lifecycle_dual_write_enabled():
-        listing.save(update_fields=business_fields)
+    Legacy mode intentionally delegates to the old model save. In dual-write
+    mode the transaction follows the global account->listing lock order so a
+    stale status worker can only win before this newer local intent, never
+    after it commits.
+    """
+
+    lifecycle_enabled = _status_lifecycle_dual_write_enabled()
+    feed_ingress_enabled = _feed_ingress_dual_write_enabled()
+    if not lifecycle_enabled and not feed_ingress_enabled:
+        listing.save(update_fields=update_fields)
         return True
 
-    intended_values: dict[str, object] = {}
-    for field_name in business_fields:
-        intended_values[field_name] = getattr(listing, field_name)
-    if reset_provider_identity:
-        listing.external_url = ''
-        intended_values['external_url'] = ''
-        business_fields = _merged_update_fields(
-            business_fields,
-            ('external_url',),
-        )
+    due_at = _local_status_due_at(listing) if lifecycle_enabled else None
+    business_fields = tuple(update_fields)
 
     def _matches_expected(current: Listing) -> bool:
         if current.account_id != listing.account_id:
@@ -758,62 +854,137 @@ def _save_local_listing_intent(
             return False
         return True
 
-    with transaction.atomic():
-        account = (
-            MarketplaceAccount.all_objects.select_for_update(of=('self',))
-            .filter(
-                pk=listing.account_id,
-                deleted_at__isnull=True,
-                is_active=True,
-                tenant__is_active=True,
+    try:
+        with transaction.atomic():
+            account = (
+                MarketplaceAccount.all_objects.select_for_update()
+                .filter(pk=listing.account_id)
+                .first()
             )
-            .first()
-        )
-        if account is None:
-            return False
-        current = (
-            Listing.all_objects.select_for_update(of=('self',))
-            .filter(pk=listing.pk, deleted_at__isnull=True)
-            .first()
-        )
-        if current is None or not _matches_expected(current):
-            if current is not None:
-                _copy_listing_row(listing, current)
-            return False
+            if feed_ingress_enabled:
+                from apps.marketplaces.models import MarketplaceFeedEndpoint
 
-        for field_name, value in intended_values.items():
-            setattr(current, field_name, value)
+                list(
+                    MarketplaceFeedEndpoint.objects.select_for_update()
+                    .filter(account_id=listing.account_id)
+                    .order_by('account_id')
+                )
 
-        if reset_provider_identity:
-            observation_fields = clear_remote_observation().apply_to(current)
-            claim_fields = release_status_check(
-                next_status_check_at=None,
-            ).apply_to(current)
-            lifecycle_fields = _merged_update_fields(
-                observation_fields,
-                claim_fields,
+            # The account lock is the compatible-writer fence.  Validate and
+            # advance the source revision before taking the Listing row lock,
+            # preserving account->endpoint->listing order.
+            snapshot = (
+                Listing.all_objects
+                .filter(pk=listing.pk, deleted_at__isnull=True)
+                .first()
             )
-        else:
-            lifecycle_fields = release_status_check(
-                next_status_check_at=_local_status_due_at(current),
-            ).apply_to(current)
+            if snapshot is None or not _matches_expected(snapshot):
+                return False
 
-        saved_fields = _merged_update_fields(business_fields, lifecycle_fields)
-        current.save(update_fields=saved_fields)
-        for field_name in saved_fields:
-            setattr(listing, field_name, getattr(current, field_name))
-        listing._state.fields_cache.clear()
+            intended_values = {}
+            for field_name in business_fields:
+                model_field = cast(Any, Listing._meta.get_field(field_name))
+                intended_values[model_field.attname] = getattr(
+                    listing,
+                    model_field.attname,
+                )
+            if reset_provider_identity:
+                intended_values['feed_run_id'] = None
 
-        due_at = current.next_status_check_at
-        if due_at is not None:
-            MarketplaceAccount.objects.filter(pk=account.pk).filter(
-                Q(status_batch_due_at__isnull=True)
-                | Q(status_batch_due_at__gt=due_at),
-            ).update(status_batch_due_at=due_at)
-        return True
+            before_live = snapshot.status in _FEED_PROJECTION_STATUSES
+            before_values = {
+                field_name: getattr(snapshot, field_name)
+                for field_name in intended_values
+            }
+            for field_name, value in intended_values.items():
+                setattr(snapshot, field_name, value)
+            after_live = snapshot.status in _FEED_PROJECTION_STATUSES
+            actual_projection_change = any(
+                before_values[field_name] != value
+                for field_name, value in intended_values.items()
+            )
+            if (
+                feed_ingress_enabled
+                and feed_projection_changed
+                and actual_projection_change
+                and (before_live or after_live)
+            ):
+                from apps.marketplaces.feed_intents import bump_feed_intents
+
+                bump_feed_intents([listing.account_id], now())
+
+            if feed_ingress_enabled and after_live:
+                from apps.products.models import Product
+
+                locked_product = (
+                    Product.all_objects.select_for_update()
+                    .filter(pk=snapshot.product_id)
+                    .only('pk', 'deleted_at')
+                    .first()
+                )
+                if locked_product is None or locked_product.deleted_at is not None:
+                    raise _StaleTaskListingIntent
+
+            current = (
+                Listing.all_objects.select_for_update()
+                .filter(pk=listing.pk, deleted_at__isnull=True)
+                .first()
+            )
+            if current is None or not _matches_expected(current):
+                raise _StaleTaskListingIntent
+            for field_name, value in intended_values.items():
+                setattr(current, field_name, value)
+
+            lifecycle_fields: tuple[str, ...] = ()
+            if lifecycle_enabled and reset_provider_identity:
+                observation_fields = clear_remote_observation().apply_to(current)
+                claim_fields = release_status_check(
+                    next_status_check_at=None,
+                ).apply_to(current)
+                lifecycle_fields = _merged_update_fields(
+                    observation_fields,
+                    claim_fields,
+                )
+            elif lifecycle_enabled:
+                lifecycle_fields = release_status_check(
+                    next_status_check_at=due_at,
+                ).apply_to(current)
+
+            saved_fields = _merged_update_fields(
+                business_fields,
+                ('feed_run',) if reset_provider_identity else (),
+                lifecycle_fields,
+            )
+            current.save(update_fields=saved_fields)
+            for field_name in saved_fields:
+                model_field = cast(Any, Listing._meta.get_field(field_name))
+                setattr(
+                    listing,
+                    model_field.attname,
+                    getattr(current, model_field.attname),
+                )
+            if (
+                lifecycle_enabled
+                and due_at is not None
+                and account is not None
+                and account.deleted_at is None
+                and account.is_active
+            ):
+                MarketplaceAccount.objects.filter(pk=account.pk).filter(
+                    Q(status_batch_due_at__isnull=True)
+                    | Q(status_batch_due_at__gt=due_at),
+                ).update(status_batch_due_at=due_at)
+            return True
+    except _StaleTaskListingIntent:
+        return False
 
 
-def _reject_listing(listing: Listing, reason: str) -> None:
+def _reject_listing(
+    listing: Listing,
+    reason: str,
+    *,
+    feed_projection_changed: bool = False,
+) -> None:
     if _status_lifecycle_dual_write_enabled():
         reason = _bounded_provider_reason(reason)
     expected_status = listing.status
@@ -826,9 +997,98 @@ def _reject_listing(listing: Listing, reason: str) -> None:
         update_fields=('status', 'rejection_reason', 'last_sync_at'),
         expected_status=expected_status,
         expected_external_id=expected_external_id,
+        feed_projection_changed=feed_projection_changed,
     )
     if saved:
         _notify_error(listing.tenant, reason, listing=listing)
+
+
+def _reject_pending_feed_batch(
+    account_id: int,
+    reason: str,
+) -> int:
+    """Reject one unavailable-profile batch with one revision and one digest."""
+
+    from apps.products.models import Product
+
+    rejection_reason = _bounded_provider_reason(reason)
+    rejected_at = now()
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.all_objects.select_for_update(of=('self',))
+            .select_related('tenant')
+            .filter(
+                pk=account_id,
+                deleted_at__isnull=True,
+                is_active=True,
+                tenant__is_active=True,
+            )
+            .first()
+        )
+        if account is None:
+            return 0
+        snapshot = list(
+            Listing.all_objects.filter(
+                account_id=account_id,
+                deleted_at__isnull=True,
+                status=Listing.STATUS_PENDING,
+                external_id__isnull=True,
+            )
+            .order_by('pk')
+            .values_list('pk', 'product_id')
+        )
+        if not snapshot:
+            return 0
+
+        if _feed_ingress_dual_write_enabled():
+            # The whole batch is one projection mutation. Legacy already owns
+            # the captured coordinator revision; DB-ingress modes record one
+            # successor regardless of batch cardinality.
+            from apps.marketplaces.feed_intents import bump_feed_intents
+
+            bump_feed_intents([account_id], rejected_at)
+        product_ids = sorted({product_id for _pk, product_id in snapshot})
+        list(
+            Product.all_objects.select_for_update(of=('self',))
+            .filter(pk__in=product_ids)
+            .order_by('pk')
+            .values_list('pk', flat=True)
+        )
+        listing_ids = [pk for pk, _product_id in snapshot]
+        locked_ids = list(
+            Listing.all_objects.select_for_update(of=('self',))
+            .filter(
+                pk__in=listing_ids,
+                account_id=account_id,
+                deleted_at__isnull=True,
+                status=Listing.STATUS_PENDING,
+                external_id__isnull=True,
+            )
+            .order_by('pk')
+            .values_list('pk', flat=True)
+        )
+        if len(locked_ids) != len(snapshot):
+            # The account lock should fence every compliant writer. Roll the
+            # speculative successor back if a legacy bypass still won.
+            raise _StaleTaskListingIntent
+        updates: dict[str, object] = {
+            'status': Listing.STATUS_REJECTED,
+            'rejection_reason': rejection_reason,
+            'last_sync_at': rejected_at,
+        }
+        if _status_lifecycle_dual_write_enabled():
+            updates.update(release_status_check(
+                next_status_check_at=None,
+            ).as_update_kwargs())
+        changed = Listing.all_objects.filter(pk__in=locked_ids).update(**updates)
+        if changed != len(locked_ids):
+            raise _StaleTaskListingIntent
+
+    _notify_error(
+        account.tenant,
+        f'{rejection_reason} Отклонено объявлений: {len(locked_ids)}.',
+    )
+    return len(locked_ids)
 
 
 def _send_listing_to_review(listing: Listing, reason: str) -> None:
@@ -872,11 +1132,7 @@ def _account_feed_listings(
     queryset = (
         Listing.objects.filter(
             account=account,
-            status__in=[
-                Listing.STATUS_ACTIVE,
-                Listing.STATUS_PENDING,
-                Listing.STATUS_QUEUED,
-            ],
+            status__in=_feed_projection_statuses(),
         )
         .select_related('tenant', 'product', 'account')
         .order_by('created_at', 'pk')
@@ -907,6 +1163,274 @@ def _flush_account_or_stop(account) -> None:
 # Avito читает автозагрузку ~раз в час. Изменения тенанта между окнами копятся
 # и уходят одним фидом — см. request_feed_flush / coalesced_flush_task.
 FEED_WINDOW_SECONDS = 3600
+_FEED_FLUSH_REPAIR_GRACE = datetime.timedelta(minutes=5)
+_FEED_FLUSH_MESSAGE_EXPIRY_SAFETY_SECONDS = 30
+_FEED_FLUSH_MARKER_PREFIX = 'avito:flush_scheduled:'
+_CACHE_UNAVAILABLE = object()
+
+
+def _feed_flush_marker(account_id: int) -> str:
+    return f'{_FEED_FLUSH_MARKER_PREFIX}{account_id}'
+
+
+def _feed_flush_marker_lock(account_id: int) -> _CoordinationLock:
+    return _coordination_lock(
+        f'{_feed_flush_marker(account_id)}:owner-cas',
+        timeout=5,
+    )
+
+
+def _cache_add_feed_flush_owner(
+    account_id: int,
+    owner_token: str,
+    *,
+    timeout: int,
+) -> bool | None:
+    """Acquire the latency-only cache marker without making cache durable state.
+
+    ``None`` means the cache was unavailable.  The caller must continue with
+    the database repair cursor as its backstop instead of dropping feed work.
+    """
+
+    try:
+        with _feed_flush_marker_lock(account_id):
+            return bool(cache.add(
+                _feed_flush_marker(account_id),
+                owner_token,
+                timeout=max(1, int(timeout)),
+            ))
+    except Exception:
+        return None
+
+
+def _cache_get_feed_flush_owner(account_id: int):
+    try:
+        return cache.get(_feed_flush_marker(account_id))
+    except Exception:
+        return _CACHE_UNAVAILABLE
+
+
+def _cache_refresh_feed_flush_owner(
+    account_id: int,
+    owner_token: str | None,
+    *,
+    timeout: int,
+) -> None:
+    """Extend only this task's marker; never overwrite a replacement owner."""
+
+    if not owner_token:
+        return
+    try:
+        with _feed_flush_marker_lock(account_id):
+            current_owner = _cache_get_feed_flush_owner(account_id)
+            if current_owner is _CACHE_UNAVAILABLE or current_owner is None:
+                return
+            if str(current_owner) != owner_token:
+                return
+            cache.set(
+                _feed_flush_marker(account_id),
+                owner_token,
+                timeout=max(1, int(timeout)),
+            )
+    except Exception:
+        pass
+
+
+def _cache_clear_feed_flush_owner(
+    account_id: int,
+    owner_token: str | None,
+) -> None:
+    """Best-effort cleanup that cannot delete a newer task's ownership."""
+
+    if not owner_token:
+        return
+    try:
+        with _feed_flush_marker_lock(account_id):
+            current_owner = _cache_get_feed_flush_owner(account_id)
+            if current_owner is _CACHE_UNAVAILABLE or current_owner is None:
+                return
+            if str(current_owner) != owner_token:
+                return
+            cache.delete(_feed_flush_marker(account_id))
+    except Exception:
+        pass
+
+
+def _feed_flush_schedule_window(
+    account: MarketplaceAccount,
+    *,
+    current_time: datetime.datetime,
+    countdown_override: int | None = None,
+) -> tuple[int, datetime.datetime, int]:
+    """Return countdown, DB repair deadline and broker expiry.
+
+    Every message expires before the database lease becomes due.  Therefore a
+    broker-delayed old message cannot wake after the periodic repair has
+    legitimately installed a replacement owner.
+    """
+
+    remaining = (
+        _feed_window_remaining(account)
+        if countdown_override is None
+        else max(0, int(countdown_override))
+    )
+    repair_deadline = (
+        current_time
+        + datetime.timedelta(seconds=remaining)
+        + _FEED_FLUSH_REPAIR_GRACE
+    )
+    expires = max(
+        1,
+        remaining
+        + int(_FEED_FLUSH_REPAIR_GRACE.total_seconds())
+        - _FEED_FLUSH_MESSAGE_EXPIRY_SAFETY_SECONDS,
+    )
+    return remaining, repair_deadline, expires
+
+
+def _publish_exact_feed_flush(
+    account: MarketplaceAccount,
+    *,
+    captured_revision: int | None,
+    owner_token: str,
+    transfer_existing_owner: bool = False,
+    countdown_override: int | None = None,
+) -> datetime.datetime | None:
+    """Publish one exact legacy coordinator wake-up.
+
+    A false cache acquisition means another accepted message still owns this
+    account.  Cache outage is deliberately fail-open for delivery: the DB
+    lease plus the provider-boundary advisory lock remain authoritative.
+    """
+
+    scheduled_at = now()
+    countdown, repair_deadline, expires = _feed_flush_schedule_window(
+        account,
+        current_time=scheduled_at,
+        countdown_override=countdown_override,
+    )
+    marker_timeout = max(
+        1,
+        int((repair_deadline - scheduled_at).total_seconds()),
+    )
+    marker_acquired: bool | None
+    current_owner = (
+        _cache_get_feed_flush_owner(account.pk)
+        if transfer_existing_owner
+        else None
+    )
+    if (
+        transfer_existing_owner
+        and current_owner is not _CACHE_UNAVAILABLE
+        and current_owner is not None
+    ):
+        marker_acquired = str(current_owner) == owner_token
+    else:
+        marker_acquired = _cache_add_feed_flush_owner(
+            account.pk,
+            owner_token,
+            timeout=marker_timeout,
+        )
+    if marker_acquired is False:
+        return None
+    try:
+        coalesced_flush_task.apply_async(
+            args=[account.pk, captured_revision, owner_token],
+            countdown=countdown,
+            expires=expires,
+        )
+    except Exception:
+        _cache_clear_feed_flush_owner(account.pk, owner_token)
+        raise
+    _cache_refresh_feed_flush_owner(
+        account.pk,
+        owner_token,
+        timeout=marker_timeout,
+    )
+    return repair_deadline
+
+
+def _set_feed_flush_repair_deadline(
+    account: MarketplaceAccount,
+    *,
+    captured_revision: int | None,
+    repair_deadline: datetime.datetime,
+    release_provider_hold: bool = False,
+) -> None:
+    """Move only the exact outstanding dual-write revision into repair wait."""
+
+    if captured_revision is None:
+        return
+    if release_provider_hold:
+        if (
+            account.feed_intent_revision < captured_revision
+            or account.feed_intent_revision
+            <= account.feed_intent_dispatched_revision
+        ):
+            return
+    elif (
+        account.feed_intent_revision != captured_revision
+        or account.feed_intent_dispatched_revision >= captured_revision
+    ):
+        return
+    if account.feed_intent_due_at is None and not release_provider_hold:
+        # desired > dispatched + NULL due is the explicit provider-boundary
+        # hold.  Only a proven safe rejection whose replacement publish was
+        # accepted may release it.
+        return
+    account.feed_intent_due_at = repair_deadline
+    # Scheduler cursors intentionally do not mutate account.updated_at.
+    MarketplaceAccount.all_objects.bulk_update(
+        [account],
+        ('feed_intent_due_at',),
+    )
+
+
+def _schedule_locked_feed_flush(
+    account: MarketplaceAccount,
+    *,
+    captured_revision: int | None,
+    owner_token: str | None = None,
+    transfer_existing_owner: bool = False,
+    countdown_override: int | None = None,
+) -> tuple[bool, str, datetime.datetime | None]:
+    """Publish while the account row is locked, then install its DB lease."""
+
+    owner_token = owner_token or uuid.uuid4().hex
+    if (
+        captured_revision is not None
+        and account.feed_intent_revision > account.feed_intent_dispatched_revision
+        and account.feed_intent_due_at is None
+    ):
+        return False, owner_token, None
+    repair_deadline = _publish_exact_feed_flush(
+        account,
+        captured_revision=captured_revision,
+        owner_token=owner_token,
+        transfer_existing_owner=transfer_existing_owner,
+        countdown_override=countdown_override,
+    )
+    if repair_deadline is None:
+        # Another accepted cache owner must not pin the same overdue row at
+        # the head of every bounded 100-account scan. Rotate it behind the
+        # current due set; its completion restores ``due=now`` for a newer
+        # desired revision, while marker TTL bounds a stale-owner delay.
+        owned_recheck_at = now() + _FEED_FLUSH_REPAIR_GRACE
+        _set_feed_flush_repair_deadline(
+            account,
+            captured_revision=captured_revision,
+            repair_deadline=owned_recheck_at,
+        )
+        return False, owner_token, owned_recheck_at
+    # This write is deliberately after accepted broker publish.  If publish
+    # raises (including the accepted-but-client-error case), cursor state stays
+    # due and a ghost message is fenced again before provider I/O.
+    _set_feed_flush_repair_deadline(
+        account,
+        captured_revision=captured_revision,
+        repair_deadline=repair_deadline,
+    )
+    return True, owner_token, repair_deadline
 
 
 def _feed_window_remaining(account) -> int:
@@ -925,13 +1449,62 @@ def request_feed_flush(account) -> None:
     отложенный flush запланирован на момент открытия (debounce через cache-маркер,
     чтобы десятки действий тенанта не наплодили задач).
     """
-    remaining = _feed_window_remaining(account)
-    if remaining == 0:
-        coalesced_flush_task.delay(account.pk)
-        return
-    marker = f'avito:flush_scheduled:{account.pk}'
-    if cache.add(marker, 1, timeout=remaining + 60):
-        coalesced_flush_task.apply_async(args=[account.pk], countdown=remaining)
+    with transaction.atomic():
+        locked_account = (
+            MarketplaceAccount.all_objects.select_for_update(of=('self',))
+            .select_related('tenant')
+            .filter(
+                pk=account.pk,
+                deleted_at__isnull=True,
+                is_active=True,
+                tenant__is_active=True,
+            )
+            .first()
+        )
+        if locked_account is None:
+            return
+
+        if _feed_ingress_dual_write_enabled():
+            # Domain writers already advanced desired state in their own
+            # transaction.  Capturing it here must never double-bump.
+            captured_revision = int(locked_account.feed_intent_revision)
+        else:
+            # Production legacy writers do not yet all own a transactional
+            # dual-write boundary.  Persist a repairable desired cursor before
+            # touching Celery; no provider I/O occurs in this transaction.
+            from apps.marketplaces.feed_intents import bump_feed_intents
+
+            captured_revision = bump_feed_intents(
+                [locked_account.pk],
+                now(),
+            )[locked_account.pk]
+            locked_account.refresh_from_db(fields=(
+                'feed_intent_revision',
+                'feed_intent_dispatched_revision',
+                'feed_intent_due_at',
+                'last_feed_flush_at',
+            ))
+
+    # The legacy bump above must commit independently before broker I/O.  If
+    # publish fails, its due cursor remains visible to the periodic repair.
+    with transaction.atomic():
+        locked_account = (
+            MarketplaceAccount.all_objects.select_for_update(of=('self',))
+            .select_related('tenant')
+            .filter(
+                pk=account.pk,
+                deleted_at__isnull=True,
+                is_active=True,
+                tenant__is_active=True,
+            )
+            .first()
+        )
+        if locked_account is None:
+            return
+        _schedule_locked_feed_flush(
+            locked_account,
+            captured_revision=captured_revision,
+        )
 
 
 def _validate_feed_batch(listings: list) -> list:
@@ -1916,6 +2489,14 @@ def _coalesced_flush_durable(task, account: MarketplaceAccount):
 
 
 def _promote_queued_feed_rows(account: MarketplaceAccount) -> int:
+    """Promote a feed batch while fencing provider reads in dual-write mode."""
+
+    if _feed_ingress_dual_write_enabled():
+        # QUEUED is unvalidated local intent.  In DB-ingress modes only the
+        # publish worker that validated one exact row may promote it to the
+        # PENDING feed projection.
+        return 0
+
     queryset = Listing.objects.filter(
         account=account,
         status=Listing.STATUS_QUEUED,
@@ -1924,13 +2505,15 @@ def _promote_queued_feed_rows(account: MarketplaceAccount) -> int:
     if not _status_lifecycle_dual_write_enabled():
         return queryset.update(status=Listing.STATUS_PENDING)
 
+    # PENDING without provider identity is intentionally not status-pollable;
+    # poll_feed_results owns this workflow and claims it explicitly by account.
     lifecycle = release_status_check(
         next_status_check_at=None,
     ).as_update_kwargs()
     with transaction.atomic():
         locked_account = (
-            MarketplaceAccount.objects.select_for_update(of=('self',))
-            .filter(pk=account.pk, is_active=True, tenant__is_active=True)
+            MarketplaceAccount.objects.select_for_update()
+            .filter(pk=account.pk, is_active=True)
             .first()
         )
         if locked_account is None:
@@ -1938,8 +2521,409 @@ def _promote_queued_feed_rows(account: MarketplaceAccount) -> int:
         return queryset.update(status=Listing.STATUS_PENDING, **lifecycle)
 
 
+def _normalized_feed_flush_revision(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError('feed_intent_revision must be a non-negative integer.')
+    try:
+        normalized = int(str(value))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(
+            'feed_intent_revision must be a non-negative integer.',
+        ) from exc
+    if normalized < 0 or str(normalized) != str(value):
+        raise ValueError('feed_intent_revision must be a non-negative integer.')
+    return normalized
+
+
+def _normalized_feed_flush_owner_token(value: object) -> str | None:
+    if value in (None, ''):
+        return None
+    normalized = str(value).strip()
+    if not normalized or len(normalized) > 64:
+        raise ValueError('feed flush owner token is invalid.')
+    return normalized
+
+
+def _feed_flush_marker_allows_execution(
+    account_id: int,
+    owner_token: str | None,
+) -> bool:
+    """Reject an old broker message only when cache proves a newer owner."""
+
+    if not owner_token:
+        return True
+    current_owner = _cache_get_feed_flush_owner(account_id)
+    if current_owner is _CACHE_UNAVAILABLE or current_owner is None:
+        return True
+    return str(current_owner) == owner_token
+
+
+def _complete_feed_flush_revision(
+    account_id: int,
+    captured_revision: int | None,
+    *,
+    completed_at: datetime.datetime,
+    submitted_at: datetime.datetime | None = None,
+) -> str:
+    """CAS-complete one legacy generation before releasing its cache owner.
+
+    A concurrent domain mutation is never acknowledged by an older provider
+    snapshot.  It remains immediately due for the next hourly coordinator;
+    the provider rate limiter may then defer it without losing the DB cursor.
+    """
+
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.all_objects.select_for_update(of=('self',))
+            .filter(pk=account_id)
+            .first()
+        )
+        if account is None:
+            return 'missing'
+
+        fields: list[str] = []
+        if submitted_at is not None:
+            account.last_feed_flush_at = submitted_at
+            fields.append('last_feed_flush_at')
+
+        if captured_revision is not None:
+            desired_revision = int(account.feed_intent_revision)
+            dispatched_revision = int(account.feed_intent_dispatched_revision)
+            if captured_revision > desired_revision:
+                return 'future_revision'
+            if dispatched_revision < captured_revision:
+                account.feed_intent_dispatched_revision = captured_revision
+                fields.append('feed_intent_dispatched_revision')
+            if desired_revision == captured_revision:
+                account.feed_intent_due_at = None
+                completion_status = 'completed'
+            else:
+                account.feed_intent_due_at = completed_at
+                completion_status = 'superseded'
+            fields.append('feed_intent_due_at')
+        else:
+            completion_status = 'completed'
+
+        if fields:
+            MarketplaceAccount.all_objects.bulk_update(
+                [account],
+                tuple(dict.fromkeys(fields)),
+            )
+        return completion_status
+
+
+def _finish_owned_feed_flush(
+    account_id: int,
+    captured_revision: int | None,
+    owner_token: str | None,
+    *,
+    submitted_at: datetime.datetime | None = None,
+) -> str:
+    completed_at = now()
+    status = _complete_feed_flush_revision(
+        account_id,
+        captured_revision,
+        completed_at=completed_at,
+        submitted_at=submitted_at,
+    )
+    # DB completion is authoritative and must commit before volatile ownership
+    # is released.  A delete outage only delays a replacement until marker TTL.
+    _cache_clear_feed_flush_owner(account_id, owner_token)
+    return status
+
+
+def _hold_legacy_feed_submission_unknown(
+    account_id: int,
+    captured_revision: int | None,
+    owner_token: str | None,
+) -> str:
+    """Persist a fail-closed hold after a possibly accepted legacy POST."""
+
+    uncertain_at = now()
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.all_objects.select_for_update(of=('self',))
+            .filter(pk=account_id)
+            .first()
+        )
+        if account is None:
+            status = 'missing'
+        else:
+            account.last_feed_flush_at = uncertain_at
+            fields = ['last_feed_flush_at']
+            if (
+                captured_revision is not None
+                and account.feed_intent_dispatched_revision < captured_revision
+                and account.feed_intent_revision >= captured_revision
+            ):
+                # NULL due with desired > dispatched is the explicit
+                # outcome-uncertain hold. New mutations preserve this hold.
+                account.feed_intent_due_at = None
+                fields.append('feed_intent_due_at')
+            MarketplaceAccount.all_objects.bulk_update([account], fields)
+            status = 'outcome_uncertain'
+    _cache_clear_feed_flush_owner(account_id, owner_token)
+    return status
+
+
+def _release_safe_feed_failure_for_repair(
+    account_id: int,
+    captured_revision: int,
+    owner_token: str | None,
+) -> str:
+    """Keep an unsubmitted revision due after a proven safe failure."""
+
+    retry_at = now() + _FEED_FLUSH_REPAIR_GRACE
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.all_objects.select_for_update()
+            .filter(pk=account_id)
+            .first()
+        )
+        if account is None:
+            status = 'missing'
+        elif (
+            account.feed_intent_dispatched_revision < captured_revision
+            and account.feed_intent_revision >= captured_revision
+        ):
+            account.feed_intent_due_at = retry_at
+            MarketplaceAccount.all_objects.bulk_update(
+                [account],
+                ('feed_intent_due_at',),
+            )
+            status = 'retry_wait'
+        else:
+            status = 'stale'
+    _cache_clear_feed_flush_owner(account_id, owner_token)
+    return status
+
+
+def _load_exact_feed_flush_account(
+    account_id: int,
+    captured_revision: int | None,
+) -> tuple[MarketplaceAccount | None, int | None, str]:
+    """Lock and validate the exact desired revision before any provider I/O."""
+
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.all_objects.select_for_update(of=('self',))
+            .select_related('tenant')
+            .filter(
+                pk=account_id,
+                deleted_at__isnull=True,
+                is_active=True,
+                tenant__is_active=True,
+            )
+            .first()
+        )
+        if account is None:
+            return None, captured_revision, 'inactive'
+
+        # Rolling-deploy compatibility for already-queued one-argument legacy
+        # messages.  If no desired work exists yet, materialize one successor
+        # while holding the account lock; otherwise adopt the existing desired
+        # revision.  Either way provider work below is exact-revision fenced.
+        if captured_revision is None:
+            if (
+                account.feed_intent_revision
+                <= account.feed_intent_dispatched_revision
+            ):
+                from apps.marketplaces.feed_intents import bump_feed_intents
+
+                exact_revision = bump_feed_intents(
+                    [account.pk],
+                    now(),
+                )[account.pk]
+                account.refresh_from_db(fields=(
+                    'feed_intent_revision',
+                    'feed_intent_dispatched_revision',
+                    'feed_intent_due_at',
+                    'last_feed_flush_at',
+                ))
+            else:
+                exact_revision = int(account.feed_intent_revision)
+        else:
+            exact_revision = captured_revision
+        desired_revision = int(account.feed_intent_revision)
+        dispatched_revision = int(account.feed_intent_dispatched_revision)
+        if exact_revision > desired_revision:
+            return account, exact_revision, 'future'
+        if dispatched_revision >= exact_revision:
+            return account, exact_revision, 'completed'
+        if account.feed_intent_due_at is None:
+            return account, exact_revision, 'outcome_uncertain'
+        if exact_revision < desired_revision:
+            return account, exact_revision, 'superseded'
+        return account, exact_revision, 'exact'
+
+
+def _claim_legacy_feed_provider_boundary(
+    account_id: int,
+    captured_revision: int,
+) -> str:
+    """Persist the non-replayable legacy POST hold and its audit evidence."""
+
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.all_objects.select_for_update()
+            .filter(pk=account_id, tenant__is_active=True)
+            .first()
+        )
+        if account is None or account.deleted_at is not None or not account.is_active:
+            return 'inactive'
+        desired_revision = int(account.feed_intent_revision)
+        dispatched_revision = int(account.feed_intent_dispatched_revision)
+        from apps.marketplaces.models import MarketplaceFeedEndpoint
+        endpoint = (
+            MarketplaceFeedEndpoint.objects.select_for_update()
+            .filter(account_id=account.pk)
+            .first()
+        )
+        if (
+            endpoint is not None
+            and endpoint.source_intent_revision != desired_revision
+        ):
+            return 'endpoint_revision_drift'
+        if (
+            endpoint is not None
+            and endpoint.profile_state in {
+                MarketplaceFeedEndpoint.ProfileState.MIGRATING,
+                MarketplaceFeedEndpoint.ProfileState.UPDATE_UNKNOWN,
+            }
+        ):
+            return 'profile_boundary_active'
+        if endpoint is not None:
+            from apps.marketplaces.feed_workflow import account_identity_digest
+            if endpoint.owner_identity_digest != account_identity_digest(account):
+                return 'endpoint_identity_drift'
+        if captured_revision > desired_revision:
+            return 'future'
+        if dispatched_revision >= captured_revision:
+            return 'completed'
+        if captured_revision < desired_revision:
+            return 'superseded'
+        if account.feed_intent_due_at is None:
+            return 'outcome_uncertain'
+        account.feed_intent_due_at = None
+        MarketplaceAccount.all_objects.bulk_update(
+            [account],
+            ('feed_intent_due_at',),
+        )
+        # The account cursor is the authoritative replay fence.  Additional
+        # operator reconciliation tooling belongs to its separately reviewed
+        # package; P5 activation does not broaden that surface.
+        return 'claimed'
+
+
+def _replace_owned_feed_flush(
+    account_id: int,
+    captured_revision: int | None,
+    owner_token: str | None,
+    *,
+    countdown: int | None = None,
+) -> bool:
+    """Install a replacement message without releasing the current marker."""
+
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.all_objects.select_for_update(of=('self',))
+            .select_related('tenant')
+            .filter(
+                pk=account_id,
+                deleted_at__isnull=True,
+                is_active=True,
+                tenant__is_active=True,
+            )
+            .first()
+        )
+        if account is None:
+            return False
+        scheduled, _token, _deadline = _schedule_locked_feed_flush(
+            account,
+            captured_revision=captured_revision,
+            owner_token=owner_token,
+            transfer_existing_owner=bool(owner_token),
+            countdown_override=countdown,
+        )
+        return scheduled
+
+
+def _retry_owned_feed_flush(
+    task,
+    exc: Exception,
+    *,
+    account_id: int,
+    captured_revision: int | None,
+    owner_token: str | None,
+    countdown: int,
+):
+    """Durably release a proven-safe hold, then publish its Celery retry."""
+
+    retry_started_at = now()
+    normalized_countdown = max(1, int(countdown))
+    repair_deadline = (
+        retry_started_at
+        + datetime.timedelta(seconds=normalized_countdown)
+        + _FEED_FLUSH_REPAIR_GRACE
+    )
+    expires = max(
+        1,
+        normalized_countdown
+        + int(_FEED_FLUSH_REPAIR_GRACE.total_seconds())
+        - _FEED_FLUSH_MESSAGE_EXPIRY_SAFETY_SECONDS,
+    )
+    # Rate limiting and the safe FeedUpload/ServerError branch prove that no
+    # non-idempotent provider POST was accepted. Release the NULL boundary hold
+    # before touching the broker: a publish error or a process kill immediately
+    # after broker acceptance must leave scanner-visible DB work.
+    if captured_revision is not None:
+        with transaction.atomic():
+            account = (
+                MarketplaceAccount.all_objects.select_for_update()
+                .filter(pk=account_id)
+                .first()
+            )
+            if account is not None:
+                _set_feed_flush_repair_deadline(
+                    account,
+                    captured_revision=captured_revision,
+                    repair_deadline=repair_deadline,
+                    release_provider_hold=True,
+                )
+    try:
+        task.retry(
+            exc=exc,
+            countdown=normalized_countdown,
+            expires=expires,
+        )
+    except Retry:
+        # Celery raises Retry only after the replacement publish was accepted.
+        _cache_refresh_feed_flush_owner(
+            account_id,
+            owner_token,
+            timeout=max(
+                1,
+                int((repair_deadline - retry_started_at).total_seconds()),
+            ),
+        )
+        raise
+    except Exception:
+        # No confirmed replacement owns this marker. The DB cursor was already
+        # made due above, so bounded scanner repair remains authoritative.
+        _cache_clear_feed_flush_owner(account_id, owner_token)
+        raise
+    raise RuntimeError('Celery retry unexpectedly returned without raising.')
+
+
 @shared_task(bind=True, max_retries=5, queue='avito_publish')
-def coalesced_flush_task(self, account_id: int):
+def coalesced_flush_task(
+    self,
+    account_id: int,
+    feed_intent_revision: int | None = None,
+    owner_token: str | None = None,
+):
     """
     Единый flush аккаунта по часовому окну Avito Autoload.
 
@@ -1948,107 +2932,276 @@ def coalesced_flush_task(self, account_id: int):
     только меняли статус — здесь они коалесятся (publish→archive за час → в фид
     объявление не попадёт). Запускается координатором request_feed_flush.
     """
-    from apps.marketplaces.models import MarketplaceAccount
     try:
-        account = MarketplaceAccount.objects.select_related('tenant').get(pk=account_id)
-    except MarketplaceAccount.DoesNotExist:
-        return
-
-    cache.delete(f'avito:flush_scheduled:{account_id}')
-
-    # Окно ещё закрыто (напр. вызвали раньше времени) — перепланируем на открытие.
-    if _feed_window_remaining(account) > 0:
-        request_feed_flush(account)
-        return
-
-    # Промотируем «в очереди» → «на модерации»: они входят в этот фид.
-    _promote_queued_feed_rows(account)
-
-    pending_queryset = Listing.objects.filter(
-        account=account,
-        status=Listing.STATUS_PENDING,
-        external_id__isnull=True,
-    ).select_related('tenant', 'product')
-
-    if _durable_feed_run_enabled():
-        has_pending = pending_queryset.exists()
-        # The durable owner materializes the complete payload exactly once,
-        # under the account lock. These probes only decide feed versus STOP.
-        has_feed_listings = has_pending or Listing.objects.filter(
-            account=account,
-            status__in=[
-                Listing.STATUS_ACTIVE,
-                Listing.STATUS_PENDING,
-                Listing.STATUS_QUEUED,
-            ],
-        ).exists()
-        has_removals = (
-            not has_feed_listings
-            and Listing.objects.filter(
-                account=account,
-                external_id__isnull=False,
-                status__in=[Listing.STATUS_ARCHIVING, Listing.STATUS_DELETED],
-            ).exists()
+        normalized_revision = _normalized_feed_flush_revision(
+            feed_intent_revision,
         )
-        if not has_feed_listings and not has_removals:
-            return
+        normalized_owner_token = _normalized_feed_flush_owner_token(owner_token)
+    except ValueError:
+        return {'status': 'invalid'}
 
-        if has_pending and not AvitoAdapter(account).is_autoload_active():
-            limit_probe = _account_feed_listings(
-                account,
-                limit=_MAX_DURABLE_FEED_PAYLOAD_LISTINGS + 1,
+    if not _feed_flush_marker_allows_execution(
+        account_id,
+        normalized_owner_token,
+    ):
+        return {'status': 'owned_by_replacement'}
+
+    lock_identity = f'marketplace-feed-flush:{account_id}'
+    with try_session_advisory_lock(lock_identity) as acquired:
+        if not acquired:
+            replaced = _replace_owned_feed_flush(
+                account_id,
+                normalized_revision,
+                normalized_owner_token,
+                countdown=30,
             )
-            if len(limit_probe) > _MAX_DURABLE_FEED_PAYLOAD_LISTINGS:
-                return _record_durable_feed_payload_limit(account)
-            for listing in pending_queryset:
-                _reject_listing(
-                    listing,
+            return {
+                'status': 'lock_busy_rescheduled' if replaced else 'lock_busy',
+            }
+
+        account, exact_revision, preflight = _load_exact_feed_flush_account(
+            account_id,
+            normalized_revision,
+        )
+        if account is None:
+            _cache_clear_feed_flush_owner(
+                account_id,
+                normalized_owner_token,
+            )
+            return {'status': 'inactive'}
+        if preflight == 'future':
+            _cache_clear_feed_flush_owner(
+                account_id,
+                normalized_owner_token,
+            )
+            return {'status': 'future_revision'}
+        if preflight == 'completed':
+            _cache_clear_feed_flush_owner(
+                account_id,
+                normalized_owner_token,
+            )
+            return {'status': 'already_completed'}
+        if preflight == 'outcome_uncertain':
+            _cache_clear_feed_flush_owner(
+                account_id,
+                normalized_owner_token,
+            )
+            return {'status': 'outcome_uncertain'}
+        if preflight == 'superseded':
+            completion = _finish_owned_feed_flush(
+                account_id,
+                exact_revision,
+                normalized_owner_token,
+            )
+            return {'status': completion}
+
+        # Окно ещё закрыто (напр. вызвали раньше времени) — передаём тот же
+        # exact revision и marker token только после accepted broker publish.
+        if _feed_window_remaining(account) > 0:
+            replaced = _replace_owned_feed_flush(
+                account_id,
+                exact_revision,
+                normalized_owner_token,
+            )
+            return {'status': 'rescheduled' if replaced else 'owned_elsewhere'}
+
+        _cache_refresh_feed_flush_owner(
+            account_id,
+            normalized_owner_token,
+            timeout=int(_FEED_FLUSH_REPAIR_GRACE.total_seconds()),
+        )
+
+        # Промотируем «в очереди» → «на модерации»: они входят в этот фид.
+        _promote_queued_feed_rows(account)
+
+        pending_queryset = Listing.objects.filter(
+            account=account,
+            status=Listing.STATUS_PENDING,
+            external_id__isnull=True,
+        ).select_related('tenant', 'product')
+
+        if _durable_feed_run_enabled():
+            has_pending = pending_queryset.exists()
+            # The durable owner materializes the full payload exactly once,
+            # under its account lock. These probes only decide feed vs STOP.
+            has_feed_listings = has_pending or Listing.objects.filter(
+                account=account,
+                status__in=_feed_projection_statuses(),
+            ).exists()
+            has_removals = (
+                not has_feed_listings
+                and Listing.objects.filter(
+                    account=account,
+                    external_id__isnull=False,
+                    status__in=[
+                        Listing.STATUS_ARCHIVING,
+                        Listing.STATUS_DELETED,
+                    ],
+                ).exists()
+            )
+            if not has_feed_listings and not has_removals:
+                completion = _finish_owned_feed_flush(
+                    account_id,
+                    exact_revision,
+                    normalized_owner_token,
+                )
+                return {'status': completion}
+
+            if has_pending and not AvitoAdapter(account).is_autoload_active():
+                limit_probe = _account_feed_listings(
+                    account,
+                    limit=_MAX_DURABLE_FEED_PAYLOAD_LISTINGS + 1,
+                )
+                if len(limit_probe) > _MAX_DURABLE_FEED_PAYLOAD_LISTINGS:
+                    return _record_durable_feed_payload_limit(account)
+                rejected = _reject_pending_feed_batch(
+                    account_id,
                     'Автозагрузка Avito не подключена или профиль Autoload '
                     'недоступен. Подключите Автозагрузку в настройках Avito '
                     'и повторите публикацию.',
                 )
-            return
+                completion = _finish_owned_feed_flush(
+                    account_id,
+                    exact_revision,
+                    normalized_owner_token,
+                )
+                return {'status': completion, 'rejected': rejected}
 
-        return _coalesced_flush_durable(self, account)
+            result = _coalesced_flush_durable(self, account)
+            if result.get('status') == 'submitted':
+                _finish_owned_feed_flush(
+                    account_id,
+                    exact_revision,
+                    normalized_owner_token,
+                )
+            return result
 
-    pending = list(pending_queryset)
-    feed_listings = _account_feed_listings(account)
-    # Есть что снять с публикации? (последнее активное ушло в архив/удаление —
-    # нужно отправить уменьшенный фид или STOP, даже если новых публикаций нет.)
-    has_removals = Listing.objects.filter(
-        account=account, external_id__isnull=False,
-        status__in=[Listing.STATUS_ARCHIVING, Listing.STATUS_DELETED],
-    ).exists()
-    if not pending and not feed_listings and not has_removals:
-        return
-
-    if pending and not AvitoAdapter(account).is_autoload_active():
-        for listing in pending:
-            _reject_listing(
-                listing,
-                'Автозагрузка Avito не подключена или профиль Autoload недоступен. '
-                'Подключите Автозагрузку в настройках Avito и повторите публикацию.',
+        pending = list(pending_queryset)
+        feed_listings = _account_feed_listings(account)
+        # Есть что снять с публикации? Последнее активное уходит через
+        # уменьшенный feed или STOP, а не отдельный слепой provider POST.
+        has_removals = Listing.objects.filter(
+            account=account,
+            external_id__isnull=False,
+            status__in=[Listing.STATUS_ARCHIVING, Listing.STATUS_DELETED],
+        ).exists()
+        if not pending and not feed_listings and not has_removals:
+            completion = _finish_owned_feed_flush(
+                account_id,
+                exact_revision,
+                normalized_owner_token,
             )
-        return
+            return {'status': completion}
 
-    try:
-        _flush_account_or_stop(account)
-        account.last_feed_flush_at = now()
-        account.save(update_fields=['last_feed_flush_at'])
+        if pending and not AvitoAdapter(account).is_autoload_active():
+            rejected = _reject_pending_feed_batch(
+                account_id,
+                'Автозагрузка Avito не подключена или профиль Autoload '
+                'недоступен. Подключите Автозагрузку в настройках Avito и '
+                'повторите публикацию.',
+            )
+            completion = _finish_owned_feed_flush(
+                account_id,
+                exact_revision,
+                normalized_owner_token,
+            )
+            return {'status': completion, 'rejected': rejected}
+
+        if exact_revision is None:
+            _cache_clear_feed_flush_owner(
+                account_id,
+                normalized_owner_token,
+            )
+            return {'status': 'invalid'}
+        provider_claim = _claim_legacy_feed_provider_boundary(
+            account_id,
+            exact_revision,
+        )
+        if provider_claim == 'superseded':
+            completion = _finish_owned_feed_flush(
+                account_id,
+                exact_revision,
+                normalized_owner_token,
+            )
+            return {'status': completion}
+        if provider_claim != 'claimed':
+            if provider_claim != 'outcome_uncertain':
+                _cache_clear_feed_flush_owner(
+                    account_id,
+                    normalized_owner_token,
+                )
+            return {'status': provider_claim}
+
+        try:
+            _flush_account_or_stop(account)
+        except RateLimitError as exc:
+            return _retry_owned_feed_flush(
+                self,
+                exc,
+                account_id=account_id,
+                captured_revision=exact_revision,
+                owner_token=normalized_owner_token,
+                countdown=RATE_LIMIT_RETRY_COUNTDOWN,
+            )
+        except (
+            AmbiguousFeedSubmissionError,
+            requests.RequestException,
+            TrustedResponseError,
+        ) as exc:
+            status = _hold_legacy_feed_submission_unknown(
+                account_id,
+                exact_revision,
+                normalized_owner_token,
+            )
+            _write_log(
+                account.tenant,
+                'feed_flush',
+                'error',
+                'Результат запуска Autoload неизвестен; автоматический повтор '
+                f'остановлен до сверки. {_bounded_provider_reason(exc)}',
+            )
+            return {'status': status}
+        except (FeedUploadError, ServerError) as exc:
+            if self.request.retries >= self.max_retries:
+                repair_status = _release_safe_feed_failure_for_repair(
+                    account_id,
+                    exact_revision,
+                    normalized_owner_token,
+                )
+                _write_log(
+                    account.tenant,
+                    'feed_flush',
+                    'error',
+                    'Фид не отправлен после исчерпания безопасных повторов; '
+                    'аккаунт оставлен в очереди восстановления. '
+                    f'{_bounded_provider_reason(exc)}',
+                )
+                return {'status': repair_status}
+            return _retry_owned_feed_flush(
+                self,
+                exc,
+                account_id=account_id,
+                captured_revision=exact_revision,
+                owner_token=normalized_owner_token,
+                countdown=backoff(self.request.retries),
+            )
+
+        submitted_at = now()
+        completion = _finish_owned_feed_flush(
+            account_id,
+            exact_revision,
+            normalized_owner_token,
+            submitted_at=submitted_at,
+        )
         _write_log(
-            account.tenant, 'feed_flush', 'ok',
-            f'Фид загружен: {len(pending)} новых объявлений для {account.name}, ожидаем Avito',
+            account.tenant,
+            'feed_flush',
+            'ok',
+            f'Фид загружен: {len(pending)} новых объявлений для '
+            f'{account.name}, ожидаем Avito',
         )
         poll_feed_results_task.apply_async(args=[account_id], countdown=300)
-    except RateLimitError as exc:
-        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
-    except (FeedUploadError, ServerError) as exc:
-        if self.request.retries >= self.max_retries:
-            reason = str(exc)
-            for listing in pending:
-                _reject_listing(listing, reason)
-            return
-        raise self.retry(exc=exc, countdown=backoff(self.request.retries))
+        return {'status': completion}
 
 
 def _latest_upload_observation(
@@ -2653,44 +3806,101 @@ def process_marketplace_feed_intent(account_id: int, revision: int):
     }
 
 
+def _repair_due_legacy_feed_flushes(
+    *,
+    batch_limit: int,
+    dispatch_time: datetime.datetime,
+) -> dict:
+    """Republish bounded legacy coordinator wake-ups from DB desired state.
+
+    This scanner never calls Avito and never activates the private-artifact
+    worker.  It publishes only ``coalesced_flush_task`` with an exact revision;
+    that task owns provider fencing and advances the completion cursor.
+    """
+
+    candidate_ids = list(
+        MarketplaceAccount.all_objects.filter(
+            marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+            deleted_at__isnull=True,
+            is_active=True,
+            tenant__is_active=True,
+            feed_intent_due_at__isnull=False,
+            feed_intent_due_at__lte=dispatch_time,
+            feed_intent_revision__gt=F('feed_intent_dispatched_revision'),
+        )
+        .order_by('feed_intent_due_at', 'pk')
+        .values_list('pk', flat=True)[:batch_limit]
+    )
+    enqueued = 0
+    owned = 0
+    failed = 0
+    revisions: list[list[int]] = []
+    for account_id in candidate_ids:
+        try:
+            with transaction.atomic():
+                account = (
+                    MarketplaceAccount.all_objects.select_for_update(
+                        skip_locked=True,
+                        of=('self',),
+                    )
+                    .select_related('tenant')
+                    .filter(
+                        pk=account_id,
+                        marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+                        deleted_at__isnull=True,
+                        is_active=True,
+                        tenant__is_active=True,
+                        feed_intent_due_at__isnull=False,
+                        feed_intent_due_at__lte=dispatch_time,
+                        feed_intent_revision__gt=F(
+                            'feed_intent_dispatched_revision',
+                        ),
+                    )
+                    .first()
+                )
+                if account is None:
+                    continue
+                captured_revision = int(account.feed_intent_revision)
+                scheduled, _owner_token, _deadline = _schedule_locked_feed_flush(
+                    account,
+                    captured_revision=captured_revision,
+                )
+                if scheduled:
+                    enqueued += 1
+                    revisions.append([account.pk, captured_revision])
+                else:
+                    owned += 1
+        except Exception:
+            # Publish failure leaves desired/due/dispatched untouched.  A
+            # broker accepted-but-client-error may still produce a ghost task;
+            # exact revision + advisory lock fence it against the replacement.
+            failed += 1
+
+    return {
+        'status': 'legacy_repair',
+        'selected': len(candidate_ids),
+        'enqueued': enqueued,
+        'owned': owned,
+        'failed': failed,
+        'batch_limit': batch_limit,
+        'revisions': revisions,
+    }
+
+
 @shared_task(
     name=_DURABLE_FEED_INTENT_SCANNER_TASK_NAME,
     queue='avito_publish',
 )
 def dispatch_due_marketplace_feed_intents(limit: int = 100):
-    """Observe shadow intents or dispatch the explicitly dark durable leaf."""
+    """Repair legacy delivery or move durable intents into their dark outbox."""
 
     batch_limit = _bounded_feed_intent_scan_limit(limit)
     dispatch_time = now()
-    mode = settings.MARKETPLACE_FEED_INGRESS_MODE
-    due_filter = dict(
-        marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
-        deleted_at__isnull=True,
-        is_active=True,
-        tenant__is_active=True,
-        feed_intent_due_at__isnull=False,
-        feed_intent_due_at__lte=dispatch_time,
-        feed_intent_revision__gt=F('feed_intent_dispatched_revision'),
-    )
-    if mode == 'legacy':
-        return {
-            'status': 'legacy_inert',
-            'selected': 0,
-            'enqueued': 0,
-            'batch_limit': batch_limit,
-        }
-    if mode == 'dual_write':
-        selected = (
-            MarketplaceAccount.all_objects.filter(**due_filter)
-            .order_by('feed_intent_due_at', 'pk')
-            .values_list('pk', flat=True)[:batch_limit]
+    if settings.MARKETPLACE_FEED_INGRESS_MODE in {'legacy', 'dual_write'}:
+        return _repair_due_legacy_feed_flushes(
+            batch_limit=batch_limit,
+            dispatch_time=dispatch_time,
         )
-        return {
-            'status': 'shadow_observed',
-            'selected': len(selected),
-            'enqueued': 0,
-            'batch_limit': batch_limit,
-        }
     if not _durable_feed_ingress_enabled():
         return {
             'status': 'disabled',
@@ -2705,7 +3915,17 @@ def dispatch_due_marketplace_feed_intents(limit: int = 100):
                 skip_locked=True,
                 of=('self',),
             )
-            .filter(**due_filter)
+            .filter(
+                marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+                deleted_at__isnull=True,
+                is_active=True,
+                tenant__is_active=True,
+                feed_intent_due_at__isnull=False,
+                feed_intent_due_at__lte=dispatch_time,
+                feed_intent_revision__gt=F(
+                    'feed_intent_dispatched_revision',
+                ),
+            )
             .only(
                 'pk',
                 'feed_intent_revision',
@@ -2714,13 +3934,16 @@ def dispatch_due_marketplace_feed_intents(limit: int = 100):
             )
             .order_by('feed_intent_due_at', 'pk')[:batch_limit]
         )
+
         dispatch_ids = []
         for account in accounts:
             revision = int(account.feed_intent_revision)
             dispatch = enqueue_durable_task(
                 _DURABLE_FEED_INTENT_TASK_NAME,
                 args=[account.pk, revision],
-                deduplication_key=f'feed-intent:{account.pk}:rev:{revision}',
+                deduplication_key=(
+                    f'feed-intent:{account.pk}:rev:{revision}'
+                ),
                 available_at=dispatch_time,
                 max_run_attempts=5,
                 execution_timeout_seconds=180,
@@ -2741,6 +3964,8 @@ def dispatch_due_marketplace_feed_intents(limit: int = 100):
             account.feed_intent_due_at = None
 
         if accounts:
+            # Do not touch TimestampedModel.updated_at: these are scheduler
+            # cursors, not a user-visible account configuration mutation.
             MarketplaceAccount.all_objects.bulk_update(
                 accounts,
                 (
@@ -2954,6 +4179,7 @@ def _reject_claimed_feed_listing(
     affected = _apply_claimed_listing_values(
         claim,
         values=values,
+        observed_at=checked_at,
         next_status_check_at=None,
         nudge_status_due=False,
     )
@@ -2983,6 +4209,7 @@ def _publish_claimed_feed_listing(
     affected = _apply_claimed_listing_values(
         claim,
         values=values,
+        observed_at=checked_at,
         next_status_check_at=next_check_at,
         nudge_status_due=True,
     )
@@ -3005,6 +4232,28 @@ def _schedule_feed_poll(account_id: int, *, countdown: int) -> None:
         args=[account_id],
         countdown=max(1, int(countdown)),
     )
+
+
+def _write_feed_poll_outcome(
+    account,
+    *,
+    total: int,
+    published: int,
+    rejected: int,
+    applied: int,
+) -> None:
+    """Emit account logs only when this worker still owned at least one row."""
+
+    if published:
+        _write_log(
+            account.tenant, 'feed_poll', 'ok',
+            f'Получены ID Avito: {published}/{total} объявлений для {account.name}',
+        )
+    if rejected:
+        _write_log(
+            account.tenant, 'feed_poll', 'error',
+            f'Не опубликовано {rejected}/{total} объявлений {account.name}',
+        )
 
 
 def _has_ready_pending_feed_rows(account_id: int) -> bool:
@@ -3037,7 +4286,13 @@ def _poll_feed_results_dual_write_owned(task, account_id: int):
     if not owned:
         return
 
+    # The account snapshot must come from the post-claim, exact-identity load.
+    # Loading it before the claim could send the request with old credentials
+    # and then accept that response under a newly changed account identity.
     account = owned[0][1].account
+
+    # A row whose intent changed just after the batch claim must not keep this
+    # worker's lease or enter the provider request.
     owned_ids = {claim.listing_id for claim, _listing in owned}
     unowned = [claim for claim in claims if claim.listing_id not in owned_ids]
     if unowned:
@@ -3063,13 +4318,7 @@ def _poll_feed_results_dual_write_owned(task, account_id: int):
                     f'{account.name}: {_bounded_provider_reason(exc)}'
                 ),
             )
-        return {
-            'status': 'processed',
-            'total': len(owned),
-            'published': 0,
-            'rejected': rejected_count,
-            'pending': 0,
-        }
+        return
     except (ServerError, RateLimitError) as exc:
         countdown = (
             max(exc.retry_after, int(_POLL_RETRY_DELAY.total_seconds()))
@@ -3086,48 +4335,70 @@ def _poll_feed_results_dual_write_owned(task, account_id: int):
 
     mapping = {item['ad_id']: item.get('avito_id') for item in results}
     published_count = 0
+    applied_count = 0
     unresolved: list[tuple[_ListingStatusClaim, Listing]] = []
     for claim, listing in owned:
         avito_id = mapping.get(get_ad_id(listing))
         if avito_id:
-            published_count += _publish_claimed_feed_listing(
-                claim,
-                listing,
-                avito_id,
-            )
+            published = _publish_claimed_feed_listing(claim, listing, avito_id)
+            published_count += published
+            applied_count += published
         else:
             unresolved.append((claim, listing))
 
-    if published_count:
-        _write_log(
-            account.tenant, 'feed_poll', 'ok',
-            f'Получены ID Avito: {published_count}/{len(owned)} объявлений для {account.name}',
-        )
+    # Do not scan ``last_successful/items`` for every 100-row batch. That API
+    # is page-oriented rather than ad-id-filtered: on a 10k feed the former
+    # implementation could issue 100 batches * 50 pages and outlive every row
+    # lease. A separate page-driven report reconciler can reject explicit item
+    # errors once per upload; until then lack of an ID remains PENDING truth.
+    truly_pending = unresolved
+    rejected_count = 0
 
-    if unresolved:
-        _release_status_claims(
-            [claim for claim, _listing in unresolved],
+    if truly_pending:
+        released = _release_status_claims(
+            [claim for claim, _listing in truly_pending],
             next_status_check_at=now() + _POLL_RETRY_DELAY,
             nudge_account=False,
         )
+        applied_count += released
 
-    if _has_ready_pending_feed_rows(account_id):
+    _write_feed_poll_outcome(
+        account,
+        total=len(owned),
+        published=published_count,
+        rejected=rejected_count,
+        applied=applied_count,
+    )
+    has_ready_pending = _has_ready_pending_feed_rows(account_id)
+    if has_ready_pending:
+        # Continue a large feed in bounded URL/DB batches. One advisory owner
+        # per account prevents overlapping requests. At 100 rows per request,
+        # 15 seconds keeps a 10k sweep to 100 requests over about 25 minutes;
+        # the 30-minute row cursor prevents the head becoming due again before
+        # the tail has been visited.
         _schedule_feed_poll(
             account_id,
             countdown=_FEED_POLL_BATCH_DELAY_SECONDS,
         )
-    elif unresolved:
+    elif truly_pending:
+        # Check report freshness once at the end of a complete bounded sweep,
+        # not once per 100-row batch. The hook itself coalesces the same
+        # account/feed/credential generation and the page worker scans each
+        # remote report page at most once.
+        if _feed_errors_are_current(account):
+            schedule_avito_feed_item_error_reconciliation(account)
+        # No task-wide retry budget: each row retains its own durable due
+        # cursor, so late batches are not punished for earlier batches.
         _schedule_feed_poll(
             account_id,
             countdown=int(_POLL_RETRY_DELAY.total_seconds()),
         )
-
     return {
         'status': 'processed',
         'total': len(owned),
         'published': published_count,
-        'rejected': 0,
-        'pending': len(unresolved),
+        'rejected': rejected_count,
+        'pending': len(truly_pending),
     }
 
 

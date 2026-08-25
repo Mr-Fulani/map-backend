@@ -20,9 +20,11 @@ P1 observability был выделен по hunks, проверен, merged че
 production на commit `c2bc2eb102c5caa7610cd15e2a8dfac8193e0a34`; feed-код и
 feed-флаги P1 не менял. P2 завершён последовательными legacy-only release.
 P3 merged через PR `#244` и выложен выключенным на production commit
-`f1881f123a0bbd4fc2534ba746eaff19af8f851b`. Активный P4 физически выделен,
-локально проверен и готовится одним PR; его runtime activation в этот release
-не входит.
+`f1881f123a0bbd4fc2534ba746eaff19af8f851b`. P4 merged через PR `#245` и
+выложен выключенным на production commit `9061ebb`. Безопасный P5 foundation
+merged через PR `#246` и выложен в production commit
+`2e9958cd6a85aef0e712b6bed95d94836bdb8db7`; production остался в legacy.
+P5 writer/legacy-delivery activation выделен отдельно и локально проверен.
 
 Этот файл — единственный источник правды о текущей стадии работ. Roadmap
 находится в [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а обязательные
@@ -31,9 +33,11 @@ P3 merged через PR `#244` и выложен выключенным на pro
 Точная карта разделения файлов и тестов:
 [`AVITO_FEED_CHANGESET_MANIFEST.md`](AVITO_FEED_CHANGESET_MANIFEST.md).
 
-## Решение: механизмы после активного P4 заморожены
+## Решение: механизмы после активного P5 заморожены
 
-До отдельного решения владельца продукта запрещено выходить за границы P4:
+Пользователь отдельно активировал весь P5 одним PR и разрешил превышение
+обычных лимитов по строкам, миграциям и подсистемам. До следующего отдельного
+решения запрещено выходить за границы P5:
 
 - добавлять новые механизмы фидов, миграции и режимы настроек;
 - продолжать `0039`, автоматическое удаление старых файлов и private serving;
@@ -71,9 +75,9 @@ MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
 MARKETPLACE_FEED_STORAGE_MODE=legacy_public
 ```
 
-Текущий production commit P3 определяет `MARKETPLACE_FEED_RUN_MODE=legacy` и
-оставляет lifecycle в `legacy`; durable owner не активирован. P4 при deploy
-добавит только явные безопасные значения
+Текущий production commit P5 foundation определяет
+`MARKETPLACE_FEED_RUN_MODE=legacy`, ingress и lifecycle в `legacy`; durable
+owner не активирован. P4 добавил только явные безопасные значения
 `MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false`,
 `MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS=3600` и
 `MARKETPLACE_FEED_STORAGE_MODE=legacy_public`. HMAC keyring и stable URL не
@@ -430,10 +434,59 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный шаг
 
-P0–P4 завершены. P4 работает в production на exact commit `9061ebb`, но profile
-migration выключена и storage остаётся `legacy_public`. Активирован безопасный
-P5 foundation: только additive cursor schema `0026`–`0028`, intent-примитивы и
-dark scanner. Writer cutover и замена legacy flush вынесены из этого release.
+P0–P4 и безопасный P5 foundation завершены. Foundation работает в production
+на exact commit `2e9958c`, но ingress/lifecycle/run остаются `legacy`, profile
+migration выключена, artifact mode disabled, storage — `legacy_public`.
+
+Отдельный P5 activation package локально проверен. Он подключает
+транзакционные writer-хуки, provider-result reconciliation, bounded report
+reconciler и надёжное восстановление legacy flush. Пакет не добавляет миграций,
+не меняет production settings и не включает новый runtime для клиентов. Его
+следующий шаг — один PR, CI и deploy строго в legacy-режиме. Включение
+`dual_write` остаётся отдельным rollout-решением после release gate.
+
+### Локальная проверка P5 writer/legacy-delivery activation
+
+Финальный срез содержит ровно 20 production-файлов. Он не включает P6/P7,
+private storage/serving, cleanup/GC, `0039`, новые миграции или изменение
+production feed-флагов.
+
+```text
+pytest -q apps/products/tests/test_product_listing_feed_writers.py \
+  apps/products/tests/test_admin_feed_safety.py \
+  apps/marketplaces/tests/test_admin_safety.py \
+  apps/marketplaces/tests/test_feed_intent_local_writers.py \
+  apps/products/tests/test_branch_toggle.py \
+  apps/products/tests/test_subscription_access_tasks.py \
+  apps/image_search/tests apps/marketplaces/tests/test_services.py \
+  apps/marketplaces/tests/test_listing_patch_api.py
+результат: 208 passed in 75.65s
+
+pytest -q
+результат: 2356 passed, 1 skipped in 872.68s
+
+flake8 .
+результат: exit 0
+
+mypy
+результат: Success, 665 source files
+
+mypy --check-untyped-defs --exclude '(^|/)(tests?|migrations)/' \
+  apps config backup
+результат: Success, 338 source files
+
+python manage.py makemigrations --check --dry-run
+результат: No changes detected
+
+git diff --check
+результат: exit 0
+```
+
+Проверены отдельно: account-first lock order, stale-generation fencing,
+stock-zero как `archiving`, bulk import с одним intent на страницу/аккаунт,
+ручные и автоматические изображения, category/address writers, provider
+results, malformed report pages, broker failure/repair и закрытие raw writer
+путей в Django Admin.
 
 ### Локальная проверка безопасного P5 foundation
 
@@ -715,8 +768,8 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
 | P2c tenant status clarity/expiry notices | `DEPLOYED_LEGACY_ONLY`, PR `#234`, production `1f05367` |
 | P3 durable feed foundation `0023`–`0024` | `DEPLOYED_OFF`, PR `#244`, production `f1881f1` |
 | P4 stable endpoint/profile `0025` | `DEPLOYED_OFF`, PR `#245`, production `9061ebb` |
-| P5 feed-intent foundation `0026`–`0028` | `LOCAL_VERIFIED`, ожидает PR/release |
-| P5 writer/legacy-delivery activation | `DEFERRED`, требует отдельного решения |
+| P5 feed-intent foundation `0026`–`0028` | `DEPLOYED_LEGACY_ONLY`, PR `#246`, production `2e9958c` |
+| P5 writer/legacy-delivery activation | `LOCAL_VERIFIED`, один PR/CI/deploy впереди; runtime остаётся legacy |
 | Решение, нужен ли P6 сейчас | `NOT_STARTED` |
 | P7 cleanup/GC/0039 | `FROZEN` |
 

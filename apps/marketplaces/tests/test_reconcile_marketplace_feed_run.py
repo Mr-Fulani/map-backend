@@ -406,7 +406,12 @@ def test_command_error_is_structured_and_does_not_expose_credentials():
 
 def test_tombstoned_owner_remains_live_only_without_explicit_recovery_option():
     account, listing, uncertain = _uncertain_run('default-tombstone')
-    account.soft_delete()
+    tombstone = timezone.now()
+    MarketplaceAccount.objects.filter(pk=account.pk).update(
+        is_active=False,
+        deleted_at=tombstone,
+    )
+    Listing.objects.filter(account=account).update(deleted_at=tombstone)
 
     with pytest.raises(FeedAccountUnavailable, match='inactive or deleted'):
         reconcile_uncertain_feed_run(
@@ -437,8 +442,13 @@ def test_provider_not_accepted_closes_tombstoned_owner_without_restore_or_flush(
     django_capture_on_commit_callbacks,
 ):
     account, listing, uncertain = _uncertain_run('tombstone-rejected')
-    account.soft_delete()
-    tombstone = account.deleted_at
+    tombstone = timezone.now()
+    MarketplaceAccount.objects.filter(pk=account.pk).update(
+        is_active=False,
+        deleted_at=tombstone,
+    )
+    Listing.objects.filter(account=account).update(deleted_at=tombstone)
+    account.deleted_at = tombstone
 
     with patch('apps.marketplaces.tasks.coalesced_flush_task.delay') as flush:
         with django_capture_on_commit_callbacks(execute=True):

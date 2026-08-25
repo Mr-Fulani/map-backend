@@ -1,7 +1,7 @@
 import datetime
 from decimal import Decimal, InvalidOperation
 from functools import partial
-from typing import Any, TypedDict
+from typing import Any, TypedDict, cast
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
@@ -18,6 +18,8 @@ from apps.marketplaces.models import (
     Listing,
     ListingStats,
     MarketplaceAccount,
+    MarketplaceFeedRun,
+    MarketplacePlacementAddress,
 )
 from apps.marketplaces.price_utils import (
     compute_price,
@@ -27,6 +29,14 @@ from apps.marketplaces.price_utils import (
 
 
 _LOCAL_STATUS_RECHECK_DELAY = datetime.timedelta(minutes=10)
+_FEED_PROJECTION_STATUSES = frozenset({
+    Listing.STATUS_ACTIVE,
+    Listing.STATUS_PENDING,
+})
+
+
+class _StaleLocalListingIntent(RuntimeError):
+    """Abort an intent and its already-written feed revision atomically."""
 
 
 class _ListingExpectedState(TypedDict):
@@ -38,6 +48,102 @@ class _ListingExpectedState(TypedDict):
 
 def _status_lifecycle_dual_write_enabled() -> bool:
     return settings.AVITO_STATUS_LIFECYCLE_MODE == 'dual_write'
+
+
+def _feed_ingress_dual_write_enabled() -> bool:
+    """Return whether local desired state must advance the DB ingress."""
+
+    return settings.MARKETPLACE_FEED_INGRESS_MODE in {'dual_write', 'durable'}
+
+
+def _durable_feed_run_enabled() -> bool:
+    """Return whether the durable feed owner may receive new work."""
+
+    return (
+        settings.MARKETPLACE_FEED_RUN_MODE == 'durable'
+        and _status_lifecycle_dual_write_enabled()
+    )
+
+
+def _listing_is_in_feed_projection(*, status: str, deleted_at) -> bool:
+    return deleted_at is None and status in _FEED_PROJECTION_STATUSES
+
+
+def _lock_feed_intent_accounts_and_endpoints(
+    account_ids,
+    *,
+    tenant_id: int | None = None,
+):
+    """Lock a sorted account set and its optional stable endpoints."""
+
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    normalized_ids = sorted({int(account_id) for account_id in account_ids})
+    accounts = MarketplaceAccount.all_objects.select_for_update().filter(
+        pk__in=normalized_ids,
+    )
+    if tenant_id is not None:
+        accounts = accounts.filter(tenant_id=tenant_id)
+    locked_accounts = list(accounts.order_by('pk'))
+    if [account.pk for account in locked_accounts] != normalized_ids:
+        raise MarketplaceAccount.DoesNotExist(
+            'Marketplace account is missing or belongs to another tenant.',
+        )
+    list(
+        MarketplaceFeedEndpoint.objects.select_for_update()
+        .filter(account_id__in=normalized_ids)
+        .order_by('account_id')
+    )
+    return locked_accounts
+
+
+def _bump_locked_accounts_with_live_projection(account_ids) -> bool:
+    """Advance each pre-locked account once if it owns projected rows."""
+
+    normalized_ids = sorted({int(account_id) for account_id in account_ids})
+    live_account_ids = set(
+        Listing.objects.filter(
+            account_id__in=normalized_ids,
+            status__in=_FEED_PROJECTION_STATUSES,
+        ).values_list('account_id', flat=True)
+    )
+    if not live_account_ids:
+        return False
+    from apps.marketplaces.feed_intents import bump_feed_intents
+
+    bump_feed_intents(live_account_ids, timezone.now())
+    return True
+
+
+def _lock_tenant_avito_feed_accounts(tenant_id: int):
+    """Lock all nondeleted Avito owners before a tenant-wide XML dependency."""
+
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    accounts = list(
+        MarketplaceAccount.all_objects.select_for_update()
+        .filter(
+            tenant_id=tenant_id,
+            marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+            deleted_at__isnull=True,
+        )
+        .order_by('pk')
+    )
+    account_ids = [account.pk for account in accounts]
+    list(
+        MarketplaceFeedEndpoint.objects.select_for_update()
+        .filter(account_id__in=account_ids)
+        .order_by('account_id')
+    )
+    return accounts
+
+
+def _merged_update_fields(*field_groups) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(
+        field
+        for fields in field_groups
+        for field in fields
+    ))
 
 
 def _listing_expected_state(listing: Listing) -> _ListingExpectedState:
@@ -83,88 +189,273 @@ def _save_local_listing_intent(
     expected_account_id: int,
     expected_external_id: str | None,
     expected_deleted_at,
+    expected_product_updated_at=None,
     reset_provider_identity: bool = False,
     require_target_account_active: bool = False,
 ) -> bool:
-    """Apply a local transition after fencing older provider observations."""
+    """Compare-and-apply one local intent under account-to-listing locks.
+
+    The caller may have read the row before a provider/local worker committed
+    a newer transition.  We therefore copy only the requested business fields
+    after revalidating the complete row generation. Lifecycle values are
+    recomputed from that locked post-intent row rather than copied from the
+    caller's stale instance.
+    """
 
     fields = tuple(dict.fromkeys(update_fields))
-    if not _status_lifecycle_dual_write_enabled():
-        listing.save(update_fields=fields)
-        return True
-
-    intended_values: dict[str, object] = {}
+    intended_values = {}
     for field_name in fields:
-        intended_values[field_name] = getattr(listing, field_name)
+        model_field = cast(Any, Listing._meta.get_field(field_name))
+        intended_values[model_field.attname] = getattr(
+            listing, model_field.attname,
+        )
 
     if reset_provider_identity:
         listing.external_id = None
         listing.external_url = ''
+        listing.feed_run_id = None
         intended_values['external_id'] = None
         intended_values['external_url'] = ''
-        fields = tuple(dict.fromkeys((*fields, 'external_id', 'external_url')))
-
-    intended_account_id = listing.account_id
-    account_ids = sorted({expected_account_id, intended_account_id})
-
-    with transaction.atomic():
-        locked_accounts = list(
-            MarketplaceAccount.all_objects.select_for_update(of=('self',))
-            .filter(
-                pk__in=account_ids,
-                tenant_id=listing.tenant_id,
-            )
-            .order_by('pk')
+        intended_values['feed_run_id'] = None
+        fields = _merged_update_fields(
+            fields,
+            ('external_id', 'external_url', 'feed_run'),
         )
-        accounts_by_id = {account.pk: account for account in locked_accounts}
-        target_account = accounts_by_id.get(intended_account_id)
-        if (
-            len(accounts_by_id) != len(account_ids)
-            or target_account is None
-            or target_account.deleted_at is not None
-            or (require_target_account_active and not target_account.is_active)
-        ):
-            return False
-        current = (
-            Listing.all_objects.select_for_update(of=('self',))
-            .filter(pk=listing.pk)
-            .first()
-        )
-        if current is None or not (
+
+    lifecycle_enabled = _status_lifecycle_dual_write_enabled()
+    feed_ingress_enabled = _feed_ingress_dual_write_enabled()
+    if not lifecycle_enabled and not feed_ingress_enabled:
+        listing.save(update_fields=fields)
+        return True
+
+    from apps.marketplaces.feed_intents import bump_feed_intents
+    from apps.marketplaces.models import (
+        MarketplaceAccount,
+        MarketplaceFeedEndpoint,
+    )
+
+    intended_account_id = intended_values.get(
+        'account_id', expected_account_id,
+    )
+    account_ids = {
+        expected_account_id,
+        intended_account_id,
+    }
+
+    def _product_generation_matches(current: Listing) -> bool:
+        if expected_product_updated_at is None:
+            return True
+        from apps.products.models import Product
+
+        return Product.objects.filter(
+            pk=current.product_id,
+            updated_at=expected_product_updated_at,
+            deleted_at__isnull=True,
+        ).exists()
+
+    def _matches_expected(current: Listing) -> bool:
+        return (
             current.status == expected_status
             and current.account_id == expected_account_id
             and current.external_id == expected_external_id
             and current.deleted_at == expected_deleted_at
-        ):
-            if current is not None:
-                _copy_listing_row(listing, current)
-            return False
+            and _product_generation_matches(current)
+        )
 
-        for field_name, value in intended_values.items():
-            setattr(current, field_name, value)
-        if reset_provider_identity:
-            observation_fields = clear_remote_observation().apply_to(current)
-            claim_fields = release_status_check(
-                next_status_check_at=None,
-            ).apply_to(current)
-            lifecycle_fields = tuple(dict.fromkeys((
-                *observation_fields,
-                *claim_fields,
-            )))
-        else:
-            lifecycle_fields = release_status_check(
-                next_status_check_at=_local_status_due_at(current),
-            ).apply_to(current)
-        saved_fields = tuple(dict.fromkeys((*fields, *lifecycle_fields)))
-        current.save(update_fields=saved_fields)
-        for field_name in saved_fields:
-            setattr(listing, field_name, getattr(current, field_name))
-        listing._state.fields_cache.clear()
+    try:
+        with transaction.atomic():
+            locked_accounts = list(
+                MarketplaceAccount.all_objects.select_for_update()
+                .filter(pk__in=account_ids)
+                .order_by('pk')
+            )
+            locked_accounts_by_id = {
+                account.pk: account for account in locked_accounts
+            }
+            if feed_ingress_enabled:
+                # The feed primitive re-selects these rows to validate revision
+                # parity.  Lock them before reading/locking Listing so that its
+                # internal account->endpoint order acquires no late lock.
+                list(
+                    MarketplaceFeedEndpoint.objects.select_for_update()
+                    .filter(account_id__in=account_ids)
+                    .order_by('account_id')
+                )
 
-        due_at = current.next_status_check_at
-        if due_at is not None:
-            _min_nudge_account_status_due(current.account_id, due_at)
-        return True
+            # Account ownership is the writer fence for Listing.  Read and
+            # validate before taking the row lock so the transactional feed
+            # revision can advance in strict account->endpoint->listing order.
+            current_snapshot = (
+                Listing.all_objects.filter(pk=listing.pk).first()
+            )
+            if current_snapshot is None:
+                return False
+            target_account = locked_accounts_by_id.get(intended_account_id)
+            target_account_is_writable = (
+                target_account is not None
+                and target_account.deleted_at is None
+                and target_account.tenant_id == current_snapshot.tenant_id
+                and (
+                    target_account.is_active
+                    or not require_target_account_active
+                )
+            )
+            if (
+                not _matches_expected(current_snapshot)
+                or not target_account_is_writable
+            ):
+                _copy_listing_row(listing, current_snapshot)
+                return False
+
+            before_values = {
+                field_name: getattr(current_snapshot, field_name)
+                for field_name in intended_values
+            }
+            before_live = _listing_is_in_feed_projection(
+                status=current_snapshot.status,
+                deleted_at=current_snapshot.deleted_at,
+            )
+            for field_name, value in intended_values.items():
+                setattr(current_snapshot, field_name, value)
+            after_live = _listing_is_in_feed_projection(
+                status=current_snapshot.status,
+                deleted_at=current_snapshot.deleted_at,
+            )
+            projection_changed = any(
+                before_values[field_name] != value
+                for field_name, value in intended_values.items()
+            )
+            if feed_ingress_enabled and projection_changed:
+                projection_account_ids = set()
+                if before_live:
+                    projection_account_ids.add(expected_account_id)
+                if after_live:
+                    projection_account_ids.add(current_snapshot.account_id)
+                if projection_account_ids:
+                    bump_feed_intents(
+                        projection_account_ids,
+                        timezone.now(),
+                    )
+
+            if feed_ingress_enabled and after_live:
+                # Product writers use the same account->endpoint->product
+                # order.  Hold the source row before Listing can enter the
+                # live projection so a concurrent content/delete generation
+                # cannot fall between this bump and the membership commit.
+                from apps.products.models import Product
+
+                locked_product = (
+                    Product.all_objects.select_for_update()
+                    .filter(pk=current_snapshot.product_id)
+                    .only('pk', 'updated_at', 'deleted_at')
+                    .first()
+                )
+                product_is_current = (
+                    locked_product is not None
+                    and locked_product.deleted_at is None
+                    and (
+                        expected_product_updated_at is None
+                        or locked_product.updated_at
+                        == expected_product_updated_at
+                    )
+                )
+                if not product_is_current:
+                    raise _StaleLocalListingIntent
+
+            current = (
+                Listing.all_objects.select_for_update()
+                .filter(pk=listing.pk)
+                .first()
+            )
+            if current is None or not _matches_expected(current):
+                if current is not None:
+                    _copy_listing_row(listing, current)
+                raise _StaleLocalListingIntent
+            for field_name, value in intended_values.items():
+                setattr(current, field_name, value)
+
+            lifecycle_fields: tuple[str, ...] = ()
+            if lifecycle_enabled and reset_provider_identity:
+                observation_fields = clear_remote_observation().apply_to(current)
+                claim_fields = release_status_check(
+                    next_status_check_at=None,
+                ).apply_to(current)
+                lifecycle_fields = _merged_update_fields(
+                    observation_fields, claim_fields,
+                )
+            elif lifecycle_enabled:
+                lifecycle_fields = release_status_check(
+                    next_status_check_at=_local_status_due_at(current),
+                ).apply_to(current)
+
+            saved_fields = _merged_update_fields(fields, lifecycle_fields)
+            current.save(update_fields=saved_fields)
+            for field_name in saved_fields:
+                model_field = cast(Any, Listing._meta.get_field(field_name))
+                setattr(
+                    listing,
+                    model_field.attname,
+                    getattr(current, model_field.attname),
+                )
+            listing._state.fields_cache.clear()
+
+            due_at = current.next_status_check_at if lifecycle_enabled else None
+            if due_at is not None:
+                if current.account_id not in locked_accounts_by_id:
+                    raise RuntimeError(
+                        'Listing due cursor requires its current account lock.',
+                    )
+                _min_nudge_account_status_due(current.account_id, due_at)
+            return True
+    except _StaleLocalListingIntent:
+        return False
+
+
+def _provider_identity_reset_kwargs() -> dict[str, object]:
+    """Build the bulk reset used when an account changes provider identity."""
+
+    values: dict[str, object] = {
+        'external_id': None,
+        'external_url': '',
+        'feed_run_id': None,
+    }
+    if _status_lifecycle_dual_write_enabled():
+        values.update(clear_remote_observation().as_update_kwargs())
+        values.update(release_status_check(next_status_check_at=None).as_update_kwargs())
+    return values
+
+
+def _bump_account_feed_projection_if_live(account_id: int) -> bool:
+    """Advance a pre-locked account when its identity/defaults affect XML."""
+
+    if not _feed_ingress_dual_write_enabled():
+        return False
+    if not Listing.objects.filter(
+        account_id=account_id,
+        status__in=_FEED_PROJECTION_STATUSES,
+    ).exists():
+        return False
+    from apps.marketplaces.feed_intents import bump_feed_intents
+
+    bump_feed_intents([account_id], timezone.now())
+    return True
+
+
+def _reset_account_status_batch(account) -> tuple[str, ...]:
+    """Drop scheduler state that belongs to a previous provider identity."""
+
+    if not _status_lifecycle_dual_write_enabled():
+        return ()
+    account.status_batch_due_at = None
+    account.status_batch_cooldown_until = None
+    account.status_batch_claim_token = None
+    account.status_batch_claimed_until = None
+    return (
+        'status_batch_due_at',
+        'status_batch_cooldown_until',
+        'status_batch_claim_token',
+        'status_batch_claimed_until',
+    )
 
 
 class CategoryMappingService:
@@ -186,20 +477,154 @@ class CategoryMappingService:
 
         Идемпотентен — повторный вызов с теми же данными не создаёт дублей.
         """
-        result = []
-        for source, data in mappings.items():
-            obj, _ = CategoryMapping.objects.update_or_create(
-                tenant=tenant,
-                marketplace=CategoryMapping.MARKETPLACE_AVITO,
-                category_source=source,
-                defaults={
-                    'category_target': data['category_target'],
-                    'category_id': data['category_id'],
-                    'attributes_map': data.get('attributes_map', {}),
-                },
+        if not _feed_ingress_dual_write_enabled():
+            result = []
+            for source, data in mappings.items():
+                obj, _ = CategoryMapping.objects.update_or_create(
+                    tenant=tenant,
+                    marketplace=CategoryMapping.MARKETPLACE_AVITO,
+                    category_source=source,
+                    defaults={
+                        'category_target': data['category_target'],
+                        'category_id': data['category_id'],
+                        'attributes_map': data.get('attributes_map', {}),
+                    },
+                )
+                result.append(obj)
+            return result
+
+        sources = sorted(mappings)
+        with transaction.atomic():
+            locked_accounts = _lock_tenant_avito_feed_accounts(tenant.pk)
+            existing_by_source = {
+                mapping.category_source: mapping
+                for mapping in CategoryMapping.objects.filter(
+                    tenant=tenant,
+                    marketplace=CategoryMapping.MARKETPLACE_AVITO,
+                    category_source__in=sources,
+                )
+            }
+            changed = False
+            for source, data in mappings.items():
+                current = existing_by_source.get(source)
+                desired = (
+                    data['category_target'],
+                    data['category_id'],
+                    data.get('attributes_map', {}),
+                )
+                if current is None or desired != (
+                    current.category_target,
+                    current.category_id,
+                    current.attributes_map,
+                ):
+                    changed = True
+                    break
+            if changed:
+                _bump_locked_accounts_with_live_projection(
+                    [account.pk for account in locked_accounts],
+                )
+            # Mapping locks are deliberately below account/endpoint/bump.
+            list(
+                CategoryMapping.objects.select_for_update()
+                .filter(
+                    tenant=tenant,
+                    marketplace=CategoryMapping.MARKETPLACE_AVITO,
+                    category_source__in=sources,
+                )
+                .order_by('pk')
             )
-            result.append(obj)
-        return result
+            result = []
+            for source, data in mappings.items():
+                obj, _ = CategoryMapping.objects.update_or_create(
+                    tenant=tenant,
+                    marketplace=CategoryMapping.MARKETPLACE_AVITO,
+                    category_source=source,
+                    defaults={
+                        'category_target': data['category_target'],
+                        'category_id': data['category_id'],
+                        'attributes_map': data.get('attributes_map', {}),
+                    },
+                )
+                result.append(obj)
+            return result
+
+    @staticmethod
+    def upsert(tenant, data: dict) -> CategoryMapping:
+        """Create/update one mapping with one tenant-wide feed successor."""
+
+        result = CategoryMappingService.bulk_create_from_dict(tenant, {
+            data['category_source']: {
+                'category_target': data['category_target'],
+                'category_id': data['category_id'],
+                'attributes_map': data.get('attributes_map', {}),
+            },
+        })
+        return result[0]
+
+    @staticmethod
+    def update(mapping: CategoryMapping, data: dict) -> CategoryMapping:
+        """Replace a mapping and advance its version transactionally."""
+
+        if not _feed_ingress_dual_write_enabled():
+            for field, value in data.items():
+                setattr(mapping, field, value)
+            mapping.version += 1
+            mapping.save()
+            return mapping
+
+        with transaction.atomic():
+            locked_accounts = _lock_tenant_avito_feed_accounts(
+                mapping.tenant_id,
+            )
+            snapshot = CategoryMapping.objects.filter(pk=mapping.pk).first()
+            if snapshot is None:
+                raise CategoryMapping.DoesNotExist
+            desired_changed = any(
+                getattr(snapshot, field) != value
+                for field, value in data.items()
+            )
+            if desired_changed:
+                _bump_locked_accounts_with_live_projection(
+                    [account.pk for account in locked_accounts],
+                )
+            current = CategoryMapping.objects.select_for_update().get(
+                pk=mapping.pk,
+                tenant_id=mapping.tenant_id,
+            )
+            for field, value in data.items():
+                setattr(current, field, value)
+            current.version += 1
+            current.save()
+            return current
+
+    @staticmethod
+    def delete(tenant, mapping_id: int) -> int:
+        """Delete one mapping behind a tenant-wide feed revision."""
+
+        if not _feed_ingress_dual_write_enabled():
+            deleted, _ = CategoryMapping.objects.filter(
+                pk=mapping_id,
+                tenant=tenant,
+            ).delete()
+            return deleted
+
+        with transaction.atomic():
+            locked_accounts = _lock_tenant_avito_feed_accounts(tenant.pk)
+            exists = CategoryMapping.objects.filter(
+                pk=mapping_id,
+                tenant=tenant,
+            ).exists()
+            if not exists:
+                return 0
+            _bump_locked_accounts_with_live_projection(
+                [account.pk for account in locked_accounts],
+            )
+            mapping = CategoryMapping.objects.select_for_update().get(
+                pk=mapping_id,
+                tenant=tenant,
+            )
+            deleted, _ = mapping.delete()
+            return deleted
 
     @staticmethod
     def get_unmapped_categories(tenant) -> list[str]:
@@ -216,6 +641,180 @@ class CategoryMappingService:
             .distinct()
         )
         return sorted(all_categories - mapped)
+
+
+class MarketplacePlacementAddressService:
+    """Feed-safe CRUD for account placement/contact defaults."""
+
+    @staticmethod
+    def create(tenant, data: dict) -> MarketplacePlacementAddress:
+        account = data['account']
+        values = {key: value for key, value in data.items() if key != 'account'}
+        if not _feed_ingress_dual_write_enabled():
+            if values.get('is_default'):
+                MarketplacePlacementAddress.objects.filter(
+                    tenant=tenant,
+                    account=account,
+                    is_default=True,
+                ).update(is_default=False)
+            return MarketplacePlacementAddress.objects.create(
+                tenant=tenant,
+                account=account,
+                **values,
+            )
+
+        with transaction.atomic():
+            _lock_feed_intent_accounts_and_endpoints(
+                [account.pk],
+                tenant_id=tenant.pk,
+            )
+            # Creating an active/default address can change inherited XML.
+            _bump_locked_accounts_with_live_projection([account.pk])
+            list(
+                MarketplacePlacementAddress.objects.select_for_update()
+                .filter(tenant=tenant, account_id=account.pk)
+                .order_by('pk')
+            )
+            if values.get('is_default'):
+                MarketplacePlacementAddress.objects.filter(
+                    tenant=tenant,
+                    account_id=account.pk,
+                    is_default=True,
+                ).update(is_default=False)
+            return MarketplacePlacementAddress.objects.create(
+                tenant=tenant,
+                account_id=account.pk,
+                **values,
+            )
+
+    @staticmethod
+    def update(
+        address: MarketplacePlacementAddress,
+        tenant,
+        data: dict,
+    ) -> MarketplacePlacementAddress:
+        if not _feed_ingress_dual_write_enabled():
+            if data.get('is_default'):
+                account = data.get('account', address.account)
+                MarketplacePlacementAddress.objects.filter(
+                    tenant=tenant,
+                    account=account,
+                    is_default=True,
+                ).exclude(pk=address.pk).update(is_default=False)
+            for field, value in data.items():
+                setattr(address, field, value)
+            address.save()
+            return address
+
+        new_account = data.get('account', address.account)
+        account_ids = {address.account_id, new_account.pk}
+        with transaction.atomic():
+            _lock_feed_intent_accounts_and_endpoints(
+                account_ids,
+                tenant_id=tenant.pk,
+            )
+            snapshot = MarketplacePlacementAddress.objects.filter(
+                pk=address.pk,
+                tenant=tenant,
+            ).first()
+            if snapshot is None:
+                raise MarketplacePlacementAddress.DoesNotExist
+            if snapshot.account_id != address.account_id:
+                # The caller was authorized against an older owner. Retrying
+                # under a newly fetched row is required so the lock set starts
+                # with the actual old account rather than acquiring it late.
+                raise MarketplacePlacementAddress.DoesNotExist
+            resulting_is_default = data.get(
+                'is_default',
+                snapshot.is_default,
+            )
+            resulting_account = data.get('account', snapshot.account)
+            resulting_account_id = getattr(
+                resulting_account,
+                'pk',
+                resulting_account,
+            )
+            changed = False
+            for field, value in data.items():
+                model_field = cast(
+                    Any,
+                    MarketplacePlacementAddress._meta.get_field(field),
+                )
+                current_value = getattr(snapshot, model_field.attname)
+                intended_value = (
+                    getattr(value, 'pk', value)
+                    if model_field.is_relation
+                    else value
+                )
+                if current_value != intended_value:
+                    changed = True
+                    break
+            # Legacy races can leave multiple defaults because the schema has
+            # no partial uniqueness constraint. Reselecting an already-default
+            # row still demotes its peer below and changes inherited XML.
+            if resulting_is_default and MarketplacePlacementAddress.objects.filter(
+                tenant=tenant,
+                account_id=resulting_account_id,
+                is_default=True,
+            ).exclude(pk=snapshot.pk).exists():
+                changed = True
+            if changed:
+                _bump_locked_accounts_with_live_projection(account_ids)
+            # Lock every default candidate only after account/endpoint/bump.
+            list(
+                MarketplacePlacementAddress.objects.select_for_update()
+                .filter(tenant=tenant, account_id__in=account_ids)
+                .order_by('pk')
+            )
+            current = MarketplacePlacementAddress.objects.get(
+                pk=address.pk,
+                tenant=tenant,
+            )
+            if resulting_is_default:
+                MarketplacePlacementAddress.objects.filter(
+                    tenant=tenant,
+                    account=resulting_account,
+                    is_default=True,
+                ).exclude(pk=current.pk).update(is_default=False)
+            for field, value in data.items():
+                setattr(current, field, value)
+            current.save()
+            return current
+
+    @staticmethod
+    def deactivate(
+        address: MarketplacePlacementAddress,
+        tenant,
+    ) -> MarketplacePlacementAddress:
+        if not _feed_ingress_dual_write_enabled():
+            address.is_active = False
+            address.save(update_fields=['is_active'])
+            return address
+
+        with transaction.atomic():
+            _lock_feed_intent_accounts_and_endpoints(
+                [address.account_id],
+                tenant_id=tenant.pk,
+            )
+            snapshot = MarketplacePlacementAddress.objects.filter(
+                pk=address.pk,
+                tenant=tenant,
+            ).first()
+            if snapshot is None:
+                raise MarketplacePlacementAddress.DoesNotExist
+            if snapshot.account_id != address.account_id:
+                raise MarketplacePlacementAddress.DoesNotExist
+            if snapshot.is_active:
+                _bump_locked_accounts_with_live_projection(
+                    [snapshot.account_id],
+                )
+            current = MarketplacePlacementAddress.objects.select_for_update().get(
+                pk=address.pk,
+                tenant=tenant,
+            )
+            current.is_active = False
+            current.save(update_fields=['is_active'])
+            return current
 
 
 class ListingNotFound(Exception):
@@ -250,8 +849,30 @@ class MarketplaceAccountFeedConflict(Exception):
     """Изменение аккаунта конфликтует с активным feed-процессом."""
 
 
+def _assert_legacy_feed_cursor_mutation_safe(account) -> None:
+    """Block account drift while a legacy provider POST is unresolved."""
+
+    if not (
+        settings.MARKETPLACE_FEED_RUN_MODE == 'legacy'
+        and settings.MARKETPLACE_FEED_INGRESS_MODE
+        in {'legacy', 'dual_write', 'durable'}
+    ):
+        return
+    if (
+        account.feed_intent_revision
+        > account.feed_intent_dispatched_revision
+        and account.feed_intent_due_at is None
+    ):
+        raise MarketplaceAccountFeedConflict(
+            'Нельзя изменить аккаунт: результат предыдущей отправки фида '
+            'ещё не подтверждён. Сначала выполните ручную сверку cursor hold.',
+        )
+
+
 def _assert_account_identity_mutation_safe(account) -> None:
     """Не даёт сменить credentials поверх уже отправленного durable run."""
+
+    _assert_legacy_feed_cursor_mutation_safe(account)
 
     from apps.marketplaces.feed_workflow import (
         FeedSubmissionOutcomeUncertain,
@@ -761,55 +1382,112 @@ class ListingService:
                 f'Массовая операция допускает не более {settings.API_BULK_MAX_ITEMS} листингов.',
             )
         target_qs = qs.filter(pk__in=target_ids)
-        if not _status_lifecycle_dual_write_enabled():
+        if (
+            not _status_lifecycle_dual_write_enabled()
+            and not _feed_ingress_dual_write_enabled()
+        ):
             return target_qs.update(**updates)
 
-        account_ids = sorted(set(
-            target_qs.values_list('account_id', flat=True),
-        ))
+        from apps.marketplaces.models import MarketplaceAccount
+
+        candidate_account_ids = set(
+            Listing.objects.filter(pk__in=target_ids)
+            .values_list('account_id', flat=True),
+        )
+        inactive_lifecycle = (
+            release_status_check(next_status_check_at=None).as_update_kwargs()
+            if _status_lifecycle_dual_write_enabled()
+            else {}
+        )
         with transaction.atomic():
             locked_accounts = list(
                 MarketplaceAccount.all_objects.select_for_update(of=('self',))
-                .filter(pk__in=account_ids)
+                .filter(pk__in=candidate_account_ids)
                 .order_by('pk')
                 .only('pk')
             )
             locked_account_ids = {account.pk for account in locked_accounts}
+            if _feed_ingress_dual_write_enabled():
+                from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+                list(
+                    MarketplaceFeedEndpoint.objects.select_for_update()
+                    .filter(account_id__in=locked_account_ids)
+                    .order_by('account_id')
+                )
             rows = list(
-                target_qs.filter(account_id__in=locked_account_ids)
-                .select_for_update(of=('self',))
+                Listing.objects.filter(
+                    pk__in=target_ids,
+                    account_id__in=locked_account_ids,
+                )
                 .order_by('pk')
-                .values('pk', 'account_id', 'status', 'external_id')
+                .values(
+                    'pk', 'account_id', 'product_id', 'status', 'external_id',
+                )
             )
+            if _feed_ingress_dual_write_enabled():
+                projection_account_ids = {
+                    row['account_id'] for row in rows
+                    if row['status'] in _FEED_PROJECTION_STATUSES
+                }
+                if projection_account_ids:
+                    from apps.marketplaces.feed_intents import bump_feed_intents
+
+                    bump_feed_intents(
+                        projection_account_ids,
+                        timezone.now(),
+                    )
+                projected_product_ids = sorted({
+                    row['product_id'] for row in rows
+                    if row['status'] in _FEED_PROJECTION_STATUSES
+                })
+                if projected_product_ids:
+                    from apps.products.models import Product
+
+                    list(
+                        Product.all_objects.select_for_update()
+                        .filter(pk__in=projected_product_ids)
+                        .order_by('pk')
+                        .values_list('pk', flat=True)
+                    )
             locked_ids = [row['pk'] for row in rows]
+            list(
+                Listing.objects.select_for_update(of=('self',))
+                .filter(pk__in=locked_ids)
+                .order_by('pk')
+                .values_list('pk', flat=True)
+            )
             locked_qs = Listing.objects.filter(pk__in=locked_ids)
-            inactive_lifecycle = release_status_check(
-                next_status_check_at=None,
-            ).as_update_kwargs()
             updated = locked_qs.update(**updates, **inactive_lifecycle)
 
+            if not _status_lifecycle_dual_write_enabled():
+                return updated
+
             short_due = timezone.now() + _LOCAL_STATUS_RECHECK_DELAY
-            due_ids = [
+            active_lifecycle = release_status_check(
+                next_status_check_at=short_due,
+            ).as_update_kwargs()
+            active_ids = [
                 row['pk']
                 for row in rows
-                if row['status'] == Listing.STATUS_ACTIVE or (
-                    row['status'] == Listing.STATUS_ARCHIVING
-                    and bool(row['external_id'])
-                )
+                if row['status'] == Listing.STATUS_ACTIVE
             ]
-            if due_ids:
-                due_id_set = set(due_ids)
-                locked_qs.filter(pk__in=due_ids).update(
-                    **release_status_check(
-                        next_status_check_at=short_due,
-                    ).as_update_kwargs(),
-                )
-                due_accounts = {
-                    row['account_id'] for row in rows if row['pk'] in due_id_set
-                }
-                for account_id in due_accounts:
-                    _min_nudge_account_status_due(account_id, short_due)
-            return updated
+            archiving_ids = [
+                row['pk']
+                for row in rows
+                if row['status'] == Listing.STATUS_ARCHIVING
+                and bool(row['external_id'])
+            ]
+            locked_qs.filter(pk__in=active_ids).update(**active_lifecycle)
+            locked_qs.filter(pk__in=archiving_ids).update(**active_lifecycle)
+            due_ids = set(active_ids) | set(archiving_ids)
+            due_account_ids = {
+                row['account_id'] for row in rows
+                if row['pk'] in due_ids
+            }
+            for account_id in due_account_ids:
+                _min_nudge_account_status_due(account_id, short_due)
+        return updated
 
     @staticmethod
     def bulk_action(tenant, data: dict) -> BulkActionResult:
@@ -1176,16 +1854,40 @@ class MarketplaceAccountService:
                 feed_endpoint = _lock_marketplace_feed_endpoint(account.pk)
                 _assert_feed_endpoint_identity_mutation_safe(feed_endpoint)
                 _assert_account_identity_mutation_safe(account)
+                previous_identity = (account.marketplace, account.external_id)
                 account.name = data['name']
                 account.marketplace = data['marketplace']
                 account.external_id = external_id
                 account.credentials_enc = credentials_enc
-                account.save(update_fields=(
-                    'name', 'marketplace', 'external_id', 'credentials_enc',
-                    'updated_at',
+                identity_changed = previous_identity != (
+                    account.marketplace, account.external_id,
+                )
+                account_lifecycle_fields: tuple[str, ...] = ()
+                if identity_changed:
+                    account_lifecycle_fields = _reset_account_status_batch(account)
+                elif _status_lifecycle_dual_write_enabled():
+                    account.status_batch_claim_token = None
+                    account.status_batch_claimed_until = None
+                    account.status_batch_cooldown_until = None
+                    account_lifecycle_fields = (
+                        'status_batch_claim_token',
+                        'status_batch_claimed_until',
+                        'status_batch_cooldown_until',
+                    )
+                account.save(update_fields=_merged_update_fields(
+                    (
+                        'name', 'marketplace', 'external_id',
+                        'credentials_enc', 'updated_at',
+                    ),
+                    account_lifecycle_fields,
                 ))
                 _fence_marketplace_feed_endpoint_identity(account, feed_endpoint)
                 _invalidate_avito_access_token_after_commit(account)
+                _bump_account_feed_projection_if_live(account.pk)
+                if identity_changed:
+                    Listing.all_objects.filter(account=account).update(
+                        **_provider_identity_reset_kwargs(),
+                    )
         except IntegrityError:
             raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
         return account
@@ -1193,6 +1895,8 @@ class MarketplaceAccountService:
     @staticmethod
     def update_partial(account, data: dict):
         """Частично обновляет аккаунт: is_active, name и настройки размещения."""
+        from django.db.models import Min
+
         with transaction.atomic():
             account = (
                 type(account).all_objects.select_for_update()
@@ -1200,6 +1904,7 @@ class MarketplaceAccountService:
             )
             update_fields = []
             was_active = account.is_active
+            feed_defaults_changed = False
             if 'is_active' in data:
                 account.is_active = bool(data['is_active'])
                 update_fields.append('is_active')
@@ -1213,16 +1918,117 @@ class MarketplaceAccountService:
                 'default_contact_phone',
             ):
                 if field in data:
-                    setattr(account, field, str(data[field] or '').strip())
+                    value = str(data[field] or '').strip()
+                    if getattr(account, field) != value:
+                        feed_defaults_changed = True
+                    setattr(account, field, value)
                     update_fields.append(field)
             if 'autoload_subscription_ends_at' in data:
                 account.autoload_subscription_ends_at = data['autoload_subscription_ends_at']
                 update_fields.append('autoload_subscription_ends_at')
-            if was_active and not account.is_active:
-                endpoint = _lock_marketplace_feed_endpoint(account.pk)
-                _assert_feed_endpoint_availability_mutation_safe(endpoint)
+
             if update_fields:
-                account.save(update_fields=(*update_fields, 'updated_at'))
+                _assert_legacy_feed_cursor_mutation_safe(account)
+
+            reactivated = not was_active and account.is_active
+            feed_endpoint = None
+            if (
+                (was_active and not account.is_active)
+                or (
+                    _feed_ingress_dual_write_enabled()
+                    and (feed_defaults_changed or reactivated)
+                )
+            ):
+                feed_endpoint = _lock_marketplace_feed_endpoint(account.pk)
+
+            if _feed_ingress_dual_write_enabled() and reactivated:
+                from apps.products.models import Product
+
+                product_ids = list(
+                    Listing.objects.filter(
+                        account_id=account.pk,
+                        status__in=_FEED_PROJECTION_STATUSES,
+                    )
+                    .order_by('product_id')
+                    .values_list('product_id', flat=True)
+                    .distinct()
+                )
+                list(
+                    Product.all_objects.select_for_update()
+                    .filter(pk__in=product_ids)
+                    .order_by('pk')
+                    .values_list('pk', flat=True)
+                )
+
+            if was_active and not account.is_active:
+                _assert_feed_endpoint_availability_mutation_safe(feed_endpoint)
+                from apps.marketplaces.feed_workflow import (
+                    OWNER_CHANGE_HOLD_SUBMITTED,
+                    fence_account_feed_runs_for_owner_change,
+                )
+
+                fence_account_feed_runs_for_owner_change(
+                    account.pk,
+                    reason='Marketplace account was deactivated.',
+                    safe_state=MarketplaceFeedRun.State.CANCELLED,
+                    submitted_policy=OWNER_CHANGE_HOLD_SUBMITTED,
+                )
+
+            if _status_lifecycle_dual_write_enabled() and was_active != account.is_active:
+                account.status_batch_claim_token = None
+                account.status_batch_claimed_until = None
+                account.status_batch_cooldown_until = None
+                update_fields.extend([
+                    'status_batch_claim_token', 'status_batch_claimed_until',
+                    'status_batch_cooldown_until',
+                ])
+                if account.is_active:
+                    account.status_batch_due_at = (
+                        Listing.objects.filter(
+                            account_id=account.pk,
+                            external_id__isnull=False,
+                            next_status_check_at__isnull=False,
+                        )
+                        .exclude(external_id='')
+                        .aggregate(value=Min('next_status_check_at'))['value']
+                    )
+                else:
+                    account.status_batch_due_at = None
+                update_fields.append('status_batch_due_at')
+            if update_fields:
+                account.save(update_fields=_merged_update_fields(
+                    update_fields,
+                    ('updated_at',),
+                ))
+
+            if (
+                _feed_ingress_dual_write_enabled()
+                and (feed_defaults_changed or reactivated)
+            ):
+                _bump_account_feed_projection_if_live(account.pk)
+
+            has_live_feed_owner = (
+                reactivated
+                and _durable_feed_run_enabled()
+                and account.marketplace == account.MARKETPLACE_AVITO
+                and type(account).objects.filter(
+                    pk=account.pk,
+                    is_active=True,
+                    tenant__is_active=True,
+                ).exists()
+                and not MarketplaceFeedRun.objects.filter(
+                    account_id=account.pk,
+                    state=MarketplaceFeedRun.State.OUTCOME_UNCERTAIN,
+                ).exists()
+            )
+            if has_live_feed_owner and Listing.objects.filter(
+                account_id=account.pk,
+                status=Listing.STATUS_PENDING,
+                external_id__isnull=True,
+            ).exists():
+                from apps.marketplaces.tasks import request_feed_flush
+
+                transaction.on_commit(partial(request_feed_flush, account))
         return account
 
 

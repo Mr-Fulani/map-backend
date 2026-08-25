@@ -63,6 +63,7 @@ from apps.marketplaces.services import (
     ListingService,
     MarketplaceAccountFeedConflict,
     MarketplaceAccountService,
+    MarketplacePlacementAddressService,
 )
 from apps.tenants.permissions import TenantAdminPermission, TenantAdminWritePermission
 
@@ -448,16 +449,10 @@ class MarketplacePlacementAddressListView(APIView):
             account = MarketplaceAccount.objects.get(pk=data['account'].pk, tenant=request.tenant)
         except MarketplaceAccount.DoesNotExist:
             return Response({'detail': 'Аккаунт Avito не найден'}, status=status.HTTP_404_NOT_FOUND)
-        if data.get('is_default'):
-            MarketplacePlacementAddress.objects.filter(
-                tenant=request.tenant,
-                account=account,
-                is_default=True,
-            ).update(is_default=False)
-        address = MarketplacePlacementAddress.objects.create(
-            tenant=request.tenant,
-            account=account,
-            **{key: value for key, value in data.items() if key != 'account'},
+        data['account'] = account
+        address = MarketplacePlacementAddressService.create(
+            request.tenant,
+            data,
         )
         return Response(MarketplacePlacementAddressSerializer(address).data, status=status.HTTP_201_CREATED)
 
@@ -488,16 +483,14 @@ class MarketplacePlacementAddressDetailView(APIView):
         data = serializer.validated_data
         if 'account' in data and data['account'].tenant_id != request.tenant.id:
             return Response({'detail': 'Аккаунт Avito не найден'}, status=status.HTTP_404_NOT_FOUND)
-        if data.get('is_default'):
-            account = data.get('account', address.account)
-            MarketplacePlacementAddress.objects.filter(
-                tenant=request.tenant,
-                account=account,
-                is_default=True,
-            ).exclude(pk=address.pk).update(is_default=False)
-        for field, value in data.items():
-            setattr(address, field, value)
-        address.save()
+        try:
+            address = MarketplacePlacementAddressService.update(
+                address,
+                request.tenant,
+                data,
+            )
+        except MarketplacePlacementAddress.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
         return Response(MarketplacePlacementAddressSerializer(address).data)
 
     @extend_schema(
@@ -509,8 +502,13 @@ class MarketplacePlacementAddressDetailView(APIView):
         address = self._get_address(pk, request.tenant)
         if address is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
-        address.is_active = False
-        address.save(update_fields=['is_active'])
+        try:
+            MarketplacePlacementAddressService.deactivate(
+                address,
+                request.tenant,
+            )
+        except MarketplacePlacementAddress.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
@@ -557,16 +555,7 @@ class CategoryMappingListView(APIView):
         serializer = CategoryMappingWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        mapping, _ = CategoryMapping.objects.update_or_create(
-            tenant=request.tenant,
-            marketplace=CategoryMapping.MARKETPLACE_AVITO,
-            category_source=data['category_source'],
-            defaults={
-                'category_target': data['category_target'],
-                'category_id': data['category_id'],
-                'attributes_map': data.get('attributes_map', {}),
-            },
-        )
+        mapping = CategoryMappingService.upsert(request.tenant, data)
         return Response(CategoryMappingSerializer(mapping).data, status=status.HTTP_201_CREATED)
 
 
@@ -594,10 +583,7 @@ class CategoryMappingDetailView(APIView):
         serializer = CategoryMappingWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        for field, value in data.items():
-            setattr(mapping, field, value)
-        mapping.version += 1
-        mapping.save()
+        mapping = CategoryMappingService.update(mapping, data)
         return Response(CategoryMappingSerializer(mapping).data)
 
     @extend_schema(
@@ -607,7 +593,7 @@ class CategoryMappingDetailView(APIView):
         responses={204: None},
     )
     def delete(self, request, pk):
-        CategoryMapping.objects.filter(pk=pk, tenant=request.tenant).delete()
+        CategoryMappingService.delete(request.tenant, pk)
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 

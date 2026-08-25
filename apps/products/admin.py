@@ -95,6 +95,16 @@ class TenantCatalogCategoryAdmin(ModelAdmin):
     list_display = ['name', 'tenant', 'root_domain', 'domain', 'parent', 'is_active', 'updated_at']
     list_filter = ['tenant', 'root_domain', 'domain', 'is_active']
     search_fields = ['name', 'aliases', 'external_id']
+    readonly_fields = [
+        # These fields are consumed directly while marketplace XML is built.
+        # Raw admin writes cannot satisfy the account-first feed lock order.
+        'tenant', 'name', 'normalized_name', 'parent', 'external_id',
+        'default_image_s3_key', 'created_at', 'updated_at',
+    ]
+
+    def has_delete_permission(self, request, obj=None):
+        # Deletion SET_NULLs Product.catalog_category outside the feed fence.
+        return False
 
 
 @admin.register(TenantCategoryMapping)
@@ -152,8 +162,13 @@ class ProductAdmin(ModelAdmin):
     ]
     search_fields = ['article', 'name', 'brand']
     readonly_fields = [
-        'hash_1c', 'brand_confidence', 'brand_source_id',
-        'sync_at', 'created_at', 'updated_at',
+        # Feed-visible product values are changed through ProductService and
+        # feed_writers so every owner receives one account-first successor.
+        'tenant', 'datasource', 'article', 'name', 'brand', 'category_1c',
+        'catalog_category', 'condition', 'description_1c', 'oem_numbers',
+        'stock_qty', 'price', 'sync_excluded', 'deleted_at',
+        'hash_1c', 'brand_confidence', 'brand_source_id', 'sync_at',
+        'created_at', 'updated_at',
     ]
     inlines = [
         ProductCatalogClassificationInline,
@@ -170,6 +185,10 @@ class ProductAdmin(ModelAdmin):
         'parse_enrichment_selected',
         'classify_catalog_domain_selected',
     ]
+
+    def has_delete_permission(self, request, obj=None):
+        # Generic deletion bypasses Product.soft_delete and linked tombstones.
+        return False
 
     @admin.display(description='Домен товара')
     def get_catalog_domain(self, obj):

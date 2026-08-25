@@ -1143,14 +1143,41 @@ def fail_job_if_checkpoint_unresolved(
 
 def activate_variant(variant: ProductImageVariant) -> ProductImageVariant:
     """Select a derived file without overwriting or deleting the original."""
-    with transaction.atomic():
-        ProductImageVariant.objects.select_for_update().filter(
-            product_image=variant.product_image,
-            is_active=True,
-        ).exclude(pk=variant.pk).update(is_active=False)
-        variant.is_active = True
-        variant.save(update_fields=['is_active', 'updated_at'])
-    return variant
+    from apps.products.feed_writers import (
+        StaleProductFeedWrite,
+        locked_product_image_variants_feed_write,
+    )
+    for _attempt in range(3):
+        current = ProductImageVariant.objects.select_related('product_image').filter(
+            pk=variant.pk,
+        ).first()
+        if current is None:
+            raise StaleProductFeedWrite(
+                f'Product image variant {variant.pk} no longer exists.',
+            )
+        try:
+            with locked_product_image_variants_feed_write(
+                current.product_image_id,
+                bump=True,
+            ) as (_product, _image, variants):
+                locked = variants.get(current.pk)
+                if locked is None:
+                    raise StaleProductFeedWrite(
+                        f'Product image variant {current.pk} no longer exists.',
+                    )
+                ProductImageVariant.objects.filter(
+                    product_image_id=current.product_image_id,
+                    is_active=True,
+                ).exclude(pk=current.pk).update(is_active=False)
+                locked.is_active = True
+                locked.save(update_fields=['is_active', 'updated_at'])
+                variant = locked
+            return variant
+        except StaleProductFeedWrite:
+            continue
+    raise StaleProductFeedWrite(
+        f'Product image variants changed repeatedly for {variant.pk}.',
+    )
 
 
 def delivery_s3_key(product_image) -> str:

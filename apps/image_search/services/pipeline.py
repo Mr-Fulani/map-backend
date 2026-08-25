@@ -98,6 +98,63 @@ def build_cache_key(product) -> str:
     return f'img_search:{PIPELINE_VERSION}:{hashlib.sha256(payload.encode()).hexdigest()}'
 
 
+def _finalize_candidate_image(
+    image_id: int,
+    *,
+    source_id: str,
+    tier: int,
+    quality_score: float,
+    search_confidence: str,
+    low_quality: bool,
+) -> ProductImage | None:
+    """Apply provider metadata without racing human moderation."""
+
+    from apps.products.feed_writers import (
+        StaleProductFeedWrite,
+        locked_product_images_feed_write,
+    )
+
+    for _attempt in range(3):
+        current = ProductImage.objects.filter(pk=image_id).only(
+            'pk', 'product_id',
+        ).first()
+        if current is None:
+            return None
+        try:
+            with locked_product_images_feed_write(
+                current.product_id,
+                bump=False,
+            ) as (_product, images):
+                locked = images.get(image_id)
+                if locked is None:
+                    raise StaleProductFeedWrite(
+                        f'Product image {image_id} disappeared during finalization.',
+                    )
+                if locked.status not in {
+                    ProductImage.Status.NEEDS_REVIEW,
+                    ProductImage.Status.LOW_CONFIDENCE,
+                }:
+                    return locked
+                locked.source_id = source_id
+                locked.tier = tier
+                locked.quality_score = quality_score
+                locked.search_confidence = search_confidence
+                locked.status = (
+                    ProductImage.Status.LOW_CONFIDENCE
+                    if low_quality else ProductImage.Status.NEEDS_REVIEW
+                )
+                locked.save(update_fields=[
+                    'source_id', 'tier', 'quality_score',
+                    'search_confidence', 'status',
+                ])
+                return locked
+        except StaleProductFeedWrite:
+            continue
+    raise StaleProductFeedWrite(
+        f'Product image {image_id} changed repeatedly during finalization.',
+    )
+
+
 def run_for_product(
     product,
     *,
@@ -540,17 +597,26 @@ def _run_for_product_owned(
                     'needs_media_processing',
                 ]
 
-            image.source_id = candidate.source_id
-            image.tier = candidate.tier
-            image.quality_score = candidate.quality_score
-            image.search_confidence = candidate.raw_meta.get('confidence', '').lower()
-            image.status = (
-                ProductImage.Status.LOW_CONFIDENCE
-                if low_quality else ProductImage.Status.NEEDS_REVIEW
+            image = _finalize_candidate_image(
+                image.pk,
+                source_id=candidate.source_id,
+                tier=candidate.tier,
+                quality_score=candidate.quality_score,
+                search_confidence=candidate.raw_meta.get('confidence', '').lower(),
+                low_quality=low_quality,
             )
-            image.save(update_fields=[
-                'source_id', 'tier', 'quality_score', 'search_confidence', 'status',
-            ])
+            if image is None:
+                download_failed_count += 1
+                continue
+            if image.status == ProductImage.Status.REJECTED:
+                rejected_urls.add(candidate.url)
+                continue
+            if image.status in (
+                ProductImage.Status.AUTO_APPROVED,
+                ProductImage.Status.MANUALLY_SET,
+                ProductImage.Status.IMPORTED,
+            ):
+                continue
 
             saved.append(image)
             accepted += 1

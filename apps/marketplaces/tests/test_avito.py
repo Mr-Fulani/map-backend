@@ -89,6 +89,18 @@ def make_listing(tenant, product, account, **kwargs):
     )
 
 
+def assert_exact_feed_flush_scheduled(mock_flush, account):
+    """Assert the P5 coordinator published one exact, repairable revision."""
+
+    mock_flush.apply_async.assert_called_once()
+    kwargs = mock_flush.apply_async.call_args.kwargs
+    account.refresh_from_db()
+    assert kwargs['args'][0] == account.pk
+    assert kwargs['args'][1] == account.feed_intent_revision
+    assert isinstance(kwargs['args'][2], str) and kwargs['args'][2]
+    assert kwargs['expires'] < kwargs['countdown'] + 300
+
+
 def test_rate_limiter_creates_ttl_window_and_rejects_only_over_limit(monkeypatch):
     local_cache = LocMemCache('avito-rate-limit-test', {})
     monkeypatch.setattr(rate_limiter, 'cache', local_cache)
@@ -922,6 +934,7 @@ class TestPublishListingTask:
         )
 
         with patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks._validate_feed_batch', side_effect=lambda rows: rows), \
              patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
             mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
             mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
@@ -930,7 +943,7 @@ class TestPublishListingTask:
         listing.refresh_from_db()
         assert listing.external_id is None
         assert listing.status == Listing.STATUS_PENDING
-        mock_flush.delay.assert_called_once_with(account.pk)
+        assert_exact_feed_flush_scheduled(mock_flush, account)
 
     def test_publish_idempotency(self):
         """Активное объявление (external_id + status=active) повторно не публикуется."""
@@ -956,6 +969,7 @@ class TestPublishListingTask:
         listing = make_listing(tenant, product, account)
 
         with patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks._validate_feed_batch', side_effect=lambda rows: rows), \
              patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
             mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
             mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
@@ -963,7 +977,7 @@ class TestPublishListingTask:
 
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_PENDING
-        mock_flush.delay.assert_called_once_with(account.pk)
+        assert_exact_feed_flush_scheduled(mock_flush, account)
 
     def test_publish_rejects_listing_without_contacts(self):
         """Без контактного лица/телефона объявление отклоняется и не уходит в feed."""
@@ -1164,6 +1178,7 @@ class TestPublishListingTask:
         listing = make_listing(tenant, product, account, status=Listing.STATUS_LIMIT_REACHED)
 
         with patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks._validate_feed_batch', side_effect=lambda rows: rows), \
              patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
             mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
             mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
@@ -1171,7 +1186,7 @@ class TestPublishListingTask:
 
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_PENDING
-        mock_flush.delay.assert_called_once_with(account.pk)
+        assert_exact_feed_flush_scheduled(mock_flush, account)
 
     def test_requeue_limit_reached_listings_targets_only_limit_reached(self):
         """Задача перезапуска трогает только листинги «Лимит достигнут» своего тенанта."""
@@ -1231,6 +1246,7 @@ class TestPublishListingTask:
         queued = make_listing(tenant, queued_product, account, status=Listing.STATUS_QUEUED)
 
         with patch('apps.marketplaces.tasks.cache') as mock_cache, \
+             patch('apps.marketplaces.tasks._validate_feed_batch', side_effect=lambda rows: rows), \
              patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
             mock_cache.lock.return_value.__enter__ = MagicMock(return_value=None)
             mock_cache.lock.return_value.__exit__ = MagicMock(return_value=False)
@@ -1238,7 +1254,7 @@ class TestPublishListingTask:
 
         queued.refresh_from_db()
         assert queued.status == Listing.STATUS_PENDING
-        mock_flush.delay.assert_called_once_with(account.pk)
+        assert_exact_feed_flush_scheduled(mock_flush, account)
 
     def test_unpublish_sets_archiving_and_requests_flush(self):
         """Снятие помечает «Снимается» и отдаёт фид координатору окна (без немедленного flush)."""
@@ -1259,7 +1275,7 @@ class TestPublishListingTask:
 
         target.refresh_from_db()
         assert target.status == Listing.STATUS_ARCHIVING
-        mock_flush.delay.assert_called_once_with(account.pk)
+        assert_exact_feed_flush_scheduled(mock_flush, account)
 
     def test_unpublish_sets_archiving_not_archived(self):
         """Снятие переводит в «Снимается», а не сразу «В архиве» (ждём подтверждения)."""
@@ -1470,7 +1486,7 @@ class TestFeedWindowCoordinator:
         with patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
             request_feed_flush(account)
 
-        mock_flush.delay.assert_called_once_with(account.pk)
+        assert_exact_feed_flush_scheduled(mock_flush, account)
 
     def test_defers_one_flush_when_window_closed(self):
         """Окно закрыто (только что слали) → один отложенный flush на момент открытия."""

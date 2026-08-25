@@ -397,49 +397,86 @@ class ProductDetailView(APIView):
         Ручное значение не затирается последующими импортами (см.
         ProductService.upsert_from_source).
         """
-        try:
-            product = Product.objects.get(pk=pk, tenant=request.tenant)
-        except Product.DoesNotExist:
-            return Response(
-                {'status': 'error', 'code': 'not_found', 'message': 'Товар не найден'},
-                status=status.HTTP_404_NOT_FOUND,
-            )
         if 'brand' not in request.data:
             return Response(
                 {'status': 'error', 'code': 'validation_error', 'message': 'Передайте поле brand'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            capture_product_feed_generations,
+            locked_product_feed_write,
+        )
+
         brand = str(request.data.get('brand') or '').strip()[:200]
         is_machine = getattr(request.user, 'is_api_key', False)
-        product.brand = brand
-        product.brand_ref = ProductBrandService.resolve_existing_brand(brand)
-        if not brand:
-            product.brand_resolution_status = Product.BrandResolutionStatus.UNKNOWN
-            product.brand_confidence = 0.0
-            product.brand_source_id = ''
-            product.brand_needs_review = False
-        elif product.brand_ref is not None:
-            product.brand_resolution_status = Product.BrandResolutionStatus.CATALOG
-            product.brand_confidence = product.brand_ref.confidence
-            product.brand_source_id = 'catalog'
-            product.brand_needs_review = product.brand_ref.needs_review
-        elif is_machine:
-            product.brand_resolution_status = Product.BrandResolutionStatus.SOURCE
-            product.brand_confidence = 0.5
-            product.brand_source_id = 'api_key'
-            product.brand_needs_review = True
-        else:
-            product.brand_resolution_status = Product.BrandResolutionStatus.MANUAL
-            product.brand_confidence = 1.0
-            product.brand_source_id = 'manual'
-            product.brand_needs_review = False
-        product.save(update_fields=[
-            'brand', 'brand_ref', 'brand_resolution_status', 'brand_confidence',
-            'brand_source_id', 'brand_needs_review', 'updated_at',
-        ])
+        brand_ref = ProductBrandService.resolve_existing_brand(brand)
+        brand_changed = False
+        product = None
+        for _attempt in range(3):
+            generations = capture_product_feed_generations((pk,))
+            generation = generations.get(pk)
+            if generation is None:
+                return Response(
+                    {'status': 'error', 'code': 'not_found', 'message': 'Товар не найден'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            current_row = Product.objects.filter(pk=pk, tenant=request.tenant).first()
+            if current_row is None:
+                return Response(
+                    {'status': 'error', 'code': 'not_found', 'message': 'Товар не найден'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            brand_changed = current_row.brand != brand
+            try:
+                with locked_product_feed_write(
+                    (generation,),
+                    bump_product_ids=(pk,) if brand_changed else (),
+                ) as locked:
+                    product = locked[pk]
+                    product.brand = brand
+                    product.brand_ref = brand_ref
+                    if not brand:
+                        product.brand_resolution_status = Product.BrandResolutionStatus.UNKNOWN
+                        product.brand_confidence = 0.0
+                        product.brand_source_id = ''
+                        product.brand_needs_review = False
+                    elif product.brand_ref is not None:
+                        product.brand_resolution_status = Product.BrandResolutionStatus.CATALOG
+                        product.brand_confidence = product.brand_ref.confidence
+                        product.brand_source_id = 'catalog'
+                        product.brand_needs_review = product.brand_ref.needs_review
+                    elif is_machine:
+                        product.brand_resolution_status = Product.BrandResolutionStatus.SOURCE
+                        product.brand_confidence = 0.5
+                        product.brand_source_id = 'api_key'
+                        product.brand_needs_review = True
+                    else:
+                        product.brand_resolution_status = Product.BrandResolutionStatus.MANUAL
+                        product.brand_confidence = 1.0
+                        product.brand_source_id = 'manual'
+                        product.brand_needs_review = False
+                    product.save(update_fields=[
+                        'brand', 'brand_ref', 'brand_resolution_status', 'brand_confidence',
+                        'brand_source_id', 'brand_needs_review', 'updated_at',
+                    ])
+                break
+            except StaleProductFeedWrite:
+                product = None
+                continue
+        if product is None:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'concurrent_product_update',
+                    'message': 'Товар изменился параллельно. Повторите запрос.',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         # Для активных листингов Brand — часть XML-фида, поэтому ручную правку
         # нужно распространить так же, как контентное изменение из импорта.
-        transaction.on_commit(lambda: sync_product_listings_task.delay(product.pk, 'content'))
+        if brand_changed:
+            transaction.on_commit(lambda: sync_product_listings_task.delay(product.pk, 'content'))
         return Response({'status': 'ok', 'data': ProductDetailSerializer(product, context={'request': request}).data})
 
 
@@ -699,6 +736,11 @@ class TenantCatalogCategoryDetailView(APIView):
         responses=CatalogCategoryResponseSerializer,
     )
     def put(self, request, pk):
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            locked_catalog_category_feed_write,
+        )
+
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         serializer = TenantCatalogCategorySerializer(category, data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -707,7 +749,27 @@ class TenantCatalogCategoryDetailView(APIView):
         )
         if validation_error is not None:
             return validation_error
-        category = serializer.save(tenant=request.tenant)
+        try:
+            with locked_catalog_category_feed_write(
+                category.pk,
+                # The category fence captures its own later exact generation.
+                # Treat every accepted update as projection-capable so a
+                # concurrent opposite update cannot invalidate a stale
+                # pre-lock ``changes_feed`` decision.
+                include_descendants=True,
+                bump=True,
+            ) as (locked_category, _products):
+                serializer.instance = locked_category
+                category = serializer.save(tenant=request.tenant)
+        except StaleProductFeedWrite:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'concurrent_category_update',
+                    'message': 'Категория изменилась параллельно. Повторите запрос.',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
 
@@ -716,6 +778,11 @@ class TenantCatalogCategoryDetailView(APIView):
         responses=CatalogCategoryResponseSerializer,
     )
     def patch(self, request, pk):
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            locked_catalog_category_feed_write,
+        )
+
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         serializer = TenantCatalogCategorySerializer(category, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
@@ -724,7 +791,23 @@ class TenantCatalogCategoryDetailView(APIView):
         )
         if validation_error is not None:
             return validation_error
-        category = serializer.save()
+        try:
+            with locked_catalog_category_feed_write(
+                category.pk,
+                include_descendants=True,
+                bump=True,
+            ) as (locked_category, _products):
+                serializer.instance = locked_category
+                category = serializer.save()
+        except StaleProductFeedWrite:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'concurrent_category_update',
+                    'message': 'Категория изменилась параллельно. Повторите запрос.',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
 
@@ -848,6 +931,11 @@ class TenantCatalogCategoryDefaultImageView(APIView):
         responses=CatalogCategoryResponseSerializer,
     )
     def post(self, request, pk):
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            locked_catalog_category_feed_write,
+        )
+
         category = get_object_or_404(TenantCatalogCategory, pk=pk, tenant=request.tenant)
         image = request.FILES.get('image')
         if image is None:
@@ -898,11 +986,11 @@ class TenantCatalogCategoryDefaultImageView(APIView):
         )
         saved_key = default_storage.save(s3_key, image)
         try:
-            with transaction.atomic():
-                category = TenantCatalogCategory.objects.select_for_update().get(
-                    pk=category.pk,
-                    tenant=request.tenant,
-                )
+            with locked_catalog_category_feed_write(
+                category.pk,
+                include_descendants=False,
+                bump=True,
+            ) as (category, _products):
                 previous_key = category.default_image_s3_key
                 category.default_image_s3_key = saved_key
                 category.default_image_source_name = image.name[:255]
@@ -910,6 +998,16 @@ class TenantCatalogCategoryDefaultImageView(APIView):
                     'default_image_s3_key', 'default_image_source_name', 'updated_at',
                 ])
                 delete_storage_keys_on_commit((previous_key,))
+        except StaleProductFeedWrite:
+            delete_storage_keys((saved_key,))
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'concurrent_category_update',
+                    'message': 'Категория изменилась параллельно. Повторите запрос.',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         except Exception:
             delete_storage_keys((saved_key,))
             raise
@@ -918,19 +1016,38 @@ class TenantCatalogCategoryDefaultImageView(APIView):
 
     @extend_schema(request=None, responses=CatalogCategoryResponseSerializer)
     def delete(self, request, pk):
-        with transaction.atomic():
-            category = get_object_or_404(
-                TenantCatalogCategory.objects.select_for_update(),
-                pk=pk,
-                tenant=request.tenant,
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            locked_catalog_category_feed_write,
+        )
+
+        category = get_object_or_404(
+            TenantCatalogCategory,
+            pk=pk,
+            tenant=request.tenant,
+        )
+        try:
+            with locked_catalog_category_feed_write(
+                category.pk,
+                include_descendants=False,
+                bump=True,
+            ) as (category, _products):
+                previous_key = category.default_image_s3_key
+                category.default_image_s3_key = ''
+                category.default_image_source_name = ''
+                category.save(update_fields=[
+                    'default_image_s3_key', 'default_image_source_name', 'updated_at',
+                ])
+                delete_storage_keys_on_commit((previous_key,))
+        except StaleProductFeedWrite:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'concurrent_category_update',
+                    'message': 'Категория изменилась параллельно. Повторите запрос.',
+                },
+                status=status.HTTP_409_CONFLICT,
             )
-            previous_key = category.default_image_s3_key
-            category.default_image_s3_key = ''
-            category.default_image_source_name = ''
-            category.save(update_fields=[
-                'default_image_s3_key', 'default_image_source_name', 'updated_at',
-            ])
-            delete_storage_keys_on_commit((previous_key,))
         serializer = TenantCatalogCategorySerializer(category, context={'request': request})
         return Response({'status': 'ok', 'data': serializer.data})
 
@@ -1057,64 +1174,111 @@ class ProductCatalogCategoryAssignView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        valid_ids = list(
-            Product.objects
-            .filter(tenant=request.tenant, pk__in=product_ids)
-            .values_list('pk', flat=True)
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            capture_product_feed_generations,
+            locked_product_feed_write,
         )
-        skipped_count = max(len(set(product_ids)) - len(valid_ids), 0)
-        with transaction.atomic():
-            Product.objects.filter(tenant=request.tenant, pk__in=valid_ids).update(
-                catalog_category=category,
-                catalog_category_manually_cleared=category is None,
-            )
-            products = (
+
+        valid_ids = []
+        write_completed = False
+        for _attempt in range(3):
+            valid_ids = list(
                 Product.objects
-                .filter(tenant=request.tenant, pk__in=valid_ids)
-                .select_related('tenant', 'catalog_category')
+                .filter(tenant=request.tenant, pk__in=product_ids)
+                .order_by('pk')
+                .values_list('pk', flat=True)
             )
-            if category is not None:
-                # Обучение на ручном исправлении: запоминаем «категория
-                # источника → категория каталога», чтобы следующий импорт
-                # с той же категорией 1С не гадал по названию товара.
-                source_categories = set(
-                    products.exclude(category_1c='').values_list('category_1c', flat=True)
+            generations = capture_product_feed_generations(valid_ids)
+            if category is None:
+                changed_ids = list(
+                    Product.objects.filter(pk__in=valid_ids)
+                    .filter(catalog_category__isnull=False)
+                    .values_list('pk', flat=True)
                 )
-                for source_category in source_categories:
-                    TenantCategoryMapping.objects.update_or_create(
-                        tenant=request.tenant,
-                        source_category=source_category,
-                        defaults={'category': category},
+            else:
+                changed_ids = list(
+                    Product.objects.filter(pk__in=valid_ids)
+                    .exclude(catalog_category_id=category.pk)
+                    .values_list('pk', flat=True)
+                )
+            try:
+                with locked_product_feed_write(
+                    generations.values(),
+                    bump_product_ids=changed_ids,
+                ):
+                    Product.objects.filter(tenant=request.tenant, pk__in=valid_ids).update(
+                        catalog_category=category,
+                        catalog_category_manually_cleared=category is None,
+                        updated_at=now(),
                     )
-            for product in products:
-                classification = ProductEnrichmentService.classify_product_catalog_domain(product, force=True)
-                if category is not None:
-                    is_machine = getattr(request.user, 'is_api_key', False)
-                    classification.domain = category.domain
-                    classification.confidence = 0.95
-                    classification.source = (
-                        ProductCatalogClassification.Source.API_KEY
-                        if is_machine
-                        else ProductCatalogClassification.Source.MANUAL
+                    products = (
+                        Product.objects
+                        .filter(tenant=request.tenant, pk__in=valid_ids)
+                        .select_related('tenant', 'catalog_category')
                     )
-                    source_label = 'через API Key' if is_machine else 'вручную'
-                    classification.reason = (
-                        f'Категория каталога выбрана {source_label}: {category.name}.'
-                    )
-                    classification.needs_review = False
-                    classification.review_status = ReviewStatus.APPROVED
-                    classification.reviewed_at = now()
-                    classification.reviewed_by = _review_actor(request)
-                    classification.save(update_fields=[
-                        'domain', 'confidence', 'source', 'reason', 'needs_review',
-                        'review_status', 'reviewed_at', 'reviewed_by', 'updated_at',
-                    ])
-                else:
-                    # После снятия ручной категории снова показываем актуальный
-                    # результат автоматической классификации без старой отметки оператора.
-                    classification.reviewed_at = None
-                    classification.reviewed_by = None
-                    classification.save(update_fields=['reviewed_at', 'reviewed_by', 'updated_at'])
+                    if category is not None:
+                        # Обучение на ручном исправлении: запоминаем «категория
+                        # источника → категория каталога», чтобы следующий импорт
+                        # с той же категорией 1С не гадал по названию товара.
+                        source_categories = set(
+                            products.exclude(category_1c='').values_list('category_1c', flat=True)
+                        )
+                        for source_category in source_categories:
+                            TenantCategoryMapping.objects.update_or_create(
+                                tenant=request.tenant,
+                                source_category=source_category,
+                                defaults={'category': category},
+                            )
+                    for product in products:
+                        classification = ProductEnrichmentService._classify_product_catalog_domain_locked(
+                            product, force=True,
+                        )
+                        if category is not None:
+                            is_machine = getattr(request.user, 'is_api_key', False)
+                            classification.domain = category.domain
+                            classification.confidence = 0.95
+                            classification.source = (
+                                ProductCatalogClassification.Source.API_KEY
+                                if is_machine
+                                else ProductCatalogClassification.Source.MANUAL
+                            )
+                            source_label = 'через API Key' if is_machine else 'вручную'
+                            classification.reason = (
+                                f'Категория каталога выбрана {source_label}: {category.name}.'
+                            )
+                            classification.needs_review = False
+                            classification.review_status = ReviewStatus.APPROVED
+                            classification.reviewed_at = now()
+                            classification.reviewed_by = _review_actor(request)
+                            classification.save(update_fields=[
+                                'domain', 'confidence', 'source', 'reason', 'needs_review',
+                                'review_status', 'reviewed_at', 'reviewed_by', 'updated_at',
+                            ])
+                        else:
+                            # После снятия ручной категории снова показываем актуальный
+                            # результат автоматической классификации без старой отметки оператора.
+                            classification.reviewed_at = None
+                            classification.reviewed_by = None
+                            classification.save(update_fields=[
+                                'reviewed_at', 'reviewed_by', 'updated_at',
+                            ])
+                write_completed = True
+                break
+            except StaleProductFeedWrite:
+                continue
+
+        if not write_completed:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'concurrent_product_update',
+                    'message': 'Товары изменились параллельно. Повторите запрос.',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        skipped_count = max(len(set(product_ids)) - len(valid_ids), 0)
 
         return Response({
             'status': 'ok',
@@ -1163,14 +1327,51 @@ class ProductBulkDeleteView(APIView):
     )
     def delete(self, request):
         """Скрывает товары и листинги; retention-задача удалит их физически позднее."""
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            capture_product_feed_generations,
+            locked_product_feed_write,
+        )
+
         serializer = ProductBulkDeleteRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         product_ids = serializer.validated_data['product_ids']
-        with transaction.atomic():
-            products = Product.objects.filter(tenant=request.tenant, pk__in=product_ids)
-            valid_ids = list(products.values_list('pk', flat=True))
-            Listing.objects.filter(tenant=request.tenant, product_id__in=valid_ids).delete()
-            deleted_count, _ = products.delete()
+        deleted_count = 0
+        write_completed = False
+        for _attempt in range(3):
+            valid_ids = list(
+                Product.objects.filter(
+                    tenant=request.tenant,
+                    pk__in=product_ids,
+                ).order_by('pk').values_list('pk', flat=True)
+            )
+            generations = capture_product_feed_generations(valid_ids)
+            try:
+                with locked_product_feed_write(generations.values()):
+                    # The account intent already exists at this point. Hiding
+                    # the last ACTIVE/PENDING listing cannot erase the STOP
+                    # signal because the desired-state cursor commits with it.
+                    Listing.objects.filter(
+                        tenant=request.tenant,
+                        product_id__in=valid_ids,
+                    ).delete()
+                    deleted_count, _ = Product.objects.filter(
+                        tenant=request.tenant,
+                        pk__in=valid_ids,
+                    ).delete()
+                write_completed = True
+                break
+            except StaleProductFeedWrite:
+                continue
+        if not write_completed:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'concurrent_product_update',
+                    'message': 'Товары изменились параллельно. Повторите запрос.',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         return Response({'status': 'ok', 'data': {'deleted_count': deleted_count}})
 
 
@@ -1636,6 +1837,97 @@ def _set_review_state(obj, request, review_status: str) -> None:
     obj.save(update_fields=['review_status', 'needs_review', 'reviewed_at', 'reviewed_by', 'updated_at'])
 
 
+def _review_fact_with_feed_fence(
+    fact: ProductEnrichmentFact,
+    request,
+    review_status: str,
+) -> ProductEnrichmentFact:
+    """Apply a BRAND/OEM review under account -> product -> fact locks."""
+
+    from apps.products.feed_writers import (
+        StaleProductFeedWrite,
+        capture_product_feed_generation,
+        locked_product_feed_write,
+    )
+
+    current_product = Product.all_objects.get(pk=fact.product_id)
+    generation = capture_product_feed_generation(current_product)
+    changes_feed = (
+        review_status == ReviewStatus.APPROVED
+        and fact.fact_type in {
+            ProductEnrichmentFact.FactType.BRAND,
+            ProductEnrichmentFact.FactType.OEM,
+        }
+    )
+
+    expected_updated_at = fact.updated_at
+    with locked_product_feed_write(
+        (generation,),
+        bump_product_ids=(current_product.pk,) if changes_feed else (),
+    ) as products:
+        locked_fact = ProductEnrichmentFact.objects.select_for_update().filter(
+            pk=fact.pk,
+            product_id=current_product.pk,
+            tenant_id=fact.tenant_id,
+        ).first()
+        if locked_fact is None or locked_fact.updated_at != expected_updated_at:
+            raise StaleProductFeedWrite(
+                f'Enrichment fact {fact.pk} changed before review.',
+            )
+        _set_review_state(locked_fact, request, review_status)
+        if review_status == ReviewStatus.APPROVED:
+            ProductEnrichmentService.apply_approved_fact(
+                cast(Product, products[current_product.pk]),
+                locked_fact,
+            )
+        return locked_fact
+
+
+def _review_fitment_with_feed_fence(
+    fitment: VehicleFitment,
+    request,
+    review_status: str,
+) -> VehicleFitment:
+    """Review and refresh denormalized Product fields under Product fencing."""
+
+    from apps.products.feed_writers import (
+        StaleProductFeedWrite,
+        capture_product_feed_generation,
+        locked_product_feed_write,
+    )
+
+    current_product = Product.all_objects.get(pk=fitment.product_id)
+    generation = capture_product_feed_generation(current_product)
+    expected_updated_at = fitment.updated_at
+    with locked_product_feed_write((generation,)) as products:
+        locked_fitment = VehicleFitment.objects.select_for_update().filter(
+            pk=fitment.pk,
+            product_id=current_product.pk,
+            tenant_id=fitment.tenant_id,
+        ).first()
+        if locked_fitment is None or locked_fitment.updated_at != expected_updated_at:
+            raise StaleProductFeedWrite(
+                f'Fitment {fitment.pk} changed before review.',
+            )
+        locked_product = cast(Product, products[current_product.pk])
+        _set_review_state(locked_fitment, request, review_status)
+        if review_status == ReviewStatus.APPROVED:
+            ProductKnowledgeGraphService.learn_approved_fitment(
+                locked_product,
+                locked_fitment,
+            )
+        # Fitment itself is not emitted in XML, but this refresh also writes
+        # Product.oem_numbers from ProductCrossCode. Conservatively bump and
+        # serialize it with every covered OEM writer.
+        ProductEnrichmentService.refresh_product_denormalized_enrichment(
+            locked_product,
+        )
+        locked_product.save(update_fields=[
+            'oem_numbers', 'cross_numbers', 'applicability', 'updated_at',
+        ])
+        return locked_fitment
+
+
 def _sync_web_research_review(obj, review_status: str) -> None:
     if getattr(obj, 'source_id', '') == 'web_research':
         from apps.web_research.services import WebResearchService
@@ -1859,27 +2151,43 @@ class ProductReviewQueueActionView(APIView):
         if action not in ['approve', 'reject']:
             return _bad_review_action_response()
         if item_type == 'fitment':
+            from apps.products.feed_writers import StaleProductFeedWrite
+
             fitment = get_object_or_404(VehicleFitment, pk=record_id, tenant=request.tenant)
             review_status = ReviewStatus.APPROVED if action == 'approve' else ReviewStatus.REJECTED
-            _set_review_state(fitment, request, review_status)
-            if review_status == ReviewStatus.APPROVED:
-                ProductKnowledgeGraphService.learn_approved_fitment(fitment.product, fitment)
-            ProductEnrichmentService.refresh_product_denormalized_enrichment(fitment.product)
-            fitment.product.save(
-                update_fields=['oem_numbers', 'cross_numbers', 'applicability', 'updated_at'],
-            )
+            try:
+                fitment = _review_fitment_with_feed_fence(
+                    fitment,
+                    request,
+                    review_status,
+                )
+            except StaleProductFeedWrite:
+                return Response(
+                    {'status': 'error', 'code': 'concurrent_product_update'},
+                    status=status.HTTP_409_CONFLICT,
+                )
             _sync_web_research_review(fitment, review_status)
             return Response({'status': 'ok', 'data': _serialize_review_item(item_type, fitment)})
         if item_type == 'fact':
+            from apps.products.feed_writers import StaleProductFeedWrite
+
             fact = get_object_or_404(
                 ProductEnrichmentFact,
                 pk=record_id,
                 tenant=request.tenant,
             )
             review_status = ReviewStatus.APPROVED if action == 'approve' else ReviewStatus.REJECTED
-            _set_review_state(fact, request, review_status)
-            if review_status == ReviewStatus.APPROVED:
-                ProductEnrichmentService.apply_approved_fact(fact.product, fact)
+            try:
+                fact = _review_fact_with_feed_fence(
+                    fact,
+                    request,
+                    review_status,
+                )
+            except StaleProductFeedWrite:
+                return Response(
+                    {'status': 'error', 'code': 'concurrent_product_update'},
+                    status=status.HTTP_409_CONFLICT,
+                )
             _sync_web_research_review(fact, review_status)
             return Response({'status': 'ok', 'data': _serialize_review_item(item_type, fact)})
         if item_type == 'classification':
@@ -1914,18 +2222,28 @@ class ProductFitmentReviewView(APIView):
 
     @extend_schema(request=None, responses=FitmentResponseSerializer)
     def post(self, request, pk: int, fitment_id: int, action: str):
+        from apps.products.feed_writers import StaleProductFeedWrite
+
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
         fitment = get_object_or_404(VehicleFitment, pk=fitment_id, tenant=request.tenant, product=product)
         if action == 'approve':
-            _set_review_state(fitment, request, ReviewStatus.APPROVED)
-            ProductKnowledgeGraphService.learn_approved_fitment(product, fitment)
+            review_status = ReviewStatus.APPROVED
         elif action == 'reject':
-            _set_review_state(fitment, request, ReviewStatus.REJECTED)
+            review_status = ReviewStatus.REJECTED
         else:
             return Response({'status': 'error', 'code': 'bad_action'}, status=status.HTTP_404_NOT_FOUND)
 
-        ProductEnrichmentService.refresh_product_denormalized_enrichment(product)
-        product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability', 'updated_at'])
+        try:
+            fitment = _review_fitment_with_feed_fence(
+                fitment,
+                request,
+                review_status,
+            )
+        except StaleProductFeedWrite:
+            return Response(
+                {'status': 'error', 'code': 'concurrent_product_update'},
+                status=status.HTTP_409_CONFLICT,
+            )
         _sync_web_research_review(fitment, fitment.review_status)
         return Response({'status': 'ok', 'data': VehicleFitmentSerializer(fitment).data})
 
@@ -1951,13 +2269,34 @@ class ProductEnrichmentFactReviewView(APIView):
 
     @extend_schema(request=None, responses=EnrichmentFactResponseSerializer)
     def post(self, request, pk: int, fact_id: int, action: str):
+        from apps.products.feed_writers import StaleProductFeedWrite
+
         product = get_object_or_404(Product, pk=pk, tenant=request.tenant)
         fact = get_object_or_404(ProductEnrichmentFact, pk=fact_id, tenant=request.tenant, product=product)
         if action == 'approve':
-            _set_review_state(fact, request, ReviewStatus.APPROVED)
-            ProductEnrichmentService.apply_approved_fact(product, fact)
+            try:
+                fact = _review_fact_with_feed_fence(
+                    fact,
+                    request,
+                    ReviewStatus.APPROVED,
+                )
+            except StaleProductFeedWrite:
+                return Response(
+                    {'status': 'error', 'code': 'concurrent_product_update'},
+                    status=status.HTTP_409_CONFLICT,
+                )
         elif action == 'reject':
-            _set_review_state(fact, request, ReviewStatus.REJECTED)
+            try:
+                fact = _review_fact_with_feed_fence(
+                    fact,
+                    request,
+                    ReviewStatus.REJECTED,
+                )
+            except StaleProductFeedWrite:
+                return Response(
+                    {'status': 'error', 'code': 'concurrent_product_update'},
+                    status=status.HTTP_409_CONFLICT,
+                )
         else:
             return Response({'status': 'error', 'code': 'bad_action'}, status=status.HTTP_404_NOT_FOUND)
         _sync_web_research_review(fact, fact.review_status)
@@ -2122,6 +2461,26 @@ class ProductRegenerateView(APIView):
 
         source = str(request_data.get('source') or DEFAULT_PART_SOURCE).strip()
         intent_key = str(request_data['idempotency_key'])
+
+        # The paid-ingress transaction below locks Product for its own CAS.
+        # Materialize a missing category/classification first so its
+        # account-first writer can never be entered after that Product lock.
+        if (
+            request.tenant.supports_auto_parts_enrichment
+            and request.tenant.requires_product_auto_parts_check
+            and not ProductCatalogClassification.objects.filter(
+                product_id=pk,
+                tenant=request.tenant,
+            ).exists()
+        ):
+            product_for_classification = get_object_or_404(
+                Product,
+                pk=pk,
+                tenant=request.tenant,
+            )
+            ProductEnrichmentService.classify_product_catalog_domain(
+                product_for_classification,
+            )
 
         with transaction.atomic():
             type(request.tenant).objects.select_for_update().only('pk').get(

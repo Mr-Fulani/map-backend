@@ -1,12 +1,12 @@
 import hashlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from decimal import Decimal
 from typing import Any, NotRequired, SupportsInt, TypeAlias, TypedDict, cast
 
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.utils.timezone import now
 
 from apps.core.idempotency import raise_on_fingerprint_conflict
@@ -317,22 +317,13 @@ class ProductService:
     """Сервис управления товарами: создание/обновление из источников данных."""
 
     @staticmethod
-    def upsert_from_source(tenant, datasource, data: dict) -> tuple[Product, str, str | None]:
-        """
-        Создаёт или обновляет товар из данных адаптера.
+    def _prepare_source_upsert(datasource, data: dict) -> dict[str, object]:
+        """Normalize source values before any account/product row lock."""
 
-        Возвращает (product, status, change_type) где:
-        - status: 'created' | 'updated' | 'unchanged'
-        - change_type: 'price_only' | 'stock_only' | 'content' | 'category' | None
-
-        Unchanged означает что данные не изменились — задача в Celery не нужна.
-        """
         hash_new = _compute_hash(data)
         uuid_1c = data.get('uuid') or None
         incoming_brand = str(data.get('brand') or '').strip()
         brand_source_id = getattr(datasource, 'type', '') or 'datasource'
-
-        lookup = {'tenant': tenant, 'datasource': datasource, 'article': data['article']}
         defaults = {
             'name': data.get('name', ''),
             'brand': incoming_brand,
@@ -357,36 +348,80 @@ class ProductService:
         }
         if uuid_1c is not None:
             defaults['uuid_1c'] = uuid_1c
+        return {
+            'data': data,
+            'defaults': defaults,
+            'hash_new': hash_new,
+        }
 
-        # Читаем старый хэш ДО update_or_create — иначе всегда будет 'unchanged'
-        try:
-            existing = Product.all_objects.get(**lookup)
-            old_hash = existing.hash_1c
-            old_data = {
-                'price': existing.price,
-                'stock_qty': existing.stock_qty,
-                'name': existing.name,
-                'brand': existing.brand,
-                'condition': existing.condition,
-                'category': existing.category_1c,
-                'description': existing.description_1c,
-            }
-        except Product.DoesNotExist:
-            existing = None
-            old_hash = None
-            old_data = None
+    @staticmethod
+    def _source_changes_feed(existing: Product, prepared: Mapping[str, object]) -> bool:
+        """Whether the source mutation changes a Product value read by XML."""
 
-        if existing and existing.deleted_at is not None:
-            existing.restore()
+        if existing.deleted_at is not None:
+            return True
+        if existing.sync_excluded:
+            return False
+        defaults = dict(cast(Mapping[str, object], prepared['defaults']))
+        # An empty source brand intentionally preserves a tenant-entered brand.
+        if not defaults['brand'] and existing.brand:
+            defaults['brand'] = existing.brand
+        comparisons = {
+            'name': defaults['name'],
+            'brand': defaults['brand'],
+            'category_1c': defaults['category_1c'],
+            'condition': defaults['condition'],
+            'description_1c': defaults['description_1c'],
+        }
+        return any(
+            getattr(existing, field_name) != value
+            for field_name, value in comparisons.items()
+        )
+
+    @staticmethod
+    def _apply_source_upsert(
+        tenant,
+        datasource,
+        prepared: Mapping[str, object],
+        existing: Product | None,
+    ) -> tuple[Product, str, str | None]:
+        """Apply one already-fenced source mutation."""
+
+        data = cast(dict, prepared['data'])
+        defaults = dict(cast(Mapping[str, object], prepared['defaults']))
+        hash_new = str(prepared['hash_new'])
+        lookup = {
+            'tenant': tenant,
+            'datasource': datasource,
+            'article': data['article'],
+        }
+
+        if existing is None:
+            return Product.objects.create(**lookup, **defaults), 'created', None
+
+        old_hash = existing.hash_1c
+        old_data = {
+            'price': existing.price,
+            'stock_qty': existing.stock_qty,
+            'name': existing.name,
+            'brand': existing.brand,
+            'condition': existing.condition,
+            'category': existing.category_1c,
+            'description': existing.description_1c,
+        }
+
+        restoring = existing.deleted_at is not None
+        if restoring:
+            # Do not call Product.restore(): this row is already locked after
+            # account/endpoint fencing and a nested writer would invert locks.
+            existing.deleted_at = None
             existing.sync_excluded = False
-            existing.save(update_fields=['sync_excluded', 'updated_at'])
-
-        if existing and existing.sync_excluded:
+        elif existing.sync_excluded:
             return existing, 'unchanged', None
 
         # Источник не знает бренд, а у товара он есть (дозаполнен тенантом
         # вручную для Avito) — не затираем пустотой при каждом импорте.
-        if existing and not defaults['brand'] and existing.brand:
+        if not defaults['brand'] and existing.brand:
             defaults['brand'] = existing.brand
             defaults['brand_ref'] = existing.brand_ref
             defaults['brand_resolution_status'] = existing.brand_resolution_status
@@ -394,17 +429,13 @@ class ProductService:
             defaults['brand_source_id'] = existing.brand_source_id
             defaults['brand_needs_review'] = existing.brand_needs_review
 
-        if existing is None:
-            product = Product.objects.create(**lookup, **defaults)
-            created = True
-        else:
-            for field, value in defaults.items():
-                setattr(existing, field, value)
-            existing.save(update_fields=[*defaults.keys(), 'updated_at'])
-            product = existing
-            created = False
-        if created:
-            return product, 'created', None
+        for field, value in defaults.items():
+            setattr(existing, field, value)
+        update_fields = [*defaults.keys(), 'updated_at']
+        if restoring:
+            update_fields.extend(('deleted_at', 'sync_excluded'))
+        existing.save(update_fields=tuple(dict.fromkeys(update_fields)))
+
         if old_hash != hash_new:
             new_data = {
                 'price': data.get('price', '0'),
@@ -415,12 +446,142 @@ class ProductService:
                 'category': data.get('category', ''),
                 'description': data.get('description', ''),
             }
-            assert old_data is not None
             change_type = ProductService.detect_change_type(old_data, new_data)
-            if change_type is None:
-                return product, 'unchanged', None
-            return product, 'updated', change_type
-        return product, 'unchanged', None
+            if change_type is not None:
+                return existing, 'updated', change_type
+        return existing, 'unchanged', None
+
+    @classmethod
+    def upsert_from_source(cls, tenant, datasource, data: dict) -> tuple[Product, str, str | None]:
+        """
+        Создаёт или обновляет товар из данных адаптера.
+
+        Возвращает (product, status, change_type) где:
+        - status: 'created' | 'updated' | 'unchanged'
+        - change_type: 'price_only' | 'stock_only' | 'content' | 'category' | None
+
+        Unchanged означает что данные не изменились — задача в Celery не нужна.
+        """
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            capture_product_feed_generation,
+            locked_product_feed_write,
+        )
+
+        prepared = cls._prepare_source_upsert(datasource, data)
+        lookup = {'tenant': tenant, 'datasource': datasource, 'article': data['article']}
+        for _attempt in range(3):
+            existing = Product.all_objects.filter(**lookup).first()
+            if existing is None:
+                try:
+                    with transaction.atomic():
+                        return cls._apply_source_upsert(
+                            tenant, datasource, prepared, None,
+                        )
+                except IntegrityError:
+                    # A concurrent import may have created the same source
+                    # identity after our read. Re-enter through the normal
+                    # account-first update path with its committed row.
+                    continue
+            generation = capture_product_feed_generation(existing)
+            changes_feed = cls._source_changes_feed(existing, prepared)
+            try:
+                with locked_product_feed_write(
+                    (generation,),
+                    bump_product_ids=(existing.pk,) if changes_feed else (),
+                ) as locked:
+                    return cls._apply_source_upsert(
+                        tenant,
+                        datasource,
+                        prepared,
+                        cast(Product, locked[existing.pk]),
+                    )
+            except StaleProductFeedWrite:
+                continue
+        raise StaleProductFeedWrite(
+            f'Product source row {data["article"]!r} changed repeatedly.',
+        )
+
+    @classmethod
+    def upsert_batch_from_source(
+        cls,
+        tenant,
+        datasource,
+        items: Iterable[dict],
+    ) -> list[tuple[Product, str, str | None]]:
+        """Apply one source page with at most one feed bump per account."""
+
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            capture_product_feed_generations,
+            locked_product_feed_write,
+        )
+
+        prepared_items = [
+            cls._prepare_source_upsert(datasource, item)
+            for item in items
+        ]
+        articles = [
+            cast(dict, prepared['data'])['article']
+            for prepared in prepared_items
+        ]
+        for _attempt in range(3):
+            existing_products = list(
+                Product.all_objects.filter(
+                    tenant=tenant,
+                    datasource=datasource,
+                    article__in=articles,
+                ).order_by('pk')
+            )
+            existing_by_article = {
+                product.article: product for product in existing_products
+            }
+            generations = capture_product_feed_generations(
+                product.pk for product in existing_products
+            )
+            bump_ids = {
+                existing.pk
+                for prepared in prepared_items
+                if (
+                    (existing := existing_by_article.get(
+                        cast(dict, prepared['data'])['article'],
+                    )) is not None
+                    and cls._source_changes_feed(existing, prepared)
+                )
+            }
+            try:
+                with locked_product_feed_write(
+                    generations.values(),
+                    bump_product_ids=bump_ids,
+                ) as locked:
+                    results = []
+                    created_by_article: dict[object, Product] = {}
+                    for prepared in prepared_items:
+                        article = cast(dict, prepared['data'])['article']
+                        existing = (
+                            existing_by_article.get(article)
+                            or created_by_article.get(article)
+                        )
+                        locked_existing = (
+                            cast(Product, locked[existing.pk])
+                            if (
+                                existing is not None
+                                and existing.pk in locked
+                            ) else existing
+                        )
+                        result = cls._apply_source_upsert(
+                            tenant,
+                            datasource,
+                            prepared,
+                            locked_existing,
+                        )
+                        results.append(result)
+                        if existing is None:
+                            created_by_article[article] = result[0]
+                    return results
+            except (IntegrityError, StaleProductFeedWrite):
+                continue
+        raise StaleProductFeedWrite('Product source page changed repeatedly.')
 
     @staticmethod
     def schedule_ai_generation(
@@ -583,7 +744,50 @@ class ProductEnrichmentService:
     def classify_product_catalog_domain(
         cls, product: Product, save: bool = True, force: bool = False,
     ) -> ProductCatalogClassification:
-        tenant_category = cls.get_product_tenant_category(product)
+        """Classify under account -> endpoint -> product feed fencing.
+
+        Category inference may assign ``Product.catalog_category`` as a side
+        effect.  Callers must never enter that writer after locking Product,
+        so runtime paths that already own the canonical fence use the private
+        ``_locked`` implementation below.
+        """
+
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            capture_product_feed_generations,
+            locked_product_feed_write,
+        )
+
+        for _attempt in range(3):
+            generation = capture_product_feed_generations((product.pk,)).get(product.pk)
+            if generation is None:
+                raise Product.DoesNotExist(f'Product {product.pk} no longer exists.')
+            if generation.deleted_at is not None:
+                raise Product.DoesNotExist(f'Product {product.pk} is deleted.')
+            try:
+                with locked_product_feed_write((generation,)) as products:
+                    locked_product = cast(Product, products[product.pk])
+                    classification = cls._classify_product_catalog_domain_locked(
+                        locked_product,
+                        save=save,
+                        force=force,
+                    )
+                    product.catalog_category_id = locked_product.catalog_category_id
+                    product.updated_at = locked_product.updated_at
+                    return classification
+            except StaleProductFeedWrite:
+                continue
+        raise StaleProductFeedWrite(
+            f'Product {product.pk} changed repeatedly during classification.',
+        )
+
+    @classmethod
+    def _classify_product_catalog_domain_locked(
+        cls, product: Product, save: bool = True, force: bool = False,
+    ) -> ProductCatalogClassification:
+        """Classify a Product already locked after all owner accounts."""
+
+        tenant_category = cls._get_product_tenant_category_locked(product)
         text = ' '.join([
             product.name or '',
             product.category_1c or '',
@@ -682,8 +886,39 @@ class ProductEnrichmentService:
             return False
         return category.root_domain.supports_auto_parts_enrichment
 
+    @classmethod
+    def get_product_tenant_category(cls, product: Product) -> TenantCatalogCategory | None:
+        """Resolve/assign a category under the canonical feed writer fence."""
+
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            capture_product_feed_generations,
+            locked_product_feed_write,
+        )
+
+        for _attempt in range(3):
+            generation = capture_product_feed_generations((product.pk,)).get(product.pk)
+            if generation is None:
+                raise Product.DoesNotExist(f'Product {product.pk} no longer exists.')
+            if generation.deleted_at is not None:
+                raise Product.DoesNotExist(f'Product {product.pk} is deleted.')
+            try:
+                with locked_product_feed_write((generation,)) as products:
+                    locked_product = cast(Product, products[product.pk])
+                    category = cls._get_product_tenant_category_locked(locked_product)
+                    product.catalog_category_id = locked_product.catalog_category_id
+                    product.updated_at = locked_product.updated_at
+                    return category
+            except StaleProductFeedWrite:
+                continue
+        raise StaleProductFeedWrite(
+            f'Product {product.pk} changed repeatedly during category inference.',
+        )
+
     @staticmethod
-    def get_product_tenant_category(product: Product) -> TenantCatalogCategory | None:
+    def _get_product_tenant_category_locked(
+        product: Product,
+    ) -> TenantCatalogCategory | None:
         if product.catalog_category_id:
             return product.catalog_category
         if product.catalog_category_manually_cleared:
@@ -1059,6 +1294,37 @@ class ProductEnrichmentService:
 
     @classmethod
     def save_parsed_part(
+        cls, tenant, product: Product, parsed: ParsedPart, source_id: str = DEFAULT_PART_SOURCE,
+    ) -> None:
+        """Fence feed-visible brand/OEM changes before relation/product writes."""
+
+        from apps.products.feed_writers import (
+            capture_product_feed_generation,
+            locked_product_feed_write,
+        )
+
+        cls._ensure_product_tenant(product, tenant)
+        current_product = Product.all_objects.filter(pk=product.pk).first()
+        if current_product is None:
+            raise Product.DoesNotExist(f'Product {product.pk} no longer exists.')
+        generation = capture_product_feed_generation(current_product)
+        with locked_product_feed_write(
+            (generation,),
+            # Parsed results can refresh the denormalized OEM projection from
+            # ProductCrossCode rows in addition to applying their own payload.
+            # Fence every accepted apply so a concurrent relation insert can
+            # never invalidate a pre-lock diff decision.
+            bump_product_ids=(product.pk,),
+        ) as locked:
+            cls._save_parsed_part_locked(
+                tenant,
+                cast(Product, locked[product.pk]),
+                parsed,
+                source_id=source_id,
+            )
+
+    @classmethod
+    def _save_parsed_part_locked(
         cls, tenant, product: Product, parsed: ParsedPart, source_id: str = DEFAULT_PART_SOURCE,
     ) -> None:
         """Сохраняет enrichment-данные, не трогая цену, остаток и склад."""
@@ -2502,12 +2768,30 @@ class ProductKnowledgeGraphService:
 
     @classmethod
     def apply_known_knowledge_to_product(cls, product: Product) -> dict:
-        relations_count = cls.apply_known_relations_to_product(product)
-        fitments_count = cls.apply_known_fitments_to_product(product)
-        return {
-            'relations_count': relations_count,
-            'fitments_count': fitments_count,
-        }
+        from apps.products.feed_writers import (
+            capture_product_feed_generation,
+            locked_product_feed_write,
+        )
+
+        current = Product.all_objects.filter(pk=product.pk).first()
+        if current is None:
+            raise Product.DoesNotExist(f'Product {product.pk} no longer exists.')
+        generation = capture_product_feed_generation(current)
+
+        with locked_product_feed_write(
+            (generation,),
+            # Global relations are mutable independently of Product. A diff
+            # computed before the Product fence could therefore become stale;
+            # conservatively fence every knowledge-graph apply.
+            bump_product_ids=(current.pk,),
+        ) as locked:
+            locked_product = cast(Product, locked[current.pk])
+            relations_count = cls.apply_known_relations_to_product(locked_product)
+            fitments_count = cls.apply_known_fitments_to_product(locked_product)
+            return {
+                'relations_count': relations_count,
+                'fitments_count': fitments_count,
+            }
 
     @classmethod
     def _relation_to_cross_code_type(cls, relation_type: str) -> str:

@@ -2,16 +2,18 @@ import hashlib
 import io
 import logging
 import re
+import uuid
 from urllib.parse import urlparse
 
 import requests
 from PIL import Image, UnidentifiedImageError
 from django.conf import settings
-from django.db import transaction
+from django.db import IntegrityError
 
 from apps.core.image_security import validate_image_pixel_budget
 from apps.core.storage import delete_storage_keys
 from apps.core.url_security import request_public_http_url
+from apps.products.media import PUBLISHABLE_IMAGE_STATUSES
 from apps.products.models import ProductImage
 
 MAX_PHOTOS = 10
@@ -275,8 +277,9 @@ class PhotoUploadPipeline:
         thumb_bytes = _to_jpeg_bytes(_resize(img.copy(), THUMB_DIMENSION))
 
         if existing is not None:
-            return _update_existing_image_metadata(
-                existing,
+            return self._update_existing_with_fence(
+                existing.pk,
+                expected_sha=sha,
                 source_url=source_url,
                 source_id=source_id,
                 phash=phash,
@@ -285,15 +288,106 @@ class PhotoUploadPipeline:
                 raw_size=len(raw),
             )
 
+        # Storage is external to the database transaction. Persist an
+        # immutable attempt pair before taking any account/product/image row
+        # locks; only the short CAS/create section below runs under the fence.
         requested_original_key, requested_thumb_key = _product_media_keys(product, sha)
-        with transaction.atomic():
-            # Serialize uploads per product and re-check after acquiring the
-            # lock: two workers may have downloaded the same bytes together.
-            locked_product = type(product).objects.select_for_update().get(pk=product.pk)
-            existing = locked_product.images.filter(sha256=sha).first()
-            if existing is not None:
-                return _update_existing_image_metadata(
-                    existing,
+        attempt_token = uuid.uuid4().hex
+        original_stem, original_suffix = requested_original_key.rsplit('.', 1)
+        thumb_stem, thumb_suffix = requested_thumb_key.rsplit('.', 1)
+        thumb_base = thumb_stem.removesuffix('_thumb')
+        saved_keys = _save_product_image_pair(
+            self._storage,
+            f'{original_stem}-auto-{attempt_token}.{original_suffix}',
+            original_bytes,
+            f'{thumb_base}-auto-{attempt_token}_thumb.{thumb_suffix}',
+            thumb_bytes,
+        )
+        if saved_keys is None:
+            return None
+        saved_original_key, saved_thumb_key = saved_keys
+        target_status = status or ProductImage.Status.IMPORTED
+
+        class _ExistingImage(RuntimeError):
+            def __init__(self, image_id: int):
+                self.image_id = image_id
+
+        class _PerceptualDuplicate(RuntimeError):
+            def __init__(self, image_id: int):
+                self.image_id = image_id
+
+        class _LimitReached(RuntimeError):
+            pass
+
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            locked_product_images_feed_write,
+        )
+
+        for _attempt in range(3):
+            try:
+                with locked_product_images_feed_write(
+                    product.pk,
+                    bump=target_status in PUBLISHABLE_IMAGE_STATUSES,
+                ) as (locked_product, images):
+                    same_sha = next(
+                        (
+                            candidate for candidate in images.values()
+                            if candidate.sha256 == sha
+                        ),
+                        None,
+                    )
+                    if same_sha is not None:
+                        # Roll back a conservative publishable-image bump. The
+                        # existing row is updated in a separate no-bump fence
+                        # after the prepared objects have been cleaned up.
+                        raise _ExistingImage(same_sha.pk)
+
+                    duplicate = next(
+                        (
+                            candidate for candidate in images.values()
+                            if (
+                                candidate.status != ProductImage.Status.REJECTED
+                                and candidate.phash
+                                and phash_distance(candidate.phash, phash)
+                                <= PERCEPTUAL_DUP_DISTANCE
+                            )
+                        ),
+                        None,
+                    )
+                    if duplicate is not None:
+                        raise _PerceptualDuplicate(duplicate.pk)
+                    if (
+                        check_limit
+                        and sum(
+                            candidate.status != ProductImage.Status.REJECTED
+                            for candidate in images.values()
+                        ) >= MAX_PHOTOS
+                    ):
+                        raise _LimitReached
+
+                    uploaded = ProductImage.objects.create(
+                        product=locked_product,
+                        s3_key=saved_original_key,
+                        s3_key_thumb=saved_thumb_key,
+                        url_source=source_url,
+                        sha256=sha,
+                        position=len(images),
+                        source_id=source_id,
+                        status=target_status,
+                        phash=phash,
+                        resolution_w=actual_width,
+                        resolution_h=actual_height,
+                        file_size_kb=max(1, len(raw) // 1024),
+                    )
+                return uploaded
+            except (IntegrityError, StaleProductFeedWrite):
+                continue
+            except _ExistingImage as exc:
+                delete_storage_keys(saved_keys, storage=self._storage)
+                return self._update_existing_with_fence(
+                    exc.image_id,
+                    expected_sha=sha,
                     source_url=source_url,
                     source_id=source_id,
                     phash=phash,
@@ -301,42 +395,67 @@ class PhotoUploadPipeline:
                     actual_height=actual_height,
                     raw_size=len(raw),
                 )
-            duplicate = find_perceptual_duplicate(locked_product, phash)
-            if duplicate is not None:
-                return duplicate
-            if (
-                check_limit
-                and locked_product.images.exclude(
-                    status=ProductImage.Status.REJECTED,
-                ).count() >= MAX_PHOTOS
-            ):
+            except _PerceptualDuplicate as exc:
+                delete_storage_keys(saved_keys, storage=self._storage)
+                return ProductImage.objects.filter(pk=exc.image_id).first()
+            except _LimitReached:
+                delete_storage_keys(saved_keys, storage=self._storage)
                 return None
-
-            saved_keys = _save_product_image_pair(
-                self._storage,
-                requested_original_key,
-                original_bytes,
-                requested_thumb_key,
-                thumb_bytes,
-            )
-            if saved_keys is None:
-                return None
-            saved_original_key, saved_thumb_key = saved_keys
-            try:
-                return ProductImage.objects.create(
-                    product=locked_product,
-                    s3_key=saved_original_key,
-                    s3_key_thumb=saved_thumb_key,
-                    url_source=source_url,
-                    sha256=sha,
-                    position=locked_product.images.count(),
-                    source_id=source_id,
-                    status=status or ProductImage.Status.IMPORTED,
-                    phash=phash,
-                    resolution_w=actual_width,
-                    resolution_h=actual_height,
-                    file_size_kb=max(1, len(raw) // 1024),
-                )
             except Exception:
                 delete_storage_keys(saved_keys, storage=self._storage)
                 raise
+
+        delete_storage_keys(saved_keys, storage=self._storage)
+        raise StaleProductFeedWrite(
+            f'Product {product.pk} images changed repeatedly during upload.',
+        )
+
+    @staticmethod
+    def _update_existing_with_fence(
+        image_id: int,
+        *,
+        expected_sha: str,
+        source_url: str,
+        source_id: str,
+        phash: str,
+        actual_width: int,
+        actual_height: int,
+        raw_size: int,
+    ) -> ProductImage | None:
+        """Update non-projection metadata under Product/image serialization."""
+
+        from apps.products.feed_writers import (
+            StaleProductFeedWrite,
+            locked_product_images_feed_write,
+        )
+
+        for _attempt in range(3):
+            current = ProductImage.objects.filter(pk=image_id).only(
+                'pk', 'product_id',
+            ).first()
+            if current is None:
+                return None
+            try:
+                with locked_product_images_feed_write(
+                    current.product_id,
+                    bump=False,
+                ) as (_product, images):
+                    locked = images.get(image_id)
+                    if locked is None or locked.sha256 != expected_sha:
+                        raise StaleProductFeedWrite(
+                            f'Product image {image_id} changed identity.',
+                        )
+                    return _update_existing_image_metadata(
+                        locked,
+                        source_url=source_url,
+                        source_id=source_id,
+                        phash=phash,
+                        actual_width=actual_width,
+                        actual_height=actual_height,
+                        raw_size=raw_size,
+                    )
+            except StaleProductFeedWrite:
+                continue
+        raise StaleProductFeedWrite(
+            f'Product image {image_id} changed repeatedly during metadata update.',
+        )

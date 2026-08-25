@@ -239,6 +239,36 @@ private artifact schema/storage, upload ledger, GC или dispatch fence.
 Deploy: только legacy. В этом release production-конфигурация отклоняет
 dual-write/durable; следующий activation package требует отдельного решения.
 
+Foundation merged через PR `#246` и deployed exact commit `2e9958c` с
+неизменным legacy runtime.
+
+### P5 activation — writer fencing и legacy delivery repair
+
+Разрешённый production-срез (ровно 20 файлов):
+
+- `apps/image_search/services/moderation.py`, `pipeline.py`, `views.py`;
+- `apps/media_processing/services.py`;
+- `apps/products/admin.py`, `feed_writers.py`, `models.py`, `services.py`,
+  `storage.py`, `tasks.py`, `views.py`;
+- `apps/marketplaces/adapters/avito/adapter.py`;
+- `apps/marketplaces/admin.py`, `feed_report_reconciler.py`, `models.py`,
+  `services.py`, `tasks.py`, `views.py`;
+- `apps/tenants/admin.py`, `models.py`.
+
+Обязательные тестовые срезы:
+
+- feed intent local writers, flush delivery repair, report reconciler и
+  provider-result intents;
+- product/image writers, product-to-listing fencing и admin safety;
+- существующие Avito, status fencing, branch toggle, datasource import,
+  image API, marketplace service/API regressions;
+- полный backend suite.
+
+Не включать `feed_cursor_reconciliation.py`, P6/P7 artifact/cleanup/GC,
+миграции `0029+`, datasource polling refactor или изменение production
+settings. Deploy кода выполняется только с прежними legacy-флагами;
+`dual_write` — отдельный rollout после release gate.
+
 ## P6 — private artifact experiment, миграции 0029–0035
 
 Основные файлы:
