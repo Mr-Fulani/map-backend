@@ -295,6 +295,8 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
         'backend': (ROOT / 'Dockerfile').read_text(),
         'frontend': (ROOT / 'frontend/Dockerfile').read_text(),
         'backup': (ROOT / 'backup/Dockerfile').read_text(),
+        'nginx': (ROOT / 'ops/nginx/Dockerfile').read_text(),
+        'postgres': (ROOT / 'ops/postgres/Dockerfile').read_text(),
         'egress_proxy': (ROOT / 'egress-proxy/Dockerfile').read_text(),
     }
 
@@ -327,15 +329,22 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
         'liblastlog2-2',
         'libmount1',
         'libsmartcols1',
+        'libssl3t64',
         'libuuid1',
         'login',
         'mount',
+        'openssl',
+        'openssl-provider-legacy',
         'util-linux',
     ):
         assert package in dockerfiles['backend']
     assert '2.41.5-0+deb13u1' in dockerfiles['backend']
     assert '1:2.41.5-0+deb13u1' in dockerfiles['backend']
     assert '1:4.16.0-2+really2.41.5-0+deb13u1' in dockerfiles['backend']
+    assert 'for package in libssl3t64 openssl openssl-provider-legacy' in (
+        dockerfiles['backend']
+    )
+    assert 'ge 3.5.7-1~deb13u2' in dockerfiles['backend']
     assert dockerfiles['frontend'].splitlines()[0] == (
         'FROM node:24.18.0-alpine@sha256:'
         'a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd '
@@ -345,6 +354,19 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
         'FROM postgres:16.14-alpine@sha256:'
         '57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777'
     )
+    assert dockerfiles['postgres'].splitlines()[0] == (
+        'FROM postgres:16.14-alpine@sha256:'
+        '57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777'
+    )
+    assert dockerfiles['nginx'].splitlines()[0] == (
+        'FROM nginx:1.30.4-alpine@sha256:'
+        '97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46'
+    )
+    for name in ('frontend', 'backup', 'nginx', 'postgres'):
+        assert 'apk add --no-cache --upgrade' in dockerfiles[name], name
+        assert 'libcrypto3' in dockerfiles[name], name
+        assert 'libssl3' in dockerfiles[name], name
+        assert 'apk version -t "$version" 3.5.8-r0' in dockerfiles[name], name
     assert dockerfiles['egress_proxy'].splitlines()[0] == (
         'FROM ubuntu/squid:6.6-24.04_edge@sha256:'
         '8a3baed477e2c282ab8aa5edad442f69873246964f225c5c2ae8364b6610963c'
@@ -434,7 +456,7 @@ def test_ci_actions_are_commit_pinned_and_job_is_bounded():
     assert 'timeout-minutes: 60' in CI_WORKFLOW
     assert 'persist-credentials: false' in CI_WORKFLOW
     assert (
-        'django celery_worker celery_beat celery_worker_images frontend backup'
+        'django celery_worker celery_beat celery_worker_images frontend backup nginx db'
         in CI_WORKFLOW
     )
     assert 'docker compose -f docker-compose.yml config --quiet' in CI_WORKFLOW
@@ -528,7 +550,12 @@ def test_ci_scans_every_unique_production_image_and_its_service_images_match_ci(
 
     assert scan_services == production_image_services
     ci_services = yaml.safe_load(CI_WORKFLOW)['jobs']['test']['services']
-    assert ci_services['db']['image'] == COMPOSE['services']['db']['image']
+    postgres_dockerfile = ROOT / 'ops/postgres/Dockerfile'
+    assert COMPOSE['services']['db']['build'] == {
+        'context': '.',
+        'dockerfile': 'ops/postgres/Dockerfile',
+    }
+    assert f"FROM {ci_services['db']['image']}" in postgres_dockerfile.read_text()
     assert ci_services['redis']['image'] == COMPOSE['services']['redis']['image']
     assert (
         RESTORE_COMPOSE['services']['egress_proxy']['build']

@@ -44,10 +44,12 @@ from apps.marketplaces.models import MarketplaceFeedEndpoint
 
 _PROFILE_KEYS = frozenset({
     'agreement',
+    'allow_pay_over_limit',
     'autoload_enabled',
     'feeds_data',
     'report_email',
     'schedule',
+    'uploadMode',
 })
 _FINGERPRINT_RE = re.compile(r'^[0-9a-f]{64}$')
 _MAX_PROFILE_NODES = 50_000
@@ -186,6 +188,17 @@ def validate_avito_profile(profile: object) -> ValidatedAvitoProfile:
     if not isinstance(profile.get('autoload_enabled'), bool):
         raise AvitoProfileValidationError(
             'Avito profile autoload_enabled must be explicit.',
+        )
+    if (
+        'allow_pay_over_limit' in profile
+        and not isinstance(profile['allow_pay_over_limit'], bool)
+    ):
+        raise AvitoProfileValidationError(
+            'Avito profile allow_pay_over_limit must be explicit.',
+        )
+    if 'uploadMode' in profile and profile['uploadMode'] != 'auto':
+        raise AvitoProfileValidationError(
+            'Avito profile uploadMode is unsupported.',
         )
     if not (
         profile['report_email'] is None

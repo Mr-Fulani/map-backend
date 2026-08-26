@@ -184,7 +184,7 @@ COMPOSE=(
   --project-directory "$ROOT_DIR"
   -f "$COMPOSE_FILE"
 )
-BUILD_SERVICES=(django celery_worker celery_beat celery_worker_images frontend backup)
+BUILD_SERVICES=(django celery_worker celery_beat celery_worker_images frontend backup nginx db)
 ROLLBACK_SERVICES=(egress_proxy "${BUILD_SERVICES[@]}")
 ROLLBACK_INFRASTRUCTURE_SERVICES=(db redis redis_broker egress_proxy)
 ROLLBACK_APPLICATION_SERVICES=(django celery_worker celery_beat celery_worker_images frontend nginx)
