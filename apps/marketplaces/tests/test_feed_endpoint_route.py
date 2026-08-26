@@ -99,6 +99,29 @@ def test_valid_capability_redirects_get_and_head_to_exact_frozen_legacy_url():
 
 @pytest.mark.django_db
 @override_settings(**ROUTE_SETTINGS)
+def test_bridge_accepts_exact_historical_unprefixed_map_feed():
+    _tenant, account = _account('historical-feed-route')
+    key = (
+        f'feeds/{account.tenant.slug}/{account.marketplace}/'
+        f'route-account-{account.pk}/feed.xml'
+    )
+    endpoint = _endpoint(
+        account,
+        legacy_object_key=key,
+        legacy_profile_url=(
+            f'https://storage.yandexcloud.net/feed-bucket/{key}'
+        ),
+    )
+    parsed = urlsplit(marketplace_feed_public_url(endpoint))
+
+    response = Client().get(f'{parsed.path}?{parsed.query}')
+
+    assert response.status_code == 307
+    assert response['Location'] == endpoint.legacy_profile_url
+
+
+@pytest.mark.django_db
+@override_settings(**ROUTE_SETTINGS)
 def test_capability_url_survives_account_and_tenant_rename():
     tenant, account = _account('feed-before-rename')
     endpoint = _endpoint(account)

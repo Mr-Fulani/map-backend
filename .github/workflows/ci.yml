@@ -231,10 +231,10 @@ jobs:
           docker compose -f docker-compose.yml config --quiet
           docker compose -f docker-compose.prod.yml --profile ops config --quiet
           docker compose -f docker-compose.prod.yml --profile ops build \
-            django celery_worker celery_beat celery_worker_images frontend backup \
+            django celery_worker celery_beat celery_worker_images frontend backup nginx db \
             egress_proxy
           docker compose -f docker-compose.prod.yml pull \
-            db redis redis_broker nginx
+            redis redis_broker
           scripts/ci_production_runtime_smoke.sh
           cp .restore.env.example .restore.env
           install -m 600 /dev/null /tmp/backup-age-identity.txt

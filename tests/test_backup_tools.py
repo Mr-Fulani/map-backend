@@ -550,7 +550,10 @@ def test_backup_container_and_deploy_contracts():
     assert 'sysconfig.get_path("purelib")' in dockerfile
     assert '--target "$venv_site_packages"' in dockerfile
     assert '/usr/bin/python3 -m pip install' in dockerfile
-    assert 'apk add --no-cache age ca-certificates python3\n' in dockerfile
+    assert 'apk add --no-cache --upgrade' in dockerfile
+    for package in ('age', 'ca-certificates', 'libcrypto3', 'libssl3', 'python3'):
+        assert package in dockerfile
+    assert 'apk version -t "$version" 3.5.8-r0' in dockerfile
     assert 'apk del .backup-python-installer' in dockerfile
     assert 'rm -rf "$ensurepip_dir"' in dockerfile
     assert 'command -v age >/dev/null' in dockerfile

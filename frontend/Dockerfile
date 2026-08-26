@@ -1,5 +1,15 @@
 FROM node:24.18.0-alpine@sha256:a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd AS base
 
+RUN set -eux; \
+    apk add --no-cache --upgrade libcrypto3 libssl3; \
+    for package in libcrypto3 libssl3; do \
+        version="$(apk list --installed "$package" \
+            | sed -n "s/^${package}-\\([^ ]*\\).*/\\1/p")"; \
+        [ -n "$version" ]; \
+        comparison="$(apk version -t "$version" 3.5.8-r0)"; \
+        [ "$comparison" = '=' ] || [ "$comparison" = '>' ]; \
+    done
+
 FROM base AS deps
 WORKDIR /app
 RUN set -eu; \

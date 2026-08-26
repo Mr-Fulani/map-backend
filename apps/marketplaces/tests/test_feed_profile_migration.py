@@ -15,6 +15,7 @@ from apps.marketplaces.adapters.avito.profile_migration import (
     AvitoProfileValidationError,
     PreparedAvitoProfilePost,
     build_profile_plan,
+    inspect_unprovisioned_profile,
     is_profile_feed_configured,
     observe_endpoint_profile,
     probe_feed_bridge_parity,
@@ -147,10 +148,12 @@ def _client(profile: dict) -> MagicMock:
 
 def test_full_profile_validation_requires_complete_upsert_shape():
     complete = {
+        'allow_pay_over_limit': False,
         'autoload_enabled': False,
         'report_email': None,
         'feeds_data': [{'feed_name': 'One', 'feed_url': 'https://one.test/feed.xml'}],
         'schedule': [],
+        'uploadMode': 'auto',
     }
     assert validate_avito_profile(complete).profile == complete
 
@@ -165,6 +168,16 @@ def test_full_profile_validation_requires_complete_upsert_shape():
     with pytest.raises(AvitoProfileValidationError, match='feed name'):
         validate_avito_profile(invalid_feed)
 
+    invalid_pay_over_limit = deepcopy(complete)
+    invalid_pay_over_limit['allow_pay_over_limit'] = 0
+    with pytest.raises(AvitoProfileValidationError, match='allow_pay_over_limit'):
+        validate_avito_profile(invalid_pay_over_limit)
+
+    invalid_upload_mode = deepcopy(complete)
+    invalid_upload_mode['uploadMode'] = 'unexpected'
+    with pytest.raises(AvitoProfileValidationError, match='uploadMode'):
+        validate_avito_profile(invalid_upload_mode)
+
 
 @pytest.mark.django_db
 @override_settings(**MIGRATION_SETTINGS)
@@ -172,6 +185,8 @@ def test_plan_changes_only_owned_url_and_preserves_full_profile_exactly():
     _tenant, account = _account('profile-plan')
     endpoint = _endpoint(account)
     source = _profile(account, report_email=None)
+    source['allow_pay_over_limit'] = False
+    source['uploadMode'] = 'auto'
     stable_url = marketplace_feed_public_url(endpoint)
 
     observation = build_profile_plan(
@@ -188,6 +203,8 @@ def test_plan_changes_only_owned_url_and_preserves_full_profile_exactly():
     assert target['autoload_enabled'] is False
     assert target['report_email'] is None
     assert target['schedule'] == []
+    assert target['allow_pay_over_limit'] is False
+    assert target['uploadMode'] == 'auto'
     assert target['feeds_data'][0] == source['feeds_data'][0]
     assert target['feeds_data'][2] == source['feeds_data'][2]
     assert target['feeds_data'][1] == {
@@ -207,6 +224,27 @@ def test_plan_changes_only_owned_url_and_preserves_full_profile_exactly():
     assert reverse.source_fingerprint == observation.source_fingerprint
     assert reverse.target_fingerprint == observation.target_fingerprint
     assert reverse.plan.source_profile == source
+
+
+@pytest.mark.django_db
+@override_settings(**MIGRATION_SETTINGS)
+def test_inspect_accepts_exact_historical_unprefixed_map_feed():
+    _tenant, account = _account('historical-profile')
+    source = _profile(account)
+    historical_key = (
+        f'feeds/{account.tenant.slug}/{account.marketplace}/'
+        f'migration-account-{account.pk}/feed.xml'
+    )
+    source['feeds_data'][1]['feed_url'] = (
+        f'https://storage.yandexcloud.net/profile-feed-bucket/'
+        f'{historical_key}'
+    )
+
+    plan = inspect_unprovisioned_profile(account, source)
+
+    assert plan.owned_feed_count == 1
+    assert plan.foreign_feed_count == 2
+    assert plan.source_object_key == historical_key
 
 
 @pytest.mark.django_db

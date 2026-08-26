@@ -12,9 +12,12 @@ RUN set -eux; \
         liblastlog2-2 \
         libmount1 \
         libsmartcols1 \
+        libssl3t64 \
         libuuid1 \
         login \
         mount \
+        openssl \
+        openssl-provider-legacy \
         util-linux; \
     for package in \
         libblkid1 \
@@ -33,6 +36,10 @@ RUN set -eux; \
     login_version="$(dpkg-query -W -f='${Version}' login)"; \
     dpkg --compare-versions \
         "$login_version" ge 1:4.16.0-2+really2.41.5-0+deb13u1; \
+    for package in libssl3t64 openssl openssl-provider-legacy; do \
+        version="$(dpkg-query -W -f='${Version}' "$package")"; \
+        dpkg --compare-versions "$version" ge 3.5.7-1~deb13u2; \
+    done; \
     rm -rf /var/lib/apt/lists/*
 
 RUN useradd --create-home --shell /usr/sbin/nologin --uid 1000 app

@@ -361,10 +361,16 @@ def legacy_bridge_target_url(endpoint) -> str | None:
         return None
 
     prefix = str(getattr(settings, 'MEDIA_KEY_PREFIX', '') or '').strip('/')
-    feed_prefix = f'{prefix}/feeds/' if prefix else 'feeds/'
+    # Feeds created before MEDIA_KEY_PREFIX was introduced remain owned MAP
+    # objects.  Accept only the historical root plus the currently configured
+    # root; the bucket, marketplace segment and account suffix still have to
+    # match exactly below.
+    feed_prefixes = {'feeds/'}
+    if prefix:
+        feed_prefixes.add(f'{prefix}/feeds/')
     marketplace = str(getattr(account, 'marketplace', '') or '').strip()
     if (
-        not key.startswith(feed_prefix)
+        not any(key.startswith(feed_prefix) for feed_prefix in feed_prefixes)
         or not marketplace
         or f'/{marketplace}/' not in key
         or not key.endswith(f'-{account.pk}/feed.xml')
