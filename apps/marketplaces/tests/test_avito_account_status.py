@@ -387,6 +387,41 @@ def test_setup_profile_preserves_customer_settings():
     ]
 
 
+def test_setup_profile_preserves_optional_customer_settings_when_url_changes():
+    adapter = object.__new__(AvitoAdapter)
+    adapter.account = MagicMock(name='account')
+    adapter.account.name = 'Основной'
+    adapter.get_autoload_profile = MagicMock(return_value={
+        'autoload_enabled': False,
+        'allow_pay_over_limit': False,
+        'report_email': 'owner@example.com',
+        'feeds_data': [
+            {'feed_name': 'Сторонний', 'feed_url': 'https://other.test/feed.xml'},
+            {'feed_name': 'Старый MAP', 'feed_url': 'https://old.test/map.xml'},
+        ],
+        'schedule': [{'rate': 1000, 'weekdays': [1], 'time_slots': [9]}],
+        'uploadMode': 'auto',
+    })
+    adapter._request = MagicMock()
+
+    adapter.setup_autoload_profile(
+        'fallback@example.com',
+        feed_url='https://stable.test/feed.xml',
+        replaced_feed_urls=('https://old.test/map.xml',),
+    )
+
+    payload = adapter._request.call_args.kwargs['json']
+    assert payload['allow_pay_over_limit'] is False
+    assert payload['uploadMode'] == 'auto'
+    assert payload['feeds_data'] == [
+        {'feed_name': 'Сторонний', 'feed_url': 'https://other.test/feed.xml'},
+        {
+            'feed_name': 'MAP feed — Основной',
+            'feed_url': 'https://stable.test/feed.xml',
+        },
+    ]
+
+
 @pytest.mark.django_db
 def test_refresh_task_is_tenant_scoped_and_releases_lock():
     """Фоновая задача не читает аккаунт другого тенанта и освобождает lock."""

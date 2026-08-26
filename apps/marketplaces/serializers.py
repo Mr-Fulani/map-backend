@@ -133,6 +133,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
     """Чтение: credentials не возвращаются никогда."""
 
     avito_status = serializers.SerializerMethodField()
+    feed_endpoint_managed = serializers.SerializerMethodField()
 
     class Meta:
         model = MarketplaceAccount
@@ -142,6 +143,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
             'default_manager_name', 'default_contact_phone',
             'autoload_active', 'autoload_checked_at',
             'autoload_subscription_ends_at',
+            'feed_endpoint_managed',
             'avito_status',
             'created_at',
         ]
@@ -155,6 +157,10 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
         except AvitoAccountStatus.DoesNotExist:
             status_obj = AvitoAccountStatus(account=obj, tenant=obj.tenant)
         return AvitoAccountStatusSerializer(status_obj).data
+
+    def get_feed_endpoint_managed(self, obj) -> bool:
+        """Сообщает UI, что URL защищён и полностью управляется MAP."""
+        return hasattr(obj, 'feed_endpoint')
 
 
 class MarketplacePlacementAddressSerializer(serializers.ModelSerializer):

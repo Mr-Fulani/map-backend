@@ -1,6 +1,6 @@
 # Текущее состояние работ по фидам Avito
 
-Обновлено: 2026-08-26.
+Обновлено: 2026-08-27.
 
 Исходный WIP сохранён как локальный `not-for-merge` snapshot:
 
@@ -29,8 +29,10 @@ commit `9c23a6b37264fb26be9af78876af034b8d1cb508` и прошёл legacy-only pr
 gate. Settings-gate для парного P5 `dual_write` observation merged через PR
 `#248` в `54b87f286b1e6a318fda6acf1abfa266fdd48bd2`, но само production-переключение
 выполнено отдельно. P6 private artifacts merged через PR `#249`, bounded
-follow-up/recovery исправления — через PR `#250`–`#254`; production работает
-на exact commit `827040c6bfebed76b2bc0479313fb5e811b0a1d1`.
+follow-up/recovery исправления — через PR `#250`–`#254`. Постоянный private
+cutover единственного реального Autoload account `4` завершён PR `#255`;
+production перед fleet-default release работает на exact commit
+`139ed48dd154eed9834574801610ab4913b07a9b`.
 
 Этот файл — единственный источник правды о текущей стадии работ. Roadmap
 находится в [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а обязательные
@@ -39,20 +41,21 @@ follow-up/recovery исправления — через PR `#250`–`#254`; pro
 Точная карта разделения файлов и тестов:
 [`AVITO_FEED_CHANGESET_MANIFEST.md`](AVITO_FEED_CHANGESET_MANIFEST.md).
 
-## Решение: активен только P6, P7 остаётся заморожен
+## Решение: активен P6 fleet-default onboarding, P7 остаётся заморожен
 
-Пользователь отдельно активировал весь P6 2026-08-25: один PR, не более двух
-свёрнутых миграций поверх production `0028`, private bucket/IAM/presigner и
-ручной canary одного Avito-аккаунта. Это разрешение не активирует P7.
+После успешного account `4` cutover пользователь 2026-08-27 отдельно разрешил
+перевести штатную SaaS-цепочку на новую систему для всех будущих подключений.
+Пакет выходит одним PR и одним полным CI, не добавляет миграций, режимов,
+GC или удаления объектов. Старый onboarding остаётся только неактивной
+аварийной совместимостью до отдельного наблюдения и удаления.
 
 До отдельного нового решения запрещено:
 
-- добавлять миграции после P6 `0030`, новые режимы или широкое worker wiring;
+- добавлять миграции после P6 `0030` или новые режимы;
 - продолжать `0039`, retention delete, автоматическое удаление файлов или GC;
 - удалять, отвязывать или перезаписывать artifact/evidence записи и S3-версии;
-- переключать на private serving более одного явно выбранного аккаунта;
-- включать `MARKETPLACE_FEED_ARTIFACT_MODE=active` без точного allowlist одного
-  отдельно разрешённого аккаунта или выполнять массовую миграцию профилей.
+- выполнять массовую миграцию старых профилей отдельным sweep-процессом;
+- физически удалять legacy-код до подтверждённого периода наблюдения.
 
 В активном P6 разрешено:
 
@@ -62,6 +65,10 @@ follow-up/recovery исправления — через PR `#250`–`#254`; pro
 - выключенный initial deploy, затем один ручной canary с точным rollback без
   удаления объекта;
 - исключать из P6 случайно попавшие retention/GC/P7 изменения.
+- автоматически резервировать stable endpoint при создании Avito-аккаунта;
+- регистрировать stable URL в Avito с tenant/account fencing;
+- включить durable/private delivery для всех готовых аккаунтов без allowlist;
+- удерживать публикацию без legacy fallback, пока endpoint не подтверждён.
 
 ## Почему введена заморозка
 
@@ -74,23 +81,30 @@ Snapshot меняет 169 файлов и добавляет больше 61 т�
 
 ## Что сейчас работает в production
 
-Рабочая система продолжает использовать старую отправку фидов. Обязательные
-значения после появления соответствующих runtime-переключателей:
+Перед fleet-default release единственный реальный account `4` уже использует
+private generation и exact-version serving. Production settings:
 
 ```text
 MARKETPLACE_FEED_RUN_MODE=legacy
 MARKETPLACE_FEED_INGRESS_MODE=dual_write
 AVITO_STATUS_LIFECYCLE_MODE=dual_write
-MARKETPLACE_FEED_ARTIFACT_MODE=disabled
+MARKETPLACE_FEED_ARTIFACT_MODE=active
+MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS=4
 MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
 MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
 ```
 
-Текущий production commit `827040c` сохраняет старый generator как владельца
-отправки (`run=legacy`), а P5 writer/lifecycle работают в парном `dual_write`.
-P4 stable bridge и HMAC keyring включены, но массовая profile migration
-запрещена. P6 artifact runtime после fail-closed canary выключен; endpoint
-account 4 продолжает отдавать legacy XML через тот же stable URL.
+Fleet-default release меняет только два admission-параметра:
+
+```text
+MARKETPLACE_FEED_RUN_MODE=durable
+MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS=
+```
+
+После этого account `4` продолжает ту же private-цепочку, а новый успешно
+подключённый Avito-аккаунт получает managed stable URL автоматически. Если
+регистрация URL у Avito ещё не доказана, публикация ждёт и повторяет безопасную
+проверку; старый public upload не вызывается.
 
 ## Фактическая стадия snapshot
 

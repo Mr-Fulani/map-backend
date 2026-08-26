@@ -242,14 +242,21 @@ if MARKETPLACE_FEED_ARTIFACT_MODE not in {
         'MARKETPLACE_FEED_ARTIFACT_MODE должен быть disabled, shadow, canary '
         'или active.',
     )
-if (
-    MARKETPLACE_FEED_ARTIFACT_MODE == 'active'
-    and len(MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS) != 1
-):
-    raise ImproperlyConfigured(
-        'MARKETPLACE_FEED_ARTIFACT_MODE=active требует ровно один '
-        'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS для account-scoped rollout.',
+if MARKETPLACE_FEED_ARTIFACT_MODE == 'active':
+    account_scoped_active = (
+        len(MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS) == 1
+        and MARKETPLACE_FEED_RUN_MODE == 'legacy'
     )
+    fleet_active = (
+        not MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS
+        and MARKETPLACE_FEED_RUN_MODE == 'durable'
+    )
+    if not (account_scoped_active or fleet_active):
+        raise ImproperlyConfigured(
+            'MARKETPLACE_FEED_ARTIFACT_MODE=active требует либо один account '
+            'ID в MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS с legacy run mode, '
+            'либо пустой allowlist с durable fleet run mode.',
+        )
 MARKETPLACE_FEED_ARTIFACT_BUCKET = _explicit_env_allow_blank(
     'MARKETPLACE_FEED_ARTIFACT_BUCKET',
 )
@@ -359,14 +366,12 @@ if MARKETPLACE_FEED_ARTIFACT_MODE == 'canary' and (
 if MARKETPLACE_FEED_ARTIFACT_MODE == 'active' and (
     MARKETPLACE_FEED_STORAGE_MODE != 'stable_bridge'
     or MARKETPLACE_FEED_INGRESS_MODE != 'dual_write'
-    or MARKETPLACE_FEED_RUN_MODE != 'legacy'
     or AVITO_STATUS_LIFECYCLE_MODE != 'dual_write'
     or MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED
 ):
     raise ImproperlyConfigured(
-        'Account-scoped active rollout требует stable_bridge, dual_write '
-        'ingress/lifecycle, legacy fleet run mode и выключенную массовую '
-        'миграцию профилей.',
+        'Active private delivery требует stable_bridge, dual_write '
+        'ingress/lifecycle и выключенную массовую миграцию профилей.',
     )
 if (
     MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS

@@ -1,4 +1,5 @@
 import datetime
+from copy import deepcopy
 from dataclasses import dataclass
 import html
 import hmac
@@ -866,7 +867,56 @@ class AvitoAdapter(BaseMarketplaceAdapter):
     #  Настройка профиля Autoload (вызывается при онбординге)             #
     # ------------------------------------------------------------------ #
 
-    def setup_autoload_profile(self, report_email: str) -> None:
+    def _build_autoload_profile_payload(
+        self,
+        current: dict,
+        report_email: str,
+        *,
+        feed_url: str,
+        replaced_feed_urls: tuple[str, ...] = (),
+    ) -> dict:
+        """Build the existing onboarding upsert while preserving user fields."""
+
+        if not isinstance(current, dict):
+            raise ValueError('Avito Autoload profile must be an object.')
+        replaced_urls = {feed_url, *replaced_feed_urls}
+        feeds = [
+            deepcopy(feed)
+            for feed in (current.get('feeds_data') or [])
+            if (
+                isinstance(feed, dict)
+                and feed.get('feed_url') not in replaced_urls
+            )
+        ]
+        feeds.append({
+            'feed_name': f'MAP feed — {self.account.name}',
+            'feed_url': feed_url,
+        })
+        payload = {
+            'agreement': True,
+            'autoload_enabled': current.get('autoload_enabled', True),
+            'report_email': current.get('report_email') or report_email,
+            'feeds_data': feeds,
+            'schedule': deepcopy(current.get('schedule')) or [
+                {
+                    'rate': 50000,
+                    'weekdays': [0, 1, 2, 3, 4, 5, 6],
+                    'time_slots': [3, 12],
+                },
+            ],
+        }
+        for optional_key in ('allow_pay_over_limit', 'uploadMode'):
+            if optional_key in current:
+                payload[optional_key] = deepcopy(current[optional_key])
+        return payload
+
+    def setup_autoload_profile(
+        self,
+        report_email: str,
+        *,
+        feed_url: str | None = None,
+        replaced_feed_urls: tuple[str, ...] = (),
+    ) -> None:
         """
         Создаёт или обновляет профиль Avito Autoload для аккаунта.
 
@@ -874,34 +924,18 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         и явное состояние выключенного профиля.
         Вызывается один раз при подключении аккаунта (онбординг).
         """
-        own_feed = {
-            'feed_name': f'MAP feed — {self.account.name}',
-            'feed_url': self._feed_public_url(),
-        }
+        target_feed_url = feed_url or self._feed_public_url()
         try:
             current = self.get_autoload_profile()
         except NotFoundError:
             current = {}
 
-        # Существующие фиды и расписание принадлежат клиенту: добавляем только
-        # фид MAP и не включаем отключённый профиль без явного действия.
-        feeds = [
-            feed for feed in (current.get('feeds_data') or [])
-            if (
-                isinstance(feed, dict)
-                and feed.get('feed_url') != own_feed['feed_url']
-            )
-        ]
-        feeds.append(own_feed)
-        payload = {
-            'agreement': True,
-            'autoload_enabled': current.get('autoload_enabled', True),
-            'report_email': current.get('report_email') or report_email,
-            'feeds_data': feeds,
-            'schedule': current.get('schedule') or [
-                {'rate': 50000, 'weekdays': [0, 1, 2, 3, 4, 5, 6], 'time_slots': [3, 12]},
-            ],
-        }
+        payload = self._build_autoload_profile_payload(
+            current,
+            report_email,
+            feed_url=target_feed_url,
+            replaced_feed_urls=replaced_feed_urls,
+        )
         self._request(
             'post',
             '/autoload/v2/profile',

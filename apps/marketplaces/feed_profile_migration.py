@@ -18,6 +18,7 @@ fingerprints.
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import timedelta
 import hmac
@@ -29,6 +30,7 @@ from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
 
+from apps.marketplaces.adapters.avito.error_handler import NotFoundError
 from apps.marketplaces.adapters.avito.profile_migration import (
     AvitoProfileMigrationClient,
     AvitoProfileMigrationError,
@@ -36,11 +38,14 @@ from apps.marketplaces.adapters.avito.profile_migration import (
     AvitoProfilePostError,
     AvitoProfileTransportError,
     AvitoProfileValidationError,
+    build_profile_plan,
     inspect_unprovisioned_profile,
     observe_endpoint_profile,
     probe_feed_bridge_parity,
+    trusted_account_feed_object_key,
     validate_avito_profile_upsert_target,
 )
+from apps.marketplaces.feed_cutover import private_feed_fleet_enabled
 from apps.marketplaces.feed_endpoint import (
     FeedEndpointConfigurationError,
     canonical_marketplace_feed_public_base_url,
@@ -1500,3 +1505,326 @@ def run_feed_profile_migration(
         raise FeedProfileMigrationSafetyError(
             'Marketplace feed endpoint configuration is invalid.',
         ) from None
+
+
+def _assert_fleet_endpoint_owner(
+    account: MarketplaceAccount,
+    endpoint: MarketplaceFeedEndpoint,
+) -> None:
+    _assert_account_live(account)
+    if (
+        endpoint.account_id != account.pk
+        or endpoint.account.tenant_id != account.tenant_id
+        or endpoint.storage_mode
+        not in {
+            MarketplaceFeedEndpoint.StorageMode.LEGACY_BRIDGE,
+            MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION,
+        }
+        or not hmac.compare_digest(
+            endpoint.owner_identity_digest,
+            account_identity_digest(account),
+        )
+    ):
+        raise FeedProfileMigrationConflict(
+            'Marketplace feed onboarding owner generation changed.',
+        )
+
+
+def ensure_fleet_feed_endpoint(
+    account: MarketplaceAccount,
+) -> MarketplaceFeedEndpoint | None:
+    """Synchronously reserve a stable endpoint for one future SaaS account."""
+
+    if not private_feed_fleet_enabled():
+        return None
+    if not isinstance(account, MarketplaceAccount) or account.pk is None:
+        raise ValueError('A persisted marketplace account is required.')
+    if account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+        return None
+
+    from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
+
+    try:
+        locator = AvitoAdapter(account)._legacy_feed_locator()
+        key_id = _primary_signing_key_id()
+    except Exception:
+        raise FeedProfileMigrationSafetyError(
+            'Marketplace feed onboarding configuration is invalid.',
+        ) from None
+
+    with transaction.atomic():
+        locked_account = (
+            MarketplaceAccount.all_objects.select_for_update(of=('self',))
+            .select_related('tenant')
+            .filter(pk=account.pk, tenant_id=account.tenant_id)
+            .first()
+        )
+        if locked_account is None:
+            raise FeedProfileMigrationConflict(
+                'Marketplace feed onboarding owner disappeared.',
+            )
+        _assert_account_live(locked_account)
+        endpoint = (
+            MarketplaceFeedEndpoint.objects.select_for_update(of=('self',))
+            .select_related('account', 'account__tenant')
+            .filter(account_id=locked_account.pk)
+            .first()
+        )
+        if endpoint is not None:
+            _assert_fleet_endpoint_owner(locked_account, endpoint)
+            return endpoint
+        return MarketplaceFeedEndpoint.objects.create(
+            account=locked_account,
+            token_key_id=key_id,
+            owner_identity_digest=account_identity_digest(locked_account),
+            serve_enabled=False,
+            storage_mode=MarketplaceFeedEndpoint.StorageMode.LEGACY_BRIDGE,
+            legacy_object_key=locator.object_key,
+            legacy_profile_url=locator.public_url,
+            profile_state=MarketplaceFeedEndpoint.ProfileState.NEW,
+        )
+
+
+def fleet_feed_onboarding_ready(account_id: int) -> bool:
+    """Return exact database readiness without provider or storage I/O."""
+
+    if isinstance(account_id, bool) or not isinstance(account_id, int):
+        return False
+    endpoint = (
+        MarketplaceFeedEndpoint.objects.select_related('account', 'account__tenant')
+        .filter(account_id=account_id)
+        .first()
+    )
+    if endpoint is None:
+        return False
+    account = endpoint.account
+    try:
+        owner_matches = hmac.compare_digest(
+            endpoint.owner_identity_digest,
+            account_identity_digest(account),
+        )
+    except Exception:
+        return False
+    return (
+        account.deleted_at is None
+        and account.is_active is True
+        and account.tenant.is_active is True
+        and account.marketplace == MarketplaceAccount.MARKETPLACE_AVITO
+        and endpoint.serve_enabled is True
+        and endpoint.profile_state == MarketplaceFeedEndpoint.ProfileState.VERIFIED
+        and endpoint.storage_mode
+        in {
+            MarketplaceFeedEndpoint.StorageMode.LEGACY_BRIDGE,
+            MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION,
+        }
+        and owner_matches
+    )
+
+
+def _onboarding_observation(endpoint, profile: object):
+    return build_profile_plan(
+        account=endpoint.account,
+        profile=profile,
+        source_url=endpoint.legacy_profile_url,
+        source_object_key=endpoint.legacy_object_key,
+        stable_url=marketplace_feed_public_url(endpoint),
+    )
+
+
+def _enter_onboarding_bridge(
+    endpoint: MarketplaceFeedEndpoint,
+    *,
+    source_fingerprint: str,
+) -> MarketplaceFeedEndpoint:
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.all_objects.select_for_update(of=('self',))
+            .select_related('tenant')
+            .get(pk=endpoint.account_id)
+        )
+        locked = (
+            MarketplaceFeedEndpoint.objects.select_for_update(of=('self',))
+            .select_related('account', 'account__tenant')
+            .get(pk=endpoint.pk)
+        )
+        _assert_fleet_endpoint_owner(account, locked)
+        if locked.profile_state == MarketplaceFeedEndpoint.ProfileState.VERIFIED:
+            return locked
+        if locked.profile_state not in {
+            MarketplaceFeedEndpoint.ProfileState.NEW,
+            MarketplaceFeedEndpoint.ProfileState.BRIDGE_READY,
+            MarketplaceFeedEndpoint.ProfileState.UPDATE_UNKNOWN,
+        }:
+            raise FeedProfileMigrationConflict(
+                'Marketplace feed onboarding endpoint requires manual review.',
+            )
+        if (
+            locked.profile_state != MarketplaceFeedEndpoint.ProfileState.NEW
+            and not hmac.compare_digest(
+                locked.profile_fingerprint,
+                source_fingerprint,
+            )
+        ):
+            raise FeedProfileMigrationConflict(
+                'Marketplace feed onboarding source profile changed.',
+            )
+        if locked.profile_state != MarketplaceFeedEndpoint.ProfileState.BRIDGE_READY:
+            locked.profile_state = MarketplaceFeedEndpoint.ProfileState.BRIDGE_READY
+            locked.profile_fingerprint = source_fingerprint
+            locked.profile_revision = _next_revision(locked.profile_revision)
+        locked.serve_enabled = True
+        locked.profile_verified_at = timezone.now()
+        locked.save(update_fields=(
+            'serve_enabled',
+            'profile_state',
+            'profile_fingerprint',
+            'profile_revision',
+            'profile_verified_at',
+            'updated_at',
+        ))
+        return locked
+
+
+def run_fleet_feed_onboarding(
+    *,
+    tenant_id: int,
+    account_id: int,
+    report_email: str,
+) -> str:
+    """Idempotently register and verify the stable URL for one Avito account."""
+
+    if not private_feed_fleet_enabled():
+        return 'fleet_disabled'
+    if not isinstance(report_email, str) or not report_email:
+        raise ValueError('report_email must be non-empty.')
+    account = _load_account(
+        _positive_id(tenant_id, name='tenant_id'),
+        _positive_id(account_id, name='account_id'),
+    )
+    endpoint = ensure_fleet_feed_endpoint(account)
+    if endpoint is None:
+        raise FeedProfileMigrationConflict(
+            'Marketplace feed onboarding endpoint was not provisioned.',
+        )
+    _assert_fleet_endpoint_owner(account, endpoint)
+    if fleet_feed_onboarding_ready(account.pk):
+        return 'already_ready'
+
+    client = AvitoProfileMigrationClient(account)
+    try:
+        current_profile = client.adapter.get_autoload_profile()
+    except NotFoundError:
+        current_profile = {}
+    except Exception:
+        raise FeedProfileMigrationError(
+            'Marketplace feed onboarding profile read failed safely.',
+        ) from None
+
+    observation = None
+    if current_profile:
+        try:
+            observation = _onboarding_observation(endpoint, current_profile)
+        except AvitoProfileValidationError:
+            try:
+                snapshot = validate_avito_profile_upsert_target(
+                    current_profile,
+                )
+            except AvitoProfileValidationError:
+                raise FeedProfileMigrationSafetyError(
+                    'Avito onboarding profile is not safely writable.',
+                ) from None
+            owned_urls = [
+                feed['feed_url']
+                for feed in snapshot.profile['feeds_data']
+                if trusted_account_feed_object_key(
+                    account,
+                    feed['feed_url'],
+                ) is not None
+            ]
+            if owned_urls:
+                raise FeedProfileMigrationSafetyError(
+                    'Avito onboarding profile contains a drifting owned feed.',
+                )
+            observation = None
+    if observation is not None and observation.outcome == 'target':
+        bridge = _enter_onboarding_bridge(
+            endpoint,
+            source_fingerprint=observation.source_fingerprint,
+        )
+        _apply_exact_target(
+            account=account,
+            endpoint=bridge,
+            observation=observation,
+            expected_revision=bridge.profile_revision,
+            expected_source_fingerprint=bridge.profile_fingerprint,
+        )
+        return 'verified'
+
+    # UPDATE_UNKNOWN means one physical POST may already have reached Avito.
+    # Only an exact GET proof of the target may release that fence; blindly
+    # repeating the POST would violate the provider replay guarantee.
+    if endpoint.profile_state == MarketplaceFeedEndpoint.ProfileState.UPDATE_UNKNOWN:
+        raise FeedProfileMigrationProviderUncertain(
+            'Avito onboarding profile update still requires GET-only reconciliation.',
+        )
+
+    stable_url = marketplace_feed_public_url(endpoint)
+    if observation is not None:
+        target_profile = observation.plan.target_profile
+        source_fingerprint = observation.source_fingerprint
+    else:
+        target_profile = client.adapter._build_autoload_profile_payload(
+            current_profile,
+            report_email,
+            feed_url=stable_url,
+            replaced_feed_urls=(endpoint.legacy_profile_url,),
+        )
+        target = validate_avito_profile_upsert_target(target_profile)
+        source_profile = deepcopy(target.profile)
+        stable_indexes = [
+            index
+            for index, feed in enumerate(source_profile['feeds_data'])
+            if feed.get('feed_url') == stable_url
+        ]
+        if len(stable_indexes) != 1:
+            raise FeedProfileMigrationSafetyError(
+                'Marketplace feed onboarding target is not exact.',
+            )
+        source_profile['feeds_data'][stable_indexes[0]]['feed_url'] = (
+            endpoint.legacy_profile_url
+        )
+        source = validate_avito_profile_upsert_target(source_profile)
+        source_fingerprint = source.fingerprint
+
+    bridge = _enter_onboarding_bridge(
+        endpoint,
+        source_fingerprint=source_fingerprint,
+    )
+    if bridge.profile_state == MarketplaceFeedEndpoint.ProfileState.VERIFIED:
+        return 'already_ready'
+    try:
+        prepared = client.prepare_post()
+        boundary = _enter_update_unknown(
+            endpoint=bridge,
+            expected_revision=bridge.profile_revision,
+            expected_fingerprint=bridge.profile_fingerprint,
+        )
+        client.post_profile_once(prepared, target_profile)
+        latest_profile = client.get_profile()
+        latest = observe_endpoint_profile(boundary, latest_profile)
+    except (AvitoProfilePostError, AvitoProfileTransportError):
+        raise FeedProfileMigrationProviderUncertain(
+            'Avito onboarding profile update requires safe retry.',
+        ) from None
+    if latest.outcome != 'target':
+        raise FeedProfileMigrationProviderUncertain(
+            'Avito onboarding profile update is not visible yet.',
+        )
+    _apply_exact_target(
+        account=account,
+        endpoint=boundary,
+        observation=latest,
+        expected_revision=boundary.profile_revision,
+        expected_source_fingerprint=boundary.profile_fingerprint,
+    )
+    return 'verified'

@@ -19,6 +19,7 @@ from apps.marketplaces.feed_artifact_serving import private_feed_route_enabled
 from apps.marketplaces.feed_cutover import (
     private_feed_cutover_account_ids,
     private_feed_cutover_enabled,
+    private_feed_fleet_enabled,
 )
 from apps.marketplaces.feed_intents import bump_feed_intents
 from apps.marketplaces.feed_workflow import account_identity_digest
@@ -89,6 +90,12 @@ def _active_settings(settings):
     settings.MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS = (4,)
 
 
+def _fleet_settings(settings):
+    _active_settings(settings)
+    settings.MARKETPLACE_FEED_RUN_MODE = 'durable'
+    settings.MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS = ()
+
+
 def _cutover_endpoint(settings, slug: str):
     tenant = Tenant.objects.create(name=f'Cutover {slug}', slug=slug)
     account = MarketplaceAccount.objects.create(
@@ -139,6 +146,26 @@ def test_cutover_fails_closed_when_any_coordinated_gate_changes(settings):
 
     assert private_feed_cutover_enabled(4) is False
     assert _durable_feed_run_enabled(4) is False
+
+
+def test_fleet_mode_admits_every_positive_account_without_an_allowlist(settings):
+    _fleet_settings(settings)
+
+    assert private_feed_fleet_enabled() is True
+    assert private_feed_cutover_account_ids() == frozenset()
+    assert private_feed_cutover_enabled(4) is True
+    assert private_feed_cutover_enabled(500) is True
+    assert private_feed_cutover_enabled(True) is False
+    assert _durable_feed_run_enabled(4) is True
+    assert _durable_feed_run_enabled(500) is True
+
+
+def test_fleet_mode_fails_closed_if_an_account_allowlist_is_mixed_in(settings):
+    _fleet_settings(settings)
+    settings.MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS = (4,)
+
+    assert private_feed_fleet_enabled() is False
+    assert private_feed_cutover_enabled(4) is False
 
 
 def test_active_private_route_is_dark_for_non_allowlisted_account(settings):

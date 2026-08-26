@@ -1,6 +1,6 @@
 # Roadmap надёжной отправки фидов Avito
 
-Обновлено: 2026-08-26.
+Обновлено: 2026-08-27.
 
 Текущий статус: [`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md).
 Правила выполнения:
@@ -14,7 +14,7 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: P6 account-scoped cutover для account 4
+## Текущая фаза: P6 fleet-default onboarding и private delivery
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
@@ -38,12 +38,13 @@ legacy delivery repair merged через PR `#247` и выложен exact commi
 PR/push-main CI, encrypted backup, health/topology, Celery ping, scanner cycles
 и отсутствие свежих critical/500 ошибок подтверждены. P5 `dual_write`
 observation завершён. P6 private artifact package и bounded follow-up/recovery
-merged через PR `#249`–`#254`; production exact SHA `827040c` работает в
-`disabled/stable_bridge`. Canary/recovery подтвердил private exact-version
-artifact, но endpoint возвращён в legacy. Владелец продукта отдельно разрешил
-постоянный cutover единственного реального Autoload account `4`: один PR, один
-полный CI и account-scoped allowlist при неизменных fleet defaults. P7
-остаётся заморожен.
+merged через PR `#249`–`#254`. PR `#255` завершил постоянный private cutover
+единственного реального Autoload account `4`; production exact SHA перед
+fleet-release — `139ed48`. Реальный GET Avito подтвердил загрузку поколения.
+Владелец продукта отдельно разрешил один P6 fleet-default PR: любой будущий
+успешно подключённый аккаунт автоматически получает stable endpoint,
+регистрацию URL и durable/private delivery без ручного allowlist. P7 остаётся
+заморожен.
 
 Готово только когда:
 
@@ -311,14 +312,13 @@ runtime возвращён в `disabled/stable_bridge`. Следующий gate 
 PR, audited exact-version reconciliation, safe resume новой immutable attempt,
 проверка canary и точный rollback без удаления объекта.
 
-Recovery завершён в PR `#253`–`#254`. Следующий отдельно разрешённый gate —
-постоянный cutover только account `4`: `active` допускается лишь вместе с
-каноническим allowlist из одного ID, fleet run остаётся `legacy`, а private
-worker вызывается существующим durable intent только для этого ID. Cutover
-должен доказать автоматическую successor-generation, STOP/non-empty XML,
-fail-closed unknown PUT, exact-version serving, реальную загрузку Avito и
-точный rollback. Тестовые аккаунты, P7, object delete, GC, `0039` и широкое
-worker wiring не меняются.
+Recovery и account `4` cutover завершены в PR `#253`–`#255`. Следующий
+разрешённый gate переводит admission с exact-one allowlist на fleet default:
+`active/stable_bridge`, пустой allowlist и `run=durable`. Создание аккаунта
+синхронно резервирует endpoint, фоновая задача сохраняет настройки клиента и
+регистрирует stable URL, а публикация ждёт подтверждения вместо legacy
+fallback. Неоднозначный POST сверяется только GET-запросами и не повторяется
+вслепую. P7, object delete, GC и `0039` не меняются.
 
 ### P7. Удаление старых файлов и DB-защита — backlog
 
@@ -361,7 +361,7 @@ P0 docs/inventory
   → P3 durable job foundation (off)
   → P4 stable endpoint/profile (off)
   → P5 dual-write observation
-  → P6 private storage (off deploy → один ручной canary)
+  → P6 private storage (off deploy → canary → account 4 → fleet default)
   → отдельное решение о P7 cleanup/GC/0039
 ```
 

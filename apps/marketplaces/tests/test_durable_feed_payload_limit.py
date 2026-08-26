@@ -200,3 +200,39 @@ def test_coalesced_durable_path_does_not_materialize_full_payload_twice():
     full_materialization.assert_not_called()
     assert durable_owner.call_count == 1
     assert durable_owner.call_args.args[1].pk == account.pk
+
+
+def test_fleet_publication_waits_for_managed_endpoint_without_legacy_upload(settings):
+    account = _account('fleet-onboarding-hold')
+    _listing(account, 'pending')
+    settings.MARKETPLACE_FEED_INGRESS_MODE = 'dual_write'
+    settings.MARKETPLACE_FEED_ARTIFACT_MODE = 'active'
+    settings.MARKETPLACE_FEED_STORAGE_MODE = 'stable_bridge'
+    settings.MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED = False
+    settings.MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS = ()
+
+    with (
+        patch('apps.marketplaces.tasks.cache.delete'),
+        patch('apps.marketplaces.tasks._feed_window_remaining', return_value=0),
+        patch('apps.marketplaces.tasks._promote_queued_feed_rows'),
+        patch(
+            'apps.marketplaces.tasks.setup_autoload_profile_task.delay',
+        ) as onboard,
+        patch(
+            'apps.marketplaces.tasks._replace_owned_feed_flush',
+            return_value=True,
+        ) as replace_flush,
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.is_autoload_active',
+        ) as autoload_probe,
+        patch(
+            'apps.marketplaces.tasks._coalesced_flush_durable',
+        ) as durable_owner,
+    ):
+        result = coalesced_flush_task(account.pk)
+
+    assert result == {'status': 'onboarding_pending'}
+    onboard.assert_called_once_with(account.pk, account.tenant_id)
+    replace_flush.assert_called_once()
+    autoload_probe.assert_not_called()
+    durable_owner.assert_not_called()

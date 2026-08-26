@@ -181,7 +181,7 @@ class MarketplaceAccountListView(APIView):
         """Возвращает аккаунты маркетплейсов текущего тенанта."""
         qs = MarketplaceAccount.objects.filter(
             tenant=request.tenant,
-        ).select_related('avito_status')
+        ).select_related('avito_status', 'feed_endpoint')
         return Response(MarketplaceAccountSerializer(qs, many=True).data)
 
     @extend_schema(
@@ -222,7 +222,7 @@ class MarketplaceAccountDetailView(APIView):
         """Возвращает аккаунт тенанта или 404."""
         try:
             return MarketplaceAccount.objects.select_related(
-                'avito_status',
+                'avito_status', 'feed_endpoint',
             ).get(pk=pk, tenant=tenant)
         except MarketplaceAccount.DoesNotExist:
             return None
@@ -384,7 +384,23 @@ class AutoloadStatusView(APIView):
             return Response(status=status.HTTP_404_NOT_FOUND)
 
         from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
+        from apps.marketplaces.feed_cutover import private_feed_fleet_enabled
+        from apps.marketplaces.feed_profile_migration import (
+            ensure_fleet_feed_endpoint,
+            fleet_feed_onboarding_ready,
+        )
         from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+        if private_feed_fleet_enabled():
+            ensure_fleet_feed_endpoint(account)
+            if not fleet_feed_onboarding_ready(account.pk):
+                from apps.marketplaces.tasks import setup_autoload_profile_task
+                transaction.on_commit(
+                    lambda: setup_autoload_profile_task.delay(
+                        account.pk,
+                        account.tenant_id,
+                    )
+                )
 
         status_obj = AvitoAccountStatusService.refresh(account)
         snapshot = AvitoAccountStatusSerializer(status_obj).data

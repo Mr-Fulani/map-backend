@@ -308,13 +308,22 @@ preflight завершены на production `5ad92ad`. Первый account 4 c
 resume только attempt N+1 и rollback в `disabled/stable_bridge`; никаких
 delete/GC/P7/0039/new mode/worker wiring в него не входит.
 
-Recovery PR `#253`–`#254` выложен на production `827040c`. Владелец продукта
-2026-08-26 отдельно разрешил один следующий P6 cutover PR для единственного
-реального Autoload account `4`. Пакет не вводит новый fleet mode, migration
-или periodic worker: test accounts остаются legacy, а admission требует exact
-allowlist одного account ID и согласованные `legacy/dual_write/dual_write`,
-`active/stable_bridge/false` settings. Один полный GitHub CI используется как
-release gate; дублирующий push-main CI может быть отменён только при
+Recovery PR `#253`–`#254` выложен на production `827040c`, а PR `#255`
+завершил private cutover account `4` на production `139ed48`.
+
+Отдельно разрешённый 2026-08-27 P6 fleet-default пакет включает только:
+
+- fleet admission при `durable/dual_write/dual_write`, `active/stable_bridge`,
+  пустом cutover allowlist и выключенной profile migration;
+- синхронное резервирование endpoint при создании аккаунта;
+- tenant-scoped, сериализованный и fail-closed Autoload profile onboarding;
+- publication hold без legacy upload до подтверждения managed endpoint;
+- lifecycle-aware dashboard status и managed-URL подсказки frontend;
+- production settings, regression tests и документацию.
+
+Пакет не добавляет миграции, новые режимы, periodic worker, sweep старых
+аккаунтов, object delete, GC, P7 или `0039`. Один полный GitHub CI используется
+как release gate; дублирующий push-main CI может быть отменён только при
 совпадающем tree SHA.
 
 ## P7 — замороженный backlog, миграции 0036–0039

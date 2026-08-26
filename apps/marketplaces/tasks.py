@@ -45,6 +45,7 @@ from apps.marketplaces.adapters.avito.feed_builder import (
 from apps.marketplaces.feed_cutover import (
     private_feed_cutover_account_ids,
     private_feed_cutover_enabled,
+    private_feed_fleet_enabled,
 )
 from apps.marketplaces.adapters.avito.rate_limiter import (
     AUTOLOAD_RATE_LIMIT_RETRY_AFTER,
@@ -3388,6 +3389,29 @@ def coalesced_flush_task(
                 )
                 return {'status': completion}
 
+            if private_feed_fleet_enabled():
+                from apps.marketplaces.feed_profile_migration import (
+                    fleet_feed_onboarding_ready,
+                )
+                if not fleet_feed_onboarding_ready(account.pk):
+                    setup_autoload_profile_task.delay(
+                        account.pk,
+                        account.tenant_id,
+                    )
+                    replaced = _replace_owned_feed_flush(
+                        account_id,
+                        exact_revision,
+                        normalized_owner_token,
+                        countdown=60,
+                    )
+                    return {
+                        'status': (
+                            'onboarding_pending'
+                            if replaced
+                            else 'onboarding_pending_repairable'
+                        ),
+                    }
+
             if has_pending and not AvitoAdapter(account).is_autoload_active():
                 limit_probe = _account_feed_listings(
                     account,
@@ -5268,16 +5292,37 @@ def setup_autoload_profile_task(self, account_id: int, tenant_id: int):
     )
     report_email = owner.user.email if owner else account.tenant.slug + '@map.local'
 
+    lock = _coordination_lock(
+        f'avito:autoload-profile-setup:{tenant_id}:{account_id}',
+        timeout=300,
+    )
+    if not lock.acquire(blocking=False):
+        return {'status': 'locked'}
+
     try:
-        AvitoAdapter(account).setup_autoload_profile(report_email)
+        if private_feed_fleet_enabled():
+            from apps.marketplaces.feed_profile_migration import (
+                run_fleet_feed_onboarding,
+            )
+            result = run_fleet_feed_onboarding(
+                tenant_id=tenant_id,
+                account_id=account_id,
+                report_email=report_email,
+            )
+        else:
+            AvitoAdapter(account).setup_autoload_profile(report_email)
+            result = 'legacy_configured'
         from apps.marketplaces.services import AvitoAccountStatusService
         AvitoAccountStatusService.refresh(account)
         _write_log(
             account.tenant, 'autoload_profile_setup', 'ok',
             f'Autoload профиль Avito настроен для {account.name}',
         )
+        return {'status': result}
     except Exception as exc:
         raise self.retry(exc=exc, countdown=backoff(self.request.retries))
+    finally:
+        lock.release()
 
 
 @shared_task(queue='avito_update')

@@ -1,10 +1,9 @@
 # P6 private feed: bounded production canary
 
-Этот runbook применяется только к одному заранее проверенному Avito-аккаунту.
-Он не разрешает P7, GC, удаление объектов, `0039` или широкое worker wiring.
-`MARKETPLACE_FEED_ARTIFACT_MODE=active` допустим только после отдельного
-решения владельца продукта и только с exact-one account allowlist из раздела
-7.
+Разделы canary применяются только к одному заранее проверенному
+Avito-аккаунту. Fleet-default rollout из раздела 8 допустим только после
+успешного постоянного cutover и отдельного решения владельца продукта. Runbook
+не разрешает P7, GC, удаление объектов или `0039`.
 
 ## Неизменяемые условия
 
@@ -263,6 +262,48 @@ legacy 307 удаляется `ACCOUNT_ID` из allowlist, artifact mode воз�
 `disabled`, и сервисы перезапускаются. Старый private artifact, VersionId,
 upload ledger и evidence сохраняются. Повторное включение требует новой
 source intent generation; запрещено вручную переиспользовать старый PUT.
+
+## 8. Fleet-default после успешного постоянного cutover
+
+Fleet rollout не мигрирует все существующие профили и не создаёт отдельный
+sweep worker. Он меняет admission для штатной SaaS-цепочки:
+
+```text
+MARKETPLACE_FEED_RUN_MODE=durable
+MARKETPLACE_FEED_INGRESS_MODE=dual_write
+AVITO_STATUS_LIFECYCLE_MODE=dual_write
+MARKETPLACE_FEED_ARTIFACT_MODE=active
+MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS=
+MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
+MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
+```
+
+Production settings принимают только точную пару: один ID вместе с
+`run=legacy` для account-scoped cutover либо пустой allowlist вместе с
+`run=durable` для fleet default. Смешанный вариант fail-closed.
+
+Новый Avito-аккаунт создаётся вместе с endpoint в одной DB-транзакции. После
+commit сериализованная задача читает текущий профиль, сохраняет сторонние
+фиды, расписание, email и явное выключенное состояние, заменяет только URL MAP
+и подтверждает stable URL повторным GET. При неоднозначном POST следующий
+запуск выполняет только GET reconciliation и не повторяет POST вслепую.
+
+Пока endpoint не `verified`, durable publication остаётся в очереди,
+переоткрывает безопасную проверку onboarding и не вызывает legacy public
+upload. Managed capability URL не возвращается tenant UI.
+
+Порядок production rollout:
+
+1. выложить совместимый код с прежним account-scoped allowlist;
+2. проверить account `4`, private exact-version serving и readiness;
+3. одновременно очистить allowlist и поставить `run=durable`;
+4. перезапустить Django и все Celery-процессы, проверить exact settings;
+5. доказать private successor generation account `4`, Avito upload и отсутствие
+   legacy upload/error logs.
+
+Rollback admission выполняется одной парой: `run=legacy` и exact allowlist
+account `4`. Artifact, endpoint, VersionId и evidence не удаляются. P7, GC и
+object deletion остаются отдельным решением.
 
 [yandex-consistency]: https://yandex.cloud/en/docs/storage/qa#what-data-consistency-model-does-yandex-object-storage-use
 [yandex-list-versions]: https://yandex.cloud/en/docs/storage/s3/api-ref/bucket/listObjectVersions

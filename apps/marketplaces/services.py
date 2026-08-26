@@ -12,7 +12,10 @@ from apps.marketplaces.listing_lifecycle import (
     clear_remote_observation,
     release_status_check,
 )
-from apps.marketplaces.feed_cutover import private_feed_cutover_enabled
+from apps.marketplaces.feed_cutover import (
+    private_feed_cutover_enabled,
+    private_feed_fleet_enabled,
+)
 from apps.marketplaces.models import (
     AvitoAccountStatus,
     CategoryMapping,
@@ -1817,15 +1820,40 @@ class MarketplaceAccountService:
                 ))
                 _fence_marketplace_feed_endpoint_identity(account, feed_endpoint)
                 _invalidate_avito_access_token_after_commit(account)
+                if private_feed_fleet_enabled():
+                    from apps.marketplaces.feed_profile_migration import (
+                        FeedProfileMigrationError,
+                        ensure_fleet_feed_endpoint,
+                    )
+                    try:
+                        ensure_fleet_feed_endpoint(account)
+                    except FeedProfileMigrationError as exc:
+                        raise MarketplaceAccountFeedConflict(
+                            'Не удалось безопасно подготовить защищённый '
+                            'фид Avito.',
+                        ) from exc
         else:
             try:
-                account = MarketplaceAccount.objects.create(
-                    tenant=tenant,
-                    name=data['name'],
-                    marketplace=data['marketplace'],
-                    external_id=external_id,
-                    credentials_enc=credentials_enc,
-                )
+                with transaction.atomic():
+                    account = MarketplaceAccount.objects.create(
+                        tenant=tenant,
+                        name=data['name'],
+                        marketplace=data['marketplace'],
+                        external_id=external_id,
+                        credentials_enc=credentials_enc,
+                    )
+                    if private_feed_fleet_enabled():
+                        from apps.marketplaces.feed_profile_migration import (
+                            FeedProfileMigrationError,
+                            ensure_fleet_feed_endpoint,
+                        )
+                        try:
+                            ensure_fleet_feed_endpoint(account)
+                        except FeedProfileMigrationError as exc:
+                            raise MarketplaceAccountFeedConflict(
+                                'Не удалось безопасно подготовить защищённый '
+                                'фид Avito.',
+                            ) from exc
             except IntegrityError:
                 raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
 
@@ -2311,12 +2339,29 @@ class AvitoAccountStatusService:
                 if profile.get('autoload_enabled')
                 else AvitoAccountStatus.AUTOLOAD_DISABLED
             )
-            expected_feed_url = adapter._feed_public_url()
-            status_obj.feed_configured = any(
-                feed.get('feed_url') == expected_feed_url
-                for feed in (profile.get('feeds_data') or [])
-                if isinstance(feed, dict)
+            from apps.marketplaces.models import MarketplaceFeedEndpoint
+            endpoint = (
+                MarketplaceFeedEndpoint.objects.select_related(
+                    'account', 'account__tenant',
+                )
+                .filter(account_id=account.pk)
+                .first()
             )
+            if endpoint is None:
+                expected_feed_url = adapter._feed_public_url()
+                status_obj.feed_configured = any(
+                    feed.get('feed_url') == expected_feed_url
+                    for feed in (profile.get('feeds_data') or [])
+                    if isinstance(feed, dict)
+                )
+            else:
+                from apps.marketplaces.adapters.avito.profile_migration import (
+                    is_profile_feed_configured,
+                )
+                status_obj.feed_configured = is_profile_feed_configured(
+                    endpoint=endpoint,
+                    profile=profile,
+                )
             status_obj.profile_checked_at = checked_at
         except NotFoundError:
             status_obj.connection_status = AvitoAccountStatus.CONNECTION_CONNECTED
