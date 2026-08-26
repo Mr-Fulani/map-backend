@@ -1,6 +1,6 @@
 # Текущее состояние работ по фидам Avito
 
-Обновлено: 2026-08-25.
+Обновлено: 2026-08-26.
 
 Исходный WIP сохранён как локальный `not-for-merge` snapshot:
 
@@ -28,7 +28,9 @@ P5 writer/legacy-delivery activation merged через PR `#247`, выложен
 commit `9c23a6b37264fb26be9af78876af034b8d1cb508` и прошёл legacy-only production
 gate. Settings-gate для парного P5 `dual_write` observation merged через PR
 `#248` в `54b87f286b1e6a318fda6acf1abfa266fdd48bd2`, но само production-переключение
-в этой стадии не выполняется.
+выполнено отдельно. P6 private artifacts merged через PR `#249`, follow-up
+исправления — через PR `#250`–`#252`; production работает на exact commit
+`5ad92ad6729f724e6ba73954d7cf72bce45c6ebb`.
 
 Этот файл — единственный источник правды о текущей стадии работ. Roadmap
 находится в [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а обязательные
@@ -77,19 +79,18 @@ Snapshot меняет 169 файлов и добавляет больше 61 т�
 
 ```text
 MARKETPLACE_FEED_RUN_MODE=legacy
-MARKETPLACE_FEED_INGRESS_MODE=legacy
+MARKETPLACE_FEED_INGRESS_MODE=dual_write
+AVITO_STATUS_LIFECYCLE_MODE=dual_write
 MARKETPLACE_FEED_ARTIFACT_MODE=disabled
 MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
-MARKETPLACE_FEED_STORAGE_MODE=legacy_public
+MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
 ```
 
-Текущий production commit P5 foundation определяет
-`MARKETPLACE_FEED_RUN_MODE=legacy`, ingress и lifecycle в `legacy`; durable
-owner не активирован. P4 добавил только явные безопасные значения
-`MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false`,
-`MARKETPLACE_FEED_PROFILE_SOURCE_SETTLEMENT_SECONDS=3600` и
-`MARKETPLACE_FEED_STORAGE_MODE=legacy_public`. HMAC keyring и stable URL не
-нужны, пока stable bridge выключен.
+Текущий production commit `5ad92ad` сохраняет старый generator как владельца
+отправки (`run=legacy`), а P5 writer/lifecycle работают в парном `dual_write`.
+P4 stable bridge и HMAC keyring включены, но массовая profile migration
+запрещена. P6 artifact runtime после fail-closed canary выключен; endpoint
+account 4 продолжает отдавать legacy XML через тот же stable URL.
 
 ## Фактическая стадия snapshot
 
@@ -442,18 +443,64 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 
 ## Активный шаг
 
-P0–P4, P5 foundation и P5 writer/legacy-delivery activation завершены.
-Activation работает в production на exact commit `9c23a6b`; PR и push-main CI,
-encrypted backup, readiness, topology, Celery ping и несколько scanner cycles
-зелёные. Production пока сохраняет ingress/lifecycle/run `legacy`, profile
-migration выключена, artifact runtime отсутствует, storage — `legacy_public`.
+P0–P5 завершены. P6 schema/runtime выложен через PR `#249`, а три bounded
+follow-up — через PR `#250`–`#252`. Production exact SHA — `5ad92ad`; все
+контейнеры/readiness зелёные. Рабочие настройки после неуспешного canary
+возвращены в безопасные `legacy/dual_write/disabled/stable_bridge`, массовый
+profile admission выключен.
 
-Активный шаг — отдельно разрешённый P5 `dual_write` observation. Минимальный
-settings gate разрешает только ingress `legacy|dual_write` и требует lifecycle
-`dual_write` для ingress `dual_write`. Фактический rollout одновременно меняет
-только ingress и lifecycle; run остаётся `legacy`. Атомарный rollback возвращает
-обе переменные в `legacy`. Durable run, stable/private storage, profile
-migration, P6/P7, cleanup/GC и `0039` не включаются.
+Активный шаг — отдельно разрешённый P6 recovery только для account `4`, tenant
+`8`. Первый PUT оставил run `47228396-7351-4f40-a723-6cfd78ae4999` и attempt
+`777d9e27-ec83-4536-9a98-b394261b0582` в `put_pending`; endpoint не был
+переключён и продолжает `legacy_bridge`. После settlement exact-key
+`ListObjectVersions` показал ноль версий и delete markers. Recovery добавляет
+только audited reconciliation и exact-fenced resume того же generation с
+новой immutable attempt. P7, GC, удаление объектов, `0039`, новые режимы и
+общее worker wiring остаются заморожены.
+
+Локальный recovery gate 2026-08-26:
+
+```text
+pytest -q \
+  apps/marketplaces/tests/test_feed_artifact_canary.py \
+  apps/marketplaces/tests/test_feed_artifact_clients.py \
+  apps/marketplaces/tests/test_feed_artifact_db_guards.py \
+  apps/marketplaces/tests/test_feed_artifact_promotion.py \
+  apps/marketplaces/tests/test_feed_artifact_put_reconciliation.py \
+  apps/marketplaces/tests/test_feed_artifact_serving.py \
+  apps/marketplaces/tests/test_feed_artifact_storage.py \
+  apps/marketplaces/tests/test_feed_artifact_upload_ledger.py \
+  apps/marketplaces/tests/test_private_feed_recovery_commands.py \
+  tests/test_feed_artifact_settings.py \
+  tests/test_production_storage_settings.py
+результат: 339 passed, 2 skipped in 252.50s
+
+pytest -q \
+  apps/marketplaces/tests/test_feed_artifact_clients.py \
+  apps/marketplaces/tests/test_feed_artifact_put_reconciliation.py \
+  apps/marketplaces/tests/test_feed_artifact_canary.py \
+  apps/marketplaces/tests/test_private_feed_recovery_commands.py
+результат: 44 passed in 56.03s
+
+flake8 .
+результат: exit 0
+
+mypy
+результат: Success, 687 source files
+
+mypy --check-untyped-defs --exclude '(^|/)(tests?|migrations)/' \
+  apps config backup
+результат: Success, 346 source files
+
+python manage.py makemigrations --check --dry-run
+результат: No changes detected
+
+python manage.py migrate --noinput
+результат: No migrations to apply
+```
+
+Два skip — прежние замороженные P7 object-retention/GC integration tests.
+Полный backend suite выполняется один раз в CI единственного recovery PR.
 
 ### Локальная проверка P5 dual-write production gate
 
@@ -807,7 +854,7 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
 | P5 feed-intent foundation `0026`–`0028` | `DEPLOYED_LEGACY_ONLY`, PR `#246`, production `2e9958c` |
 | P5 writer/legacy-delivery activation | `DEPLOYED_LEGACY_ONLY`, PR `#247`, production `9c23a6b` |
 | P5 dual-write observation rollout | settings gate `MERGED` PR `#248`; production read-only inspection подтверждает `dual_write/dual_write` на SHA `54b87f2` |
-| P6 private artifact experiment | `LOCAL_GATE_VERIFIED`, разрешён 2026-08-25; cloud preflight, PR/deploy и реальный canary ещё не закрыты |
+| P6 private artifact experiment | `DEPLOYED_OFF`, PR `#249`–`#252`, production `5ad92ad`; account 4 canary fail-closed в `put_pending`, recovery `IN_PROGRESS` |
 | P7 cleanup/GC/0039 | `FROZEN` |
 
 Физическое разделение не выполняется автоматически: общие файлы
@@ -825,12 +872,11 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
 - `0030_private_feed_artifact_guards` — PostgreSQL-защита promotion,
   exact-version serving и rollback.
 
-Пакет готовится одним PR. Первичный production deploy обязан оставаться
-выключенным. После отдельной настройки versioned private bucket, IAM, KMS и
-presigner разрешён только ручной canary одного явно указанного Avito-аккаунта.
-Canary сохраняет прежний публичный URL фида, атомарно переключает только этот
-endpoint на проверенную точную версию XML и имеет rollback обратно на legacy
-без удаления объекта.
+Основной пакет merged через PR `#249`; follow-up PR `#250`–`#252` устранили
+реальные несовпадения Avito schema/schedule и Yandex ACL owner response.
+Versioned private bucket, отдельный IAM/KMS и presigner настроены. Canary
+сохраняет прежний публичный URL фида, атомарно переключает только выбранный
+endpoint и имеет rollback обратно на legacy без удаления объекта.
 
 Локально подтверждены:
 
@@ -847,10 +893,14 @@ endpoint на проверенную точную версию XML и имеет
 - end-to-end PostgreSQL canary: STOP для пустой публикации, exact-version
   upload/readback, атомарное promotion и legacy rollback.
 
-Cloud preflight сверяет реальный Yandex folder owner через `GetBucketAcl`,
-включённое versioning и точный default KMS key до любого canary PUT.
+Cloud preflight проверяет owner contract через `GetBucketAcl`, включённое
+versioning и точный default KMS key до любого canary PUT. Yandex может опустить
+оба owner-поля; частичный или другой owner блокируется.
 
-Локальный gate закрыт. Реальная cloud preflight/canary, PR/CI и production
-наблюдение ещё не завершены, поэтому пакет пока не `DEPLOYED` и не
-`CANARY_VERIFIED`. P7, retention delete, GC, удаление объектов, `0039` и
-широкое production-включение в P6 не входят.
+Код и cloud preflight выложены, но canary ещё не `CANARY_VERIFIED`: первый PUT
+завершился неизвестным результатом, durable ledger остался `put_pending`, а
+legacy endpoint не переключился. Exact-key list после settlement показал ноль
+версий. Отдельно разрешённый recovery-пакет обязан записать immutable audit,
+возобновить canary только новой attempt и вернуть runtime в
+`disabled/stable_bridge`. P7, retention delete, GC, удаление объектов, `0039`
+и широкое production-включение в P6 не входят.

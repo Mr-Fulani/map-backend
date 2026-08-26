@@ -28,8 +28,9 @@ def _error(code: str, message: str) -> CommandError:
 
 class Command(BaseCommand):
     help = (
-        'Inspect, activate, or roll back one exact P6 private feed artifact. '
-        'Inspect is read-only; mutations require repeated account confirmation.'
+        'Inspect, activate, resume, or roll back one exact P6 private feed '
+        'artifact. Inspect is read-only; mutations require repeated account '
+        'confirmation.'
     )
 
     def add_arguments(self, parser):
@@ -37,13 +38,17 @@ class Command(BaseCommand):
         parser.add_argument(
             '--phase',
             required=True,
-            choices=('inspect', 'activate', 'rollback'),
+            choices=('inspect', 'activate', 'resume', 'rollback'),
         )
         parser.add_argument('--apply', action='store_true')
         parser.add_argument('--canary', action='store_true')
         parser.add_argument('--confirm-account-id', type=_positive_int)
         parser.add_argument('--expected-artifact-id')
         parser.add_argument('--expected-artifact-revision', type=_positive_int)
+        parser.add_argument('--expected-run-id')
+        parser.add_argument('--expected-run-revision', type=_positive_int)
+        parser.add_argument('--expected-attempt-id')
+        parser.add_argument('--expected-attempt-revision', type=_positive_int)
 
     def handle(self, *args, **options):
         phase = options['phase']
@@ -54,13 +59,17 @@ class Command(BaseCommand):
         if phase != 'inspect' and not apply:
             raise _error(
                 'apply_required',
-                'Activate and rollback require --apply.',
+                'Canary mutation phases require --apply.',
             )
         if phase == 'inspect' and (
             options['canary']
             or options['confirm_account_id'] is not None
             or options['expected_artifact_id'] is not None
             or options['expected_artifact_revision'] is not None
+            or options['expected_run_id'] is not None
+            or options['expected_run_revision'] is not None
+            or options['expected_attempt_id'] is not None
+            or options['expected_attempt_revision'] is not None
         ):
             raise _error(
                 'dry_run_confirmation_refused',
@@ -90,11 +99,28 @@ class Command(BaseCommand):
                 'rollback_fence_required',
                 'Rollback requires exact artifact id and artifact revision.',
             )
+        recovery_values = (
+            options['expected_run_id'],
+            options['expected_run_revision'],
+            options['expected_attempt_id'],
+            options['expected_attempt_revision'],
+        )
+        if phase != 'resume' and any(value is not None for value in recovery_values):
+            raise _error(
+                'resume_fence_not_allowed',
+                'Run and attempt fences are valid only for resume.',
+            )
+        if phase == 'resume' and any(value is None for value in recovery_values):
+            raise _error(
+                'resume_fence_required',
+                'Resume requires exact run and reconciled attempt fences.',
+            )
 
         from apps.marketplaces.feed_artifact_canary import (
             PrivateFeedCanaryError,
             activate_private_feed_canary,
             inspect_private_feed_canary,
+            resume_private_feed_canary,
             rollback_private_feed_canary,
         )
 
@@ -104,6 +130,16 @@ class Command(BaseCommand):
                 result = inspect_private_feed_canary(account_id)
             elif phase == 'activate':
                 result = activate_private_feed_canary(account_id)
+            elif phase == 'resume':
+                result = resume_private_feed_canary(
+                    account_id,
+                    expected_run_id=options['expected_run_id'],
+                    expected_run_revision=options['expected_run_revision'],
+                    expected_attempt_id=options['expected_attempt_id'],
+                    expected_attempt_revision=(
+                        options['expected_attempt_revision']
+                    ),
+                )
             else:
                 result = rollback_private_feed_canary(
                     account_id,

@@ -279,6 +279,9 @@ settings. Deploy кода выполняется только с прежним�
   feed_artifact_serving.py, feed_artifact_put_reconciliation.py;
 - feed_artifact_clients.py, feed_artifact_canary.py и ручная bounded
   `canary_private_feed_artifact` management-команда;
+- account-scoped `reconcile_private_feed_artifact_put` и exact-fenced
+  `canary_private_feed_artifact --phase resume` только для recovery уже
+  существующей `put_pending` attempt;
 - `P6_PRIVATE_FEED_CANARY_RUNBOOK.md` с exact rollback и fail-closed
   неизвестного PUT;
 - streaming writer/deterministic OEM части Avito feed builder;
@@ -290,10 +293,14 @@ P6 разрешён 2026-08-25 одним PR. Deploy сначала выключ
 preflight и нагрузочного теста. Широкое включение и любые object delete/GC
 остаются вне пакета.
 
-Локальный acceptance закрыт: `2592 passed, 3 skipped`, flake8, оба mypy,
-migration drift, OpenAPI, свежие migrations `0029`–`0030` и их точный
-rollback/reapply зелёные. Cloud preflight, PR/CI, deploy и canary не считаются
-закрытыми этим локальным результатом.
+Локальный основной acceptance закрыт: `2592 passed, 3 skipped`, flake8, оба
+mypy, migration drift, OpenAPI, свежие migrations `0029`–`0030` и их точный
+rollback/reapply зелёные. PR `#249`–`#252`, выключенный deploy и cloud
+preflight завершены на production `5ad92ad`. Первый account 4 canary оставил
+одну fail-closed `put_pending` attempt без endpoint promotion. Recovery для
+неё отдельно разрешён одним PR: read-only exact-version list, immutable audit,
+resume только attempt N+1 и rollback в `disabled/stable_bridge`; никаких
+delete/GC/P7/0039/new mode/worker wiring в него не входит.
 
 ## P7 — замороженный backlog, миграции 0036–0039
 

@@ -43,6 +43,7 @@ from apps.marketplaces.models import (
     MarketplaceFeedArtifact,
     MarketplaceFeedArtifactUploadAttempt,
     MarketplaceFeedEndpoint,
+    MarketplaceFeedPutReconciliationAudit,
     MarketplaceFeedRun,
 )
 
@@ -129,6 +130,12 @@ def _artifact_revision(value: object) -> int:
     return value
 
 
+def _positive_revision(value: object, *, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError(f'{field_name} must be a positive integer.')
+    return value
+
+
 def _artifact_id(value: object) -> uuid.UUID:
     if isinstance(value, uuid.UUID):
         return value
@@ -136,6 +143,15 @@ def _artifact_id(value: object) -> uuid.UUID:
         return uuid.UUID(str(value))
     except (AttributeError, TypeError, ValueError):
         raise ValueError('expected_artifact_id must be a UUID.') from None
+
+
+def _required_uuid(value: object, *, field_name: str) -> uuid.UUID:
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (AttributeError, TypeError, ValueError):
+        raise ValueError(f'{field_name} must be a UUID.') from None
 
 
 def _projection_statuses() -> tuple[str, ...]:
@@ -318,6 +334,171 @@ def _create_canary_run(
 
 
 @transaction.atomic(durable=True)
+def _validate_resumable_canary(
+    inspection: PrivateFeedCanaryInspection,
+    payload: FeedWriteResult,
+    *,
+    expected_run_id: uuid.UUID,
+    expected_run_revision: int,
+    expected_attempt_id: uuid.UUID,
+    expected_attempt_revision: int,
+) -> MarketplaceFeedRun:
+    """Fence one reconciled NO_OBJECT attempt before allocating attempt N+1."""
+
+    checked_at = timezone.now()
+    account = (
+        MarketplaceAccount.all_objects.select_for_update(of=('self',))
+        .select_related('tenant')
+        .get(pk=inspection.account_id)
+    )
+    endpoint = (
+        MarketplaceFeedEndpoint.objects.select_for_update(of=('self',))
+        .get(pk=inspection.endpoint_id, account_id=account.pk)
+    )
+    run = (
+        MarketplaceFeedRun.objects.select_for_update(of=('self',))
+        .filter(pk=expected_run_id, account_id=account.pk)
+        .first()
+    )
+    attempt = (
+        MarketplaceFeedArtifactUploadAttempt.objects.select_for_update(
+            of=('self',),
+        )
+        .filter(
+            pk=expected_attempt_id,
+            account_id=account.pk,
+            endpoint_id=endpoint.pk,
+            run_id=expected_run_id,
+        )
+        .first()
+    )
+    _validate_legacy_snapshot(account, endpoint)
+    if run is None or attempt is None:
+        raise PrivateFeedCanaryError(
+            'The exact reconciled canary generation is unavailable.',
+        )
+    audit = MarketplaceFeedPutReconciliationAudit.objects.filter(
+        attempt_id=attempt.pk,
+    ).first()
+    latest_attempt_id = (
+        MarketplaceFeedArtifactUploadAttempt.objects.filter(run_id=run.pk)
+        .order_by('-attempt_no')
+        .values_list('pk', flat=True)
+        .first()
+    )
+    active_claim = (
+        run.claim_token is not None
+        and run.claimed_until is not None
+        and run.claimed_until > checked_at
+    )
+    if (
+        run.state != MarketplaceFeedRun.State.PREPARING
+        or run.revision != expected_run_revision
+        or run.next_attempt_at is None
+        or run.next_attempt_at > checked_at
+        or active_claim
+        or run.feed_artifact_id is not None
+        or run.artifact_upload_attempt != 0
+        or run.source_intent_revision != inspection.source_intent_revision
+        or run.source_intent_revision != account.feed_intent_revision
+        or account.feed_intent_dispatched_revision != run.source_intent_revision
+        or account.feed_intent_due_at is not None
+        or run.endpoint_revision != inspection.artifact_revision
+        or run.endpoint_revision != endpoint.artifact_revision
+        or run.predecessor_artifact_id != endpoint.current_artifact_id
+        or run.total_count != payload.listing_count
+        or run.pending_count != 0
+        or not hmac.compare_digest(run.payload_sha256, payload.payload_sha256)
+        or latest_attempt_id != attempt.pk
+        or attempt.revision != expected_attempt_revision
+        or attempt.state != MarketplaceFeedArtifactUploadAttempt.State.NO_OBJECT
+        or attempt.put_resolution_source
+        != MarketplaceFeedArtifactUploadAttempt.ResolutionSource.OPERATOR_RECONCILIATION
+        or attempt.resolved_at is None
+        or attempt.safe_error_code != 'reviewed_settlement_no_object'
+        or attempt.object_version_id is not None
+        or attempt.storage_bucket
+        != str(settings.MARKETPLACE_FEED_ARTIFACT_BUCKET)
+        or attempt.expected_bucket_owner
+        != str(settings.MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER)
+        or audit is None
+        or audit.pre_revision + 1 != attempt.revision
+        or audit.post_revision != attempt.revision
+        or audit.to_state != MarketplaceFeedArtifactUploadAttempt.State.NO_OBJECT
+        or audit.outcome
+        != (
+            MarketplaceFeedPutReconciliationAudit.Outcome.
+            NO_OBJECT_BY_REVIEWED_SETTLEMENT_POLICY
+        )
+        or audit.decision_code != 'reviewed_settlement_no_object'
+        or audit.version_id_captured is not False
+    ):
+        raise PrivateFeedCanaryError(
+            'The exact reconciled canary snapshot changed before resume.',
+        )
+    return run
+
+
+def _claim_upload_activate(
+    inspection: PrivateFeedCanaryInspection,
+    run: MarketplaceFeedRun,
+    payload_file: BinaryIO,
+    payload: FeedWriteResult,
+    *,
+    max_bytes: int,
+) -> tuple[
+    MarketplaceFeedArtifact,
+    MarketplaceFeedRun,
+    MarketplaceFeedEndpoint,
+]:
+    claim = claim_due_run_for_account(
+        inspection.account_id,
+        expected_generation_id=run.pk,
+        expected_revision=run.revision,
+        lease=timedelta(minutes=30),
+    )
+    if claim is None:
+        raise PrivateFeedCanaryError('The exact P6 canary run could not be claimed.')
+    service = PrivateFeedArtifactStorageService(
+        private_feed_object_client(),
+        bucket=str(settings.MARKETPLACE_FEED_ARTIFACT_BUCKET),
+        expected_bucket_owner=str(
+            settings.MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER,
+        ),
+        max_bytes=max_bytes,
+    )
+    artifact = service.upload_and_attach(
+        claim,
+        payload_file=payload_file,
+        projection_count=payload.listing_count,
+    )
+    run, endpoint = _activate_attached_canary(claim, artifact.pk)
+    return artifact, run, endpoint
+
+
+def _result_from_activation(
+    inspection: PrivateFeedCanaryInspection,
+    artifact: MarketplaceFeedArtifact,
+    run: MarketplaceFeedRun,
+    endpoint: MarketplaceFeedEndpoint,
+) -> PrivateFeedCanaryResult:
+    source_intent_revision = run.source_intent_revision
+    if source_intent_revision is None:
+        raise PrivateFeedCanaryError('The activated canary lost its source revision.')
+    return PrivateFeedCanaryResult(
+        account_id=inspection.account_id,
+        endpoint_id=endpoint.pk,
+        run_id=run.pk,
+        artifact_id=artifact.pk,
+        source_intent_revision=source_intent_revision,
+        artifact_revision=endpoint.artifact_revision,
+        listing_count=artifact.listing_count,
+        size_bytes=artifact.size_bytes,
+        payload_sha256=artifact.payload_sha256,
+    )
+
+
+@transaction.atomic(durable=True)
 def _activate_attached_canary(
     claim: FeedRunClaim,
     artifact_id: uuid.UUID,
@@ -438,43 +619,72 @@ def activate_private_feed_canary(account_id: int) -> PrivateFeedCanaryResult:
             max_bytes=max_bytes,
         )
         run = _create_canary_run(inspection, payload)
-        claim = claim_due_run_for_account(
-            inspection.account_id,
-            expected_generation_id=run.pk,
-            expected_revision=run.revision,
-            lease=timedelta(minutes=30),
-        )
-        if claim is None:
-            raise PrivateFeedCanaryError('The exact P6 canary run could not be claimed.')
-        service = PrivateFeedArtifactStorageService(
-            private_feed_object_client(),
-            bucket=str(settings.MARKETPLACE_FEED_ARTIFACT_BUCKET),
-            expected_bucket_owner=str(
-                settings.MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER,
-            ),
+        artifact, run, endpoint = _claim_upload_activate(
+            inspection,
+            run,
+            cast(BinaryIO, payload_file),
+            payload,
             max_bytes=max_bytes,
         )
-        artifact = service.upload_and_attach(
-            claim,
-            payload_file=cast(BinaryIO, payload_file),
-            projection_count=payload.listing_count,
-        )
-        run, endpoint = _activate_attached_canary(claim, artifact.pk)
+    return _result_from_activation(inspection, artifact, run, endpoint)
 
-    source_intent_revision = run.source_intent_revision
-    if source_intent_revision is None:
-        raise PrivateFeedCanaryError('The activated canary lost its source revision.')
-    return PrivateFeedCanaryResult(
-        account_id=inspection.account_id,
-        endpoint_id=endpoint.pk,
-        run_id=run.pk,
-        artifact_id=artifact.pk,
-        source_intent_revision=source_intent_revision,
-        artifact_revision=endpoint.artifact_revision,
-        listing_count=artifact.listing_count,
-        size_bytes=artifact.size_bytes,
-        payload_sha256=artifact.payload_sha256,
+
+def resume_private_feed_canary(
+    account_id: int,
+    *,
+    expected_run_id: uuid.UUID | str,
+    expected_run_revision: int,
+    expected_attempt_id: uuid.UUID | str,
+    expected_attempt_revision: int,
+) -> PrivateFeedCanaryResult:
+    """Resume one audited NO_OBJECT canary using immutable attempt N+1."""
+
+    _require_runtime()
+    private_feed_bucket_preflight()
+    expected_run_id = _required_uuid(
+        expected_run_id,
+        field_name='expected_run_id',
     )
+    expected_attempt_id = _required_uuid(
+        expected_attempt_id,
+        field_name='expected_attempt_id',
+    )
+    expected_run_revision = _positive_revision(
+        expected_run_revision,
+        field_name='expected_run_revision',
+    )
+    expected_attempt_revision = _positive_revision(
+        expected_attempt_revision,
+        field_name='expected_attempt_revision',
+    )
+    inspection = inspect_private_feed_canary(account_id)
+    max_bytes = getattr(settings, 'MARKETPLACE_FEED_ARTIFACT_MAX_BYTES', None)
+    if isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes < 1:
+        raise PrivateFeedCanaryError('The private artifact byte cap is invalid.')
+
+    with tempfile.NamedTemporaryFile(mode='w+b') as payload_file:
+        payload = _write_projection(
+            inspection.account_id,
+            payload_file,
+            listing_count=inspection.listing_count,
+            max_bytes=max_bytes,
+        )
+        run = _validate_resumable_canary(
+            inspection,
+            payload,
+            expected_run_id=expected_run_id,
+            expected_run_revision=expected_run_revision,
+            expected_attempt_id=expected_attempt_id,
+            expected_attempt_revision=expected_attempt_revision,
+        )
+        artifact, run, endpoint = _claim_upload_activate(
+            inspection,
+            run,
+            cast(BinaryIO, payload_file),
+            payload,
+            max_bytes=max_bytes,
+        )
+    return _result_from_activation(inspection, artifact, run, endpoint)
 
 
 @transaction.atomic(durable=True)
