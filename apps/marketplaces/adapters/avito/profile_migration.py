@@ -366,6 +366,12 @@ def _trusted_url_object_key(account, raw_url: object) -> str | None:
     return key if legacy_bridge_target_url(candidate) == url else None
 
 
+def trusted_account_feed_object_key(account, raw_url: object) -> str | None:
+    """Return a trusted account-owned legacy key without exposing URL rules."""
+
+    return _trusted_url_object_key(account, raw_url)
+
+
 def inspect_unprovisioned_profile(account, profile: object) -> AvitoProfilePlan:
     """Find exactly one account-owned legacy feed before endpoint creation."""
 

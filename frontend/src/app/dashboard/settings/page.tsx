@@ -59,6 +59,7 @@ interface Account {
   autoload_active: boolean | null;
   autoload_checked_at: string | null;
   autoload_subscription_ends_at: string | null;
+  feed_endpoint_managed: boolean;
   avito_status: AvitoAccountHealth | null;
   created_at: string;
 }
@@ -544,6 +545,7 @@ export default function SettingsPage() {
                       ? acc.avito_status.autoload_status === 'enabled'
                       : Boolean(acc.autoload_active),
                     feed_url: '',
+                    feed_endpoint_managed: acc.feed_endpoint_managed,
                     stale: acc.avito_status?.profile_stale,
                     status: acc.avito_status ?? undefined,
                   };
@@ -1974,6 +1976,12 @@ export default function SettingsPage() {
                                   }
                                 </button>
                               </div>
+                            )}
+                            {al?.feed_endpoint_managed && (
+                              <p className="text-xs text-muted-foreground">
+                                2. MAP настроил защищённую ссылку фида автоматически;
+                                копировать URL не нужно.
+                              </p>
                             )}
                           </div>
                         </div>

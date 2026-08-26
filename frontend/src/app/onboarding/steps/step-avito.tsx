@@ -44,6 +44,7 @@ export function StepAvito({ data, onNext }: StepAvitoProps) {
         avito_client_secret: clientSecret,
         avito_account_name: accountName,
         avito_account_id: result.id,
+        avito_feed_endpoint_managed: Boolean(result.feed_endpoint_managed),
       });
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status?: number; data?: Record<string, unknown> } };

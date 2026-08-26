@@ -368,6 +368,34 @@ def test_production_accepts_one_account_active_cutover():
     assert _result_json(result)['mode'] == 'active'
 
 
+def test_production_accepts_active_private_fleet_without_an_allowlist():
+    environment = _stable_shadow_environment()
+    environment.update({
+        'MARKETPLACE_FEED_ARTIFACT_MODE': 'active',
+        'MARKETPLACE_FEED_RUN_MODE': 'durable',
+        'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS': '',
+    })
+
+    result = _run_settings('config.settings.production', environment)
+
+    assert result.returncode == 0, result.stderr
+    assert _result_json(result)['mode'] == 'active'
+
+
+def test_production_rejects_durable_private_fleet_with_an_allowlist():
+    environment = _stable_shadow_environment()
+    environment.update({
+        'MARKETPLACE_FEED_ARTIFACT_MODE': 'active',
+        'MARKETPLACE_FEED_RUN_MODE': 'durable',
+        'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS': '4',
+    })
+
+    result = _run_settings('config.settings.production', environment)
+
+    assert result.returncode != 0
+    assert 'MARKETPLACE_FEED_ARTIFACT_MODE=active' in result.stderr
+
+
 def test_production_accepts_bounded_private_canary_contract():
     result = _run_settings(
         'config.settings.production',
