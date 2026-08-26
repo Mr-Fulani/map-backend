@@ -163,6 +163,30 @@ def _validate_json_tree(value: object) -> None:
         )
 
 
+def _canonical_json_sort_key(value: object) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(',', ':'),
+        sort_keys=True,
+    )
+
+
+def _profile_fingerprint_material(profile: dict) -> dict:
+    """Normalize only provider-defined unordered schedule value sets."""
+
+    material = deepcopy(profile)
+    for schedule_entry in material.get('schedule', []):
+        if not isinstance(schedule_entry, dict):
+            continue
+        for field_name in ('time_slots', 'weekdays'):
+            values = schedule_entry.get(field_name)
+            if isinstance(values, list):
+                values.sort(key=_canonical_json_sort_key)
+    return material
+
+
 def validate_avito_profile(profile: object) -> ValidatedAvitoProfile:
     """Strictly validate and fingerprint the complete writable profile."""
 
@@ -244,7 +268,7 @@ def validate_avito_profile(profile: object) -> ValidatedAvitoProfile:
     _validate_json_tree(profile)
     try:
         canonical = json.dumps(
-            profile,
+            _profile_fingerprint_material(profile),
             ensure_ascii=False,
             allow_nan=False,
             separators=(',', ':'),
