@@ -108,10 +108,21 @@ def _enable_promotion(settings):
     settings.MARKETPLACE_FEED_ARTIFACT_MODE = 'canary'
 
 
+def _enable_account_cutover(settings, account_id: int):
+    settings.AVITO_STATUS_LIFECYCLE_MODE = 'dual_write'
+    settings.MARKETPLACE_FEED_RUN_MODE = 'legacy'
+    settings.MARKETPLACE_FEED_INGRESS_MODE = 'dual_write'
+    settings.MARKETPLACE_FEED_ARTIFACT_MODE = 'active'
+    settings.MARKETPLACE_FEED_STORAGE_MODE = 'stable_bridge'
+    settings.MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED = False
+    settings.MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS = (account_id,)
+
+
 def _attached_generation(
     slug: str,
     *,
     renew_during_put: bool = False,
+    active_settings=None,
 ) -> _PromotionContext:
     payload = b'<Ads formatVersion="3" target="Avito.ru"></Ads>'
     created_at = timezone.now()
@@ -125,13 +136,19 @@ def _attached_generation(
         feed_intent_revision=1,
         feed_intent_dispatched_revision=1,
     )
+    if active_settings is not None:
+        _enable_account_cutover(active_settings, account.pk)
     owner_digest = account_identity_digest(account)
     endpoint = MarketplaceFeedEndpoint.objects.create(
         account=account,
         token_key_id='promotion-hmac-v1',
         owner_identity_digest=owner_digest,
-        storage_mode=MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION,
-        serve_enabled=False,
+        storage_mode=(
+            MarketplaceFeedEndpoint.StorageMode.LEGACY_BRIDGE
+            if active_settings is not None
+            else MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION
+        ),
+        serve_enabled=active_settings is not None,
         legacy_object_key=f'feeds/{slug}/feed.xml',
         legacy_profile_url=f'https://legacy.example.test/{slug}/feed.xml',
         profile_state=MarketplaceFeedEndpoint.ProfileState.VERIFIED,
@@ -253,6 +270,28 @@ def test_attached_exact_version_and_submission_boundary_commit_atomically(settin
     assert context.run.submitted_at == transition_at
     assert context.run.revision == context.claim.revision + 1
     assert boundary.run_id == context.run.pk
+    assert boundary.revision == context.run.revision
+
+
+def test_active_account_cutover_promotes_legacy_bridge_without_global_durable(
+    settings,
+):
+    context = _attached_generation(
+        'active-account-cutover',
+        active_settings=settings,
+    )
+
+    boundary = _promote(context)
+
+    context.endpoint.refresh_from_db()
+    context.run.refresh_from_db()
+    assert context.endpoint.storage_mode == (
+        MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION
+    )
+    assert context.endpoint.serve_enabled is True
+    assert context.endpoint.current_artifact_id == context.artifact.pk
+    assert context.endpoint.artifact_revision == 1
+    assert context.run.state == MarketplaceFeedRun.State.SUBMIT_UNKNOWN
     assert boundary.revision == context.run.revision
 
 

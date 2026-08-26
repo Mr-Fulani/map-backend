@@ -216,6 +216,31 @@ class Command(BaseCommand):
                 'The exact PUT-pending reconciliation failed; inspect protected logs.',
             ) from None
 
+        from apps.marketplaces.feed_cutover import private_feed_cutover_enabled
+
+        if (
+            result.applied
+            and result.state in {'no_object', 'version_known'}
+            and private_feed_cutover_enabled(account_id)
+        ):
+            from django.db import transaction
+
+            from apps.marketplaces.feed_intents import (
+                nudge_undispatched_feed_intent,
+            )
+            from apps.marketplaces.models import MarketplaceAccount
+
+            try:
+                with transaction.atomic():
+                    nudge_undispatched_feed_intent(
+                        account_id,
+                        timezone.now(),
+                    )
+            except MarketplaceAccount.DoesNotExist:
+                # Reconciliation evidence is already durable. A concurrently
+                # removed owner has no safe work left to wake.
+                pass
+
         payload = {
             'ok': True,
             'phase': 'reconcile_put',

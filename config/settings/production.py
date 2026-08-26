@@ -16,6 +16,7 @@ from config.sentry_scrubbing import (
 )
 
 from .base import *  # noqa: F401, F403
+from .base import _strict_feed_cutover_account_ids
 
 DEBUG = False
 _https_url_validator = URLValidator(schemes=['https'])
@@ -225,6 +226,12 @@ if (
         'MARKETPLACE_FEED_INGRESS_MODE=dual_write требует '
         'AVITO_STATUS_LIFECYCLE_MODE=dual_write.',
     )
+try:
+    MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS = _strict_feed_cutover_account_ids(  # noqa: F405
+        _explicit_env_allow_blank('MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS'),
+    )
+except ValueError as exc:
+    raise ImproperlyConfigured(str(exc)) from exc
 MARKETPLACE_FEED_ARTIFACT_MODE = _required_env(
     'MARKETPLACE_FEED_ARTIFACT_MODE',
 ).lower()
@@ -235,9 +242,13 @@ if MARKETPLACE_FEED_ARTIFACT_MODE not in {
         'MARKETPLACE_FEED_ARTIFACT_MODE должен быть disabled, shadow, canary '
         'или active.',
     )
-if MARKETPLACE_FEED_ARTIFACT_MODE == 'active':
+if (
+    MARKETPLACE_FEED_ARTIFACT_MODE == 'active'
+    and len(MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS) != 1
+):
     raise ImproperlyConfigured(
-        'MARKETPLACE_FEED_ARTIFACT_MODE=active не входит в P6 canary.',
+        'MARKETPLACE_FEED_ARTIFACT_MODE=active требует ровно один '
+        'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS для account-scoped rollout.',
     )
 MARKETPLACE_FEED_ARTIFACT_BUCKET = _explicit_env_allow_blank(
     'MARKETPLACE_FEED_ARTIFACT_BUCKET',
@@ -344,6 +355,26 @@ if MARKETPLACE_FEED_ARTIFACT_MODE == 'canary' and (
     raise ImproperlyConfigured(
         'P6 canary требует private_generation, dual_write ingress, legacy '
         'run mode и выключенную массовую миграцию профилей.',
+    )
+if MARKETPLACE_FEED_ARTIFACT_MODE == 'active' and (
+    MARKETPLACE_FEED_STORAGE_MODE != 'stable_bridge'
+    or MARKETPLACE_FEED_INGRESS_MODE != 'dual_write'
+    or MARKETPLACE_FEED_RUN_MODE != 'legacy'
+    or AVITO_STATUS_LIFECYCLE_MODE != 'dual_write'
+    or MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED
+):
+    raise ImproperlyConfigured(
+        'Account-scoped active rollout требует stable_bridge, dual_write '
+        'ingress/lifecycle, legacy fleet run mode и выключенную массовую '
+        'миграцию профилей.',
+    )
+if (
+    MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS
+    and MARKETPLACE_FEED_ARTIFACT_MODE != 'active'
+):
+    raise ImproperlyConfigured(
+        'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS разрешён только при '
+        'MARKETPLACE_FEED_ARTIFACT_MODE=active.',
     )
 if (
     MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED

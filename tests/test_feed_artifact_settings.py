@@ -67,6 +67,7 @@ def _production_environment() -> dict[str, str]:
         'AVITO_STATUS_LIFECYCLE_MODE': 'legacy',
         'MARKETPLACE_FEED_RUN_MODE': 'legacy',
         'MARKETPLACE_FEED_INGRESS_MODE': 'legacy',
+        'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS': '',
         'MARKETPLACE_FEED_ARTIFACT_MODE': 'disabled',
         'MARKETPLACE_FEED_ARTIFACT_BUCKET': '',
         'MARKETPLACE_FEED_ARTIFACT_ACCESS_KEY_ID': '',
@@ -342,7 +343,7 @@ def test_production_non_disabled_mode_never_accepts_blank_bucket(mode):
     assert 'MARKETPLACE_FEED_ARTIFACT_BUCKET' in result.stderr
 
 
-def test_production_keeps_active_hard_disabled():
+def test_production_active_requires_one_account_allowlist():
     environment = _private_canary_environment()
     environment['MARKETPLACE_FEED_ARTIFACT_MODE'] = 'active'
 
@@ -350,7 +351,21 @@ def test_production_keeps_active_hard_disabled():
 
     assert result.returncode != 0
     assert 'MARKETPLACE_FEED_ARTIFACT_MODE=active' in result.stderr
-    assert 'P6 canary' in result.stderr
+    assert 'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS' in result.stderr
+
+
+def test_production_accepts_one_account_active_cutover():
+    environment = _private_canary_environment()
+    environment.update({
+        'MARKETPLACE_FEED_ARTIFACT_MODE': 'active',
+        'MARKETPLACE_FEED_STORAGE_MODE': 'stable_bridge',
+        'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS': '4',
+    })
+
+    result = _run_settings('config.settings.production', environment)
+
+    assert result.returncode == 0, result.stderr
+    assert _result_json(result)['mode'] == 'active'
 
 
 def test_production_accepts_bounded_private_canary_contract():

@@ -1,9 +1,8 @@
 """Fail-closed exact-version redirects for private marketplace feed artifacts.
 
 Serving is available only to an explicitly promoted ``private_generation``
-endpoint with ``serve_enabled`` and artifact mode ``canary`` or ``active``.
-P6 production settings admit only the bounded canary; broad ``active`` mode
-remains rejected.
+endpoint with ``serve_enabled``. Canary remains operator-bounded; active mode
+additionally requires the endpoint account in the exact cutover allowlist.
 """
 
 from __future__ import annotations
@@ -24,6 +23,7 @@ from django.utils import timezone
 from apps.marketplaces.feed_endpoint import (
     accepted_marketplace_feed_capability_key_id,
 )
+from apps.marketplaces.feed_cutover import private_feed_cutover_enabled
 from apps.marketplaces.feed_workflow import account_identity_digest
 from apps.marketplaces.models import (
     MarketplaceAccount,
@@ -74,9 +74,17 @@ class _LockedPrivateFeedSnapshot:
 def private_feed_route_enabled(endpoint: MarketplaceFeedEndpoint) -> bool:
     """Return whether one explicitly promoted endpoint may use private serving."""
 
+    artifact_mode = str(
+        getattr(settings, 'MARKETPLACE_FEED_ARTIFACT_MODE', 'disabled'),
+    )
     return (
-        str(getattr(settings, 'MARKETPLACE_FEED_ARTIFACT_MODE', 'disabled'))
-        in {'canary', 'active'}
+        (
+            artifact_mode == 'canary'
+            or (
+                artifact_mode == 'active'
+                and private_feed_cutover_enabled(endpoint.account_id)
+            )
+        )
         and endpoint.storage_mode
         == MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION
         and endpoint.serve_enabled is True

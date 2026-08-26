@@ -2,10 +2,11 @@ import datetime
 import hashlib
 import html
 import logging
+import tempfile
 import uuid
 from dataclasses import dataclass, replace
 from types import TracebackType
-from typing import Any, Protocol, cast
+from typing import Any, BinaryIO, Protocol, cast
 
 import requests
 from celery import shared_task
@@ -35,9 +36,15 @@ from apps.marketplaces.adapters.avito.error_handler import (
     backoff,
 )
 from apps.marketplaces.adapters.avito.feed_builder import (
+    FeedWriteResult,
     build_feed,
     build_stop_feed,
     get_ad_id,
+    write_feed,
+)
+from apps.marketplaces.feed_cutover import (
+    private_feed_cutover_account_ids,
+    private_feed_cutover_enabled,
 )
 from apps.marketplaces.adapters.avito.rate_limiter import (
     AUTOLOAD_RATE_LIMIT_RETRY_AFTER,
@@ -149,12 +156,15 @@ def _status_lifecycle_dual_write_enabled() -> bool:
     return settings.AVITO_STATUS_LIFECYCLE_MODE == 'dual_write'
 
 
-def _durable_feed_run_enabled() -> bool:
+def _durable_feed_run_enabled(account_id: int | None = None) -> bool:
     """Enable the durable feed owner only after lifecycle fencing is active."""
 
-    return (
+    fleet_enabled = (
         settings.MARKETPLACE_FEED_RUN_MODE == 'durable'
         and _status_lifecycle_dual_write_enabled()
+    )
+    return fleet_enabled or (
+        account_id is not None and private_feed_cutover_enabled(account_id)
     )
 
 
@@ -2296,8 +2306,339 @@ def _retry_pre_submission_baseline(
     )
 
 
+def _write_private_feed_payload(
+    feed_listings: list[Listing],
+    payload_file: BinaryIO,
+) -> FeedWriteResult:
+    """Write one bounded immutable projection without materializing XML bytes."""
+
+    max_bytes = settings.MARKETPLACE_FEED_ARTIFACT_MAX_BYTES
+    if feed_listings:
+        result = write_feed(
+            iter(feed_listings),
+            payload_file,
+            max_bytes=max_bytes,
+        )
+    else:
+        payload = build_stop_feed()
+        if len(payload) > max_bytes:
+            raise FeedUploadError('Private STOP feed exceeds the byte limit.')
+        written = payload_file.write(payload)
+        if written != len(payload):
+            raise OSError('Private feed payload file accepted a partial write.')
+        result = FeedWriteResult(
+            listing_count=0,
+            size_bytes=len(payload),
+            payload_sha256=hashlib.sha256(payload).hexdigest(),
+        )
+    payload_file.flush()
+    payload_file.seek(0)
+    return result
+
+
+def _prepare_private_feed_run(
+    account_id: int,
+    *,
+    source_intent_revision: int,
+    payload: FeedWriteResult,
+) -> tuple[MarketplaceAccount, FeedRunSnapshot]:
+    """Freeze one exact account/endpoint generation after payload creation."""
+
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.objects.select_for_update(of=('self',))
+            .select_related('tenant')
+            .get(pk=account_id, tenant__is_active=True)
+        )
+        endpoint = (
+            MarketplaceFeedEndpoint.objects.select_for_update(of=('self',))
+            .filter(account_id=account.pk)
+            .first()
+        )
+        if (
+            endpoint is None
+            or account.feed_intent_revision != source_intent_revision
+            or endpoint.source_intent_revision != source_intent_revision
+            or endpoint.profile_state
+            != MarketplaceFeedEndpoint.ProfileState.VERIFIED
+            or endpoint.serve_enabled is not True
+            or endpoint.storage_mode
+            not in {
+                MarketplaceFeedEndpoint.StorageMode.LEGACY_BRIDGE,
+                MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION,
+            }
+        ):
+            raise FeedRunConflict(
+                'Private feed endpoint changed while its payload was built.',
+            )
+        existing_run = (
+            MarketplaceFeedRun.objects.filter(
+                account_id=account.pk,
+                source_intent_revision=source_intent_revision,
+            )
+            .first()
+        )
+        frozen_endpoint_revision = (
+            existing_run.endpoint_revision
+            if existing_run is not None
+            else endpoint.artifact_revision
+        )
+        frozen_predecessor_artifact_id = (
+            existing_run.predecessor_artifact_id
+            if existing_run is not None
+            else endpoint.current_artifact_id
+        )
+        run = create_or_supersede_feed_run(
+            account.pk,
+            generation_id=existing_run.pk if existing_run is not None else None,
+            payload_sha256=payload.payload_sha256,
+            source_intent_revision=source_intent_revision,
+            endpoint_revision=frozen_endpoint_revision,
+            predecessor_artifact_id=frozen_predecessor_artifact_id,
+            now=now(),
+        )
+    return account, run
+
+
+def _hold_private_feed_intent(account_id: int, source_revision: int) -> None:
+    """Stop automatic replay while storage/provider outcome needs review."""
+
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.all_objects.select_for_update(of=('self',))
+            .filter(pk=account_id)
+            .first()
+        )
+        if (
+            account is not None
+            and account.feed_intent_revision == source_revision
+            and account.feed_intent_dispatched_revision < source_revision
+        ):
+            account.feed_intent_due_at = None
+            MarketplaceAccount.all_objects.bulk_update(
+                [account],
+                ('feed_intent_due_at',),
+            )
+
+
+def _retry_private_pre_submission(
+    task,
+    claim: FeedRunClaim,
+    error: Exception,
+) -> dict:
+    """Release one proven pre-provider claim and retry the same immutable run."""
+
+    retry_delay = _provider_retry_delay(error)
+    retry_step(
+        claim,
+        next_attempt_at=now() + retry_delay,
+        error=error,
+        now=now(),
+    )
+    if task.request.retries >= task.max_retries:
+        return {
+            'status': 'private_pre_submission_retry_exhausted',
+            'run_id': str(claim.run_id),
+        }
+    raise task.retry(
+        exc=error,
+        countdown=max(1, int(retry_delay.total_seconds())),
+    )
+
+
+def _coalesced_flush_private_durable(task, account: MarketplaceAccount):
+    """Upload, verify, promote and submit one private immutable generation."""
+
+    from apps.marketplaces.feed_artifact_clients import private_feed_object_client
+    from apps.marketplaces.feed_artifact_promotion import (
+        persist_private_feed_promotion_boundary,
+    )
+    from apps.marketplaces.feed_artifact_storage import (
+        FeedArtifactAttemptBlocked,
+        FeedArtifactContentError,
+        FeedArtifactResumeRequired,
+        FeedArtifactUploadOutcomeUnknown,
+        FeedArtifactVerificationError,
+        PrivateFeedArtifactStorageService,
+        StaleFeedArtifactClaim,
+    )
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    source_revision = int(account.feed_intent_revision)
+    feed_listings = _account_feed_listings(
+        account,
+        limit=_MAX_DURABLE_FEED_PAYLOAD_LISTINGS + 1,
+    )
+    if len(feed_listings) > _MAX_DURABLE_FEED_PAYLOAD_LISTINGS:
+        return _record_durable_feed_payload_limit(account)
+
+    with tempfile.TemporaryFile(mode='w+b') as payload_file:
+        try:
+            payload = _write_private_feed_payload(
+                feed_listings,
+                cast(BinaryIO, payload_file),
+            )
+            locked_account, run = _prepare_private_feed_run(
+                account.pk,
+                source_intent_revision=source_revision,
+                payload=payload,
+            )
+        except (FeedRunConflict, MarketplaceAccount.DoesNotExist):
+            _reschedule_coalesced_flush_after_conflict(account.pk)
+            return {'status': 'private_generation_changed'}
+        claim = claim_due_run_for_account(
+            locked_account.pk,
+            expected_generation_id=run.run_id,
+            expected_revision=run.revision,
+            lease=datetime.timedelta(minutes=30),
+            now=now(),
+        )
+        if claim is None:
+            return {'status': 'private_generation_owned', 'run_id': str(run.run_id)}
+
+        service = PrivateFeedArtifactStorageService(
+            private_feed_object_client(),
+            bucket=str(settings.MARKETPLACE_FEED_ARTIFACT_BUCKET),
+            expected_bucket_owner=str(
+                settings.MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER,
+            ),
+            max_bytes=settings.MARKETPLACE_FEED_ARTIFACT_MAX_BYTES,
+        )
+        try:
+            artifact = service.upload_and_attach(
+                claim,
+                payload_file=cast(BinaryIO, payload_file),
+                projection_count=payload.listing_count,
+            )
+        except FeedArtifactUploadOutcomeUnknown as exc:
+            _hold_private_feed_intent(account.pk, source_revision)
+            _write_log(
+                account.tenant,
+                'feed_flush',
+                'error',
+                'Результат записи приватного фида неизвестен; повтор PUT '
+                'остановлен до безопасной сверки.',
+            )
+            return {
+                'status': 'private_artifact_put_unknown',
+                'run_id': str(run.run_id),
+                'attempt_id': str(exc.upload_attempt_id),
+            }
+        except (FeedArtifactResumeRequired, FeedArtifactVerificationError) as exc:
+            return _retry_private_pre_submission(task, claim, exc)
+        except StaleFeedArtifactClaim as exc:
+            snapshot = _finish_durable_feed_run(
+                claim,
+                state=MarketplaceFeedRun.State.CANCELLED,
+                error=exc,
+            )
+            return {'status': 'private_generation_stale', 'run_id': str(snapshot.run_id)}
+        except (FeedArtifactAttemptBlocked, FeedArtifactContentError) as exc:
+            _hold_private_feed_intent(account.pk, source_revision)
+            snapshot = _finish_durable_feed_run(
+                claim,
+                state=MarketplaceFeedRun.State.FAILED,
+                error=exc,
+            )
+            return {'status': 'private_artifact_blocked', 'run_id': str(snapshot.run_id)}
+
+        endpoint = MarketplaceFeedEndpoint.objects.get(account_id=account.pk)
+        expected_profile_revision = endpoint.profile_revision
+        expected_profile_fingerprint = endpoint.profile_fingerprint
+        adapter = AvitoAdapter(locked_account)
+        try:
+            predecessor_upload = adapter.get_latest_upload(strict=True)
+            provider_predecessor_run_id = _provider_predecessor_from_strict_read(
+                locked_account,
+                predecessor_upload,
+            )
+        except _PROVIDER_READ_EXCEPTIONS as exc:
+            return _retry_private_pre_submission(task, claim, exc)
+
+        submitted_at = now()
+        try:
+            claim = persist_private_feed_promotion_boundary(
+                claim,
+                artifact_id=artifact.pk,
+                expected_profile_revision=expected_profile_revision,
+                expected_profile_fingerprint=expected_profile_fingerprint,
+                provider_predecessor_run_id=provider_predecessor_run_id,
+                submitted_at=submitted_at,
+                now=submitted_at,
+            )
+        except Exception as exc:
+            return _retry_private_pre_submission(task, claim, exc)
+
+        try:
+            adapter._trigger_autoload()
+        except RateLimitError as exc:
+            claim = _clear_rejected_feed_submission_boundary(claim)
+            return _retry_private_pre_submission(task, claim, exc)
+        except (
+            AmbiguousFeedSubmissionError,
+            requests.RequestException,
+            TrustedResponseError,
+            ServerError,
+        ) as exc:
+            uncertain_at = now()
+            with transaction.atomic():
+                snapshot = mark_feed_submission_unknown(
+                    claim,
+                    submitted_at=submitted_at,
+                    next_attempt_at=(
+                        uncertain_at + _DURABLE_FEED_SUBMISSION_DELAY
+                    ),
+                    error=exc,
+                    now=uncertain_at,
+                )
+                _hold_private_feed_intent(account.pk, source_revision)
+                _enqueue_feed_run_snapshot(snapshot)
+            return {
+                'status': 'submission_unknown',
+                'run_id': str(snapshot.run_id),
+            }
+        except FeedUploadError as exc:
+            _hold_private_feed_intent(account.pk, source_revision)
+            snapshot = _finish_durable_feed_run(
+                claim,
+                state=MarketplaceFeedRun.State.FAILED,
+                error=exc,
+            )
+            return {'status': 'failed', 'run_id': str(snapshot.run_id)}
+
+        transition_at = now()
+        with transaction.atomic():
+            snapshot = mark_feed_submitted(
+                claim,
+                payload_sha256=payload.payload_sha256,
+                provider_run_id=None,
+                submitted_at=submitted_at,
+                next_attempt_at=(
+                    transition_at + _DURABLE_FEED_SUBMISSION_DELAY
+                ),
+                now=transition_at,
+            )
+            _enqueue_feed_run_snapshot(snapshot)
+        _write_log(
+            locked_account.tenant,
+            'feed_flush',
+            'ok',
+            (
+                f'Приватный фид проверен и отправлен: '
+                f'{payload.listing_count} объявлений для '
+                f'{locked_account.name}, ожидаем Avito'
+            ),
+        )
+        return {'status': 'submitted', 'run_id': str(snapshot.run_id)}
+
+
 def _coalesced_flush_durable(task, account: MarketplaceAccount):
     """Submit one exact feed generation without replaying ambiguous POSTs."""
+
+    if private_feed_cutover_enabled(account.pk):
+        return _coalesced_flush_private_durable(task, account)
 
     # Local writers use the same account-first lock order.  The byte snapshot
     # and generation tags therefore describe one coherent local intent.
@@ -3020,7 +3361,7 @@ def coalesced_flush_task(
             external_id__isnull=True,
         ).select_related('tenant', 'product')
 
-        if _durable_feed_run_enabled():
+        if _durable_feed_run_enabled(account.pk):
             has_pending = pending_queryset.exists()
             # The durable owner materializes the full payload exactly once,
             # under its account lock. These probes only decide feed vs STOP.
@@ -3406,6 +3747,18 @@ def _process_submission_unknown(
             ),
             now=transition_at,
         )
+        source_revision = (
+            MarketplaceFeedRun.objects.filter(pk=claim.run_id)
+            .values_list('source_intent_revision', flat=True)
+            .first()
+        )
+        if source_revision is not None:
+            _complete_feed_flush_revision(
+                claim.account_id,
+                source_revision,
+                completed_at=transition_at,
+                submitted_at=claim.submitted_at,
+            )
         _enqueue_feed_run_snapshot(snapshot)
     return {
         'status': 'provider_run_bound',
@@ -4031,9 +4384,6 @@ def process_marketplace_feed_run_step(run_id: str, revision: int, /):
         expected_revision = revision
     except (TypeError, ValueError, OverflowError):
         return {'status': 'invalid'}
-    if not _durable_feed_run_enabled():
-        return {'status': 'disabled'}
-
     run = (
         MarketplaceFeedRun.objects.select_related('account', 'tenant')
         .filter(pk=generation_id)
@@ -4041,6 +4391,8 @@ def process_marketplace_feed_run_step(run_id: str, revision: int, /):
     )
     if run is None or run.revision != expected_revision:
         return {'status': 'stale'}
+    if not _durable_feed_run_enabled(run.account_id):
+        return {'status': 'disabled'}
     if run.state in {
         MarketplaceFeedRun.State.SUCCEEDED,
         MarketplaceFeedRun.State.FAILED,
@@ -4099,14 +4451,16 @@ def process_marketplace_feed_run_step(run_id: str, revision: int, /):
 def dispatch_due_marketplace_feed_runs():
     """Recover at most 100 due feed runs without taking their domain leases."""
 
-    if not _durable_feed_run_enabled():
+    cutover_ids = private_feed_cutover_account_ids()
+    fleet_enabled = _durable_feed_run_enabled()
+    if not fleet_enabled and not cutover_ids:
         return {'selected': 0, 'enqueued': 0, 'cancelled': 0, 'status': 'disabled'}
     current_time = now()
     cancelled = cancel_feed_runs_for_inactive_owners(
         limit=_DURABLE_FEED_RECOVERY_BATCH_SIZE,
         now=current_time,
     )
-    rows = list(
+    queryset = (
         MarketplaceFeedRun.objects.filter(
             marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
             state__in=MarketplaceFeedRun.ACTIVE_STATES,
@@ -4122,6 +4476,11 @@ def dispatch_due_marketplace_feed_runs():
             | Q(claimed_until__isnull=True)
             | Q(claimed_until__lte=current_time),
         )
+    )
+    if not fleet_enabled:
+        queryset = queryset.filter(account_id__in=cutover_ids)
+    rows = list(
+        queryset
         .order_by('next_attempt_at', 'pk')
         .values_list('pk', 'revision', 'next_attempt_at')
         [:_DURABLE_FEED_RECOVERY_BATCH_SIZE]
@@ -4412,7 +4771,7 @@ def poll_feed_results_task(self, account_id: int):
 
     Запускается через 5 мин после coalesced_flush_task; при необходимости повторяет.
     """
-    if _durable_feed_run_enabled():
+    if _durable_feed_run_enabled(account_id):
         return _enqueue_current_feed_run(account_id)
     if _status_lifecycle_dual_write_enabled():
         return _poll_feed_results_dual_write(self, account_id)

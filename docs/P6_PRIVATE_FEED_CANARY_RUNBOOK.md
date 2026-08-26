@@ -1,8 +1,10 @@
 # P6 private feed: bounded production canary
 
 Этот runbook применяется только к одному заранее проверенному Avito-аккаунту.
-Он не разрешает P7, GC, удаление объектов, `0039`, durable worker или
-`MARKETPLACE_FEED_ARTIFACT_MODE=active`.
+Он не разрешает P7, GC, удаление объектов, `0039` или широкое worker wiring.
+`MARKETPLACE_FEED_ARTIFACT_MODE=active` допустим только после отдельного
+решения владельца продукта и только с exact-one account allowlist из раздела
+7.
 
 ## Неизменяемые условия
 
@@ -219,6 +221,48 @@ Stable URL, legacy object, artifact, VersionId, upload ledger и fetch evidence
 `MARKETPLACE_FEED_ARTIFACT_MODE=disabled` и
 `MARKETPLACE_FEED_STORAGE_MODE=stable_bridge`. Для повторного canary требуется
 новое отдельное решение и новая точная generation.
+
+## 7. Постоянный account-scoped cutover после успешного canary
+
+Постоянное включение не меняет fleet run mode и не затрагивает тестовые
+аккаунты. Для единственного разрешённого account используются одновременно:
+
+```text
+MARKETPLACE_FEED_RUN_MODE=legacy
+MARKETPLACE_FEED_INGRESS_MODE=dual_write
+AVITO_STATUS_LIFECYCLE_MODE=dual_write
+MARKETPLACE_FEED_ARTIFACT_MODE=active
+MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS=ACCOUNT_ID
+MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
+MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
+```
+
+Production settings отклоняют `active` без канонического списка ровно из
+одного положительного ID. Private serving в `active` также проверяет этот ID,
+поэтому случайная private endpoint запись другого аккаунта остаётся тёмной.
+
+После deploy оператор повторно проверяет legacy endpoint и запускает:
+
+```bash
+python manage.py activate_marketplace_feed_cutover \
+  --account-id ACCOUNT_ID \
+  --confirm-account-id ACCOUNT_ID \
+  --apply
+```
+
+Команда делает bucket preflight, проверяет владельца endpoint, verified
+профиль и отсутствие uncertain run, затем создаёт или переиспользует ровно
+один durable intent. Worker строит новую immutable generation, выполняет
+one-shot private PUT, exact-version HEAD/GET, атомарно переключает тот же
+stable endpoint и только затем запускает Avito Autoload. Потерянный ответ PUT
+не повторяется; endpoint до reconciliation продолжает legacy serving.
+
+Для экстренного отката сначала выполняется exact artifact rollback из раздела
+6 при всё ещё включённом `active` admission. Только после подтверждённого
+legacy 307 удаляется `ACCOUNT_ID` из allowlist, artifact mode возвращается в
+`disabled`, и сервисы перезапускаются. Старый private artifact, VersionId,
+upload ledger и evidence сохраняются. Повторное включение требует новой
+source intent generation; запрещено вручную переиспользовать старый PUT.
 
 [yandex-consistency]: https://yandex.cloud/en/docs/storage/qa#what-data-consistency-model-does-yandex-object-storage-use
 [yandex-list-versions]: https://yandex.cloud/en/docs/storage/s3/api-ref/bucket/listObjectVersions

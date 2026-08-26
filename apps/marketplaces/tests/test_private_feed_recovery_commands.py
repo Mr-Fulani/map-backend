@@ -109,6 +109,56 @@ def test_reconciliation_command_outputs_only_redacted_result(settings):
     assert len(termination.evidence_digest) == 64
 
 
+@pytest.mark.django_db
+def test_active_cutover_reconciliation_wakes_only_exact_account(settings):
+    settings.SECRET_KEY = 'test-only-secret-key'
+    settings.AVITO_STATUS_LIFECYCLE_MODE = 'dual_write'
+    settings.MARKETPLACE_FEED_RUN_MODE = 'legacy'
+    settings.MARKETPLACE_FEED_INGRESS_MODE = 'dual_write'
+    settings.MARKETPLACE_FEED_ARTIFACT_MODE = 'active'
+    settings.MARKETPLACE_FEED_STORAGE_MODE = 'stable_bridge'
+    settings.MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED = False
+    settings.MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS = (4,)
+    result = SimpleNamespace(
+        attempt_id=uuid.uuid4(),
+        outcome='no_object_by_reviewed_settlement_policy',
+        state='no_object',
+        revision=2,
+        applied=True,
+        pages_scanned=1,
+        entries_scanned=0,
+        exact_version_count=0,
+        exact_delete_marker_count=0,
+        settlement_remaining_seconds=0,
+    )
+
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_clients.private_feed_bucket_preflight',
+        ),
+        patch(
+            'apps.marketplaces.feed_artifact_clients.'
+            'private_feed_authoritative_version_client',
+            return_value=Mock(),
+        ),
+        patch(
+            'apps.marketplaces.feed_artifact_put_reconciliation.'
+            'reconcile_put_pending_upload_attempt',
+            return_value=result,
+        ),
+        patch(
+            'apps.marketplaces.feed_intents.nudge_undispatched_feed_intent',
+        ) as nudge,
+    ):
+        call_command(
+            'reconcile_private_feed_artifact_put',
+            *_reconciliation_args(),
+            stdout=io.StringIO(),
+        )
+
+    assert nudge.call_args.args[0] == 4
+
+
 def test_canary_resume_command_requires_all_exact_fences():
     with pytest.raises(CommandError) as exc_info:
         call_command(

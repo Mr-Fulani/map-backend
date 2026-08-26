@@ -359,6 +359,49 @@ class AvitoAdapter(BaseMarketplaceAdapter):
 
         return self._stable_feed_locator() or self._legacy_feed_locator()
 
+    def _assert_autoload_feed_route_servable(self) -> None:
+        """Fence the stable URL before the non-idempotent provider trigger."""
+
+        from apps.marketplaces.feed_cutover import private_feed_cutover_enabled
+        from apps.marketplaces.feed_workflow import account_identity_digest
+        from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+        if not private_feed_cutover_enabled(self.account.pk):
+            self._stable_feed_locator(require_serve_enabled=True)
+            return
+        endpoint = (
+            MarketplaceFeedEndpoint.objects.select_related(
+                'account', 'account__tenant',
+            )
+            .filter(account_id=self.account.pk)
+            .first()
+        )
+        if endpoint is None:
+            raise FeedEndpointIdentityHold(
+                'Private feed endpoint is unavailable.',
+            )
+        stored_digest = str(endpoint.owner_identity_digest or '')
+        live_digest = account_identity_digest(endpoint.account)
+        adapter_digest = account_identity_digest(self.account)
+        if not (
+            endpoint.storage_mode
+            == MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION
+            and endpoint.serve_enabled is True
+            and endpoint.current_artifact_id is not None
+            and endpoint.profile_state
+            == MarketplaceFeedEndpoint.ProfileState.VERIFIED
+            and endpoint.source_intent_revision
+            == endpoint.account.feed_intent_revision
+            and endpoint.account.deleted_at is None
+            and endpoint.account.is_active is True
+            and endpoint.account.tenant.is_active is True
+            and hmac.compare_digest(stored_digest, live_digest)
+            and hmac.compare_digest(stored_digest, adapter_digest)
+        ):
+            raise FeedEndpointIdentityHold(
+                'Private feed endpoint is not safely servable.',
+            )
+
     def _feed_s3_key(self) -> str:
         locator = self._stable_feed_locator()
         return locator.object_key if locator is not None else self._legacy_feed_s3_key()
@@ -398,7 +441,7 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         """Уведомляет Avito о новом фиде через POST /autoload/v1/upload."""
         # Re-read the endpoint after upload. A credential rotation between
         # S3 PUT and this non-idempotent POST must stop at the provider boundary.
-        self._stable_feed_locator(require_serve_enabled=True)
+        self._assert_autoload_feed_route_servable()
         token = self._auth.get_token(self.account)
         resp = _avito_request(
             requests.post,
