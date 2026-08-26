@@ -21,6 +21,7 @@ from apps.marketplaces.feed_artifact_put_reconciliation import (
     reconcile_put_pending_upload_attempt,
 )
 from apps.marketplaces.feed_artifact_storage import (
+    FeedArtifactResumeRequired,
     FeedArtifactUploadOutcomeUnknown,
 )
 from apps.marketplaces.feed_workflow import account_identity_digest
@@ -44,8 +45,10 @@ class _ExactVersionClient:
     def __init__(self):
         self.body = None
         self.request = None
+        self.put_calls = 0
 
     def put_object_once(self, **kwargs):
+        self.put_calls += 1
         self.request = kwargs.copy()
         self.body = kwargs['Body'].read()
         return {
@@ -79,6 +82,33 @@ class _UnknownPutClient(_ExactVersionClient):
         self.request = kwargs.copy()
         self.body = kwargs['Body'].read()
         return {'ChecksumSHA256': kwargs['ChecksumSHA256']}
+
+
+class _YandexVersionKnownClient(_ExactVersionClient):
+    """Model Yandex metadata casing and omitted provider checksum fields."""
+
+    def __init__(self, account_id):
+        super().__init__()
+        self.account_id = account_id
+        self.refuse_put = False
+
+    def put_object_once(self, **kwargs):
+        if self.refuse_put:
+            raise AssertionError('VERSION_KNOWN resume must never issue PUT')
+        response = super().put_object_once(**kwargs)
+        MarketplaceFeedRun.objects.filter(account_id=self.account_id).update(
+            claimed_until=timezone.now() - timedelta(seconds=1),
+        )
+        return {'VersionId': response['VersionId']}
+
+    def _response(self, *, include_body=False):
+        response = super()._response(include_body=include_body)
+        response.pop('ChecksumSHA256', None)
+        response['Metadata'] = {
+            '-'.join(part.capitalize() for part in key.split('-')): value
+            for key, value in response['Metadata'].items()
+        }
+        return response
 
 
 class _AuthoritativeEmptyVersionClient:
@@ -351,3 +381,55 @@ def test_resume_refuses_stale_reconciliation_fence_before_second_put(settings):
 
     assert retry_client.request is None
     assert MarketplaceFeedArtifactUploadAttempt.objects.filter(run=run).count() == 1
+
+
+@pytest.mark.django_db(transaction=True)
+def test_version_known_yandex_canary_resume_verifies_without_new_put(settings):
+    _canary_settings(settings)
+    account, endpoint = _legacy_endpoint('p6-version-known-resume')
+    client = _YandexVersionKnownClient(account.pk)
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_canary.private_feed_bucket_preflight',
+            return_value={'versioning': 'Enabled'},
+        ),
+        patch(
+            'apps.marketplaces.feed_artifact_canary.private_feed_object_client',
+            return_value=client,
+        ),
+        pytest.raises(FeedArtifactResumeRequired),
+    ):
+        activate_private_feed_canary(account.pk)
+
+    run = MarketplaceFeedRun.objects.get(account=account)
+    attempt = MarketplaceFeedArtifactUploadAttempt.objects.get(run=run)
+    assert run.revision == 1
+    assert attempt.state == MarketplaceFeedArtifactUploadAttempt.State.VERSION_KNOWN
+    assert attempt.revision == 2
+    assert client.put_calls == 1
+
+    client.refuse_put = True
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_canary.private_feed_bucket_preflight',
+            return_value={'versioning': 'Enabled'},
+        ),
+        patch(
+            'apps.marketplaces.feed_artifact_canary.private_feed_object_client',
+            return_value=client,
+        ),
+    ):
+        result = resume_private_feed_canary(
+            account.pk,
+            expected_run_id=run.pk,
+            expected_run_revision=run.revision,
+            expected_attempt_id=attempt.pk,
+            expected_attempt_revision=attempt.revision,
+        )
+
+    assert client.put_calls == 1
+    attempt.refresh_from_db()
+    endpoint.refresh_from_db()
+    assert attempt.state == MarketplaceFeedArtifactUploadAttempt.State.ATTACHED
+    assert result.artifact_id == MarketplaceFeedArtifact.objects.get(run=run).pk
+    assert endpoint.storage_mode == MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION

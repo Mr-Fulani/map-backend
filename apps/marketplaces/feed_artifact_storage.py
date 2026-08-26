@@ -1204,6 +1204,33 @@ def _response_mapping(value: object, *, operation: str) -> Mapping[str, object]:
     return value
 
 
+def _normalized_response_metadata(
+    value: object,
+) -> dict[str, object]:
+    """Normalize S3 user-metadata keys using HTTP case semantics.
+
+    Yandex Object Storage may return ``X-Amz-Meta-*`` names in title case
+    through botocore even when the PUT request used lower-case names.  Values
+    remain exact and collisions after lower-casing fail closed.
+    """
+
+    if not isinstance(value, Mapping):
+        raise ValueError('Private storage returned no artifact metadata.')
+    normalized: dict[str, object] = {}
+    for key, metadata_value in value.items():
+        if not isinstance(key, str) or not key.isascii():
+            raise ValueError(
+                'Private storage returned an invalid artifact metadata key.',
+            )
+        normalized_key = key.lower()
+        if normalized_key in normalized:
+            raise ValueError(
+                'Private storage returned colliding artifact metadata keys.',
+            )
+        normalized[normalized_key] = metadata_value
+    return normalized
+
+
 def _verify_response_headers(
     response: Mapping[str, object],
     *,
@@ -1216,7 +1243,8 @@ def _verify_response_headers(
         raise ValueError('Exact private artifact version is a delete marker.')
     if _object_version_id(response.get('VersionId')) != version_id:
         raise ValueError('Private storage returned a different object VersionId.')
-    if response.get('ChecksumSHA256') != checksum_sha256:
+    provider_checksum = response.get('ChecksumSHA256')
+    if provider_checksum is not None and provider_checksum != checksum_sha256:
         raise ValueError(
             'Private storage did not preserve the exact SHA-256 checksum.',
         )
@@ -1229,9 +1257,7 @@ def _verify_response_headers(
         raise ValueError('Private storage returned a different object size.')
     if response.get('ContentType') != MarketplaceFeedArtifact.CONTENT_TYPE_XML:
         raise ValueError('Private storage returned a different content type.')
-    actual_metadata = response.get('Metadata')
-    if not isinstance(actual_metadata, Mapping):
-        raise ValueError('Private storage returned no artifact metadata.')
+    actual_metadata = _normalized_response_metadata(response.get('Metadata'))
     if any(actual_metadata.get(key) != value for key, value in metadata.items()):
         raise ValueError('Private storage returned different artifact metadata.')
 
@@ -1668,9 +1694,10 @@ class PrivateFeedArtifactStorageService:
                         locator=exact_locator,
                         upload_attempt_id=attempt_id,
                     ) from exc
-                if put_response.get('ChecksumSHA256') != checksum_sha256:
+                put_checksum = put_response.get('ChecksumSHA256')
+                if put_checksum is not None and put_checksum != checksum_sha256:
                     raise FeedArtifactUploadOutcomeUnknown(
-                        'Private artifact PUT returned no exact SHA-256 checksum; '
+                        'Private artifact PUT returned a different SHA-256 checksum; '
                         'exact VersionId requires verification.',
                         locator=_locator(attempt),
                         upload_attempt_id=attempt.pk,
