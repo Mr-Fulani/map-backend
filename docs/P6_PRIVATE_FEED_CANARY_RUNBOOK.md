@@ -159,10 +159,11 @@ python manage.py reconcile_private_feed_artifact_put \
 
 ### 5.2 Safe resume того же generation
 
-Resume требует post-reconciliation attempt revision и неизменившуюся run
-revision. Он заново строит XML и сравнивает SHA-256/количество со frozen run,
-проверяет audit `put_pending → no_object`, отсутствие более новой attempt и
-только затем claim-ит тот же generation:
+Resume требует точные attempt/run UUID и revision. Поддерживаются только две
+явные ветки: audited `no_object` после сверки неизвестного PUT либо последняя
+`version_known` с VersionId из ответа PUT. Команда заново строит XML, сравнивает
+SHA-256/размер/количество со frozen run, проверяет отсутствие более новой
+attempt и только затем claim-ит тот же generation:
 
 ```bash
 python manage.py canary_private_feed_artifact \
@@ -177,9 +178,22 @@ python manage.py canary_private_feed_artifact \
   --confirm-account-id ACCOUNT_ID
 ```
 
-Любое несовпадение fence останавливает resume до второго PUT. Если новый PUT
-снова становится неизвестным, он остаётся новой `put_pending` attempt и
-проходит отдельную сверку; автоматического цикла retry нет.
+Для `no_object` дополнительно проверяется неизменённый reconciliation audit;
+только эта ветка создаёт immutable attempt N+1 и может выполнить новый PUT.
+Для `version_known` новый PUT запрещён: сервис делает HEAD и GET только точной
+версии, после чего либо атомарно прикрепляет её, либо останавливается.
+
+Yandex Object Storage может вернуть имена `X-Amz-Meta-*` с другим регистром и
+не включить `ChecksumSHA256` в PUT/HEAD/GET response. Имена metadata
+сравниваются без учёта HTTP-регистра, но значения остаются точными; коллизии
+регистра запрещены. Отсутствующий provider checksum принимается только после
+совпадения VersionId, типа, размера, immutable metadata и полного SHA-256
+GET-readback exact version. Присутствующий, но отличный checksum всегда
+останавливает проверку.
+
+Любое несовпадение fence останавливает resume до storage-вызова. Если новый
+PUT ветки `no_object` снова становится неизвестным, он остаётся новой
+`put_pending` attempt и проходит отдельную сверку; автоматического retry нет.
 
 ## 6. Точный rollback после promotion
 

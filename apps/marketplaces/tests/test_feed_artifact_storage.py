@@ -368,7 +368,9 @@ def test_missing_put_version_fails_closed_without_head_or_attachment():
 
 
 @pytest.mark.parametrize('missing_checksum_phase', ('put', 'head'))
-def test_missing_storage_checksum_fails_closed(missing_checksum_phase):
+def test_missing_provider_checksum_uses_exact_version_readback(
+    missing_checksum_phase,
+):
     payload = b'<Ads></Ads>'
     _, _, run, claim = _claimed_private_run(
         f'artifact-storage-no-checksum-{missing_checksum_phase}',
@@ -379,16 +381,91 @@ def test_missing_storage_checksum_fails_closed(missing_checksum_phase):
         head_checksum=missing_checksum_phase != 'head',
     )
 
-    expected_error = (
-        FeedArtifactUploadOutcomeUnknown
-        if missing_checksum_phase == 'put'
-        else FeedArtifactVerificationError
+    artifact = _upload(_service(client), claim, payload)
+
+    assert artifact.run_id == run.pk
+    attempt = MarketplaceFeedArtifactUploadAttempt.objects.get(run=run)
+    assert attempt.state == MarketplaceFeedArtifactUploadAttempt.State.ATTACHED
+    assert [name for name, _ in client.calls] == [
+        'put_object_once',
+        'head_object',
+        'get_object',
+    ]
+
+
+def test_yandex_title_case_metadata_without_checksum_uses_full_readback():
+    payload = b'<Ads></Ads>'
+    _, _, run, claim = _claimed_private_run(
+        'artifact-storage-yandex-metadata',
+        payload,
     )
-    with pytest.raises(expected_error) as exc_info:
+
+    class YandexResponseClient(FakePrivateS3Client):
+        def _read_response(self, *, body=False):
+            response = super()._read_response(body=body)
+            response.pop('ChecksumSHA256', None)
+            response['Metadata'] = {
+                '-'.join(part.capitalize() for part in key.split('-')): value
+                for key, value in response['Metadata'].items()
+            }
+            return response
+
+    client = YandexResponseClient(put_checksum=False, head_checksum=False)
+
+    artifact = _upload(_service(client), claim, payload)
+
+    assert artifact.run_id == run.pk
+    assert artifact.payload_sha256 == hashlib.sha256(payload).hexdigest()
+    assert [name for name, _ in client.calls].count('put_object_once') == 1
+
+
+def test_present_mismatched_readback_checksum_fails_closed():
+    payload = b'<Ads></Ads>'
+    _, _, run, claim = _claimed_private_run(
+        'artifact-storage-head-checksum-mismatch',
+        payload,
+    )
+
+    class MismatchedReadbackChecksumClient(FakePrivateS3Client):
+        def _read_response(self, *, body=False):
+            response = super()._read_response(body=body)
+            response['ChecksumSHA256'] = base64.b64encode(
+                b'wrong checksum',
+            ).decode('ascii')
+            return response
+
+    client = MismatchedReadbackChecksumClient()
+
+    with pytest.raises(FeedArtifactVerificationError) as exc_info:
         _upload(_service(client), claim, payload)
 
     assert exc_info.value.locator.object_version_id == 'artifact-version-1'
     assert not MarketplaceFeedArtifact.objects.filter(run=run).exists()
+    attempt = MarketplaceFeedArtifactUploadAttempt.objects.get(run=run)
+    assert attempt.state == MarketplaceFeedArtifactUploadAttempt.State.VERSION_KNOWN
+
+
+def test_case_colliding_response_metadata_fails_closed():
+    payload = b'<Ads></Ads>'
+    _, _, run, claim = _claimed_private_run(
+        'artifact-storage-metadata-collision',
+        payload,
+    )
+
+    class CollidingMetadataClient(FakePrivateS3Client):
+        def _read_response(self, *, body=False):
+            response = super()._read_response(body=body)
+            response['Metadata']['Payload-Sha256'] = (
+                response['Metadata']['payload-sha256']
+            )
+            return response
+
+    with pytest.raises(FeedArtifactVerificationError):
+        _upload(_service(CollidingMetadataClient()), claim, payload)
+
+    assert not MarketplaceFeedArtifact.objects.filter(run=run).exists()
+    attempt = MarketplaceFeedArtifactUploadAttempt.objects.get(run=run)
+    assert attempt.state == MarketplaceFeedArtifactUploadAttempt.State.VERSION_KNOWN
 
 
 def test_mismatched_put_checksum_keeps_exact_version_unattached():

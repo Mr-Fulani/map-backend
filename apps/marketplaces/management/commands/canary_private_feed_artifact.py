@@ -113,7 +113,7 @@ class Command(BaseCommand):
         if phase == 'resume' and any(value is None for value in recovery_values):
             raise _error(
                 'resume_fence_required',
-                'Resume requires exact run and reconciled attempt fences.',
+                'Resume requires exact run and resumable attempt fences.',
             )
 
         from apps.marketplaces.feed_artifact_canary import (

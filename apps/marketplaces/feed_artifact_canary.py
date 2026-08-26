@@ -343,7 +343,7 @@ def _validate_resumable_canary(
     expected_attempt_id: uuid.UUID,
     expected_attempt_revision: int,
 ) -> MarketplaceFeedRun:
-    """Fence one reconciled NO_OBJECT attempt before allocating attempt N+1."""
+    """Fence one exact NO_OBJECT or VERSION_KNOWN canary continuation."""
 
     checked_at = timezone.now()
     account = (
@@ -391,7 +391,7 @@ def _validate_resumable_canary(
         and run.claimed_until is not None
         and run.claimed_until > checked_at
     )
-    if (
+    shared_snapshot_changed = (
         run.state != MarketplaceFeedRun.State.PREPARING
         or run.revision != expected_run_revision
         or run.next_attempt_at is None
@@ -411,30 +411,55 @@ def _validate_resumable_canary(
         or not hmac.compare_digest(run.payload_sha256, payload.payload_sha256)
         or latest_attempt_id != attempt.pk
         or attempt.revision != expected_attempt_revision
-        or attempt.state != MarketplaceFeedArtifactUploadAttempt.State.NO_OBJECT
-        or attempt.put_resolution_source
-        != MarketplaceFeedArtifactUploadAttempt.ResolutionSource.OPERATOR_RECONCILIATION
-        or attempt.resolved_at is None
-        or attempt.safe_error_code != 'reviewed_settlement_no_object'
-        or attempt.object_version_id is not None
         or attempt.storage_bucket
         != str(settings.MARKETPLACE_FEED_ARTIFACT_BUCKET)
         or attempt.expected_bucket_owner
         != str(settings.MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER)
-        or audit is None
-        or audit.pre_revision + 1 != attempt.revision
-        or audit.post_revision != attempt.revision
-        or audit.to_state != MarketplaceFeedArtifactUploadAttempt.State.NO_OBJECT
-        or audit.outcome
-        != (
+        or attempt.payload_sha256 != payload.payload_sha256
+        or attempt.size_bytes != payload.size_bytes
+        or attempt.projection_count != payload.listing_count
+        or attempt.content_type != MarketplaceFeedArtifact.CONTENT_TYPE_XML
+    )
+    no_object_resume = (
+        attempt.state == MarketplaceFeedArtifactUploadAttempt.State.NO_OBJECT
+        and attempt.put_resolution_source
+        == (
+            MarketplaceFeedArtifactUploadAttempt.ResolutionSource.
+            OPERATOR_RECONCILIATION
+        )
+        and attempt.resolved_at is not None
+        and attempt.safe_error_code == 'reviewed_settlement_no_object'
+        and attempt.object_version_id is None
+        and audit is not None
+        and audit.pre_revision + 1 == attempt.revision
+        and audit.post_revision == attempt.revision
+        and audit.to_state
+        == MarketplaceFeedArtifactUploadAttempt.State.NO_OBJECT
+        and audit.outcome
+        == (
             MarketplaceFeedPutReconciliationAudit.Outcome.
             NO_OBJECT_BY_REVIEWED_SETTLEMENT_POLICY
         )
-        or audit.decision_code != 'reviewed_settlement_no_object'
-        or audit.version_id_captured is not False
-    ):
+        and audit.decision_code == 'reviewed_settlement_no_object'
+        and audit.version_id_captured is False
+    )
+    version_known_resume = (
+        attempt.state
+        == MarketplaceFeedArtifactUploadAttempt.State.VERSION_KNOWN
+        and attempt.put_resolution_source
+        == MarketplaceFeedArtifactUploadAttempt.ResolutionSource.PUT_RESPONSE
+        and attempt.resolved_at is None
+        and attempt.safe_error_code == ''
+        and attempt.object_version_id is not None
+        and attempt.object_version_id != ''
+        and attempt.version_known_at is not None
+        and attempt.put_run_revision is not None
+        and attempt.put_run_revision <= run.revision
+        and audit is None
+    )
+    if shared_snapshot_changed or not (no_object_resume or version_known_resume):
         raise PrivateFeedCanaryError(
-            'The exact reconciled canary snapshot changed before resume.',
+            'The exact resumable canary snapshot changed before resume.',
         )
     return run
 
