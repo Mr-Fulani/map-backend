@@ -134,6 +134,7 @@ def test_bucket_preflight_requires_versioning_and_exact_kms_key():
     assert result == {
         'bucket': 'private-feed-artifacts-1',
         'owner_id': 'folder-owner-1',
+        'owner_check': 'verified',
         'versioning': 'Enabled',
         'kms_key_id': 'kms-key-1',
     }
@@ -154,6 +155,61 @@ def test_bucket_preflight_fails_closed_for_wrong_folder_owner():
         pytest.raises(
             PrivateFeedClientConfigurationError,
             match='owner',
+        ),
+    ):
+        private_feed_bucket_preflight()
+
+    raw_client.get_bucket_versioning.assert_not_called()
+
+
+@override_settings(**PRIVATE_SETTINGS)
+def test_bucket_preflight_accepts_yandex_omitted_owner_fields():
+    raw_client = Mock()
+    raw_client.get_bucket_acl.return_value = {
+        'Owner': {'ID': '', 'DisplayName': ''},
+    }
+    raw_client.get_bucket_versioning.return_value = {'Status': 'Enabled'}
+    raw_client.get_bucket_encryption.return_value = {
+        'ServerSideEncryptionConfiguration': {
+            'Rules': [{
+                'ApplyServerSideEncryptionByDefault': {
+                    'SSEAlgorithm': 'aws:kms',
+                    'KMSMasterKeyID': 'kms-key-1',
+                },
+            }],
+        },
+    }
+
+    with patch(
+        'apps.marketplaces.feed_artifact_clients._client',
+        return_value=raw_client,
+    ):
+        result = private_feed_bucket_preflight()
+
+    assert result == {
+        'bucket': 'private-feed-artifacts-1',
+        'owner_id': '',
+        'owner_check': 'unavailable',
+        'versioning': 'Enabled',
+        'kms_key_id': 'kms-key-1',
+    }
+
+
+@override_settings(**PRIVATE_SETTINGS)
+def test_bucket_preflight_fails_closed_for_partial_owner_response():
+    raw_client = Mock()
+    raw_client.get_bucket_acl.return_value = {
+        'Owner': {'ID': '', 'DisplayName': 'unexpected-owner'},
+    }
+
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_clients._client',
+            return_value=raw_client,
+        ),
+        pytest.raises(
+            PrivateFeedClientConfigurationError,
+            match='incomplete',
         ),
     ):
         private_feed_bucket_preflight()

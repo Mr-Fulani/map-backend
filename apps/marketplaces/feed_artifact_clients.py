@@ -2,10 +2,12 @@
 
 The private feed key pair is deliberately isolated from the public media
 credentials. Writes use a botocore client with automatic retries disabled;
-reads and signatures use separate clients. The expected Yandex folder owner
-is checked through ``GetBucketAcl`` during canary preflight and then remains an
-application-level scope token because Yandex does not implement AWS's
-``ExpectedBucketOwner`` request parameter.
+reads and signatures use separate clients. Yandex may omit both owner fields
+from ``GetBucketAcl``. When it supplies an owner ID, canary preflight verifies
+it exactly. Otherwise the exact bucket, versioning and KMS checks remain the
+external proof, while the required expected owner remains an application-level
+scope token because Yandex does not implement AWS's ``ExpectedBucketOwner``
+request parameter.
 """
 
 from __future__ import annotations
@@ -143,7 +145,7 @@ def presign_private_feed_exact_version(
 
 
 def private_feed_bucket_preflight() -> dict[str, str]:
-    """Verify owner, versioning and exact default KMS without modifying S3."""
+    """Verify the private bucket contract without modifying Object Storage."""
 
     bucket = _required_setting('MARKETPLACE_FEED_ARTIFACT_BUCKET')
     expected_owner = _required_setting(
@@ -152,11 +154,22 @@ def private_feed_bucket_preflight() -> dict[str, str]:
     kms_key_id = _required_setting('MARKETPLACE_FEED_ARTIFACT_KMS_KEY_ID')
     client = _client(total_max_attempts=4)
     acl = client.get_bucket_acl(Bucket=bucket)
-    actual_owner = str(acl.get('Owner', {}).get('ID', '') or '').strip()
-    if actual_owner != expected_owner:
+    owner = acl.get('Owner')
+    if not isinstance(owner, Mapping):
+        raise PrivateFeedClientConfigurationError(
+            'Private feed bucket owner response is invalid.',
+        )
+    actual_owner = str(owner.get('ID', '') or '').strip()
+    owner_display_name = str(owner.get('DisplayName', '') or '').strip()
+    if actual_owner and actual_owner != expected_owner:
         raise PrivateFeedClientConfigurationError(
             'Private feed bucket folder owner does not match configuration.',
         )
+    if not actual_owner and owner_display_name:
+        raise PrivateFeedClientConfigurationError(
+            'Private feed bucket owner response is incomplete.',
+        )
+    owner_check = 'verified' if actual_owner else 'unavailable'
     versioning = client.get_bucket_versioning(Bucket=bucket)
     if versioning.get('Status') != 'Enabled':
         raise PrivateFeedClientConfigurationError(
@@ -184,6 +197,7 @@ def private_feed_bucket_preflight() -> dict[str, str]:
     return {
         'bucket': bucket,
         'owner_id': actual_owner,
+        'owner_check': owner_check,
         'versioning': 'Enabled',
         'kms_key_id': kms_key_id,
     }
