@@ -108,20 +108,28 @@ Trial: 14 дней бесплатно на плане Business. Скидка 20%
 
 ### Текущий режим фидов Avito
 
-Production продолжает использовать существующую legacy-отправку. Большой WIP
-новой отправки сохранён отдельно как `not-for-merge` snapshot и заморожен до
-разделения на независимо проверяемые пакеты.
+P0–P6 внедрены. Production использует durable/private цепочку для готовых Avito
+Autoload аккаунтов. Новый успешно подключённый аккаунт автоматически получает
+managed stable endpoint; ручной allowlist не нужен. XML хранится в закрытом
+versioned bucket, а Avito получает короткоживущий redirect на точную версию.
 
-Для разделяемого WIP зафиксирован обязательный production-контракт; ни один
-пакет не меняет его без отдельного rollout:
+Текущий production-контракт:
 
 ```text
-MARKETPLACE_FEED_RUN_MODE=legacy
-MARKETPLACE_FEED_INGRESS_MODE=legacy
-MARKETPLACE_FEED_ARTIFACT_MODE=disabled
+AVITO_STATUS_LIFECYCLE_MODE=dual_write
+MARKETPLACE_FEED_RUN_MODE=durable
+MARKETPLACE_FEED_INGRESS_MODE=dual_write
+MARKETPLACE_FEED_ARTIFACT_MODE=active
+MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS=
 MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
-MARKETPLACE_FEED_STORAGE_MODE=legacy_public
+MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
 ```
+
+Пустой cutover allowlist означает fleet-default. Profile migration остаётся
+`false`, потому что массовый sweep старых профилей выключен; штатный onboarding
+нового аккаунта при этом работает. P7 cleanup/GC/object deletion/`0039`
+заморожен до отдельного решения. Исходный смешанный WIP сохранён только как
+исторический `not-for-merge` snapshot и не должен целиком попадать в release.
 
 Актуальные границы и порядок:
 

@@ -184,15 +184,18 @@ targets, если daemon занят чужим проектом.
       будущих пакетов.
 - [ ] Для P1 и последующих пакетов указаны точные узкие и полные test commands
       с результатами; следующий пакет не используется для исправления текущего.
-- [ ] Production feed contract остаётся
-      `legacy/legacy/disabled/false/legacy_public` для run, ingress, artifact,
-      profile migration и storage, либо для отдельно утверждённого P5
-      observation — `legacy/dual_write/disabled/false/legacy_public` вместе с
-      `AVITO_STATUS_LIFECYCLE_MODE=dual_write` и готовым атомарным rollback обоих
-      режимов в `legacy`.
-- [ ] Cleanup, `0039`, private serving, GC, object deletion, новые
-      migrations/modes и worker activation отсутствуют, если соответствующий
-      roadmap package не был отдельно активирован.
+- [ ] Production feed contract точно равен текущему P6 fleet-набору:
+      `run=durable`, `ingress=dual_write`, `lifecycle=dual_write`,
+      `artifact=active`, пустой cutover allowlist,
+      `profile migration=false`, `storage=stable_bridge`.
+- [ ] Django, оба worker, image worker и Beat видят одинаковые feed settings;
+      пустой allowlist действительно разобран как fleet-default.
+- [ ] Если выполняется admission rollback, одной согласованной сменой
+      установлены `run=legacy` и exact allowlist account `4`; artifact,
+      VersionId, ledger и evidence не удалены.
+- [ ] Cleanup, `0039`, GC, object deletion, новые migrations/modes и
+      дополнительный worker activation отсутствуют, если P7 не был отдельно
+      активирован. Текущий P6 private serving не считается frozen-функцией.
 - [ ] Cleanup/backfill и auto-applied `0039` не объединены в один release.
 
 ## 7. Ошибка и recovery

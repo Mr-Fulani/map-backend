@@ -1,14 +1,15 @@
-# P6 private feed: bounded production canary
+# P6 private feed: canary, recovery и fleet operations
 
-Разделы canary применяются только к одному заранее проверенному
-Avito-аккаунту. Fleet-default rollout из раздела 8 допустим только после
-успешного постоянного cutover и отдельного решения владельца продукта. Runbook
-не разрешает P7, GC, удаление объектов или `0039`.
+Fleet-default rollout завершён 2026-08-27 на production `0762ab5`. Разделы
+1–7 сохраняют точную историческую canary/recovery и аварийную процедуру для
+одного заранее проверенного Avito-аккаунта. Раздел 8 описывает текущий штатный
+fleet runtime. Runbook не разрешает P7, GC, удаление объектов или `0039`.
 
 ## Неизменяемые условия
 
 - production checkout и deployed image имеют один точный SHA, Git clean;
-- `MARKETPLACE_FEED_RUN_MODE=legacy`;
+- для исторического account-scoped canary из разделов 1–7
+  `MARKETPLACE_FEED_RUN_MODE=legacy`; текущий fleet использует `durable`;
 - P5 ingress и Avito lifecycle одновременно `dual_write`;
 - массовая миграция профилей выключена до и после отдельного P4-перехода;
 - private bucket закрыт от public access, versioning включён, default
@@ -19,6 +20,8 @@ Avito-аккаунту. Fleet-default rollout из раздела 8 допуст
   Yandex опускает одновременно оба owner-поля; частичный или другой owner
   всегда блокирует операцию;
 - публичный stable URL и capability не меняются при private promotion.
+- capability URL, presigned URL, object key, VersionId, HMAC/static credentials
+  не выводятся в отчёты, логи или документацию.
 
 При несовпадении любого условия canary не начинается.
 
@@ -263,10 +266,10 @@ legacy 307 удаляется `ACCOUNT_ID` из allowlist, artifact mode воз�
 upload ledger и evidence сохраняются. Повторное включение требует новой
 source intent generation; запрещено вручную переиспользовать старый PUT.
 
-## 8. Fleet-default после успешного постоянного cutover
+## 8. Текущий fleet-default runtime
 
 Fleet rollout не мигрирует все существующие профили и не создаёт отдельный
-sweep worker. Он меняет admission для штатной SaaS-цепочки:
+sweep worker. Он уже включён для штатной SaaS-цепочки:
 
 ```text
 MARKETPLACE_FEED_RUN_MODE=durable
@@ -292,7 +295,7 @@ commit сериализованная задача читает текущий �
 переоткрывает безопасную проверку onboarding и не вызывает legacy public
 upload. Managed capability URL не возвращается tenant UI.
 
-Порядок production rollout:
+Фактически выполненный порядок production rollout:
 
 1. выложить совместимый код с прежним account-scoped allowlist;
 2. проверить account `4`, private exact-version serving и readiness;
@@ -304,6 +307,38 @@ upload. Managed capability URL не возвращается tenant UI.
 Rollback admission выполняется одной парой: `run=legacy` и exact allowlist
 account `4`. Artifact, endpoint, VersionId и evidence не удаляются. P7, GC и
 object deletion остаются отдельным решением.
+
+### 8.1 Зафиксированный release
+
+- PR `#256`, успешный PR CI `33018719809`;
+- merge/deployed SHA
+  `0762ab578dda40aeff3178b6aa4e69247b40eae7`;
+- проверенный head и merge имеют одинаковый tree SHA
+  `d52ec2b876d2a8e9da5eaf5df799c087bc932691`;
+- новых миграций нет;
+- 10 production containers healthy, readiness HTTP `200`, restart count `0`;
+- все Django/Celery consumers видят `run=durable` и пустой allowlist;
+- account `4`: endpoint `private_generation/verified`, artifact существует,
+  uncertain runs и unresolved PUT attempts равны `0`.
+
+### 8.2 Регулярная операторская проверка
+
+Без изменения state проверяются:
+
+1. exact deployed SHA и clean checkout;
+2. одинаковые семь feed settings во всех Django/Celery consumers;
+3. readiness, 10 контейнеров, restart count и оба backup timer;
+4. endpoint `verified`, current artifact и совпадение source/intent/dispatched
+   revisions для подключённых accounts;
+5. отсутствие uncertain runs, `put_pending` без reconciliation и повторных
+   provider POST для одного generation;
+6. terminal status либо безопасно назначенный следующий poll текущего Avito
+   upload;
+7. отсутствие application critical/traceback и Nginx 5xx.
+
+Если Avito долго оставляет upload в `processing`, это не разрешает повторять
+POST. Worker продолжает bounded polling; incident начинается только по
+утверждённому timeout/provider evidence.
 
 [yandex-consistency]: https://yandex.cloud/en/docs/storage/qa#what-data-consistency-model-does-yandex-object-storage-use
 [yandex-list-versions]: https://yandex.cloud/en/docs/storage/s3/api-ref/bucket/listObjectVersions

@@ -10,11 +10,12 @@
 
 ## Цель
 
-Первый результат — не потерять изменение товара или объявления и при этом не
-сломать существующую отправку. Приватные файлы, их автоматическое удаление и
-полностью новая отправка — отдельные будущие результаты.
+Не потерять изменение товара или объявления, безопасно переживать сбои worker
+и внешнего API и обслуживать много tenant/account без публичного хранения XML.
+Эта цель закрыта P0–P6. Автоматическое удаление старых файлов и DB cleanup
+остаются отдельной будущей целью P7.
 
-## Текущая фаза: P6 fleet-default onboarding и private delivery
+## Текущая фаза: наблюдение P6 fleet-default; P7 заморожен
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
@@ -29,31 +30,21 @@ P2c follow-up с provider truth, временем последней Avito-пр�
 tenant notices выложен в production commit `1f05367` без изменения
 feed-режима. Первый плановый цикл повторно подтвердил 10 active
 объявлений и доставил два разных Telegram notice для порога 14 дней.
-P3 merged через PR `#244`, выложен в production commit `f1881f1` и остаётся
-выключенным (`MARKETPLACE_FEED_RUN_MODE=legacy`). P4 merged через PR `#245` и
-выложен выключенным в production commit `9061ebb`. P5 schema/intent foundation
-merged через PR `#246` и выложен в production commit `2e9958c` в legacy-only
-режиме. Отдельный P5 activation package с writer fencing, reconciliation и
-legacy delivery repair merged через PR `#247` и выложен exact commit `9c23a6b`.
-PR/push-main CI, encrypted backup, health/topology, Celery ping, scanner cycles
-и отсутствие свежих critical/500 ошибок подтверждены. P5 `dual_write`
-observation завершён. P6 private artifact package и bounded follow-up/recovery
-merged через PR `#249`–`#254`. PR `#255` завершил постоянный private cutover
-единственного реального Autoload account `4`; production exact SHA перед
-fleet-release — `139ed48`. Реальный GET Avito подтвердил загрузку поколения.
-Владелец продукта отдельно разрешил один P6 fleet-default PR: любой будущий
-успешно подключённый аккаунт автоматически получает stable endpoint,
-регистрацию URL и durable/private delivery без ручного allowlist. P7 остаётся
-заморожен.
+P3–P5 были сначала выложены выключенными и затем последовательно активированы.
+P6 private artifacts, recovery и account-scoped canary прошли PR `#249`–`#255`.
+PR `#256` завершил fleet-default release на production SHA `0762ab5`: run
+`durable`, ingress/lifecycle `dual_write`, artifacts `active`, storage
+`stable_bridge`, allowlist пустой. Любой будущий успешно подключённый Avito
+account получает stable endpoint и durable/private delivery автоматически.
 
-Готово только когда:
+Текущий gate — observation без изменения кода P7:
 
-- состав каждого пакета зафиксирован;
-- случайные и личные файлы исключены;
-- каждый пакет имеет собственные тесты и порядок выкладки;
-- текущий legacy-режим проходит полный backend test;
-- миграции проходят на чистой PostgreSQL;
-- ни один новый feed-флаг не включён.
+- дождаться terminal результата реального Avito upload, который сейчас
+  обрабатывается провайдером;
+- следить за duplicate POST/PUT, uncertain runs, unresolved attempts, 5xx,
+  queue lag и restart;
+- зафиксировать retention/restore policy до разрешения любого object delete;
+- отдельно согласовать P7. Обычные продуктовые задачи вне P7 не блокируются.
 
 ## Логическое разделение текущей большой правки
 
@@ -178,7 +169,7 @@ drift, OpenAPI, flake8 и оба mypy gate зелёные. PR `#234`, PR CI
 `1f05367` работает в режиме `legacy`; exact topology, readiness,
 backup, manual monitor `32512208535` и десятиминутное наблюдение зелёные.
 
-### P3. Надёжная запись задания на отправку — завершён, выключен
+### P3. Надёжная запись задания на отправку — завершён и включён
 
 Содержимое:
 
@@ -197,10 +188,11 @@ backup, manual monitor `32512208535` и десятиминутное наблю�
 - сбой брокера, остановка worker и повторная доставка;
 - полный backend test.
 
-Deploy: PR `#244`, production commit `f1881f1`; schema `0023`–`0024`
-применена, код выключен. Legacy остаётся единственным владельцем отправки.
+История deploy: PR `#244`, production commit `f1881f1`; schema `0023`–`0024`
+сначала была выложена выключенной. После P5/P6 gates текущий production run
+mode — `durable`.
 
-### P4. Стабильная ссылка и профиль Autoload — локально проверен
+### P4. Стабильная ссылка и профиль Autoload — завершён и включён
 
 Содержимое:
 
@@ -215,16 +207,18 @@ Deploy: PR `#244`, production commit `f1881f1`; schema `0023`–`0024`
 - реальная тестовая проверка Avito query string и HTTP 307;
 - rehearsal без изменения production-профиля.
 
-Deploy: только с выключенным
+Первичный deploy выполнялся только с выключенным
 `MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false` и
-`MARKETPLACE_FEED_STORAGE_MODE=legacy_public`. Включение — отдельное решение.
+`MARKETPLACE_FEED_STORAGE_MODE=legacy_public`.
 
 Локальный gate: 105 P4-тестов и полный backend (`2198 passed, 1 skipped`)
 зелёные; clean/upgrade/rollback/reapply PostgreSQL `0025`, migration drift,
 flake8, frontend ESLint/typecheck и `git diff --check` прошли. PR `#245`
-выпущен в production commit `9061ebb`; legacy-режим не изменён.
+выпущен в production commit `9061ebb`; legacy-режим тогда не изменился.
+Сейчас stable endpoint и profile protection используются fleet onboarding.
+Флаг profile migration остаётся `false`, потому что массовый sweep не нужен.
 
-### P5. Учёт изменений — безопасный foundation
+### P5. Учёт изменений — завершён и включён
 
 Содержимое:
 
@@ -245,8 +239,8 @@ flush-coordinator не входят в этот release. Их нельзя вы�
 - полный backend test;
 - staging fault test.
 
-Deploy foundation: PR `#246`, production commit `2e9958c`, только `legacy`;
-новая система не отправляет файлы в Avito и не меняет legacy flush.
+История deploy foundation: PR `#246`, production commit `2e9958c`, первоначально
+только `legacy`. Текущий production ingress — `dual_write`, run — `durable`.
 
 ### P5 activation. Writer fencing и надёжная legacy delivery
 
@@ -276,10 +270,10 @@ Release gate закрыт: PR `#247`, production `9c23a6b`, все десять 
 healthy с restart count `0`, readiness/topology/Celery зелёные, scanner в
 legacy инертен. P5 `dual_write` observation отдельно разрешён 2026-08-25.
 Минимальный production settings gate локально прошёл 150 focused tests, полный
-backend (`2357 passed, 1 skipped`), оба mypy, flake8 и migration drift; до его
-deploy production environment остаётся legacy.
+backend (`2357 passed, 1 skipped`), оба mypy, flake8 и migration drift. Этот
+этап завершён; текущие значения приведены в `AVITO_FEED_STATUS.md`.
 
-### P6. Приватные файлы — активированный экспериментальный проект
+### P6. Приватные файлы и fleet onboarding — завершён и включён
 
 Содержимое:
 
@@ -297,28 +291,27 @@ Release gate:
 - тест 10 000 объявлений с памятью, диском и временем;
 - утверждённый способ восстановления.
 
-P6 отдельно разрешён владельцем продукта 2026-08-25 и собирается одним PR.
-Первичный deploy выполняется только выключенным. После успешного release gate
-разрешён ручной canary ровно одного явно выбранного Avito-аккаунта с атомарным
-переключением и rollback без удаления объекта. Широкая production-активация,
-P7, retention delete, GC, удаление файлов и `0039` в пакет не входят.
+P6 отдельно разрешён владельцем продукта 2026-08-25. Первичный deploy был
+выключенным, затем выполнены bounded canary/recovery account `4` и общий
+fleet-default rollout. P7, retention delete, GC, удаление файлов и `0039` в
+пакет не входят.
 
-Локальный P6 gate закрыт: полный backend дал `2592 passed, 3 skipped`,
+Исторический локальный P6 gate закрыт: полный backend дал
+`2592 passed, 3 skipped`,
 flake8, оба mypy gate, migration drift и OpenAPI зелёные; свежая PostgreSQL
 база прошла `0029`–`0030` и rollback/reapply `0030 → 0028 → 0030`. Основной
-release и cloud preflight завершены. Первый canary account 4 не прошёл PUT:
-durable attempt осталась `put_pending`, endpoint продолжил legacy serving и
-runtime возвращён в `disabled/stable_bridge`. Следующий gate — один P6 recovery
-PR, audited exact-version reconciliation, safe resume новой immutable attempt,
-проверка canary и точный rollback без удаления объекта.
+release и cloud preflight завершены. Первый canary account 4 оставил
+fail-closed `put_pending`; audited recovery без слепого повторного PUT успешно
+разрешил этот случай.
 
-Recovery и account `4` cutover завершены в PR `#253`–`#255`. Следующий
-разрешённый gate переводит admission с exact-one allowlist на fleet default:
+Recovery и account `4` cutover завершены в PR `#253`–`#255`. PR `#256`
+перевёл admission с exact-one allowlist на fleet default:
 `active/stable_bridge`, пустой allowlist и `run=durable`. Создание аккаунта
 синхронно резервирует endpoint, фоновая задача сохраняет настройки клиента и
 регистрирует stable URL, а публикация ждёт подтверждения вместо legacy
 fallback. Неоднозначный POST сверяется только GET-запросами и не повторяется
-вслепую. P7, object delete, GC и `0039` не меняются.
+вслепую. Production release/health evidence записано в текущем статусе. P7,
+object delete, GC и `0039` не меняются.
 
 ### P7. Удаление старых файлов и DB-защита — backlog
 
@@ -327,8 +320,8 @@ fallback. Неоднозначный POST сверяется только GET-з
 
 Этот пакет не начинается, пока:
 
-- P1–P6 не разделены и проверены;
-- новая система не прошла staging canary;
+- не завершён согласованный fleet observation;
+- реальный Avito upload не получил terminal outcome либо не оформлен incident;
 - dry-run production backfill не показал реальные данные;
 - не утверждена политика хранения и восстановления;
 - владелец продукта отдельно не разрешил этап.
@@ -362,12 +355,13 @@ P0 docs/inventory
   → P4 stable endpoint/profile (off)
   → P5 dual-write observation
   → P6 private storage (off deploy → canary → account 4 → fleet default)
+  → P6 fleet observation (текущий этап)
   → отдельное решение о P7 cleanup/GC/0039
 ```
 
-Текущий безопасный P6 rollback возвращает artifact/storage в
-`disabled/stable_bridge`, сохраняя отдельно проверенный P5
-`legacy/dual_write/dual_write`. Полный аварийный rollback предыдущих пакетов
-может дополнительно вернуть ingress/lifecycle в `legacy`, но не является
-частью account 4 recovery. Последующий пакет не используется как условие
-отката предыдущего.
+Текущий минимальный admission rollback одной согласованной сменой возвращает
+`run=legacy` и exact allowlist account `4`, не удаляя artifact, endpoint,
+VersionId и evidence. Более глубокий откат artifact выполняется только по P6
+runbook. Полный аварийный rollback предыдущих пакетов не является частью
+обычного fleet rollback. Последующий пакет не используется как условие отката
+предыдущего.
