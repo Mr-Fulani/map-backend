@@ -179,6 +179,47 @@ def test_full_profile_validation_requires_complete_upsert_shape():
         validate_avito_profile(invalid_upload_mode)
 
 
+def test_profile_fingerprint_normalizes_only_unordered_schedule_values():
+    profile = {
+        'autoload_enabled': False,
+        'report_email': 'reports@example.test',
+        'feeds_data': [
+            {'feed_name': 'One', 'feed_url': 'https://one.test/feed.xml'},
+        ],
+        'schedule': [
+            {
+                'time_slots': ['18:00-19:00', '09:00-10:00'],
+                'weekdays': ['sunday', 'monday'],
+                'provider_metadata': ['order', 'must', 'remain'],
+            },
+        ],
+    }
+    reordered = deepcopy(profile)
+    reordered['schedule'][0]['time_slots'].reverse()
+    reordered['schedule'][0]['weekdays'].reverse()
+
+    original_snapshot = validate_avito_profile(profile)
+    reordered_snapshot = validate_avito_profile(reordered)
+
+    assert original_snapshot.fingerprint == reordered_snapshot.fingerprint
+    assert original_snapshot.profile == profile
+    assert reordered_snapshot.profile == reordered
+
+    changed_value = deepcopy(profile)
+    changed_value['schedule'][0]['weekdays'][0] = 'tuesday'
+    assert (
+        validate_avito_profile(changed_value).fingerprint
+        != original_snapshot.fingerprint
+    )
+
+    changed_unrelated_order = deepcopy(profile)
+    changed_unrelated_order['schedule'][0]['provider_metadata'].reverse()
+    assert (
+        validate_avito_profile(changed_unrelated_order).fingerprint
+        != original_snapshot.fingerprint
+    )
+
+
 @pytest.mark.django_db
 @override_settings(**MIGRATION_SETTINGS)
 def test_plan_changes_only_owned_url_and_preserves_full_profile_exactly():
