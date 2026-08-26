@@ -32,6 +32,7 @@ from apps.marketplaces.feed_workflow import (
     FeedRunClaim,
     account_identity_digest,
 )
+from apps.marketplaces.feed_cutover import private_feed_cutover_enabled
 from apps.marketplaces.models import (
     MarketplaceAccount,
     MarketplaceFeedArtifact,
@@ -412,6 +413,15 @@ def _generation_snapshot_is_current(
                 in {'shadow', 'canary'}
                 and endpoint.storage_mode
                 == MarketplaceFeedEndpoint.StorageMode.LEGACY_BRIDGE
+                and endpoint.serve_enabled is True
+            )
+            or (
+                private_feed_cutover_enabled(account.pk)
+                and endpoint.storage_mode
+                in {
+                    MarketplaceFeedEndpoint.StorageMode.LEGACY_BRIDGE,
+                    MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION,
+                }
                 and endpoint.serve_enabled is True
             )
         )

@@ -478,6 +478,9 @@ def create_or_supersede_feed_run(
     *,
     generation_id: uuid.UUID | None = None,
     payload_sha256: str = '',
+    source_intent_revision: int | None = None,
+    endpoint_revision: int | None = None,
+    predecessor_artifact_id: uuid.UUID | None = None,
     now: datetime | None = None,
 ) -> FeedRunSnapshot:
     """Create one generation and stamp all currently pending feed listings.
@@ -489,6 +492,28 @@ def create_or_supersede_feed_run(
 
     transition_at = _now(now)
     payload_sha256 = _digest(payload_sha256, field_name='payload_sha256', allow_blank=True)
+    private_generation = source_intent_revision is not None
+    if private_generation:
+        if (
+            isinstance(source_intent_revision, bool)
+            or not isinstance(source_intent_revision, int)
+            or source_intent_revision < 1
+            or isinstance(endpoint_revision, bool)
+            or not isinstance(endpoint_revision, int)
+            or endpoint_revision < 0
+        ):
+            raise ValueError(
+                'Private generation revisions must be non-negative exact integers.',
+            )
+        if predecessor_artifact_id is not None and not isinstance(
+            predecessor_artifact_id,
+            uuid.UUID,
+        ):
+            raise ValueError('predecessor_artifact_id must be a UUID or null.')
+    elif endpoint_revision is not None or predecessor_artifact_id is not None:
+        raise ValueError(
+            'Private generation fields must be supplied as one bundle.',
+        )
     generation_id = generation_id or uuid.uuid4()
     if not isinstance(generation_id, uuid.UUID):
         try:
@@ -506,6 +531,14 @@ def create_or_supersede_feed_run(
             raise FeedRunConflict('Generation id already belongs to another account.')
         if payload_sha256 and existing.payload_sha256 not in ('', payload_sha256):
             raise FeedRunConflict('Generation replay has a different payload digest.')
+        if (
+            existing.source_intent_revision != source_intent_revision
+            or existing.endpoint_revision != endpoint_revision
+            or existing.predecessor_artifact_id != predecessor_artifact_id
+        ):
+            raise FeedRunConflict(
+                'Generation replay has a different private endpoint snapshot.',
+            )
         return _snapshot(existing)
 
     pending_rows = Listing.objects.filter(
@@ -569,6 +602,9 @@ def create_or_supersede_feed_run(
         marketplace=account.marketplace,
         account_identity_digest=account_identity_digest(account),
         payload_sha256=payload_sha256,
+        source_intent_revision=source_intent_revision,
+        endpoint_revision=endpoint_revision,
+        predecessor_artifact_id=predecessor_artifact_id,
         state=MarketplaceFeedRun.State.PREPARING,
         next_attempt_at=transition_at,
     )

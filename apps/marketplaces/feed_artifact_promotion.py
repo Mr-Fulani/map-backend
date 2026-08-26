@@ -1,4 +1,4 @@
-"""Atomic, still-dark promotion boundary for private feed artifacts.
+"""Atomic promotion boundary for private feed artifacts.
 
 The caller must attach an exact immutable artifact first, capture the expected
 verified profile snapshot, and perform the strict provider predecessor read
@@ -7,9 +7,9 @@ I/O.  A successful return means that the endpoint pointer and the durable
 ``SUBMIT_UNKNOWN`` boundary committed together; there is deliberately no
 automatic pointer rollback after that boundary.
 
-Production settings currently reject every configuration that can enter this
-service.  Keeping the checks local as well as in settings prevents an
-accidental direct call from turning the dark slice into an activation path.
+Production admits either the bounded operator canary or one exact account in
+the active cutover allowlist. Keeping the checks local as well as in settings
+prevents a direct call from widening either activation path.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ from apps.marketplaces.feed_workflow import (
     account_identity_digest,
     persist_feed_submission_boundary,
 )
+from apps.marketplaces.feed_cutover import private_feed_cutover_enabled
 from apps.marketplaces.models import (
     MarketplaceAccount,
     MarketplaceFeedArtifact,
@@ -57,15 +58,19 @@ class StaleFeedArtifactPromotion(FeedArtifactPromotionError):
     """The exact claim, profile, artifact, or endpoint snapshot changed."""
 
 
-def _require_activation_gates() -> str:
-    if (
-        getattr(settings, 'MARKETPLACE_FEED_RUN_MODE', None) != 'durable'
-        or getattr(settings, 'MARKETPLACE_FEED_INGRESS_MODE', None) != 'durable'
-        or getattr(settings, 'MARKETPLACE_FEED_ARTIFACT_MODE', None)
-        not in _PROMOTION_ARTIFACT_MODES
-        or getattr(settings, 'MARKETPLACE_FEED_STORAGE_MODE', None)
-        != 'private_generation'
-    ):
+def _require_activation_gates(account_id: int) -> tuple[str, str]:
+    artifact_mode = getattr(settings, 'MARKETPLACE_FEED_ARTIFACT_MODE', None)
+    canary_ready = (
+        artifact_mode == 'canary'
+        and getattr(settings, 'MARKETPLACE_FEED_RUN_MODE', None) == 'durable'
+        and getattr(settings, 'MARKETPLACE_FEED_INGRESS_MODE', None) == 'durable'
+        and getattr(settings, 'MARKETPLACE_FEED_STORAGE_MODE', None)
+        == 'private_generation'
+    )
+    active_ready = artifact_mode == 'active' and private_feed_cutover_enabled(
+        account_id,
+    )
+    if not (canary_ready or active_ready):
         raise FeedArtifactPromotionConfigurationError(
             'Private feed artifact promotion is not activated.',
         )
@@ -75,7 +80,7 @@ def _require_activation_gates() -> str:
         raise FeedArtifactPromotionConfigurationError(
             'The private feed artifact bucket is not safely configured.',
         )
-    return bucket
+    return bucket, str(artifact_mode)
 
 
 def _profile_revision(value: object) -> int:
@@ -197,10 +202,11 @@ def _validate_locked_snapshot(
     expected_profile_revision: int,
     expected_profile_fingerprint: str,
     configured_bucket: str,
+    artifact_mode: str,
     max_bytes: int,
     submitted_at: datetime,
     now: datetime,
-) -> None:
+) -> bool:
     tenant = account.tenant
     try:
         current_identity_digest = account_identity_digest(account)
@@ -216,6 +222,53 @@ def _validate_locked_snapshot(
     attached_at = upload_attempt.attached_at
     resolved_at = upload_attempt.resolved_at
     if (
+        isinstance(endpoint_revision, int)
+        and not isinstance(endpoint_revision, bool)
+        and 0 <= endpoint_revision < _MAX_REVISION
+    ):
+        valid_endpoint_revision = True
+        expected_promoted_revision = endpoint_revision + 1
+    else:
+        valid_endpoint_revision = False
+        expected_promoted_revision = -1
+    initial_pointer = (
+        valid_endpoint_revision
+        and endpoint.current_artifact_id == run.predecessor_artifact_id
+        and endpoint.artifact_revision == endpoint_revision
+    )
+    already_promoted = (
+        valid_endpoint_revision
+        and endpoint.current_artifact_id == artifact.pk
+        and endpoint.artifact_revision == expected_promoted_revision
+        and endpoint.artifact_promoted_at is not None
+    )
+    if artifact_mode == 'active':
+        endpoint_transition_is_valid = (
+            endpoint.serve_enabled is True
+            and (
+                (
+                    initial_pointer
+                    and endpoint.storage_mode
+                    in {
+                        MarketplaceFeedEndpoint.StorageMode.LEGACY_BRIDGE,
+                        MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION,
+                    }
+                )
+                or (
+                    already_promoted
+                    and endpoint.storage_mode
+                    == MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION
+                )
+            )
+        )
+    else:
+        endpoint_transition_is_valid = (
+            initial_pointer
+            and endpoint.storage_mode
+            == MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION
+            and endpoint.serve_enabled is False
+        )
+    if (
         account.deleted_at is not None
         or account.is_active is not True
         or tenant.is_active is not True
@@ -227,9 +280,7 @@ def _validate_locked_snapshot(
         or not hmac.compare_digest(current_identity_digest, claim.account_identity_digest)
         or not hmac.compare_digest(endpoint.owner_identity_digest, current_identity_digest)
         or not hmac.compare_digest(run.account_identity_digest, current_identity_digest)
-        or endpoint.storage_mode
-        != MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION
-        or endpoint.serve_enabled is not False
+        or not endpoint_transition_is_valid
         or endpoint.profile_state != MarketplaceFeedEndpoint.ProfileState.VERIFIED
         or endpoint.profile_revision != expected_profile_revision
         or not hmac.compare_digest(
@@ -247,8 +298,6 @@ def _validate_locked_snapshot(
         or endpoint_revision >= _MAX_REVISION
         or account.feed_intent_revision != source_revision
         or endpoint.source_intent_revision != source_revision
-        or endpoint.artifact_revision != endpoint_revision
-        or endpoint.current_artifact_id != run.predecessor_artifact_id
         or (
             endpoint.current_artifact_id is None
             and (
@@ -308,6 +357,7 @@ def _validate_locked_snapshot(
         raise StaleFeedArtifactPromotion(
             'The private feed promotion snapshot is stale or unsafe.',
         )
+    return already_promoted
 
 
 @transaction.atomic(durable=True)
@@ -331,7 +381,7 @@ def persist_private_feed_promotion_boundary(
     one-way; later provider failures require reconciliation, never rollback.
     """
 
-    configured_bucket = _require_activation_gates()
+    configured_bucket, artifact_mode = _require_activation_gates(claim.account_id)
     max_bytes = _configured_artifact_byte_cap()
     artifact_id = _artifact_id(artifact_id)
     expected_profile_revision = _profile_revision(expected_profile_revision)
@@ -396,7 +446,7 @@ def persist_private_feed_promotion_boundary(
             'The attached feed artifact no longer matches.',
         )
 
-    _validate_locked_snapshot(
+    already_promoted = _validate_locked_snapshot(
         account=account,
         endpoint=endpoint,
         upload_attempt=upload_attempt,
@@ -406,6 +456,7 @@ def persist_private_feed_promotion_boundary(
         expected_profile_revision=expected_profile_revision,
         expected_profile_fingerprint=expected_profile_fingerprint,
         configured_bucket=configured_bucket,
+        artifact_mode=artifact_mode,
         max_bytes=max_bytes,
         submitted_at=submitted_at,
         now=transition_at,
@@ -419,30 +470,40 @@ def persist_private_feed_promotion_boundary(
         raise StaleFeedArtifactPromotion(
             'The feed run has no private source or endpoint revision.',
         )
-    changed = MarketplaceFeedEndpoint.objects.filter(
-        pk=endpoint.pk,
-        account_id=account.pk,
-        owner_identity_digest=endpoint.owner_identity_digest,
-        storage_mode=MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION,
-        serve_enabled=False,
-        profile_state=MarketplaceFeedEndpoint.ProfileState.VERIFIED,
-        profile_revision=expected_profile_revision,
-        profile_fingerprint=expected_profile_fingerprint,
-        source_intent_revision=source_intent_revision,
-        artifact_revision=endpoint_revision,
-        current_artifact_id=run.predecessor_artifact_id,
-        artifact_promoted_at=endpoint.artifact_promoted_at,
-    ).update(
-        current_artifact=artifact,
-        artifact_revision=promoted_revision,
-        source_intent_revision=source_intent_revision,
-        artifact_promoted_at=promoted_at,
-        updated_at=promoted_at,
-    )
-    if changed != 1:
-        raise StaleFeedArtifactPromotion(
-            'The feed endpoint changed before artifact promotion.',
-        )
+    if not already_promoted:
+        filters = {
+            'pk': endpoint.pk,
+            'account_id': account.pk,
+            'owner_identity_digest': endpoint.owner_identity_digest,
+            'storage_mode': endpoint.storage_mode,
+            'serve_enabled': endpoint.serve_enabled,
+            'profile_state': MarketplaceFeedEndpoint.ProfileState.VERIFIED,
+            'profile_revision': expected_profile_revision,
+            'profile_fingerprint': expected_profile_fingerprint,
+            'source_intent_revision': source_intent_revision,
+            'artifact_revision': endpoint_revision,
+            'current_artifact_id': run.predecessor_artifact_id,
+            'artifact_promoted_at': endpoint.artifact_promoted_at,
+        }
+        updates = {
+            'current_artifact': artifact,
+            'artifact_revision': promoted_revision,
+            'source_intent_revision': source_intent_revision,
+            'artifact_promoted_at': promoted_at,
+            'updated_at': promoted_at,
+        }
+        if artifact_mode == 'active':
+            updates.update(
+                storage_mode=(
+                    MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION
+                ),
+                serve_enabled=True,
+            )
+        changed = MarketplaceFeedEndpoint.objects.filter(**filters).update(**updates)
+        if changed != 1:
+            raise StaleFeedArtifactPromotion(
+                'The feed endpoint changed before artifact promotion.',
+            )
 
     boundary = persist_feed_submission_boundary(
         claim,

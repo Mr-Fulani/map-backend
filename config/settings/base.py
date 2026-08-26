@@ -57,6 +57,37 @@ def _strict_feed_artifact_int(
     return value
 
 
+def _strict_feed_cutover_account_ids(raw_value: str) -> tuple[int, ...]:
+    """Parse one canonical, bounded CSV allowlist of positive account IDs."""
+
+    if raw_value == '':
+        return ()
+    values = raw_value.split(',')
+    if len(values) > 10:
+        raise ValueError(
+            'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS may contain at most 10 IDs.',
+        )
+    if any(
+        not value
+        or not value.isascii()
+        or not value.isdecimal()
+        or value.startswith('0')
+        for value in values
+    ):
+        raise ValueError(
+            'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS must be canonical positive '
+            'ASCII integers separated by commas.',
+        )
+    account_ids = tuple(int(value) for value in values)
+    if len(set(account_ids)) != len(account_ids) or account_ids != tuple(
+        sorted(account_ids)
+    ):
+        raise ValueError(
+            'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS must be unique and sorted.',
+        )
+    return account_ids
+
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', '')
@@ -804,6 +835,9 @@ if MARKETPLACE_FEED_INGRESS_MODE not in {'legacy', 'dual_write'}:
     raise ValueError(
         'MARKETPLACE_FEED_INGRESS_MODE must be legacy or dual_write.',
     )
+MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS = _strict_feed_cutover_account_ids(
+    os.environ.get('MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS', '').strip(),
+)
 MARKETPLACE_FEED_ARTIFACT_MODE = os.environ.get(
     'MARKETPLACE_FEED_ARTIFACT_MODE', 'disabled',
 ).strip().lower()

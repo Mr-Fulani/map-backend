@@ -282,6 +282,12 @@ settings. Deploy кода выполняется только с прежним�
 - account-scoped `reconcile_private_feed_artifact_put` и exact-fenced
   `canary_private_feed_artifact --phase resume` только для recovery уже
   существующей `put_pending` attempt;
+- fail-closed `feed_cutover.py`, exact-one production allowlist и
+  `activate_marketplace_feed_cutover` для отдельно разрешённого постоянного
+  cutover account `4`;
+- account-scoped private durable generation в существующем P5 intent worker:
+  streaming XML, one-shot PUT, exact-version readback, atomic endpoint
+  successor promotion, Avito trigger и polling;
 - `P6_PRIVATE_FEED_CANARY_RUNBOOK.md` с exact rollback и fail-closed
   неизвестного PUT;
 - streaming writer/deterministic OEM части Avito feed builder;
@@ -301,6 +307,15 @@ preflight завершены на production `5ad92ad`. Первый account 4 c
 неё отдельно разрешён одним PR: read-only exact-version list, immutable audit,
 resume только attempt N+1 и rollback в `disabled/stable_bridge`; никаких
 delete/GC/P7/0039/new mode/worker wiring в него не входит.
+
+Recovery PR `#253`–`#254` выложен на production `827040c`. Владелец продукта
+2026-08-26 отдельно разрешил один следующий P6 cutover PR для единственного
+реального Autoload account `4`. Пакет не вводит новый fleet mode, migration
+или periodic worker: test accounts остаются legacy, а admission требует exact
+allowlist одного account ID и согласованные `legacy/dual_write/dual_write`,
+`active/stable_bridge/false` settings. Один полный GitHub CI используется как
+release gate; дублирующий push-main CI может быть отменён только при
+совпадающем tree SHA.
 
 ## P7 — замороженный backlog, миграции 0036–0039
 

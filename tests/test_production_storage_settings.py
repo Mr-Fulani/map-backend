@@ -59,6 +59,7 @@ def _production_environment() -> dict[str, str]:
         'AVITO_STATUS_LIFECYCLE_MODE': 'legacy',
         'MARKETPLACE_FEED_RUN_MODE': 'legacy',
         'MARKETPLACE_FEED_INGRESS_MODE': 'legacy',
+        'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS': '',
         'MARKETPLACE_FEED_ARTIFACT_MODE': 'disabled',
         'MARKETPLACE_FEED_ARTIFACT_BUCKET': '',
         'MARKETPLACE_FEED_ARTIFACT_ACCESS_KEY_ID': '',

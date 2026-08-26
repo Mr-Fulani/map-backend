@@ -12,6 +12,7 @@ from apps.marketplaces.listing_lifecycle import (
     clear_remote_observation,
     release_status_check,
 )
+from apps.marketplaces.feed_cutover import private_feed_cutover_enabled
 from apps.marketplaces.models import (
     AvitoAccountStatus,
     CategoryMapping,
@@ -56,12 +57,15 @@ def _feed_ingress_dual_write_enabled() -> bool:
     return settings.MARKETPLACE_FEED_INGRESS_MODE in {'dual_write', 'durable'}
 
 
-def _durable_feed_run_enabled() -> bool:
+def _durable_feed_run_enabled(account_id: int | None = None) -> bool:
     """Return whether the durable feed owner may receive new work."""
 
-    return (
+    fleet_enabled = (
         settings.MARKETPLACE_FEED_RUN_MODE == 'durable'
         and _status_lifecycle_dual_write_enabled()
+    )
+    return fleet_enabled or (
+        account_id is not None and private_feed_cutover_enabled(account_id)
     )
 
 
@@ -2009,7 +2013,7 @@ class MarketplaceAccountService:
 
             has_live_feed_owner = (
                 reactivated
-                and _durable_feed_run_enabled()
+                and _durable_feed_run_enabled(account.pk)
                 and account.marketplace == account.MARKETPLACE_AVITO
                 and type(account).objects.filter(
                     pk=account.pk,
