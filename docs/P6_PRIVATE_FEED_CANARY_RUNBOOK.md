@@ -14,7 +14,9 @@
   encryption использует один утверждённый KMS key;
 - private static key не совпадает с media key и не имеет
   `s3:DeleteObject`/`s3:DeleteObjectVersion`;
-- `GetBucketAcl` возвращает точный ожидаемый Yandex folder ID;
+- `GetBucketAcl` либо возвращает точный ожидаемый Yandex folder ID, либо
+  Yandex опускает одновременно оба owner-поля; частичный или другой owner
+  всегда блокирует операцию;
 - публичный stable URL и capability не меняются при private promotion.
 
 При несовпадении любого условия canary не начинается.
@@ -112,6 +114,73 @@ canary считается неуспешным. Оператор использ�
 этого generation запрещена. Любая известная лишняя версия сохраняется:
 удаление относится к замороженному P7.
 
+### 5.1 Audited reconciliation одного `put_pending`
+
+Recovery допустим только после доказанного завершения исходной process
+boundary и не менее 15 минут settlement. Для Docker допустимой boundary
+является init-процесс уже уничтоженного контейнера: reference обязан быть
+привязан к incident/redeploy evidence, а время завершения берётся как
+консервативная верхняя граница из Docker metadata. PID без уникального
+container/process reference использовать нельзя.
+
+Yandex документирует [strong consistency для PUT/DELETE][yandex-consistency]
+и отдельный [`ListObjectVersions`][yandex-list-versions] для versioned bucket.
+Перед apply оператор отдельно
+фиксирует revision реального exact-key empty-list canary. Команда имеет только
+read-only list client, сверяет точные tenant/account/endpoint/run/attempt UUID
+и revision, а audit сохраняет HMAC-дайджесты references вместо их открытых
+значений:
+
+```bash
+python manage.py reconcile_private_feed_artifact_put \
+  --tenant-id TENANT_ID \
+  --account-id ACCOUNT_ID \
+  --endpoint-id ENDPOINT_UUID \
+  --run-id RUN_UUID \
+  --attempt-id ATTEMPT_UUID \
+  --expected-attempt-revision ATTEMPT_REVISION \
+  --origin-process-id TERMINATED_BOUNDARY_PID \
+  --origin-process-terminated-at ISO_8601_WITH_TIMEZONE \
+  --termination-evidence-reference INCIDENT_REFERENCE \
+  --operator-reference OPERATOR_REFERENCE \
+  --origin-process-reference UNIQUE_ORIGIN_REFERENCE \
+  --identity-digest-key-revision KEY_REVISION \
+  --canary-policy-revision EXACT_LIST_CANARY_REVISION \
+  --apply \
+  --canary \
+  --confirm-account-id ACCOUNT_ID \
+  --confirm-origin-process-terminated
+```
+
+Результат `no_object` разрешает только новую immutable attempt с номером N+1;
+старый key не переиспользуется. Найденная версия сохраняется как
+`version_known`; delete marker, несколько версий или malformed listing
+переводят attempt в `manual_review`. Ни одна ветка ничего не удаляет.
+
+### 5.2 Safe resume того же generation
+
+Resume требует post-reconciliation attempt revision и неизменившуюся run
+revision. Он заново строит XML и сравнивает SHA-256/количество со frozen run,
+проверяет audit `put_pending → no_object`, отсутствие более новой attempt и
+только затем claim-ит тот же generation:
+
+```bash
+python manage.py canary_private_feed_artifact \
+  --account-id ACCOUNT_ID \
+  --phase resume \
+  --expected-run-id RUN_UUID \
+  --expected-run-revision RUN_REVISION \
+  --expected-attempt-id RECONCILED_ATTEMPT_UUID \
+  --expected-attempt-revision RECONCILED_ATTEMPT_REVISION \
+  --apply \
+  --canary \
+  --confirm-account-id ACCOUNT_ID
+```
+
+Любое несовпадение fence останавливает resume до второго PUT. Если новый PUT
+снова становится неизвестным, он остаётся новой `put_pending` attempt и
+проходит отдельную сверку; автоматического цикла retry нет.
+
 ## 6. Точный rollback после promotion
 
 Из результата activation берутся `artifact_id` и `artifact_revision`:
@@ -136,3 +205,6 @@ Stable URL, legacy object, artifact, VersionId, upload ledger и fetch evidence
 `MARKETPLACE_FEED_ARTIFACT_MODE=disabled` и
 `MARKETPLACE_FEED_STORAGE_MODE=stable_bridge`. Для повторного canary требуется
 новое отдельное решение и новая точная generation.
+
+[yandex-consistency]: https://yandex.cloud/en/docs/storage/qa#what-data-consistency-model-does-yandex-object-storage-use
+[yandex-list-versions]: https://yandex.cloud/en/docs/storage/s3/api-ref/bucket/listObjectVersions

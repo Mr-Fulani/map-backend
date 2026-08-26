@@ -13,6 +13,7 @@ request parameter.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Mapping
 
 import boto3
@@ -22,6 +23,12 @@ from django.conf import settings
 
 S3_ENDPOINT_URL = 'https://storage.yandexcloud.net'
 S3_REGION = 'ru-central1'
+YANDEX_LIST_VERSIONS_ADAPTER_POLICY_REVISION = 'yandex-list-versions-v1'
+
+_PRIVATE_FEED_OBJECT_KEY_RE = re.compile(
+    r'^private-feeds/v1/[0-9a-f-]{36}/[0-9a-f-]{36}/[0-9]{5}/feed\.xml$',
+)
+_POLICY_REVISION_RE = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$')
 
 
 class PrivateFeedClientConfigurationError(RuntimeError):
@@ -98,6 +105,72 @@ class YandexPrivateVersionedObjectClient:
         return self.read_client.get_object(**self._scoped(kwargs))
 
 
+@dataclass(slots=True)
+class YandexAuthoritativeExactVersionListClient:
+    """Read-only, exact-key adapter for reviewed PUT reconciliation.
+
+    Yandex documents strong consistency for PUT/DELETE objects and exposes
+    ``ListObjectVersions`` for versioned buckets.  The per-incident canary
+    policy revision is supplied explicitly by the operator so the durable
+    audit identifies the exact real-bucket observation that admitted absence
+    reconciliation.  This adapter has no object write or delete method.
+    """
+
+    read_client: Any
+    bucket: str
+    expected_bucket_owner: str
+    canary_policy_revision: str
+    authoritative_exact_key_version_listing: bool = True
+    adapter_policy_revision: str = YANDEX_LIST_VERSIONS_ADAPTER_POLICY_REVISION
+
+    def __post_init__(self) -> None:
+        if not _POLICY_REVISION_RE.fullmatch(self.canary_policy_revision):
+            raise PrivateFeedClientConfigurationError(
+                'Private feed reconciliation canary policy revision is invalid.',
+            )
+
+    def list_object_versions(self, **kwargs: object) -> Mapping[str, object]:
+        request = dict(kwargs)
+        supplied_owner = request.pop('ExpectedBucketOwner', None)
+        if supplied_owner != self.expected_bucket_owner:
+            raise PrivateFeedClientConfigurationError(
+                'Private feed expected bucket owner mismatch.',
+            )
+        if request.get('Bucket') != self.bucket:
+            raise PrivateFeedClientConfigurationError(
+                'Private feed bucket scope mismatch.',
+            )
+        prefix = request.get('Prefix')
+        if not isinstance(prefix, str) or not _PRIVATE_FEED_OBJECT_KEY_RE.fullmatch(
+            prefix,
+        ):
+            raise PrivateFeedClientConfigurationError(
+                'Private feed reconciliation requires one exact object key.',
+            )
+        if request.get('MaxKeys') != 100:
+            raise PrivateFeedClientConfigurationError(
+                'Private feed reconciliation page size mismatch.',
+            )
+        key_marker = request.get('KeyMarker')
+        version_marker = request.get('VersionIdMarker')
+        if (key_marker is None) != (version_marker is None):
+            raise PrivateFeedClientConfigurationError(
+                'Private feed reconciliation pagination fence is incomplete.',
+            )
+        unexpected = set(request) - {
+            'Bucket',
+            'Prefix',
+            'MaxKeys',
+            'KeyMarker',
+            'VersionIdMarker',
+        }
+        if unexpected:
+            raise PrivateFeedClientConfigurationError(
+                'Private feed reconciliation request contains unsupported fields.',
+            )
+        return self.read_client.list_object_versions(**request)
+
+
 def private_feed_object_client() -> YandexPrivateVersionedObjectClient:
     """Build a dedicated client pair without reusing media credentials."""
 
@@ -109,6 +182,22 @@ def private_feed_object_client() -> YandexPrivateVersionedObjectClient:
             'MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER',
         ),
         kms_key_id=_required_setting('MARKETPLACE_FEED_ARTIFACT_KMS_KEY_ID'),
+    )
+
+
+def private_feed_authoritative_version_client(
+    *,
+    canary_policy_revision: str,
+) -> YandexAuthoritativeExactVersionListClient:
+    """Build the read-only adapter used by one audited reconciliation."""
+
+    return YandexAuthoritativeExactVersionListClient(
+        read_client=_client(total_max_attempts=4),
+        bucket=_required_setting('MARKETPLACE_FEED_ARTIFACT_BUCKET'),
+        expected_bucket_owner=_required_setting(
+            'MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER',
+        ),
+        canary_policy_revision=canary_policy_revision,
     )
 
 

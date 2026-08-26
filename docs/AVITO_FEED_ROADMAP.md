@@ -1,6 +1,6 @@
 # Roadmap надёжной отправки фидов Avito
 
-Обновлено: 2026-08-25.
+Обновлено: 2026-08-26.
 
 Текущий статус: [`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md).
 Правила выполнения:
@@ -14,7 +14,7 @@
 сломать существующую отправку. Приватные файлы, их автоматическое удаление и
 полностью новая отправка — отдельные будущие результаты.
 
-## Текущая фаза: P5 activation deployed, dual-write observation разрешён
+## Текущая фаза: P6 deployed off, account 4 recovery активирован
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
@@ -36,9 +36,13 @@ merged через PR `#246` и выложен в production commit `2e9958c` в 
 режиме. Отдельный P5 activation package с writer fencing, reconciliation и
 legacy delivery repair merged через PR `#247` и выложен exact commit `9c23a6b`.
 PR/push-main CI, encrypted backup, health/topology, Celery ping, scanner cycles
-и отсутствие свежих critical/500 ошибок подтверждены. Владелец продукта
-отдельно разрешил P5 `dual_write` observation; минимальный settings gate и
-атомарное переключение ingress/lifecycle выполняются следующим шагом.
+и отсутствие свежих critical/500 ошибок подтверждены. P5 `dual_write`
+observation завершён. P6 private artifact package и три bounded follow-up
+merged через PR `#249`–`#252`; production exact SHA `5ad92ad` работает в
+`disabled/stable_bridge`. Первый account 4 canary fail-closed оставил одну
+attempt в `put_pending`, не переключив endpoint. Активирован только отдельный
+audited reconciliation/safe-resume recovery для этой attempt; P7 остаётся
+заморожен.
 
 Готово только когда:
 
@@ -299,9 +303,12 @@ P7, retention delete, GC, удаление файлов и `0039` в пакет 
 
 Локальный P6 gate закрыт: полный backend дал `2592 passed, 3 skipped`,
 flake8, оба mypy gate, migration drift и OpenAPI зелёные; свежая PostgreSQL
-база прошла `0029`–`0030` и rollback/reapply `0030 → 0028 → 0030`. Следующий
-gate — один PR/CI, выключенный deploy, реальная bucket/IAM/KMS preflight и
-ручной canary одного аккаунта.
+база прошла `0029`–`0030` и rollback/reapply `0030 → 0028 → 0030`. Основной
+release и cloud preflight завершены. Первый canary account 4 не прошёл PUT:
+durable attempt осталась `put_pending`, endpoint продолжил legacy serving и
+runtime возвращён в `disabled/stable_bridge`. Следующий gate — один P6 recovery
+PR, audited exact-version reconciliation, safe resume новой immutable attempt,
+проверка canary и точный rollback без удаления объекта.
 
 ### P7. Удаление старых файлов и DB-защита — backlog
 
@@ -348,6 +355,9 @@ P0 docs/inventory
   → отдельное решение о P7 cleanup/GC/0039
 ```
 
-В любой момент rollback возвращает режимы к
-`legacy/legacy/disabled/legacy_public`. Последующий пакет не используется как
-условие отката предыдущего.
+Текущий безопасный P6 rollback возвращает artifact/storage в
+`disabled/stable_bridge`, сохраняя отдельно проверенный P5
+`legacy/dual_write/dual_write`. Полный аварийный rollback предыдущих пакетов
+может дополнительно вернуть ingress/lifecycle в `legacy`, но не является
+частью account 4 recovery. Последующий пакет не используется как условие
+отката предыдущего.
