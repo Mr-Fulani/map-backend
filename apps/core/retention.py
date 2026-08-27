@@ -469,5 +469,8 @@ def purge_retained_data(*, dry_run: bool = False) -> dict[str, int]:
         'notification_deliveries',
         'expired_jwt_tokens',
     ):
-        bounded_querysets[name].delete()
+        if name == 'marketplace_accounts':
+            bounded_querysets[name].hard_delete()
+        else:
+            bounded_querysets[name].delete()
     return result
