@@ -121,11 +121,19 @@ MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
 - stable endpoint отвечает `307` на exact version с коротким TTL;
 - uncertain runs и unresolved PUT attempts: `0`.
 
-Avito upload `587751397`, отправленный 2026-08-26 20:54 UTC, на последней
-проверке оставался `processing`. Durable worker в 23:00 UTC реально опросил
-его, обновил run revision `13 → 15` и безопасно назначил следующий poll на
-23:30:11 UTC. Повторного POST и дублирующей generation не было. Это ожидание
-ответа Avito, а не ошибка MAP.
+Avito upload `587751397`, отправленный 2026-08-26 20:54 UTC, получил terminal
+результат. Read-only production-проверка 2026-08-27 подтвердила durable run
+`b2084883-4914-4f1a-9d35-e40562c22e73` в состоянии `succeeded`, revision `23`;
+provider report полностью обработан 2026-08-27 00:31 UTC, `last_error` пуст,
+следующий retry и lease отсутствуют. Предыдущий provider run остался
+`587591356`, поэтому новая отправка привязана к отдельному точному ID.
+
+Схема run намеренно сводит Avito `success` и `success_warning` в один безопасный
+terminal `succeeded` и не сохраняет исходный вариант отдельно. Blocking report
+для этого поколения пуст: rejected/pending/error counts равны `0`. Upload ledger
+содержит ровно одну attempt `1`: artifact атомарно привязан по ответу одиночного
+PUT, projection содержит `10` листингов, endpoint остаётся `verified`.
+Дублирующего PUT/generation, unresolved attempt и uncertain run нет.
 
 ### Release evidence fleet-default
 
@@ -153,8 +161,9 @@ sha256: 30120e86893fb2dcff728b08468d4c91b690ec6f1ff16ce12dd9a2d24245bb5e
 - Второго реального Avito Autoload аккаунта пока нет. Новый onboarding закрыт
   контрактными тестами; account `4` отдельно доказывает private storage,
   exact-version serving, Avito trigger и durable polling на реальном провайдере.
-- Текущий Avito upload должен выйти из внешнего `processing`; MAP продолжает
-  безопасный polling без дублирующей отправки.
+- Terminal observation upload `587751397` закрыт успешным durable outcome;
+  исходный вариант Avito `success`/`success_warning` отдельно не различается,
+  blocking report пуст.
 - Fleet runtime должен пройти согласованный период наблюдения до решения об
   удалении аварийного legacy-кода или начале P7.
 - Обычная продуктовая разработка, не затрагивающая P7/GC/delete/`0039`, не

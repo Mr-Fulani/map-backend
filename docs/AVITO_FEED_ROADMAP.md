@@ -39,8 +39,9 @@ account получает stable endpoint и durable/private delivery автом�
 
 Текущий gate — observation без изменения кода P7:
 
-- дождаться terminal результата реального Avito upload, который сейчас
-  обрабатывается провайдером;
+- terminal результат реального Avito upload `587751397` получен: durable run
+  завершён как `succeeded`, blocking report пуст, duplicate PUT/POST и
+  unresolved/uncertain evidence не обнаружены;
 - следить за duplicate POST/PUT, uncertain runs, unresolved attempts, 5xx,
   queue lag и restart;
 - зафиксировать retention/restore policy до разрешения любого object delete;
@@ -321,7 +322,8 @@ object delete, GC и `0039` не меняются.
 Этот пакет не начинается, пока:
 
 - не завершён согласованный fleet observation;
-- реальный Avito upload не получил terminal outcome либо не оформлен incident;
+- terminal outcome реального Avito upload не подтверждён либо не оформлен
+  incident; для upload `587751397` этот gate закрыт состоянием `succeeded`;
 - dry-run production backfill не показал реальные данные;
 - не утверждена политика хранения и восстановления;
 - владелец продукта отдельно не разрешил этап.
