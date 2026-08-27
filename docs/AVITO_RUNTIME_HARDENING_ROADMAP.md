@@ -50,7 +50,7 @@ production bundle проверен поддерживаемым `next build --we
 
 ## H2 — восстанавливаемый onboarding новых аккаунтов
 
-Статус: `IN_PROGRESS`.
+Статус: `VERIFIED` 2026-08-28.
 
 Результат: сбой broker после создания аккаунта не превращает успешный commit в
 ошибку API; незавершённый onboarding подбирается bounded scanner; exhausted и
@@ -60,9 +60,24 @@ pre-profile endpoint readiness проверяется явно.
 Границы: marketplace onboarding/tasks/views и существующий scheduler. Без
 массового sweep старых профилей, новых режимов и миграций.
 
+Результат: API создания аккаунта остаётся успешным при недоступном broker;
+потерянная постановка подбирается bounded scanner каждые пять минут; lock,
+retry exhaustion и ручная safety-сверка имеют durable tenant-visible статус;
+неопределённый POST повторяется только через GET-only reconciliation. Новый
+endpoint можно безопасно re-key до первого POST, а подтверждённый endpoint
+разрешает только семантически неизменные credentials. Local bridge/capability
+проверяются до изменения профиля Avito; мастер подключения различает duplicate
+и опасный 409, а UI отдельно показывает тариф Avito и готовность фида MAP.
+
+Фактический gate: focused onboarding/account regressions `71 passed`;
+Marketplace `885 passed, 2 skipped`; полный backend `2684 passed, 3 skipped`;
+frontend unit `29 passed`, typecheck, eslint и production Webpack build (21
+route) — exit 0; flake8, mypy (695 sources), strict mypy (350 sources), OpenAPI
+validation, `makemigrations --check --dry-run` и `git diff --check` — exit 0.
+
 ## H3 — статистика и плановая сверка
 
-Статус: `NOT_STARTED`.
+Статус: `IN_PROGRESS`.
 
 Результат: московская дата используется последовательно; нечисловой внешний ID
 не ломает весь аккаунт; inactive tenants не планируются; bounded history

@@ -286,19 +286,25 @@ class TestMarketplaceAccountAPI:
         assert response.json()['avito_status']['days_left'] == 30
         assert response.json()['avito_status']['subscription_source'] == 'manual'
 
-    def test_create_account_schedules_autoload_profile_setup(self):
+    def test_create_account_schedules_autoload_profile_setup(
+        self,
+    ):
         """После создания аккаунта Avito планируется задача настройки Autoload профиля."""
         from unittest.mock import patch
         from django.test import Client
         tenant, key = make_tenant('acc-autoload')
 
-        with patch('apps.marketplaces.tasks.setup_autoload_profile_task') as mock_task, \
-             mock_avito_user_id('al-001'), \
-             patch('apps.marketplaces.services.transaction') as mock_tx:
-            # В тестах on_commit не срабатывает — вызываем коллбэк немедленно
-            mock_tx.on_commit.side_effect = lambda fn: fn()
-
-            Client().post('/api/v1/accounts/', {
+        with (
+            patch(
+                'apps.marketplaces.autoload_onboarding.'
+                'schedule_autoload_profile_setup',
+            ) as schedule,
+            patch(
+                'apps.marketplaces.services.transaction.on_commit',
+            ) as on_commit,
+            mock_avito_user_id('al-001'),
+        ):
+            response = Client().post('/api/v1/accounts/', {
                 'name': 'Test',
                 'marketplace': 'avito',
                 'external_id': 'al-001',
@@ -306,7 +312,42 @@ class TestMarketplaceAccountAPI:
                 'client_secret': 'y',
             }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
 
-            mock_task.delay.assert_called_once()
+            assert response.status_code == 201
+            account = MarketplaceAccount.objects.get(tenant=tenant)
+            on_commit.call_args.args[0]()
+            schedule.assert_called_once_with(account.pk, account.tenant_id)
+
+    def test_broker_failure_after_create_keeps_201_and_records_recovery(
+        self,
+        django_capture_on_commit_callbacks,
+    ):
+        """A committed account is not reported as failed when Celery is down."""
+        from django.test import Client
+        from apps.marketplaces.autoload_onboarding import DISPATCH_FAILED
+        from apps.marketplaces.models import AvitoAccountStatus
+
+        tenant, key = make_tenant('acc-autoload-broker')
+        with (
+            patch(
+                'apps.marketplaces.tasks.setup_autoload_profile_task.delay',
+                side_effect=RuntimeError('broker unavailable'),
+            ),
+            mock_avito_user_id('al-broker'),
+            django_capture_on_commit_callbacks(execute=True),
+        ):
+            response = Client().post('/api/v1/accounts/', {
+                'name': 'Broker-safe',
+                'marketplace': 'avito',
+                'external_id': 'al-broker',
+                'client_id': 'x',
+                'client_secret': 'y',
+            }, content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
+
+        assert response.status_code == 201
+        account = MarketplaceAccount.objects.get(tenant=tenant)
+        snapshot = AvitoAccountStatus.objects.get(account=account)
+        onboarding = snapshot.notification_state['autoload_onboarding']
+        assert onboarding['code'] == DISPATCH_FAILED
 
     def test_duplicate_external_id_returns_409(self):
         """Создание дублирующего external_id возвращает 409."""
@@ -328,6 +369,10 @@ class TestMarketplaceAccountAPI:
             resp = c.post('/api/v1/accounts/', payload,
                           content_type='application/json', HTTP_AUTHORIZATION=f'Bearer {key}')
         assert resp.status_code == 409
+        assert resp.json()['code'] == 'account_exists'
+        assert resp.json()['account']['id'] == MarketplaceAccount.objects.get(
+            tenant=tenant,
+        ).pk
 
     def test_invalid_avito_credentials_return_400(self):
         """Невалидные Avito credentials не сохраняются как аккаунт."""

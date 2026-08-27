@@ -3398,7 +3398,10 @@ def coalesced_flush_task(
                     fleet_feed_onboarding_ready,
                 )
                 if not fleet_feed_onboarding_ready(account.pk):
-                    setup_autoload_profile_task.delay(
+                    from apps.marketplaces.autoload_onboarding import (
+                        schedule_autoload_profile_setup,
+                    )
+                    schedule_autoload_profile_setup(
                         account.pk,
                         account.tenant_id,
                     )
@@ -5385,6 +5388,55 @@ def fetch_stats_for_account_task(self, account_id: int, date_from_str: str, date
         raise self.retry(exc=exc)
 
 
+def _retry_or_exhaust_autoload_setup(
+    task,
+    account: MarketplaceAccount,
+    *,
+    exc: Exception,
+    reason: str,
+):
+    """Persist a safe terminal outcome instead of losing the last retry."""
+
+    from apps.marketplaces.autoload_onboarding import (
+        EXHAUSTED,
+        RETRYING,
+        record_autoload_onboarding_state,
+    )
+
+    retries = int(getattr(task.request, 'retries', 0) or 0)
+    max_retries = int(getattr(task, 'max_retries', 0) or 0)
+    if retries >= max_retries:
+        record_autoload_onboarding_state(
+            account,
+            code=EXHAUSTED,
+            message=(
+                'MAP не смог завершить настройку после нескольких попыток. '
+                'Проверьте подключение и запустите повтор в настройках.'
+            ),
+        )
+        _write_log(
+            account.tenant,
+            'autoload_profile_setup',
+            'error',
+            f'Autoload onboarding exhausted for account {account.pk}: {reason}',
+        )
+        logger.error(
+            'Avito Autoload onboarding exhausted account_id=%s tenant_id=%s '
+            'reason=%s',
+            account.pk,
+            account.tenant_id,
+            reason,
+        )
+        return {'status': 'exhausted', 'reason': reason}
+
+    record_autoload_onboarding_state(
+        account,
+        code=RETRYING,
+        message='MAP повторяет безопасную настройку подключения к Avito.',
+    )
+    raise task.retry(exc=exc, countdown=backoff(retries))
+
+
 @shared_task(bind=True, max_retries=3, queue='avito_publish')
 def setup_autoload_profile_task(self, account_id: int, tenant_id: int):
     """
@@ -5405,6 +5457,17 @@ def setup_autoload_profile_task(self, account_id: int, tenant_id: int):
     except MarketplaceAccount.DoesNotExist:
         return
 
+    from apps.marketplaces.autoload_onboarding import (
+        clear_autoload_onboarding_state,
+        mark_autoload_onboarding_manual_review,
+        touch_autoload_onboarding_attempt,
+    )
+    from apps.marketplaces.feed_profile_migration import (
+        FeedProfileMigrationSafetyError,
+    )
+
+    touch_autoload_onboarding_attempt(account)
+
     owner = (
         TenantUser.objects
         .filter(tenant=account.tenant, role=TenantUser.ROLE_OWNER)
@@ -5418,7 +5481,12 @@ def setup_autoload_profile_task(self, account_id: int, tenant_id: int):
         timeout=300,
     )
     if not lock.acquire(blocking=False):
-        return {'status': 'locked'}
+        return _retry_or_exhaust_autoload_setup(
+            self,
+            account,
+            exc=RuntimeError('Autoload onboarding coordination lock is busy.'),
+            reason='lock_contended',
+        )
 
     try:
         if private_feed_fleet_enabled():
@@ -5435,15 +5503,120 @@ def setup_autoload_profile_task(self, account_id: int, tenant_id: int):
             result = 'legacy_configured'
         from apps.marketplaces.services import AvitoAccountStatusService
         AvitoAccountStatusService.refresh(account)
+        clear_autoload_onboarding_state(account)
         _write_log(
             account.tenant, 'autoload_profile_setup', 'ok',
             f'Autoload профиль Avito настроен для {account.name}',
         )
         return {'status': result}
+    except FeedProfileMigrationSafetyError:
+        mark_autoload_onboarding_manual_review(account.pk)
+        _write_log(
+            account.tenant,
+            'autoload_profile_setup',
+            'error',
+            f'Autoload onboarding requires manual review for account {account.pk}',
+        )
+        logger.error(
+            'Avito Autoload onboarding safety refusal account_id=%s tenant_id=%s',
+            account.pk,
+            account.tenant_id,
+        )
+        return {'status': 'manual_review'}
     except Exception as exc:
-        raise self.retry(exc=exc, countdown=backoff(self.request.retries))
+        return _retry_or_exhaust_autoload_setup(
+            self,
+            account,
+            exc=exc,
+            reason='setup_failed',
+        )
     finally:
         lock.release()
+
+
+@shared_task(queue='avito_update')
+def recover_autoload_profile_onboarding(limit: int = 100):
+    """Boundedly recover onboarding work whose first dispatch was lost."""
+
+    from apps.marketplaces.autoload_onboarding import (
+        DISPATCH_FAILED,
+        EXHAUSTED,
+        MANUAL_REVIEW,
+        RETRYING,
+        record_autoload_onboarding_state,
+        schedule_autoload_profile_setup,
+    )
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError('limit must be an integer between 1 and 100.')
+
+    state_lookup = 'avito_status__notification_state__autoload_onboarding__code'
+    accounts = MarketplaceAccount.objects.filter(
+        tenant__is_active=True,
+        marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+        is_active=True,
+    ).select_related('tenant', 'avito_status', 'feed_endpoint')
+    if private_feed_fleet_enabled():
+        accounts = accounts.filter(
+            Q(feed_endpoint__isnull=True)
+            | Q(feed_endpoint__profile_state__in=(
+                MarketplaceFeedEndpoint.ProfileState.NEW,
+                MarketplaceFeedEndpoint.ProfileState.BRIDGE_READY,
+                MarketplaceFeedEndpoint.ProfileState.UPDATE_UNKNOWN,
+            )),
+        ).exclude(**{
+            f'{state_lookup}__in': (EXHAUSTED, MANUAL_REVIEW),
+        })
+    else:
+        accounts = accounts.filter(**{
+            f'{state_lookup}__in': (DISPATCH_FAILED, RETRYING),
+        })
+    candidates = list(accounts.order_by(
+        F('avito_status__last_attempted_at').asc(nulls_first=True),
+        'pk',
+    )[:limit])
+
+    scheduled = 0
+    dispatch_failed = 0
+    for account in candidates:
+        if private_feed_fleet_enabled() and not hasattr(account, 'feed_endpoint'):
+            try:
+                from apps.marketplaces.feed_profile_migration import (
+                    ensure_fleet_feed_endpoint,
+                )
+                ensure_fleet_feed_endpoint(account)
+            except Exception:
+                record_autoload_onboarding_state(
+                    account,
+                    code=EXHAUSTED,
+                    message=(
+                        'MAP не смог безопасно подготовить feed endpoint. '
+                        'Проверьте конфигурацию и запустите повтор.'
+                    ),
+                )
+                logger.exception(
+                    'Unable to reserve Avito feed endpoint account_id=%s '
+                    'tenant_id=%s',
+                    account.pk,
+                    account.tenant_id,
+                )
+                continue
+        record_autoload_onboarding_state(
+            account,
+            code=RETRYING,
+            message='MAP поставил безопасную настройку подключения в очередь.',
+        )
+        if schedule_autoload_profile_setup(account.pk, account.tenant_id):
+            scheduled += 1
+        else:
+            dispatch_failed += 1
+
+    return {
+        'selected': len(candidates),
+        'scheduled': scheduled,
+        'dispatch_failed': dispatch_failed,
+    }
 
 
 @shared_task(queue='avito_update')

@@ -7,6 +7,9 @@ from drf_spectacular.utils import extend_schema_field, inline_serializer
 from rest_framework import serializers
 
 from apps.marketplaces.listing_delivery import listing_delivery_presentation
+from apps.marketplaces.autoload_onboarding import (
+    autoload_onboarding_presentation,
+)
 from apps.marketplaces.models import (
     AvitoAccountStatus,
     AvitoCategory,
@@ -130,11 +133,22 @@ class CategoryMappingWriteSerializer(serializers.ModelSerializer):
         fields = ['category_source', 'category_target', 'category_id', 'attributes_map']
 
 
+class AutoloadOnboardingSerializer(serializers.Serializer):
+    """Tenant-safe state of MAP's managed Autoload endpoint setup."""
+
+    state = serializers.CharField(read_only=True)
+    profile_state = serializers.CharField(read_only=True)
+    ready = serializers.BooleanField(read_only=True)
+    retryable = serializers.BooleanField(read_only=True)
+    message = serializers.CharField(read_only=True)
+
+
 class MarketplaceAccountSerializer(serializers.ModelSerializer):
     """Чтение: credentials не возвращаются никогда."""
 
     avito_status = serializers.SerializerMethodField()
     feed_endpoint_managed = serializers.SerializerMethodField()
+    autoload_onboarding = serializers.SerializerMethodField()
 
     class Meta:
         model = MarketplaceAccount
@@ -145,6 +159,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
             'autoload_active', 'autoload_checked_at',
             'autoload_subscription_ends_at',
             'feed_endpoint_managed',
+            'autoload_onboarding',
             'avito_status',
             'created_at',
         ]
@@ -162,6 +177,12 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
     def get_feed_endpoint_managed(self, obj) -> bool:
         """Сообщает UI, что URL защищён и полностью управляется MAP."""
         return hasattr(obj, 'feed_endpoint')
+
+    @extend_schema_field(AutoloadOnboardingSerializer)
+    def get_autoload_onboarding(self, obj):
+        """Отделяет готовность endpoint MAP от тарифа Avito."""
+        presentation = autoload_onboarding_presentation(obj)
+        return AutoloadOnboardingSerializer(presentation).data
 
 
 class MarketplacePlacementAddressSerializer(serializers.ModelSerializer):

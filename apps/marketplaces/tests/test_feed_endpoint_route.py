@@ -20,6 +20,7 @@ from apps.marketplaces.feed_endpoint import (
 from apps.marketplaces.feed_workflow import account_identity_digest
 from apps.marketplaces.models import MarketplaceAccount, MarketplaceFeedEndpoint
 from apps.marketplaces.services import MarketplaceAccountService
+from apps.marketplaces.services import MarketplaceAccountFeedConflict
 from apps.tenants.models import Tenant
 
 
@@ -333,7 +334,7 @@ def test_old_url_is_revoked_when_current_account_identity_changes():
 
 @pytest.mark.django_db
 @override_settings(**ROUTE_SETTINGS)
-def test_preprofile_credential_writer_revokes_and_marks_endpoint_for_review():
+def test_preprofile_credential_writer_rekeys_recoverable_new_endpoint():
     _tenant, account = _account('feed-service-fence')
     endpoint = _endpoint(
         account,
@@ -362,7 +363,7 @@ def test_preprofile_credential_writer_revokes_and_marks_endpoint_for_review():
     assert endpoint.capability_revision == 2
     assert endpoint.previous_token_key_id == ''
     assert endpoint.serve_enabled is False
-    assert endpoint.profile_state == MarketplaceFeedEndpoint.ProfileState.MANUAL_REVIEW
+    assert endpoint.profile_state == MarketplaceFeedEndpoint.ProfileState.NEW
     assert endpoint.profile_fingerprint == ''
     assert endpoint.profile_verified_at is None
     assert endpoint.profile_revision == 8
@@ -474,7 +475,7 @@ def test_name_only_service_update_keeps_endpoint_generation_stable():
 
 @pytest.mark.django_db
 @override_settings(**ROUTE_SETTINGS)
-def test_credential_restore_fences_existing_soft_deleted_endpoint():
+def test_credential_restore_rekeys_unpublished_soft_deleted_endpoint():
     tenant, account = _account('feed-credential-restore')
     endpoint = _endpoint(
         account,
@@ -500,8 +501,50 @@ def test_credential_restore_fences_existing_soft_deleted_endpoint():
     assert endpoint.owner_identity_digest == account_identity_digest(restored)
     assert endpoint.capability_revision == 2
     assert endpoint.serve_enabled is False
-    assert endpoint.profile_state == MarketplaceFeedEndpoint.ProfileState.MANUAL_REVIEW
+    assert endpoint.profile_state == MarketplaceFeedEndpoint.ProfileState.NEW
     assert Client().get(f'{before.path}?{before.query}').status_code == 404
+
+
+@pytest.mark.django_db
+@override_settings(**ROUTE_SETTINGS)
+def test_verified_endpoint_allows_noop_credentials_but_blocks_real_rotation():
+    _tenant, account = _account('feed-verified-credentials')
+    account.credentials_enc = encrypt({
+        'client_id': 'same-client',
+        'client_secret': 'same-secret',
+    })
+    account.save(update_fields=['credentials_enc'])
+    endpoint = _endpoint(
+        account,
+        profile_state=MarketplaceFeedEndpoint.ProfileState.VERIFIED,
+        serve_enabled=True,
+    )
+    before = marketplace_feed_public_url(endpoint)
+
+    with patch.object(
+        MarketplaceAccountService,
+        '_fetch_avito_user_id',
+        return_value=account.external_id,
+    ):
+        updated = MarketplaceAccountService.update_credentials(account, {
+            'name': 'Renamed only',
+            'marketplace': account.marketplace,
+            'client_id': 'same-client',
+            'client_secret': 'same-secret',
+        })
+        with pytest.raises(MarketplaceAccountFeedConflict):
+            MarketplaceAccountService.update_credentials(updated, {
+                'name': 'Unsafe rotation',
+                'marketplace': account.marketplace,
+                'client_id': 'same-client',
+                'client_secret': 'different-secret',
+            })
+
+    endpoint.refresh_from_db()
+    assert endpoint.profile_state == MarketplaceFeedEndpoint.ProfileState.VERIFIED
+    assert endpoint.serve_enabled is True
+    assert endpoint.capability_revision == 1
+    assert marketplace_feed_public_url(endpoint) == before
 
 
 def test_feed_https_authorities_reject_userinfo_path_and_nonstandard_port(settings):

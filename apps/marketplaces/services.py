@@ -1,4 +1,5 @@
 import datetime
+import hmac
 from decimal import Decimal, InvalidOperation
 from functools import partial
 from typing import Any, TypedDict, cast
@@ -881,6 +882,10 @@ class NoActiveAccounts(Exception):
 class AccountAlreadyExists(Exception):
     """Аккаунт с таким external_id уже существует у тенанта."""
 
+    def __init__(self, message: str, *, account_id: int | None = None):
+        super().__init__(message)
+        self.account_id = account_id
+
 
 class InvalidMarketplaceCredentials(Exception):
     """Credentials маркетплейса не прошли проверку через API."""
@@ -1019,6 +1024,44 @@ def _fence_marketplace_feed_endpoint_identity(account, endpoint) -> None:
         'previous_token_key_id',
         'serve_enabled',
         'profile_state',
+        'profile_fingerprint',
+        'profile_verified_at',
+        'profile_revision',
+        'updated_at',
+    ))
+
+
+def _refresh_new_feed_endpoint_identity(account, endpoint) -> None:
+    """Re-key an endpoint that has never been exposed or posted to Avito."""
+
+    if endpoint is None:
+        return
+    from apps.marketplaces.feed_workflow import account_identity_digest
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    if (
+        endpoint.profile_state != MarketplaceFeedEndpoint.ProfileState.NEW
+        or endpoint.serve_enabled
+    ):
+        raise MarketplaceAccountFeedConflict(
+            'Нельзя изменить подключение после начала настройки профиля Avito.',
+        )
+    max_revision = (1 << 63) - 1
+    if (
+        endpoint.capability_revision >= max_revision
+        or endpoint.profile_revision >= max_revision
+    ):
+        raise OverflowError('Marketplace feed endpoint revision is exhausted.')
+    endpoint.owner_identity_digest = account_identity_digest(account)
+    endpoint.capability_revision += 1
+    endpoint.previous_token_key_id = ''
+    endpoint.profile_fingerprint = ''
+    endpoint.profile_verified_at = None
+    endpoint.profile_revision += 1
+    endpoint.save(update_fields=(
+        'owner_identity_digest',
+        'capability_revision',
+        'previous_token_key_id',
         'profile_fingerprint',
         'profile_verified_at',
         'profile_revision',
@@ -1854,17 +1897,39 @@ class MarketplaceAccountService:
                     .get(pk=deleted_account.pk)
                 )
                 feed_endpoint = _lock_marketplace_feed_endpoint(account.pk)
-                _assert_feed_endpoint_identity_mutation_safe(feed_endpoint)
-                _assert_account_identity_mutation_safe(account)
+                from apps.marketplaces.feed_workflow import account_identity_digest
+                previous_generation = account_identity_digest(account)
                 account.name = data['name']
                 account.credentials_enc = credentials_enc
                 account.is_active = True
                 account.deleted_at = None
+                generation_changed = not hmac.compare_digest(
+                    previous_generation,
+                    account_identity_digest(account),
+                )
+                new_endpoint_rekey = bool(
+                    generation_changed
+                    and feed_endpoint is not None
+                    and feed_endpoint.profile_state
+                    == feed_endpoint.ProfileState.NEW
+                    and not feed_endpoint.serve_enabled
+                )
+                if generation_changed:
+                    if not new_endpoint_rekey:
+                        _assert_feed_endpoint_identity_mutation_safe(feed_endpoint)
+                    _assert_account_identity_mutation_safe(account)
                 account.save(update_fields=(
                     'name', 'credentials_enc', 'is_active', 'deleted_at',
                     'updated_at',
                 ))
-                _fence_marketplace_feed_endpoint_identity(account, feed_endpoint)
+                if generation_changed:
+                    if new_endpoint_rekey:
+                        _refresh_new_feed_endpoint_identity(account, feed_endpoint)
+                    else:
+                        _fence_marketplace_feed_endpoint_identity(
+                            account,
+                            feed_endpoint,
+                        )
                 _invalidate_avito_access_token_after_commit(account)
                 if private_feed_fleet_enabled():
                     from apps.marketplaces.feed_profile_migration import (
@@ -1901,15 +1966,29 @@ class MarketplaceAccountService:
                                 'фид Avito.',
                             ) from exc
             except IntegrityError:
-                raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
+                existing_id = (
+                    MarketplaceAccount.objects.filter(
+                        tenant=tenant,
+                        marketplace=data['marketplace'],
+                        external_id=external_id,
+                    ).values_list('pk', flat=True).first()
+                )
+                raise AccountAlreadyExists(
+                    'Аккаунт с таким external_id уже существует',
+                    account_id=existing_id,
+                )
 
         # Регистрируем feed URL в Avito Autoload после коммита транзакции
         if account.marketplace == MarketplaceAccount.MARKETPLACE_AVITO:
-            from apps.marketplaces.tasks import setup_autoload_profile_task
+            from apps.marketplaces.autoload_onboarding import (
+                schedule_autoload_profile_setup,
+            )
             transaction.on_commit(
-                lambda: setup_autoload_profile_task.delay(
-                    account.pk, account.tenant_id,
-                )
+                partial(
+                    schedule_autoload_profile_setup,
+                    account.pk,
+                    account.tenant_id,
+                ),
             )
 
         return account
@@ -1930,13 +2009,28 @@ class MarketplaceAccountService:
                     .get(pk=account.pk)
                 )
                 feed_endpoint = _lock_marketplace_feed_endpoint(account.pk)
-                _assert_feed_endpoint_identity_mutation_safe(feed_endpoint)
-                _assert_account_identity_mutation_safe(account)
+                from apps.marketplaces.feed_workflow import account_identity_digest
+                previous_generation = account_identity_digest(account)
                 previous_identity = (account.marketplace, account.external_id)
                 account.name = data['name']
                 account.marketplace = data['marketplace']
                 account.external_id = external_id
                 account.credentials_enc = credentials_enc
+                generation_changed = not hmac.compare_digest(
+                    previous_generation,
+                    account_identity_digest(account),
+                )
+                new_endpoint_rekey = bool(
+                    generation_changed
+                    and feed_endpoint is not None
+                    and feed_endpoint.profile_state
+                    == feed_endpoint.ProfileState.NEW
+                    and not feed_endpoint.serve_enabled
+                )
+                if generation_changed:
+                    if not new_endpoint_rekey:
+                        _assert_feed_endpoint_identity_mutation_safe(feed_endpoint)
+                    _assert_account_identity_mutation_safe(account)
                 identity_changed = previous_identity != (
                     account.marketplace, account.external_id,
                 )
@@ -1959,15 +2053,42 @@ class MarketplaceAccountService:
                     ),
                     account_lifecycle_fields,
                 ))
-                _fence_marketplace_feed_endpoint_identity(account, feed_endpoint)
+                if generation_changed:
+                    if new_endpoint_rekey:
+                        _refresh_new_feed_endpoint_identity(account, feed_endpoint)
+                    else:
+                        _fence_marketplace_feed_endpoint_identity(
+                            account,
+                            feed_endpoint,
+                        )
                 _invalidate_avito_access_token_after_commit(account)
-                _bump_account_feed_projection_if_live(account.pk)
+                if generation_changed:
+                    _bump_account_feed_projection_if_live(account.pk)
                 if identity_changed:
                     Listing.all_objects.filter(account=account).update(
                         **_provider_identity_reset_kwargs(),
                     )
+                if new_endpoint_rekey:
+                    from apps.marketplaces.autoload_onboarding import (
+                        schedule_autoload_profile_setup,
+                    )
+                    transaction.on_commit(partial(
+                        schedule_autoload_profile_setup,
+                        account.pk,
+                        account.tenant_id,
+                    ))
         except IntegrityError:
-            raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
+            existing_id = (
+                type(account).objects.filter(
+                    tenant_id=account.tenant_id,
+                    marketplace=data['marketplace'],
+                    external_id=external_id,
+                ).exclude(pk=account.pk).values_list('pk', flat=True).first()
+            )
+            raise AccountAlreadyExists(
+                'Аккаунт с таким external_id уже существует',
+                account_id=existing_id,
+            )
         return account
 
     @staticmethod
@@ -2231,7 +2352,10 @@ class AvitoAccountStatusService:
         state = dict(status_obj.notification_state or {})
         period_key = cls._period_key(status_obj)
         if state.get('period') != period_key:
+            onboarding_state = state.get('autoload_onboarding')
             state = {'period': period_key}
+            if isinstance(onboarding_state, dict):
+                state['autoload_onboarding'] = onboarding_state
 
         if (
             status_obj.connection_status

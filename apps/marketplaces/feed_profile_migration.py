@@ -49,7 +49,10 @@ from apps.marketplaces.feed_cutover import private_feed_fleet_enabled
 from apps.marketplaces.feed_endpoint import (
     FeedEndpointConfigurationError,
     canonical_marketplace_feed_public_base_url,
+    legacy_bridge_target_url,
+    marketplace_feed_capability,
     marketplace_feed_public_url,
+    verify_marketplace_feed_capability,
 )
 from apps.marketplaces.feed_workflow import account_identity_digest
 from apps.marketplaces.models import MarketplaceAccount, MarketplaceFeedEndpoint
@@ -1685,6 +1688,41 @@ def _enter_onboarding_bridge(
         return locked
 
 
+def _assert_onboarding_route_ready(endpoint: MarketplaceFeedEndpoint) -> None:
+    """Prove the local stable route is valid before changing Avito."""
+
+    if (
+        endpoint.storage_mode
+        != MarketplaceFeedEndpoint.StorageMode.LEGACY_BRIDGE
+        or not endpoint.serve_enabled
+        or endpoint.profile_state not in {
+            MarketplaceFeedEndpoint.ProfileState.BRIDGE_READY,
+            MarketplaceFeedEndpoint.ProfileState.UPDATE_UNKNOWN,
+            MarketplaceFeedEndpoint.ProfileState.VERIFIED,
+        }
+    ):
+        raise FeedProfileMigrationSafetyError(
+            'Marketplace feed onboarding bridge is not locally ready.',
+        )
+    _assert_fleet_endpoint_owner(endpoint.account, endpoint)
+    try:
+        target = legacy_bridge_target_url(endpoint)
+        capability = marketplace_feed_capability(endpoint)
+        public_url = marketplace_feed_public_url(endpoint)
+    except FeedEndpointConfigurationError:
+        raise FeedProfileMigrationSafetyError(
+            'Marketplace feed onboarding route configuration is invalid.',
+        ) from None
+    if (
+        target is None
+        or not public_url
+        or not verify_marketplace_feed_capability(endpoint, capability)
+    ):
+        raise FeedProfileMigrationSafetyError(
+            'Marketplace feed onboarding route cannot serve its legacy feed.',
+        )
+
+
 def run_fleet_feed_onboarding(
     *,
     tenant_id: int,
@@ -1751,6 +1789,7 @@ def run_fleet_feed_onboarding(
             endpoint,
             source_fingerprint=observation.source_fingerprint,
         )
+        _assert_onboarding_route_ready(bridge)
         _apply_exact_target(
             account=account,
             endpoint=bridge,
@@ -1800,6 +1839,7 @@ def run_fleet_feed_onboarding(
         endpoint,
         source_fingerprint=source_fingerprint,
     )
+    _assert_onboarding_route_ready(bridge)
     if bridge.profile_state == MarketplaceFeedEndpoint.ProfileState.VERIFIED:
         return 'already_ready'
     try:

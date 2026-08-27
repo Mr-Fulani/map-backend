@@ -48,17 +48,27 @@ export function StepAvito({ data, onNext }: StepAvitoProps) {
       });
     } catch (err: unknown) {
       const axiosErr = err as { response?: { status?: number; data?: Record<string, unknown> } };
-      // 409 = аккаунт уже создан ранее — это ок, идём дальше
-      if (axiosErr?.response?.status === 409) {
+      const respData = axiosErr?.response?.data;
+      const existing = respData?.account as {
+        id?: number;
+        name?: string;
+        feed_endpoint_managed?: boolean;
+      } | undefined;
+      if (
+        axiosErr?.response?.status === 409
+        && respData?.code === 'account_exists'
+        && typeof existing?.id === 'number'
+      ) {
         toast.success('Аккаунт Avito уже подключён!');
         onNext({
           avito_client_id: clientId,
           avito_client_secret: clientSecret,
-          avito_account_name: accountName,
+          avito_account_name: existing.name || accountName,
+          avito_account_id: existing.id,
+          avito_feed_endpoint_managed: Boolean(existing.feed_endpoint_managed),
         });
         return;
       }
-      const respData = axiosErr?.response?.data;
       const message =
         (respData?.detail as string) ||
         (respData?.message as string) ||
