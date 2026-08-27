@@ -218,7 +218,7 @@ jobs:
         run: python manage.py spectacular --file /tmp/openapi-schema.yml --validate --fail-on-warn
 
       - name: Сохранить backend SBOM
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom-backend-${{ github.sha }}
           path: ${{ runner.temp }}/sbom/*.cdx.json
@@ -308,7 +308,7 @@ jobs:
             --cov-fail-under=0
 
       - name: Передать coverage своей части
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage-${{ matrix.shard }}-${{ github.run_id }}
           path: coverage.${{ matrix.shard }}
@@ -572,7 +572,7 @@ jobs:
           npm run build
 
       - name: Сохранить frontend SBOM
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sbom-frontend-${{ github.sha }}
           path: ${{ runner.temp }}/frontend.cdx.json
@@ -630,7 +630,7 @@ jobs:
             > "$RUNNER_TEMP/ci-gate/evidence.txt"
 
       - name: Сохранить exact-tree gate evidence
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ci-gate-${{ needs.scope.outputs.tree_sha }}-${{ needs.scope.outputs.mode }}
           path: ${{ runner.temp }}/ci-gate/evidence.txt
