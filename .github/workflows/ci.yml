@@ -287,6 +287,9 @@ jobs:
           --only-binary=:all:
           --requirement requirements/dev.txt
 
+      - name: Подготовить source database для backup integration
+        run: python manage.py migrate --noinput
+
       - name: Запустить свою полную часть backend-тестов
         env:
           COVERAGE_FILE: coverage.${{ matrix.shard }}

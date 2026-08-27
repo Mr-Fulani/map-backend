@@ -290,6 +290,21 @@ def test_external_container_images_are_pinned_by_manifest_digest():
             assert image_pattern.fullmatch(service['image']), (job_name, name)
 
 
+def test_backend_shards_prepare_backup_source_database_before_pytest():
+    backend_tests = yaml.safe_load(CI_WORKFLOW)['jobs']['backend-tests']
+    steps = backend_tests['steps']
+    step_names = [step['name'] for step in steps]
+    migration_name = 'Подготовить source database для backup integration'
+    pytest_name = 'Запустить свою полную часть backend-тестов'
+
+    assert backend_tests['env']['BACKUP_INTEGRATION_DATABASE_URL'].endswith(
+        '/map_db'
+    )
+    assert step_names.index(migration_name) < step_names.index(pytest_name)
+    migration_step = next(step for step in steps if step['name'] == migration_name)
+    assert migration_step['run'] == 'python manage.py migrate --noinput'
+
+
 def test_dockerfiles_pin_base_images_and_production_runs_non_root():
     external_image = re.compile(r'^[^\s@]+@sha256:[0-9a-f]{64}$')
     dockerfiles = {
