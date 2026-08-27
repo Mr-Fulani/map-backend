@@ -21,21 +21,31 @@ images из registry: `deploy.sh` повторно собирает их на pr
 проверенного SHA. Исходники, Python/npm lock-файлы, base-image digests и npm tarball
 checksum зафиксированы, но это пока не схема «build once, deploy exact image digest».
 
-### Freeze новой отправки фидов Avito
+### Текущий production-контракт фидов Avito
 
-Текущий runtime продолжает использовать legacy-отправку. Сохранённый
-`not-for-merge` WIP разделяется по
-[`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md); фактическое состояние
-зафиксировано в [`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md).
+P0–P6 внедрены; фактическое состояние и release evidence зафиксированы в
+[`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md), границы будущего P7 — в
+[`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md).
 
-До отдельно утверждённого rollout будущие feed-настройки не могут отличаться от
-`legacy/legacy/disabled/false/legacy_public` для run, ingress, artifact,
-profile migration и storage соответственно. Для отдельно разрешённого P5
-observation допустим только
-`legacy/dual_write/disabled/false/legacy_public` вместе с
-`AVITO_STATUS_LIFECYCLE_MODE=dual_write`. Rollback атомарно возвращает ingress
-и lifecycle в `legacy`; durable run, stable/private storage и profile migration
-не включаются.
+Каждый production deploy обязан сохранить точную согласованную комбинацию:
+
+```text
+AVITO_STATUS_LIFECYCLE_MODE=dual_write
+MARKETPLACE_FEED_RUN_MODE=durable
+MARKETPLACE_FEED_INGRESS_MODE=dual_write
+MARKETPLACE_FEED_ARTIFACT_MODE=active
+MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS=
+MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
+MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
+```
+
+Пустой allowlist означает fleet-default. Допустимый минимальный admission
+rollback — одной операцией вернуть `run=legacy` и exact allowlist проверенного
+account `4`; смешивать пустой allowlist с `legacy` или один ID с `durable`
+нельзя. Artifact/VersionId/evidence при rollback не удаляются. Более глубокий
+откат выполняется только по
+[`P6_PRIVATE_FEED_CANARY_RUNBOOK.md`](P6_PRIVATE_FEED_CANARY_RUNBOOK.md).
+P7, GC, cleanup, object deletion и `0039` остаются заморожены.
 
 ## 1. Подготовка production host
 
@@ -326,13 +336,27 @@ checkout вручную: script сам проверит target и вернёт p
 Канонический путь — успешный `CI` для `push` в `main`, после которого workflow
 `Deploy`:
 
-1. получает `workflow_run.head_sha` и проверяет, что это полный SHA успешного
-   `push` в `main`;
+1. получает exact-run CI gate artifact и `workflow_run.head_sha`; режим `docs`
+   завершает workflow без production deploy, а `full`/`reuse` разрешает
+   продолжение только для успешного `push` в `main`;
 2. подключается как `mapdeploy` по SSH с проверкой host fingerprint;
 3. передаёт forced-command протоколу только `deploy <40-char-sha>`;
 4. root-owned release entrypoint выполняет `git fetch --no-tags origin main`,
    пропускает устаревший SHA, проверяет ancestry, сохраняет предыдущий SHA,
    переключает checkout в detached HEAD и запускает `deploy.sh`.
+
+Required check сохраняет имя `test`. Markdown-only изменения в `docs/` и
+корневые `*.md` проходят короткий `git diff --check`; любой другой файл
+fail-closed включает полный gate. Полный gate параллельно выполняет backend
+contracts/schema/supply-chain, три исчерпывающих backend test shards с единым
+coverage threshold, frontend и production image/runtime security.
+
+После успешного полного gate CI сохраняет evidence проверенного Git tree. Для
+последующего `push` того же дерева полный gate можно не повторять только если
+GitHub API подтверждает неистёкший artifact успешного workflow этого же
+репозитория. Совпадения commit SHA недостаточно; сравнивается tree SHA. Ошибка
+API, foreign/fork run, иной workflow, неуспешный run или другое дерево всегда
+возвращают полный CI.
 
 `deploy.sh` затем:
 

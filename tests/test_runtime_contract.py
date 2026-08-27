@@ -285,8 +285,24 @@ def test_external_container_images_are_pinned_by_manifest_digest():
             assert image_pattern.fullmatch(service['image']), name
 
     ci_config = yaml.safe_load(CI_WORKFLOW)
-    for name, service in ci_config['jobs']['test']['services'].items():
-        assert image_pattern.fullmatch(service['image']), name
+    for job_name in ('backend-quality', 'backend-tests'):
+        for name, service in ci_config['jobs'][job_name]['services'].items():
+            assert image_pattern.fullmatch(service['image']), (job_name, name)
+
+
+def test_backend_shards_prepare_backup_source_database_before_pytest():
+    backend_tests = yaml.safe_load(CI_WORKFLOW)['jobs']['backend-tests']
+    steps = backend_tests['steps']
+    step_names = [step['name'] for step in steps]
+    migration_name = 'Подготовить source database для backup integration'
+    pytest_name = 'Запустить свою полную часть backend-тестов'
+
+    assert backend_tests['env']['BACKUP_INTEGRATION_DATABASE_URL'].endswith(
+        '/map_db'
+    )
+    assert step_names.index(migration_name) < step_names.index(pytest_name)
+    migration_step = next(step for step in steps if step['name'] == migration_name)
+    assert migration_step['run'] == 'python manage.py migrate --noinput'
 
 
 def test_dockerfiles_pin_base_images_and_production_runs_non_root():
@@ -549,7 +565,7 @@ def test_ci_scans_every_unique_production_image_and_its_service_images_match_ci(
     }
 
     assert scan_services == production_image_services
-    ci_services = yaml.safe_load(CI_WORKFLOW)['jobs']['test']['services']
+    ci_services = yaml.safe_load(CI_WORKFLOW)['jobs']['backend-quality']['services']
     postgres_dockerfile = ROOT / 'ops/postgres/Dockerfile'
     assert COMPOSE['services']['db']['build'] == {
         'context': '.',

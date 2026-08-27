@@ -29,10 +29,9 @@ commit `9c23a6b37264fb26be9af78876af034b8d1cb508` и прошёл legacy-only pr
 gate. Settings-gate для парного P5 `dual_write` observation merged через PR
 `#248` в `54b87f286b1e6a318fda6acf1abfa266fdd48bd2`, но само production-переключение
 выполнено отдельно. P6 private artifacts merged через PR `#249`, bounded
-follow-up/recovery исправления — через PR `#250`–`#254`. Постоянный private
-cutover единственного реального Autoload account `4` завершён PR `#255`;
-production перед fleet-default release работает на exact commit
-`139ed48dd154eed9834574801610ab4913b07a9b`.
+follow-up/recovery — через PR `#250`–`#254`, account-scoped cutover — через PR
+`#255`. PR `#256` завершил fleet-default rollout. Текущий production работает
+на exact commit `0762ab578dda40aeff3178b6aa4e69247b40eae7`.
 
 Этот файл — единственный источник правды о текущей стадии работ. Roadmap
 находится в [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а обязательные
@@ -41,13 +40,23 @@ production перед fleet-default release работает на exact commit
 Точная карта разделения файлов и тестов:
 [`AVITO_FEED_CHANGESET_MANIFEST.md`](AVITO_FEED_CHANGESET_MANIFEST.md).
 
-## Решение: активен P6 fleet-default onboarding, P7 остаётся заморожен
+## Решение: P6 fleet-default включён, P7 остаётся заморожен
 
-После успешного account `4` cutover пользователь 2026-08-27 отдельно разрешил
-перевести штатную SaaS-цепочку на новую систему для всех будущих подключений.
-Пакет выходит одним PR и одним полным CI, не добавляет миграций, режимов,
-GC или удаления объектов. Старый onboarding остаётся только неактивной
-аварийной совместимостью до отдельного наблюдения и удаления.
+P0–P6 внедрены. Новая цепочка Avito является штатной production-цепочкой, а не
+экспериментом одного аккаунта:
+
+- изменения каталога записываются как durable intent;
+- worker создаёт версионированный XML в закрытом Yandex Object Storage;
+- MAP выдаёт Avito постоянный stable URL, который перенаправляет на точную
+  короткоживущую ссылку конкретной версии;
+- новый успешно подключённый Avito-аккаунт получает managed endpoint и
+  onboarding автоматически, без ручного allowlist;
+- пока Avito не подтвердил endpoint, публикация ждёт безопасной сверки и не
+  откатывается к публичной legacy-загрузке;
+- неоднозначные внешние POST/PUT не повторяются вслепую.
+
+Старый onboarding физически остаётся только аварийной совместимостью до
+отдельного observation и удаления в будущем reviewed пакете.
 
 До отдельного нового решения запрещено:
 
@@ -55,20 +64,19 @@ GC или удаления объектов. Старый onboarding остаё�
 - продолжать `0039`, retention delete, автоматическое удаление файлов или GC;
 - удалять, отвязывать или перезаписывать artifact/evidence записи и S3-версии;
 - выполнять массовую миграцию старых профилей отдельным sweep-процессом;
-- физически удалять legacy-код до подтверждённого периода наблюдения.
+- физически удалять legacy-код до подтверждённого периода наблюдения;
+- считать внешний Avito `processing` причиной для повторного POST.
 
-В активном P6 разрешено:
+В уже включённом P6 работает:
 
 - private artifact schema, exact-version upload/readback и fail-closed serving;
 - отдельные IAM credentials, folder-owner/KMS/versioning preflight и presigner;
 - потоковый тест 10 000 объявлений и необходимые regression/test-fixes;
-- выключенный initial deploy, затем один ручной canary с точным rollback без
-  удаления объекта;
-- исключать из P6 случайно попавшие retention/GC/P7 изменения.
-- автоматически резервировать stable endpoint при создании Avito-аккаунта;
-- регистрировать stable URL в Avito с tenant/account fencing;
-- включить durable/private delivery для всех готовых аккаунтов без allowlist;
-- удерживать публикацию без legacy fallback, пока endpoint не подтверждён.
+- один проверенный реальный account `4` и общий fleet-default admission;
+- автоматическое резервирование stable endpoint при создании Avito-аккаунта;
+- регистрация stable URL в Avito с tenant/account fencing;
+- durable/private delivery для всех готовых аккаунтов без allowlist;
+- удержание публикации без legacy fallback, пока endpoint не подтверждён.
 
 ## Почему введена заморозка
 
@@ -81,38 +89,94 @@ Snapshot меняет 169 файлов и добавляет больше 61 т�
 
 ## Что сейчас работает в production
 
-Перед fleet-default release единственный реальный account `4` уже использует
-private generation и exact-version serving. Production settings:
+Production settings во всех Django/Celery consumers:
 
 ```text
-MARKETPLACE_FEED_RUN_MODE=legacy
+MARKETPLACE_FEED_RUN_MODE=durable
 MARKETPLACE_FEED_INGRESS_MODE=dual_write
 AVITO_STATUS_LIFECYCLE_MODE=dual_write
 MARKETPLACE_FEED_ARTIFACT_MODE=active
-MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS=4
+MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS=
 MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
 MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
 ```
 
-Fleet-default release меняет только два admission-параметра:
-
-```text
-MARKETPLACE_FEED_RUN_MODE=durable
-MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS=
-```
-
-После этого account `4` продолжает ту же private-цепочку, а новый успешно
+Пустой allowlist означает fleet-default, а не выключение. Account `4`
+продолжает ту же private-цепочку, а новый успешно
 подключённый Avito-аккаунт получает managed stable URL автоматически. Если
 регистрация URL у Avito ещё не доказана, публикация ждёт и повторяет безопасную
 проверку; старый public upload не вызывается.
 
-## Фактическая стадия snapshot
+`MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false` запрещает массовый sweep
+старых профилей, но не выключает штатный onboarding нового аккаунта.
 
-Таблица ниже описывает сохранённый WIP snapshot, а не runtime-код P0-ветки.
+### Реальный account 4
+
+После fleet switch подтверждено:
+
+- endpoint `private_generation`, `verified`, `serve_enabled=true`;
+- текущий artifact существует, listing count `10`;
+- intent/dispatched/source revisions равны `2`, endpoint artifact revision —
+  `2`;
+- stable endpoint отвечает `307` на exact version с коротким TTL;
+- uncertain runs и unresolved PUT attempts: `0`.
+
+Avito upload `587751397`, отправленный 2026-08-26 20:54 UTC, получил terminal
+результат. Read-only production-проверка 2026-08-27 подтвердила durable run
+`b2084883-4914-4f1a-9d35-e40562c22e73` в состоянии `succeeded`, revision `23`;
+provider report полностью обработан 2026-08-27 00:31 UTC, `last_error` пуст,
+следующий retry и lease отсутствуют. Предыдущий provider run остался
+`587591356`, поэтому новая отправка привязана к отдельному точному ID.
+
+Схема run намеренно сводит Avito `success` и `success_warning` в один безопасный
+terminal `succeeded` и не сохраняет исходный вариант отдельно. Blocking report
+для этого поколения пуст: rejected/pending/error counts равны `0`. Upload ledger
+содержит ровно одну attempt `1`: artifact атомарно привязан по ответу одиночного
+PUT, projection содержит `10` листингов, endpoint остаётся `verified`.
+Дублирующего PUT/generation, unresolved attempt и uncertain run нет.
+
+### Release evidence fleet-default
+
+- PR `#256`, PR CI run `33018719809`, job `98343434543`: `success`;
+- merge SHA: `0762ab578dda40aeff3178b6aa4e69247b40eae7`;
+- merge tree и проверенный PR head tree совпали:
+  `d52ec2b876d2a8e9da5eaf5df799c087bc932691`;
+- дублирующий push-main CI `33020511166` отменён только после доказанного
+  совпадения tree SHA, затем выполнен канонический manual deploy;
+- новых миграций нет (`No migrations to apply`);
+- production checkout exact и clean, 10 контейнеров healthy, restart count
+  `0`, readiness HTTP `200`, оба backup timer active;
+- application critical matches и Nginx 5xx matches: `0`.
+
+Release backup:
+
+```text
+postgres/daily/2026/08/20260826T224643Z_0762ab578dda_b5a32cbaafdd.dump.age
+bytes: 5514721
+sha256: 30120e86893fb2dcff728b08468d4c91b690ec6f1ff16ce12dd9a2d24245bb5e
+```
+
+### Что ещё не доказано и что дальше
+
+- Второго реального Avito Autoload аккаунта пока нет. Новый onboarding закрыт
+  контрактными тестами; account `4` отдельно доказывает private storage,
+  exact-version serving, Avito trigger и durable polling на реальном провайдере.
+- Terminal observation upload `587751397` закрыт успешным durable outcome;
+  исходный вариант Avito `success`/`success_warning` отдельно не различается,
+  blocking report пуст.
+- Fleet runtime должен пройти согласованный период наблюдения до решения об
+  удалении аварийного legacy-кода или начале P7.
+- Обычная продуктовая разработка, не затрагивающая P7/GC/delete/`0039`, не
+  обязана ждать этого observation window.
+
+## Историческое состояние исходного snapshot
+
+Таблица ниже описывает только сохранённый WIP на 2026-08-20, а не текущий
+production runtime. Актуальное состояние пакетов приведено ниже отдельно.
 
 | Часть | Состояние | Можно включать? |
 |---|---|---|
-| Текущая старая отправка | Работает сейчас | Да, это текущий режим |
+| Старая отправка на дату snapshot | Работала на 2026-08-20 | Исторический факт |
 | Учёт изменений товаров и объявлений | Код написан, общая проверка не завершена | Нет |
 | Надёжные задания на повторную отправку | Код написан, общая проверка не завершена | Нет |
 | Стабильная ссылка на фид | Код написан, реальная проверка с Avito не выполнена | Нет |
@@ -123,7 +187,11 @@ MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS=
 | Защита базы `0039` | Не начата | Нет |
 | Hardening удаления MarketplaceAccount | Частично записан в `models.py` и `retention.py`, тестирование не завершено | Нет |
 
-## Что действительно проверено
+## Исторический журнал проверок P0–P6
+
+Раздел ниже сохраняет команды и результаты промежуточных пакетов. Формулировки
+`legacy`, `disabled` и старые SHA относятся к моменту соответствующего release,
+а не к текущему production-контракту из начала документа.
 
 Для отдельных частей ранее запускались узкие тесты и статические проверки.
 Tracked working-tree diff ранее проходил `py_compile`, `flake8` и
@@ -455,21 +523,10 @@ Cleanup/backfill и auto-applied `0039` запрещено выпускать о
 `0039` возможен только в отдельном следующем rollout после фактической очистки,
 полного повторного backfill и независимого fleet/broker drain evidence.
 
-## Активный шаг
+## Исторический account-scoped P6 gate — завершён
 
-P0–P5 завершены. P6 schema/runtime выложен через PR `#249`, а bounded
-follow-up/recovery — через PR `#250`–`#254`. Production exact SHA — `827040c`;
-все контейнеры/readiness зелёные. Рабочие настройки после canary
-возвращены в безопасные `legacy/dual_write/disabled/stable_bridge`, массовый
-profile admission выключен.
-
-Активный шаг — отдельно разрешённый постоянный P6 cutover только для реального
-account `4`, tenant `8`. Остальные аккаунты тестовые, не подключены к Avito
-Autoload и остаются на legacy. Пакет добавляет fail-closed allowlist admission,
-автоматическую генерацию и точную проверку private artifact, атомарную замену
-endpoint и отправку в Avito через существующий durable intent. Глобальные
-run/ingress/lifecycle режимы остаются `legacy/dual_write/dual_write`, поэтому
-новый владелец доставки включается только для account `4`:
+Перед fleet-default account `4`, tenant `8` был отдельно проверен через точный
+allowlist. Это был временный безопасный этап, а не конечная архитектура SaaS:
 
 ```text
 MARKETPLACE_FEED_ARTIFACT_MODE=active
@@ -478,14 +535,14 @@ MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
 MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
 ```
 
-Activation выполняется exact-confirmed командой
+Историческая activation выполнялась exact-confirmed командой
 `activate_marketplace_feed_cutover`; до её успешного завершения endpoint
-остаётся `legacy_bridge`. Неизвестный результат PUT блокируется для ручной
-сверки без повторного PUT. Экстренный rollback сначала возвращает endpoint
-`private_generation → legacy_bridge`, затем убирает account `4` из allowlist и
-возвращает artifact mode в `disabled`. Объекты и audit evidence при этом не
-удаляются. P7, GC, удаление объектов, `0039`, новые общие режимы и широкое
-worker wiring остаются заморожены.
+оставался `legacy_bridge`. Неизвестный результат PUT блокировался для ручной
+сверки без повторного PUT. Экстренный rollback сначала возвращал endpoint
+`private_generation → legacy_bridge`, затем убирал account `4` из allowlist и
+возвращал artifact mode в `disabled`. Объекты и audit evidence при этом не
+удалялись. PR `#255` закрыл этот gate; PR `#256` затем заменил его общей
+fleet-default конфигурацией, указанной в начале документа.
 
 Локальный recovery gate 2026-08-26:
 
@@ -877,13 +934,11 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
 | P2b2 runtime fencing/dual-write | `DEPLOYED_LEGACY_ONLY`, PR `#232`, production `0ef04de` |
 | P2b2 monitor/health/log observation | `VERIFIED` 2026-08-21 |
 | Avito 0 / dashboard 10: bounded provider canary | `VERIFIED`; Avito API подтверждает все 10 active |
-| P2c tenant status clarity/expiry notices | `DEPLOYED_LEGACY_ONLY`, PR `#234`, production `1f05367` |
-| P3 durable feed foundation `0023`–`0024` | `DEPLOYED_OFF`, PR `#244`, production `f1881f1` |
-| P4 stable endpoint/profile `0025` | `DEPLOYED_OFF`, PR `#245`, production `9061ebb` |
-| P5 feed-intent foundation `0026`–`0028` | `DEPLOYED_LEGACY_ONLY`, PR `#246`, production `2e9958c` |
-| P5 writer/legacy-delivery activation | `DEPLOYED_LEGACY_ONLY`, PR `#247`, production `9c23a6b` |
-| P5 dual-write observation rollout | settings gate `MERGED` PR `#248`; production read-only inspection подтверждает `dual_write/dual_write` на SHA `54b87f2` |
-| P6 private artifact experiment | `DEPLOYED_OFF`, PR `#249`–`#254`, production `827040c`; canary/recovery завершён, account 4 возвращён в legacy, постоянный account-scoped cutover `IN_PROGRESS` |
+| P2c tenant status clarity/expiry notices | `ENABLED`, первоначальный PR `#234`; lifecycle сейчас `dual_write` |
+| P3 durable feed foundation `0023`–`0024` | `ENABLED`, run сейчас `durable` |
+| P4 stable endpoint/profile `0025` | `ENABLED` в штатном onboarding |
+| P5 feed-intent foundation/activation `0026`–`0028` | `ENABLED`, ingress сейчас `dual_write` |
+| P6 private artifacts и fleet onboarding `0029`–`0030` | `ENABLED`, PR `#249`–`#256`, production `0762ab5` |
 | P7 cleanup/GC/0039 | `FROZEN` |
 
 Физическое разделение не выполняется автоматически: общие файлы
@@ -891,7 +946,7 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
 отдельным diff-hunks, после чего сразу проверять каждый получившийся пакет.
 Точная карта находится в `AVITO_FEED_CHANGESET_MANIFEST.md`.
 
-### Активированный пакет P6
+### Исторический основной acceptance пакета P6
 
 Владелец продукта отдельно разрешил P6 2026-08-25. Недеплоенные миграции
 `0029`–`0035` свёрнуты в две новые миграции поверх production `0028`:
@@ -927,8 +982,7 @@ Cloud preflight проверяет owner contract через `GetBucketAcl`, в�
 versioning и точный default KMS key до любого canary PUT. Yandex может опустить
 оба owner-поля; частичный или другой owner блокируется.
 
-Canary/recovery завершён, private artifact прошёл exact-version verification,
-а endpoint по плану возвращён в legacy. Следующий отдельно разрешённый срез —
-постоянный cutover только реального account `4` через exact-one allowlist при
-неизменном fleet run mode. P7, retention delete, GC, удаление объектов, `0039`
-и широкое production-включение в P6 не входят.
+Canary/recovery, постоянный account `4` cutover и fleet-default последовательно
+завершены PR `#253`–`#256`. Текущая конфигурация и release evidence находятся
+в начале документа. P7, retention delete, GC, удаление объектов и `0039`
+по-прежнему не входят в P6.

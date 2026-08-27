@@ -16,6 +16,14 @@ def test_deploy_is_gated_by_ci_and_uses_exact_commit():
     assert 'bash -se' not in DEPLOY_WORKFLOW
 
 
+def test_docs_only_ci_is_verified_from_exact_run_and_never_deployed():
+    assert 'actions: read' in DEPLOY_WORKFLOW
+    assert 'run-id: ${{ github.event.workflow_run.id }}' in DEPLOY_WORKFLOW
+    assert 'pattern: ci-gate-*' in DEPLOY_WORKFLOW
+    assert "case \"$mode\" in\n            docs|full|reuse)" in DEPLOY_WORKFLOW
+    assert "needs.gate.outputs.mode != 'docs'" in DEPLOY_WORKFLOW
+
+
 def test_previous_sha_is_explicit_and_validated_before_docker_mutation():
     assert 'PREVIOUS_SHA="${PREVIOUS_SHA:-}"' in DEPLOY_SCRIPT
     assert 'PREVIOUS_SHA:-$(git rev-parse HEAD' not in DEPLOY_SCRIPT

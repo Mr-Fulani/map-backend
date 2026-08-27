@@ -341,22 +341,30 @@ Media job с `outcome_uncertain`, удержанным credit reservation или
 durable provider-response checkpoint, а также его soft-deleted Product, не
 удаляются до явной операторской сверки.
 
-## Blocking contract новой отправки фидов Avito
+## Blocking contract production-фидов Avito
 
 Текущая стадия и freeze зафиксированы в
 [`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md), порядок будущих пакетов — в
-[`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md). Production продолжает
-работать через legacy-отправку. Для разделяемого WIP обязательны:
+[`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md). P6 fleet runtime включён.
+Обязательная согласованная комбинация:
 
-- run и ingress — `legacy`;
-- artifact mode — `disabled`;
+- lifecycle и ingress — `dual_write`;
+- run — `durable`;
+- artifact mode — `active`;
+- cutover allowlist — пустой (fleet-default);
 - profile migration — `false`;
-- storage — `legacy_public`.
+- storage — `stable_bridge`.
 
-Выключенный или сохранённый в WIP код не считается production-защитой.
-Private serving, GC, object deletion, cleanup, `0039`, новые миграции/режимы и
-worker wiring остаются замороженными до отдельного roadmap package. Cleanup и
-auto-applied `0039` нельзя выпускать одним release.
+Private bucket остаётся непубличным, versioned и KMS-encrypted. Отдельный
+Avito service account имеет только bucket-scoped uploader/configurer права и
+не получает `editor/admin`. Приложение не выполняет delete до отдельного P7
+rollout. Capability/presigned URL, object key, VersionId и HMAC keys запрещено
+писать в логи и документы.
+
+Выключенный или сохранённый в WIP код не считается production-защитой. GC,
+object deletion, cleanup, `0039`, новые миграции/режимы и дополнительный worker
+wiring остаются замороженными до отдельного P7 package. Cleanup и auto-applied
+`0039` нельзя выпускать одним release.
 
 ## Целостность media storage
 
@@ -484,6 +492,12 @@ Workflow `Deploy` запускается событием `workflow_run` тол�
 `push` в `main` и передаёт на сервер точный 40-символьный commit SHA. `deploy.sh`
 проверяет принадлежность SHA ветке `origin/main` и разворачивает именно этот commit,
 а не текущее состояние ветки на момент подключения к серверу.
+
+Перед доступом к production secrets workflow скачивает gate artifact только из
+точного завершённого CI run. Режим `docs` никогда не запускает deploy. Режим
+`reuse` допустим только после подтверждения успешного полного CI того же
+репозитория для идентичного Git tree; недоступный или неоднозначный evidence
+fail-closed запускает полный CI либо блокирует deploy.
 
 В GitHub необходимо создать защищённое environment `production`, включить required
 reviewers и определить:

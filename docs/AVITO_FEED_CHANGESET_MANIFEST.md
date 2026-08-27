@@ -269,7 +269,7 @@ Foundation merged через PR `#246` и deployed exact commit `2e9958c` с
 settings. Deploy кода выполняется только с прежними legacy-флагами;
 `dual_write` — отдельный rollout после release gate.
 
-## P6 — private artifact experiment, миграции 0029–0030
+## P6 — private artifacts и fleet onboarding, миграции 0029–0030 — завершён
 
 Основные файлы:
 
@@ -294,10 +294,9 @@ settings. Deploy кода выполняется только с прежним�
 - только artifact settings/admin/model части; retention delete не входит;
 - artifact upload/serving/promotion/reconciliation tests.
 
-P6 разрешён 2026-08-25 одним PR. Deploy сначала выключенный; затем допустим
-только ручной canary одного Avito-аккаунта после реального bucket/IAM/KMS
-preflight и нагрузочного теста. Широкое включение и любые object delete/GC
-остаются вне пакета.
+P6 разрешён 2026-08-25. Deploy выполнялся последовательно: выключенный release,
+ручной canary/recovery одного Avito-аккаунта, постоянный account-scoped cutover
+и fleet-default. Любые object delete/GC остаются вне пакета.
 
 Локальный основной acceptance закрыт: `2592 passed, 3 skipped`, flake8, оба
 mypy, migration drift, OpenAPI, свежие migrations `0029`–`0030` и их точный
@@ -308,10 +307,11 @@ preflight завершены на production `5ad92ad`. Первый account 4 c
 resume только attempt N+1 и rollback в `disabled/stable_bridge`; никаких
 delete/GC/P7/0039/new mode/worker wiring в него не входит.
 
-Recovery PR `#253`–`#254` выложен на production `827040c`, а PR `#255`
-завершил private cutover account `4` на production `139ed48`.
+Recovery PR `#253`–`#254` выложен на production `827040c`, PR `#255` завершил
+private cutover account `4` на `139ed48`, а PR `#256` завершил fleet-default
+на production `0762ab5`.
 
-Отдельно разрешённый 2026-08-27 P6 fleet-default пакет включает только:
+Фактически выпущенный 2026-08-27 P6 fleet-default пакет включает только:
 
 - fleet admission при `durable/dual_write/dual_write`, `active/stable_bridge`,
   пустом cutover allowlist и выключенной profile migration;
@@ -321,10 +321,11 @@ Recovery PR `#253`–`#254` выложен на production `827040c`, а PR `#25
 - lifecycle-aware dashboard status и managed-URL подсказки frontend;
 - production settings, regression tests и документацию.
 
-Пакет не добавляет миграции, новые режимы, periodic worker, sweep старых
-аккаунтов, object delete, GC, P7 или `0039`. Один полный GitHub CI используется
-как release gate; дублирующий push-main CI может быть отменён только при
-совпадающем tree SHA.
+Пакет не добавил миграции, новые режимы, periodic worker, sweep старых
+аккаунтов, object delete, GC, P7 или `0039`. Полный PR CI `33018719809`
+успешен. Merge tree совпал с проверенным head tree; дублирующий push-main CI
+был отменён только после этой проверки. Exact deploy/health evidence находится
+в [`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md).
 
 ## P7 — замороженный backlog, миграции 0036–0039
 
@@ -351,6 +352,6 @@ production dry-run не выполнены. Он сохраняется в P7 д
 3. миграции копии схемы предыдущего пакета;
 4. полный backend pytest;
 5. flake8 и git diff --check;
-6. запуск с production-like legacy settings;
+6. запуск с production-like настройками текущего или целевого этапа;
 7. проверка rollback до предыдущего пакета;
-8. подтверждение, что deploy environment не меняет feed-флаги.
+8. подтверждение точных feed-флагов после deploy.
