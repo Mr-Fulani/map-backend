@@ -314,7 +314,8 @@ def test_feed_revision_rolls_back_with_listing_domain_failure():
     assert account.feed_intent_due_at is None
 
 
-def test_pending_account_move_bumps_old_and_new_accounts_once():
+def test_local_durable_pending_account_move_bumps_old_and_new_accounts_once(settings):
+    settings.MARKETPLACE_FEED_RUN_MODE = 'durable'
     tenant, old_account, _product, listing = _listing(
         status=Listing.STATUS_PENDING,
     )

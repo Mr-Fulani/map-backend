@@ -372,7 +372,7 @@ function FunnelWidget({
     { label: 'Всего объявлений', value: funnel.listings, href: '/dashboard/listings', icon: ListOrdered },
     { label: 'Активные в MAP', value: funnel.active_listings, href: '/dashboard/listings?status=active', icon: ListOrdered },
     { label: 'В очереди', value: funnel.queued_listings, href: '/dashboard/listings?status=queued', icon: Clock3 },
-    { label: 'На модерации', value: funnel.pending_listings, href: '/dashboard/listings?status=pending', icon: Clock3 },
+    { label: 'Отправка в Avito', value: funnel.pending_listings, href: '/dashboard/listings?status=pending', icon: Clock3 },
     { label: 'Требуют проверки', value: funnel.requires_review_listings, href: '/dashboard/listings?status=requires_review', icon: ListChecks },
     { label: 'Отклонены', value: funnel.rejected_listings, href: '/dashboard/listings?status=rejected', icon: XCircle },
     { label: 'Достигнут лимит Avito', value: funnel.limit_reached_listings, href: '/dashboard/listings?status=limit_reached', icon: AlertTriangle },

@@ -26,6 +26,10 @@ interface Listing {
   id: number;
   status: string;
   status_display: string;
+  delivery_stage: string;
+  provider_submission_started: boolean;
+  lifecycle_actions_blocked: boolean;
+  can_check_avito_status: boolean;
   product_article: string;
   product_name: string;
   account_name: string;
@@ -78,7 +82,7 @@ const STATUS_FILTERS = [
   { value: '', label: 'Все' },
   { value: 'active', label: 'Активные' },
   { value: 'queued', label: 'В очереди' },
-  { value: 'pending', label: 'Модерация Avito' },
+  { value: 'pending', label: 'Отправка в Avito' },
   { value: 'draft', label: 'Черновики' },
   { value: 'rejected', label: 'Отклонены' },
   { value: 'requires_review', label: 'Требуют проверки' },
@@ -480,16 +484,18 @@ export default function ListingsPage() {
                         size="sm"
                         variant="ghost"
                         className="h-8 w-8 p-0"
-                        title="В архив"
+                        title={l.lifecycle_actions_blocked
+                          ? 'Дождитесь итогового результата текущей отправки Avito'
+                          : 'В архив'}
                         onClick={() => runListingAction(l, 'archive')}
-                        disabled={rowActionId === l.id}
+                        disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
                       >
                         {rowActionId === l.id
                           ? <Loader2 className="h-4 w-4 animate-spin" />
                           : <Archive className="h-4 w-4" />}
                       </Button>
                     )}
-                    {l.status === 'pending' && (
+                    {l.status === 'pending' && l.can_check_avito_status && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -508,9 +514,11 @@ export default function ListingsPage() {
                         size="sm"
                         variant="ghost"
                         className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                        title="Удалить"
+                        title={l.lifecycle_actions_blocked
+                          ? 'Дождитесь итогового результата текущей отправки Avito'
+                          : 'Удалить'}
                         onClick={() => runListingAction(l, 'delete')}
-                        disabled={rowActionId === l.id}
+                        disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
                       >
                         {rowActionId === l.id
                           ? <Loader2 className="h-4 w-4 animate-spin" />
@@ -624,16 +632,18 @@ export default function ListingsPage() {
                             size="sm"
                             variant="ghost"
                             className="h-8 w-8 p-0"
-                            title="В архив"
+                            title={l.lifecycle_actions_blocked
+                              ? 'Дождитесь итогового результата текущей отправки Avito'
+                              : 'В архив'}
                             onClick={() => runListingAction(l, 'archive')}
-                            disabled={rowActionId === l.id}
+                            disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
                           >
                             {rowActionId === l.id
                               ? <Loader2 className="h-4 w-4 animate-spin" />
                               : <Archive className="h-4 w-4" />}
                           </Button>
                         )}
-                        {l.status === 'pending' && (
+                        {l.status === 'pending' && l.can_check_avito_status && (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -652,9 +662,11 @@ export default function ListingsPage() {
                             size="sm"
                             variant="ghost"
                             className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                            title="Удалить"
+                            title={l.lifecycle_actions_blocked
+                              ? 'Дождитесь итогового результата текущей отправки Avito'
+                              : 'Удалить'}
                             onClick={() => runListingAction(l, 'delete')}
-                            disabled={rowActionId === l.id}
+                            disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
                           >
                             {rowActionId === l.id
                               ? <Loader2 className="h-4 w-4 animate-spin" />

@@ -27,17 +27,30 @@ backend `2659 passed, 3 skipped`; flake8, mypy (691 sources), strict mypy
 
 ## H1 — безопасные lifecycle-переходы и честный UI
 
-Статус: `IN_PROGRESS`.
+Статус: `VERIFIED` 2026-08-28.
 
 Результат: pending-листинг нельзя локально архивировать, удалять или переносить
-на другой аккаунт, пока submitted/uncertain run ещё может создать объявление;
-UI отличает локальную подготовку от реально отправленного фида.
+на другой аккаунт, пока владеющий им preparing/submitted/uncertain run ещё
+может создать объявление; legacy pending без точного generation ID работает
+fail-closed; API и UI отличают локальную подготовку, подготовку XML, обработку
+Avito, retry, ошибку и ручную сверку. Ручная проверка Avito доступна только
+после доказанного начала provider-доставки.
 
 Границы: marketplace service/API/serializer и listing UI. Без миграций и P7.
 
+Фактический gate: focused lifecycle/delivery `78 passed`, финальная отдельная
+проверка PREPARING-race `14 passed`; Marketplace `874 passed, 2 skipped`;
+полный backend `2673 passed, 3 skipped`; frontend typecheck, eslint и unit
+`29 passed`; Next production build через Webpack (21 route) — exit 0; flake8,
+mypy (693 sources), strict mypy (349 sources),
+`makemigrations --check --dry-run` и `git diff --check` — exit 0. Нативный
+Turbopack build в локальном sandbox не смог открыть служебный loopback port;
+повтор вне sandbox дал тот же OS-level `Operation not permitted`, поэтому
+production bundle проверен поддерживаемым `next build --webpack`.
+
 ## H2 — восстанавливаемый onboarding новых аккаунтов
 
-Статус: `NOT_STARTED`.
+Статус: `IN_PROGRESS`.
 
 Результат: сбой broker после создания аккаунта не превращает успешный commit в
 ошибку API; незавершённый onboarding подбирается bounded scanner; exhausted и

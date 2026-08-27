@@ -4,6 +4,7 @@ from django.core.files.storage import default_storage
 from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 
+from apps.marketplaces.listing_delivery import listing_delivery_presentation
 from apps.products.models import (
     Product, ProductAttribute, ProductBulkActionJob, ProductCatalogClassification,
     ProductCrossCode, ProductEnrichmentFact, ProductImage, ProductParseJob, TenantCatalogCategory,
@@ -455,7 +456,7 @@ class ProductDetailSerializer(ProductSerializer):
             {
                 'id': listing.pk,
                 'status': listing.status,
-                'status_display': listing.get_status_display(),
+                'status_display': listing_delivery_presentation(listing).label,
                 'account_name': listing.account.name,
                 'title': listing.title,
             }

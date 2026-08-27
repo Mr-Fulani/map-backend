@@ -41,6 +41,10 @@ interface ListingDetail {
   id: number;
   status: string;
   status_display: string;
+  delivery_stage: string;
+  provider_submission_started: boolean;
+  lifecycle_actions_blocked: boolean;
+  can_check_avito_status: boolean;
   product_id: number;
   product_article: string;
   product_name: string;
@@ -339,13 +343,16 @@ function ListingDrawerContent({
       onActionDone();
       if (closeAfter) onClose();
     } catch (err: unknown) {
-      const code = (err as { response?: { data?: { code?: string } } })?.response?.data?.code;
+      const errorData = (err as {
+        response?: { data?: { code?: string; message?: string; detail?: string } };
+      })?.response?.data;
+      const code = errorData?.code;
       if (code === 'quota_exceeded') {
         toast.error('AI-кредиты исчерпаны. Обновите тариф в разделе Биллинг.');
       } else if (code === 'invalid_status') {
-        toast.error('Действие недоступно для текущего статуса.');
+        toast.error(errorData?.message || 'Действие недоступно для текущего статуса.');
       } else {
-        toast.error('Техническая ошибка. Обратитесь в поддержку.');
+        toast.error(errorData?.message || errorData?.detail || 'Техническая ошибка. Обратитесь в поддержку.');
       }
     } finally {
       setActionLoading(null);
@@ -458,24 +465,32 @@ function ListingDrawerContent({
       try {
         const res = await listingApi.get(listing.id);
         const updated: ListingDetail = res.data.data;
-        if (updated.status !== 'draft') {
+        setListing(updated);
+        if (updated.status === 'active') {
           clearInterval(publishPollRef.current!);
           setPublishing(false);
-          setListing(updated);
           onActionDone();
-          if (updated.status === 'active') {
-            toast.success('Объявление опубликовано!');
-          } else if (updated.status === 'pending') {
-            toast.info('Объявление отправлено на модерацию Avito.');
-          } else if (updated.status === 'rejected') {
-            toast.error(`Публикация отклонена: ${updated.rejection_reason || 'неизвестная причина'}`);
-          } else {
-            toast.error(`Статус изменился на: ${updated.status_display}`);
-          }
+          toast.success('Объявление опубликовано!');
+        } else if (updated.status === 'rejected') {
+          clearInterval(publishPollRef.current!);
+          setPublishing(false);
+          onActionDone();
+          toast.error(`Публикация отклонена: ${updated.rejection_reason || 'неизвестная причина'}`);
+        } else if (updated.status === 'pending' && updated.provider_submission_started) {
+          clearInterval(publishPollRef.current!);
+          setPublishing(false);
+          onActionDone();
+          toast.info(updated.status_display);
+        } else if (['requires_review', 'limit_reached'].includes(updated.status)) {
+          clearInterval(publishPollRef.current!);
+          setPublishing(false);
+          onActionDone();
+          toast.error(`Статус изменился на: ${updated.status_display}`);
         } else if (attempts >= MAX_ATTEMPTS) {
           clearInterval(publishPollRef.current!);
           setPublishing(false);
-          toast.error('Публикация занимает больше времени, чем ожидалось. Проверьте статус позже.');
+          onActionDone();
+          toast.info(`${updated.status_display}. MAP продолжит обработку в фоне.`);
         }
       } catch {
         if (attempts >= MAX_ATTEMPTS) {
@@ -933,7 +948,7 @@ function ListingDrawerContent({
                       setEditAccountId(e.target.value);
                       setEditPlacementAddressId(defaultAddressIdForAccount(e.target.value));
                     }}
-                    disabled={listing.status === 'active' || listing.status === 'deleted' || busy}
+                    disabled={listing.status === 'active' || listing.status === 'deleted' || listing.lifecycle_actions_blocked || busy}
                     className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
                   >
                     {accounts.map((account) => (
@@ -1164,6 +1179,14 @@ function ListingDrawerContent({
                 </div>
               )}
 
+              {listing.lifecycle_actions_blocked && (
+                <div className="rounded-md border border-blue-500/40 bg-blue-500/10 p-3 text-sm text-blue-800 dark:text-blue-300">
+                  Текущая генерация фида ещё не завершена и всё ещё может быть отправлена
+                  или принята Avito. До итогового результата нельзя переносить объявление
+                  на другой аккаунт, архивировать или удалять его.
+                </div>
+              )}
+
               {/* Незаполненные обязательные поля Avito — предупреждаем ДО публикации */}
               {(listing.avito_field_warnings?.length ?? 0) > 0 && (
                 <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-700 dark:text-yellow-400">
@@ -1254,7 +1277,7 @@ function ListingDrawerContent({
                         }
                       </Button>
                     )}
-                    {isPending && (
+                    {isPending && listing.can_check_avito_status && (
                       <Button
                         variant="secondary"
                         onClick={handleCheckStatus}

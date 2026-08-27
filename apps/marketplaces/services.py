@@ -12,6 +12,10 @@ from apps.marketplaces.listing_lifecycle import (
     clear_remote_observation,
     release_status_check,
 )
+from apps.marketplaces.listing_delivery import (
+    durable_feed_run_enabled,
+    listing_delivery_presentation,
+)
 from apps.marketplaces.feed_cutover import (
     private_feed_cutover_enabled,
     private_feed_fleet_enabled,
@@ -199,6 +203,7 @@ def _save_local_listing_intent(
     expected_product_updated_at=None,
     reset_provider_identity: bool = False,
     require_target_account_active: bool = False,
+    block_provider_owned_pending: bool = False,
 ) -> bool:
     """Compare-and-apply one local intent under account-to-listing locks.
 
@@ -231,7 +236,11 @@ def _save_local_listing_intent(
 
     lifecycle_enabled = _status_lifecycle_dual_write_enabled()
     feed_ingress_enabled = _feed_ingress_dual_write_enabled()
-    if not lifecycle_enabled and not feed_ingress_enabled:
+    if (
+        not lifecycle_enabled
+        and not feed_ingress_enabled
+        and not block_provider_owned_pending
+    ):
         listing.save(update_fields=fields)
         return True
 
@@ -297,6 +306,31 @@ def _save_local_listing_intent(
             )
             if current_snapshot is None:
                 return False
+            if (
+                block_provider_owned_pending
+                and current_snapshot.status == Listing.STATUS_PENDING
+            ):
+                current_run = None
+                if current_snapshot.feed_run_id is not None:
+                    current_run = (
+                        MarketplaceFeedRun.objects.select_for_update()
+                        .filter(pk=current_snapshot.feed_run_id)
+                        .first()
+                    )
+                delivery = listing_delivery_presentation(
+                    current_snapshot,
+                    run=current_run,
+                    durable_enabled=durable_feed_run_enabled(
+                        current_snapshot.account_id,
+                    ),
+                )
+                if delivery.lifecycle_actions_blocked:
+                    raise InvalidListingStatus(
+                        'Нельзя архивировать, удалять или переносить объявление '
+                        'на другой Avito-аккаунт, пока текущая отправка может '
+                        'быть опубликована площадкой. Дождитесь итогового '
+                        'статуса или выполните ручную сверку запуска.',
+                    )
             target_account = locked_accounts_by_id.get(intended_account_id)
             target_account_is_writable = (
                 target_account is not None
@@ -1027,6 +1061,7 @@ class ListingService:
                     'product',
                     'product__catalog_category',
                     'account',
+                    'feed_run',
                     'placement_address',
                     'bulk_placement_address',
                 )
@@ -1122,6 +1157,7 @@ class ListingService:
         applied = _save_local_listing_intent(
             listing,
             ('status',),
+            block_provider_owned_pending=True,
             **expected,
         )
         if applied:
@@ -1140,6 +1176,7 @@ class ListingService:
         applied = _save_local_listing_intent(
             listing,
             ('status',),
+            block_provider_owned_pending=True,
             **expected,
         )
         if applied:
@@ -1152,7 +1189,14 @@ class ListingService:
         """Ставит ручную проверку статуса feed/модерации Avito для аккаунта листинга."""
         listing = ListingService.get_for_tenant(listing_id, tenant)
         if listing.status != Listing.STATUS_PENDING:
-            raise InvalidListingStatus('Проверка Avito доступна только для объявлений на модерации Avito')
+            raise InvalidListingStatus(
+                'Проверка Avito доступна только после начала отправки объявления.',
+            )
+        delivery = listing_delivery_presentation(listing)
+        if not delivery.can_check_avito_status:
+            raise InvalidListingStatus(
+                f'Проверка Avito сейчас недоступна: {delivery.label.lower()}.',
+            )
         account_id = listing.account_id
         transaction.on_commit(lambda: _enqueue_poll_feed_results(account_id))
         return listing
@@ -1297,6 +1341,7 @@ class ListingService:
                 update_fields,
                 reset_provider_identity=account_changed,
                 require_target_account_active=account_changed,
+                block_provider_owned_pending=account_changed,
                 **expected,
             )
             if active_price_only and applied:
