@@ -2,7 +2,7 @@ from datetime import timedelta
 
 from django.conf import settings
 from django.db.models import (
-    BigIntegerField, Case, CharField, Exists, OuterRef, Q, Value, When,
+    BigIntegerField, Case, CharField, Exists, F, OuterRef, Q, Value, When,
 )
 from django.db.models.fields.json import KeyTextTransform
 from django.db.models.functions import Cast, Concat
@@ -48,7 +48,14 @@ def purge_retained_data(*, dry_run: bool = False) -> dict[str, int]:
         ImageSearchLog,
         ImageSearchTask,
     )
-    from apps.marketplaces.models import Listing, MarketplaceAccount
+    from apps.marketplaces.models import (
+        Listing,
+        MarketplaceAccount,
+        MarketplaceFeedArtifact,
+        MarketplaceFeedArtifactUploadAttempt,
+        MarketplaceFeedEndpoint,
+        MarketplaceFeedRun,
+    )
     from apps.media_processing.models import MediaProcessingJob
     from apps.media_processing.protection import unresolved_media_job_q
     from apps.notifications.models import NotificationDelivery
@@ -253,6 +260,16 @@ def purge_retained_data(*, dry_run: bool = False) -> dict[str, int]:
         created_at__gte=background_job_cutoff,
         dispatch__isnull=False,
     ).values_list('dispatch_id', flat=True)
+    # P7 owns ordered feed-history cleanup and object GC. Until that package is
+    # explicitly activated, generic account retention must fail closed around
+    # every durable feed owner. This preserves unknown POST/PUT outcomes,
+    # VersionId-bearing ledgers, current artifacts and their audit evidence.
+    feed_run_account_ids = MarketplaceFeedRun.objects.values('account_id')
+    feed_endpoint_account_ids = MarketplaceFeedEndpoint.objects.values('account_id')
+    feed_attempt_account_ids = MarketplaceFeedArtifactUploadAttempt.objects.values(
+        'account_id',
+    )
+    feed_artifact_account_ids = MarketplaceFeedArtifact.objects.values('account_id')
     querysets = {
         'listings': Listing.all_objects.filter(deleted_at__lt=soft_cutoff),
         'products': Product.all_objects.filter(
@@ -266,7 +283,21 @@ def purge_retained_data(*, dry_run: bool = False) -> dict[str, int]:
         ).exclude(
             pk__in=unresolved_ai_run_product_ids,
         ),
-        'marketplace_accounts': MarketplaceAccount.all_objects.filter(deleted_at__lt=soft_cutoff),
+        'marketplace_accounts': MarketplaceAccount.all_objects.filter(
+            deleted_at__lt=soft_cutoff,
+        ).exclude(
+            feed_intent_revision__gt=F('feed_intent_dispatched_revision'),
+        ).exclude(
+            feed_intent_due_at__isnull=False,
+        ).exclude(
+            pk__in=feed_run_account_ids,
+        ).exclude(
+            pk__in=feed_endpoint_account_ids,
+        ).exclude(
+            pk__in=feed_attempt_account_ids,
+        ).exclude(
+            pk__in=feed_artifact_account_ids,
+        ),
         'datasource_connections': DataSourceConnection.all_objects.filter(deleted_at__lt=soft_cutoff),
         'webhook_endpoints': WebhookEndpoint.all_objects.filter(deleted_at__lt=soft_cutoff),
         'webhook_events': WebhookEvent.objects.filter(created_at__lt=webhook_cutoff).exclude(

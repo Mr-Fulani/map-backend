@@ -13,6 +13,80 @@ from apps.tenants.services import TenantService
 
 
 @pytest.mark.django_db
+def test_retention_purges_expired_marketplace_account_without_feed_history(
+    settings,
+):
+    from apps.marketplaces.models import MarketplaceAccount
+
+    settings.SOFT_DELETE_RETENTION_DAYS = 1
+    settings.RETENTION_PURGE_BATCH_SIZE = 100
+    tenant, _ = TenantService.create_tenant(
+        'Account retention',
+        'account-retention',
+        'account-retention@example.com',
+        'pass12345',
+    )
+    account = MarketplaceAccount.objects.create(
+        tenant=tenant,
+        marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+        name='Expired account without feed history',
+        external_id='expired-account-without-feed-history',
+        credentials_enc=b'opaque-test-credentials',
+    )
+    MarketplaceAccount.all_objects.filter(pk=account.pk).update(
+        deleted_at=timezone.now() - timedelta(days=2),
+        is_active=False,
+    )
+
+    result = purge_retained_data()
+
+    assert result['marketplace_accounts'] == 1
+    assert not MarketplaceAccount.all_objects.filter(pk=account.pk).exists()
+
+
+@pytest.mark.django_db
+def test_retention_keeps_unresolved_feed_intent_until_cursor_is_settled(settings):
+    from apps.marketplaces.models import MarketplaceAccount
+
+    settings.SOFT_DELETE_RETENTION_DAYS = 1
+    settings.RETENTION_PURGE_BATCH_SIZE = 100
+    tenant, _ = TenantService.create_tenant(
+        'Feed cursor retention',
+        'feed-cursor-retention',
+        'feed-cursor-retention@example.com',
+        'pass12345',
+    )
+    expired = timezone.now() - timedelta(days=2)
+    account = MarketplaceAccount.objects.create(
+        tenant=tenant,
+        marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+        name='Account with unresolved feed intent',
+        external_id='account-with-unresolved-feed-intent',
+        credentials_enc=b'opaque-test-credentials',
+        feed_intent_revision=1,
+        feed_intent_due_at=expired,
+    )
+    MarketplaceAccount.all_objects.filter(pk=account.pk).update(
+        deleted_at=expired,
+        is_active=False,
+    )
+
+    held = purge_retained_data()
+
+    assert held['marketplace_accounts'] == 0
+    assert MarketplaceAccount.all_objects.filter(pk=account.pk).exists()
+
+    MarketplaceAccount.all_objects.filter(pk=account.pk).update(
+        feed_intent_dispatched_revision=1,
+        feed_intent_due_at=None,
+    )
+    released = purge_retained_data()
+
+    assert released['marketplace_accounts'] == 1
+    assert not MarketplaceAccount.all_objects.filter(pk=account.pk).exists()
+
+
+@pytest.mark.django_db
 def test_retention_purges_resolved_notification_delivery_only(settings):
     from apps.notifications.models import NotificationDelivery
 

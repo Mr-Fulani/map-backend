@@ -6,8 +6,10 @@ from importlib import import_module
 import pytest
 from django.db import IntegrityError, connection, migrations, transaction
 from django.db.migrations.loader import MigrationLoader
+from django.db.models.deletion import ProtectedError
 from django.utils import timezone
 
+from apps.core.retention import purge_retained_data
 from apps.marketplaces.models import (
     MarketplaceAccount,
     MarketplaceFeedArtifact,
@@ -948,6 +950,49 @@ def test_guard_reverse_sql_removes_and_forward_sql_restores_all_objects():
             [trigger_names],
         )
         assert cursor.fetchone()[0] == len(trigger_names)
+
+
+@pytest.mark.django_db
+def test_account_retention_preserves_current_exact_version_and_evidence(settings):
+    settings.SOFT_DELETE_RETENTION_DAYS = 1
+    settings.RETENTION_PURGE_BATCH_SIZE = 100
+    context = _context('account-delete-current-artifact')
+    MarketplaceAccount.objects.filter(pk=context.account.pk).update(
+        feed_intent_dispatched_revision=1,
+    )
+    artifact = _artifact(context)
+    _select_artifact(context, artifact)
+    _promote(context, artifact)
+    evidence = MarketplaceFeedFetchEvidence.objects.create(
+        **_evidence_values(context, artifact),
+    )
+
+    context.account.refresh_from_db()
+    context.account.soft_delete()
+    expired = timezone.now() - timedelta(days=2)
+    MarketplaceAccount.all_objects.filter(pk=context.account.pk).update(
+        deleted_at=expired,
+    )
+
+    dry_run = purge_retained_data(dry_run=True)
+    applied = purge_retained_data()
+
+    assert dry_run['marketplace_accounts'] == 0
+    assert applied['marketplace_accounts'] == 0
+    retained_account = MarketplaceAccount.all_objects.get(pk=context.account.pk)
+    retained_endpoint = MarketplaceFeedEndpoint.objects.get(pk=context.endpoint.pk)
+    retained_artifact = MarketplaceFeedArtifact.objects.get(pk=artifact.pk)
+    retained_attempt = MarketplaceFeedArtifactUploadAttempt.objects.get(
+        run=context.run,
+    )
+    assert retained_account.deleted_at == expired
+    assert retained_endpoint.current_artifact_id == artifact.pk
+    assert retained_artifact.object_version_id == artifact.object_version_id
+    assert retained_attempt.object_version_id == artifact.object_version_id
+    assert MarketplaceFeedFetchEvidence.objects.filter(pk=evidence.pk).exists()
+
+    with pytest.raises(ProtectedError), transaction.atomic():
+        retained_account.hard_delete()
 
 
 @pytest.mark.django_db
