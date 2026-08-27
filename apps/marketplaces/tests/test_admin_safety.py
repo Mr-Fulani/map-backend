@@ -21,6 +21,29 @@ from apps.tenants.models import Tenant
 
 
 @pytest.mark.django_db
+def test_marketplace_account_bulk_delete_requires_fenced_instance_path():
+    tenant = Tenant.objects.create(
+        name='Bulk delete protected tenant',
+        slug='bulk-delete-protected-tenant',
+    )
+    account = MarketplaceAccount.objects.create(
+        tenant=tenant,
+        name='Bulk delete protected Avito',
+        external_id='bulk-delete-protected-avito',
+        credentials_enc=b'opaque-test-credentials',
+    )
+
+    with pytest.raises(ProtectedError):
+        MarketplaceAccount.objects.filter(pk=account.pk).delete()
+    with pytest.raises(ProtectedError):
+        MarketplaceAccount.all_objects.filter(pk=account.pk).delete()
+
+    retained = MarketplaceAccount.all_objects.get(pk=account.pk)
+    assert retained.deleted_at is None
+    assert retained.is_active is True
+
+
+@pytest.mark.django_db
 def test_marketplace_admin_closes_feed_visible_raw_writers():
     request = RequestFactory().get('/admin/marketplaces/')
     request.user = get_user_model().objects.create_superuser(

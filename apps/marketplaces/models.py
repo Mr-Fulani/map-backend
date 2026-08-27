@@ -3,7 +3,7 @@ from datetime import timedelta
 
 from django.db import models, transaction
 
-from apps.core.models import SoftDeleteModel, TimestampedModel
+from apps.core.models import SoftDeleteModel, SoftDeleteQuerySet, TimestampedModel
 from apps.tenants.models import Tenant
 
 
@@ -25,6 +25,31 @@ _MARKETPLACE_FEED_TERMINAL_STATES = (
     'superseded',
     'cancelled',
 )
+
+
+class MarketplaceAccountQuerySet(SoftDeleteQuerySet):
+    """Require an explicit, fenced path for marketplace-account removal."""
+
+    def delete(self):
+        from django.db.models.deletion import ProtectedError
+
+        raise ProtectedError(
+            'MarketplaceAccount bulk deletion is disabled; use the fenced '
+            'instance/service path or the explicit retention hard-delete path.',
+            set(),
+        )
+
+
+MarketplaceAccountManagerBase = models.Manager.from_queryset(
+    MarketplaceAccountQuerySet,
+)
+
+
+class MarketplaceAccountManager(MarketplaceAccountManagerBase):
+    """Default manager that hides soft-deleted marketplace accounts."""
+
+    def get_queryset(self):
+        return super().get_queryset().filter(deleted_at__isnull=True)
 
 
 class AvitoCategory(models.Model):
@@ -99,6 +124,9 @@ class MarketplaceAccount(SoftDeleteModel):
 
     MARKETPLACE_AVITO = 'avito'
     MARKETPLACE_CHOICES = [(MARKETPLACE_AVITO, 'Avito')]
+
+    objects = MarketplaceAccountManager()  # type: ignore[misc, assignment]
+    all_objects = MarketplaceAccountManagerBase()  # type: ignore[misc]
 
     tenant = models.ForeignKey(
         Tenant, on_delete=models.CASCADE,
