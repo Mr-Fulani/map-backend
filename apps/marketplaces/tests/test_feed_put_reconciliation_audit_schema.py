@@ -9,6 +9,7 @@ from django.db import IntegrityError, connection, migrations, transaction
 from django.db.migrations.loader import MigrationLoader
 from django.utils import timezone
 
+from apps.core.retention import purge_retained_data
 from apps.marketplaces.models import (
     MarketplaceAccount,
     MarketplaceFeedArtifact,
@@ -288,6 +289,33 @@ def test_pending_resolution_without_source_is_rejected():
     attempt.refresh_from_db()
     assert attempt.state == MarketplaceFeedArtifactUploadAttempt.State.PUT_PENDING
     assert attempt.put_resolution_source == ''
+
+
+@pytest.mark.django_db(transaction=True)
+def test_account_retention_keeps_unknown_put_ledger(settings):
+    settings.SOFT_DELETE_RETENTION_DAYS = 1
+    settings.RETENTION_PURGE_BATCH_SIZE = 100
+    context = _context('account-delete-put-pending')
+    MarketplaceAccount.objects.filter(pk=context.account.pk).update(
+        feed_intent_dispatched_revision=1,
+    )
+    attempt = _pending(context)
+
+    context.account.refresh_from_db()
+    context.account.soft_delete()
+    expired = timezone.now() - timedelta(days=2)
+    MarketplaceAccount.all_objects.filter(pk=context.account.pk).update(
+        deleted_at=expired,
+    )
+
+    result = purge_retained_data()
+
+    assert result['marketplace_accounts'] == 0
+    assert MarketplaceAccount.all_objects.filter(pk=context.account.pk).exists()
+    retained = MarketplaceFeedArtifactUploadAttempt.objects.get(pk=attempt.pk)
+    assert retained.state == MarketplaceFeedArtifactUploadAttempt.State.PUT_PENDING
+    assert retained.object_version_id is None
+    assert retained.put_started_at is not None
 
 
 @pytest.mark.django_db(transaction=True)

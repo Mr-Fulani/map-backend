@@ -6,6 +6,7 @@ import pytest
 from django.utils import timezone
 
 import apps.marketplaces.feed_workflow as feed_workflow
+from apps.core.retention import purge_retained_data
 from apps.datasources.encryption import encrypt
 from apps.marketplaces.feed_workflow import (
     FeedAccountUnavailable,
@@ -306,6 +307,36 @@ def test_owner_change_api_can_hold_submitted_owner_for_deactivation():
     assert fenced.state == MarketplaceFeedRun.State.OUTCOME_UNCERTAIN
     assert current.state == MarketplaceFeedRun.State.OUTCOME_UNCERTAIN
     assert current.finished_at is not None
+
+
+def test_account_delete_holds_unknown_post_and_retention_keeps_owner(settings):
+    settings.SOFT_DELETE_RETENTION_DAYS = 1
+    settings.RETENTION_PURGE_BATCH_SIZE = 100
+    transition_at = timezone.now()
+    account = _account('delete-hold-unknown-post')
+    run = MarketplaceFeedRun.objects.create(
+        tenant_id=account.tenant_id,
+        account=account,
+        marketplace=account.marketplace,
+        state=MarketplaceFeedRun.State.SUBMIT_UNKNOWN,
+        account_identity_digest=account_identity_digest(account),
+        submitted_at=transition_at,
+        next_attempt_at=transition_at + timedelta(minutes=1),
+    )
+
+    account.soft_delete()
+    expired = transition_at - timedelta(days=2)
+    MarketplaceAccount.all_objects.filter(pk=account.pk).update(
+        deleted_at=expired,
+    )
+    result = purge_retained_data()
+
+    run.refresh_from_db()
+    assert run.state == MarketplaceFeedRun.State.OUTCOME_UNCERTAIN
+    assert run.finished_at is not None
+    assert run.next_attempt_at is None
+    assert result['marketplace_accounts'] == 0
+    assert MarketplaceAccount.all_objects.filter(pk=account.pk).exists()
 
 
 def test_claim_is_single_flight_and_expired_lease_can_be_taken_over():
