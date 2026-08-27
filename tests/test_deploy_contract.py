@@ -96,6 +96,7 @@ def test_deploy_env_is_validated_then_allowlist_parsed_without_evaluation():
         'PROD_LOG_TAIL',
         'PROD_ROLLBACK_ENABLED',
         'PROD_BACKUP_TIMEOUT_SECONDS',
+        'PROD_BEAT_STOP_TIMEOUT_SECONDS',
         'PROD_DRAIN_TIMEOUT_SECONDS',
         'PROD_BROKER_MIGRATION_CONFIRMED',
     )
@@ -201,17 +202,30 @@ def test_idempotent_plan_seed_runs_after_migration_before_rollout():
     assert migration < seed < rollout
 
 
-def test_old_application_writers_are_drained_before_backup_and_migration():
+def test_beat_is_stopped_before_ingress_and_long_worker_drain():
     execution = DEPLOY_SCRIPT
     services_changed = execution.rindex('SERVICES_CHANGED=true\n')
     drain = execution.index('drain_application_writers\n')
     backup = execution.index('DEPLOY_PHASE="pre-migration database backup"')
     migration_started = execution.index('MIGRATIONS_STARTED=true', drain)
     migration = execution.index('migrate --noinput', migration_started)
+    drain_function = execution[
+        execution.index('drain_application_writers() {'):
+        execution.index('\n}\n\nsmoke_check()', execution.index('drain_application_writers() {'))
+    ]
+    beat_stop = drain_function.index(
+        'stop -t "$PROD_BEAT_STOP_TIMEOUT_SECONDS" celery_beat'
+    )
+    ingress_stop = drain_function.index('stop -t 30 nginx')
+    worker_drain = drain_function.index(
+        'stop -t "$PROD_DRAIN_TIMEOUT_SECONDS" "${DRAIN_SERVICES[@]}"'
+    )
 
     assert services_changed < drain < backup < migration_started < migration
-    assert 'stop -t 30 nginx' in execution
-    assert 'stop -t "$PROD_DRAIN_TIMEOUT_SECONDS" "${DRAIN_SERVICES[@]}"' in execution
+    assert beat_stop < ingress_stop < worker_drain
+    assert 'DRAIN_SERVICES=(celery_worker celery_worker_images django frontend)' in execution
+    assert 'PROD_BEAT_STOP_TIMEOUT_SECONDS="${PROD_BEAT_STOP_TIMEOUT_SECONDS:-45}"' in execution
+    assert '(( PROD_BEAT_STOP_TIMEOUT_SECONDS <= 120 ))' in execution
 
 
 def test_drain_failure_or_signal_restores_previous_runtime():
@@ -279,6 +293,10 @@ def test_rollback_never_restarts_old_writers_after_migration_started():
     assert 'старый application release автоматически не запускается' in execution
     migration_failure = execution[guard:old_release]
     assert 'stop -t 30 nginx' in migration_failure
+    assert (
+        'stop -t "$PROD_BEAT_STOP_TIMEOUT_SECONDS" celery_beat || true'
+        in migration_failure
+    )
     assert '"${DRAIN_SERVICES[@]}" || true' in migration_failure
 
 

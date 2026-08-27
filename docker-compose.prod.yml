@@ -105,6 +105,7 @@ services:
   celery_beat:
     <<: [*runtime-policy, *unprivileged-runtime]
     init: true
+    stop_signal: SIGTERM
     user: "1000:1000"
     build:
       context: .

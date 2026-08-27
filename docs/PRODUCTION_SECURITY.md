@@ -519,17 +519,19 @@ target и передать его как `PREVIOUS_SHA`; скрипт fail-close
 (`chmod 600`). Файл должен быть обычным, не symlink, принадлежать deploy
 user и содержать только разрешённые уникальные `KEY=value` без shell-
 синтаксиса. `/api/v1/live/` проверяет только HTTP-процесс, а readiness также
-проверяет PostgreSQL и cache. `PROD_DRAIN_TIMEOUT_SECONDS` должен быть больше
-наибольшего hard time limit фоновой задачи (по умолчанию 3700 секунд при лимите
-3600 секунд). Скрипт:
+проверяет PostgreSQL и cache. `PROD_BEAT_STOP_TIMEOUT_SECONDS` ограничивает
+остановку Beat до закрытия ingress (по умолчанию 45 секунд, максимум 120), а
+`PROD_DRAIN_TIMEOUT_SECONDS` должен быть больше наибольшего hard time limit
+фоновой задачи (по умолчанию 3700 секунд при лимите 3600 секунд). Скрипт:
 
 1. блокирует параллельный ручной запуск и проверяет SHA, чистоту working tree,
    Compose-конфигурацию, доступность Docker и запас диска;
 2. сохраняет image ID текущего release и собирает новый до переключения web/worker
    процессов;
 3. выполняет `check --deploy`, migration plan и bounded connectivity gates для
-   Redis, SMTP и public HTTPS/YooKassa, затем включает maintenance: останавливает
-   ingress, beat, старый web и workers с graceful drain;
+   Redis, SMTP и public HTTPS/YooKassa, затем посылает Beat `SIGTERM` с коротким
+   отдельным timeout; только после его остановки закрывает ingress и выполняет
+   долгий graceful drain старых web/worker процессов;
 4. при остановленных writers делает обязательный зашифрованный S3 backup и только
    после его успеха применяет миграции в one-shot контейнере;
 5. готовит release data, запускает новый release, ждёт readiness всех сервисов и
