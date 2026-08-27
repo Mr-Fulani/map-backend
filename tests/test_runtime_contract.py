@@ -305,6 +305,28 @@ def test_backend_shards_prepare_backup_source_database_before_pytest():
     assert migration_step['run'] == 'python manage.py migrate --noinput'
 
 
+def test_backend_coverage_artifacts_survive_failed_job_reruns():
+    jobs = yaml.safe_load(CI_WORKFLOW)['jobs']
+    upload_step = next(
+        step
+        for step in jobs['backend-tests']['steps']
+        if step['name'] == 'Передать coverage своей части'
+    )
+    download_step = next(
+        step
+        for step in jobs['coverage']['steps']
+        if step['name'] == 'Получить coverage всех частей'
+    )
+
+    assert upload_step['with']['name'] == (
+        'coverage-${{ matrix.shard }}-${{ github.run_id }}'
+    )
+    assert upload_step['with']['overwrite'] is True
+    assert download_step['with']['pattern'] == (
+        'coverage-*-${{ github.run_id }}'
+    )
+
+
 def test_dockerfiles_pin_base_images_and_production_runs_non_root():
     external_image = re.compile(r'^[^\s@]+@sha256:[0-9a-f]{64}$')
     dockerfiles = {

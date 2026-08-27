@@ -310,11 +310,12 @@ jobs:
       - name: Передать coverage своей части
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: coverage-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          name: coverage-${{ matrix.shard }}-${{ github.run_id }}
           path: coverage.${{ matrix.shard }}
           if-no-files-found: error
           retention-days: 1
           compression-level: 0
+          overwrite: true
 
   coverage:
     name: Объединить backend coverage
@@ -345,7 +346,7 @@ jobs:
       - name: Получить coverage всех частей
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          pattern: coverage-*-${{ github.run_id }}-${{ github.run_attempt }}
+          pattern: coverage-*-${{ github.run_id }}
           path: coverage-parts
           merge-multiple: true
 
