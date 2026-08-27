@@ -92,6 +92,19 @@ class TestListingServiceApprove:
 
         assert result.status == Listing.STATUS_QUEUED
 
+    def test_approve_clears_previous_review_reason(self):
+        tenant = make_tenant('approve-clears-reason-co')
+        listing = make_listing(tenant)
+        listing.rejection_reason = 'Старая ошибка производителя'
+        listing.save(update_fields=['rejection_reason'])
+
+        with patch('apps.marketplaces.services._enqueue_publish_or_update'):
+            result = ListingService.approve(listing.pk, tenant)
+
+        result.refresh_from_db()
+        assert result.status == Listing.STATUS_QUEUED
+        assert result.rejection_reason == ''
+
     def test_approve_enqueues_publish_task(self):
         """Одобрение регистрирует on_commit-хук с задачей публикации."""
         tenant = make_tenant('approve-queue-co')

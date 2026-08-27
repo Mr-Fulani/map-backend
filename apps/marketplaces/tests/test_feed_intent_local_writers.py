@@ -1,8 +1,10 @@
+from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
+from django.utils import timezone
 
 from apps.marketplaces.models import (
     CategoryMapping,
@@ -23,10 +25,14 @@ from apps.marketplaces.tasks import (
     _account_feed_listings,
     _promote_queued_feed_rows,
     _reject_listing,
+    _repair_orphaned_pending_feed_intents,
     _save_local_listing_intent as save_task_intent,
     confirm_removal_task,
+    publish_listing_task,
+    unpublish_listing_task,
 )
 from apps.products.models import Product
+from apps.sync.models import SyncLog
 from apps.tenants.models import Tenant
 
 
@@ -139,6 +145,103 @@ def test_validated_queued_to_pending_task_advances_exactly_once():
     )
     account.refresh_from_db()
     assert account.feed_intent_revision == 1
+
+
+def test_real_publish_task_advances_feed_intent_in_dual_write():
+    _tenant, account, _product, listing = _listing(
+        status=Listing.STATUS_QUEUED,
+    )
+
+    with patch(
+        'apps.marketplaces.tasks._validate_feed_batch',
+        side_effect=lambda rows: rows,
+    ), patch(
+        'apps.marketplaces.tasks.LimitChecker.can_publish',
+        return_value=(True, ''),
+    ), patch('apps.marketplaces.tasks.request_feed_flush') as request_flush:
+        publish_listing_task(listing.pk)
+
+    listing.refresh_from_db()
+    account.refresh_from_db()
+    assert listing.status == Listing.STATUS_PENDING
+    assert account.feed_intent_revision == 1
+    assert account.feed_intent_due_at is not None
+    request_flush.assert_called_once()
+
+
+def test_direct_unpublish_task_advances_feed_intent_in_dual_write():
+    _tenant, account, _product, listing = _listing(
+        status=Listing.STATUS_ACTIVE,
+    )
+
+    with patch('apps.marketplaces.tasks.request_feed_flush') as request_flush:
+        unpublish_listing_task(listing.pk)
+
+    listing.refresh_from_db()
+    account.refresh_from_db()
+    assert listing.status == Listing.STATUS_ARCHIVING
+    assert account.feed_intent_revision == 1
+    assert account.feed_intent_due_at is not None
+    request_flush.assert_called_once()
+
+
+def test_orphan_pending_repair_requires_post_flush_publish_evidence(settings):
+    settings.MARKETPLACE_FEED_RUN_MODE = 'durable'
+    _tenant, account, _product, listing = _listing(
+        status=Listing.STATUS_PENDING,
+    )
+    flushed_at = timezone.now() - timedelta(hours=2)
+    MarketplaceAccount.objects.filter(pk=account.pk).update(
+        last_feed_flush_at=flushed_at,
+    )
+    evidence = SyncLog.objects.create(
+        tenant=account.tenant,
+        listing=listing,
+        event_type=SyncLog.EVENT_LISTING_PUBLISH,
+        status=SyncLog.STATUS_OK,
+        message='Accepted locally but no feed revision was created.',
+    )
+    SyncLog.objects.filter(pk=evidence.pk).update(
+        created_at=timezone.now() - timedelta(minutes=10),
+    )
+
+    first = _repair_orphaned_pending_feed_intents()
+    second = _repair_orphaned_pending_feed_intents()
+
+    account.refresh_from_db()
+    assert first == {'selected': 1, 'repaired': 1}
+    assert second == {'selected': 0, 'repaired': 0}
+    assert account.feed_intent_revision == 1
+    assert account.feed_intent_due_at is not None
+    assert SyncLog.objects.filter(
+        listing=listing,
+        payload__repair='orphan_pending_feed_intent',
+    ).count() == 1
+
+
+def test_orphan_pending_repair_does_not_replay_a_post_flush_listing(settings):
+    settings.MARKETPLACE_FEED_RUN_MODE = 'durable'
+    _tenant, account, _product, listing = _listing(
+        status=Listing.STATUS_PENDING,
+    )
+    evidence = SyncLog.objects.create(
+        tenant=account.tenant,
+        listing=listing,
+        event_type=SyncLog.EVENT_LISTING_PUBLISH,
+        status=SyncLog.STATUS_OK,
+        message='Normal publication evidence.',
+    )
+    evidence_at = timezone.now() - timedelta(hours=2)
+    SyncLog.objects.filter(pk=evidence.pk).update(created_at=evidence_at)
+    MarketplaceAccount.objects.filter(pk=account.pk).update(
+        last_feed_flush_at=evidence_at + timedelta(minutes=1),
+    )
+
+    result = _repair_orphaned_pending_feed_intents()
+
+    account.refresh_from_db()
+    assert result == {'selected': 0, 'repaired': 0}
+    assert account.feed_intent_revision == 0
 
 
 def test_dual_write_projection_excludes_and_never_bulk_promotes_queued():

@@ -98,6 +98,8 @@ _TRANSIENT_STATUS_RECHECK_DELAY = datetime.timedelta(minutes=10)
 _POLL_RETRY_DELAY = datetime.timedelta(minutes=30)
 _FEED_POLL_BATCH_SIZE = 100
 _FEED_POLL_BATCH_DELAY_SECONDS = 30
+_ORPHAN_PENDING_REPAIR_AGE = datetime.timedelta(minutes=5)
+_ORPHAN_PENDING_REPAIR_BATCH_SIZE = 100
 _MAX_PROVIDER_REASON_LENGTH = 2000
 _DURABLE_FEED_INTENT_TASK_NAME = (
     'apps.marketplaces.tasks.process_marketplace_feed_intent'
@@ -1731,6 +1733,7 @@ def publish_listing_task(self, listing_id: int):
             update_fields=('status',),
             expected_status=Listing.STATUS_QUEUED,
             expected_external_id=None,
+            feed_projection_changed=True,
         ):
             return {'status': 'stale'}
         _write_log(
@@ -1827,6 +1830,7 @@ def unpublish_listing_task(self, listing_id: int):
         update_fields=('status',),
         expected_status=expected_status,
         expected_external_id=expected_external_id,
+        feed_projection_changed=True,
     ):
         return {'status': 'stale'}
     _write_log(
@@ -5144,6 +5148,119 @@ def check_moderation_task(self, listing_id: int):
         raise self.retry(exc=exc, countdown=backoff(self.request.retries))
 
 
+def _repair_orphaned_pending_feed_intents() -> dict[str, int]:
+    """Re-arm proven local publications that never reached a feed boundary.
+
+    A PENDING row alone is not replay proof: an older legacy upload may have
+    submitted it without a durable ``feed_run``.  The repair therefore requires
+    a local publication log newer than the account's last recorded provider
+    boundary, no current/held desired revision and no prior repair for that
+    publication evidence.  The account lock fences every compliant listing
+    writer while the evidence is re-checked.
+    """
+
+    if not (
+        _feed_ingress_dual_write_enabled()
+        and _status_lifecycle_dual_write_enabled()
+    ):
+        return {'selected': 0, 'repaired': 0}
+
+    from apps.marketplaces.feed_intents import bump_feed_intents
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+    from apps.sync.models import SyncLog
+
+    candidate_account_ids = list(
+        Listing.objects.filter(
+            status=Listing.STATUS_PENDING,
+            external_id__isnull=True,
+            feed_run__isnull=True,
+            account__deleted_at__isnull=True,
+            account__is_active=True,
+            account__tenant__is_active=True,
+            account__feed_intent_due_at__isnull=True,
+            account__feed_intent_revision__lte=F(
+                'account__feed_intent_dispatched_revision',
+            ),
+        )
+        .order_by('account_id')
+        .values_list('account_id', flat=True)
+        .distinct()[:_ORPHAN_PENDING_REPAIR_BATCH_SIZE]
+    )
+    selected = 0
+    repaired = 0
+    cutoff = now() - _ORPHAN_PENDING_REPAIR_AGE
+    for account_id in candidate_account_ids:
+        if not _durable_feed_run_enabled(account_id):
+            continue
+        with transaction.atomic():
+            account = (
+                MarketplaceAccount.all_objects.select_for_update(of=('self',))
+                .select_related('tenant')
+                .filter(
+                    pk=account_id,
+                    deleted_at__isnull=True,
+                    is_active=True,
+                    tenant__is_active=True,
+                    feed_intent_due_at__isnull=True,
+                    feed_intent_revision__lte=F(
+                        'feed_intent_dispatched_revision',
+                    ),
+                )
+                .first()
+            )
+            if account is None:
+                continue
+            list(
+                MarketplaceFeedEndpoint.objects.select_for_update(of=('self',))
+                .filter(account_id=account_id)
+                .order_by('account_id')
+            )
+            evidence = SyncLog.objects.filter(
+                listing__account_id=account_id,
+                listing__status=Listing.STATUS_PENDING,
+                listing__external_id__isnull=True,
+                listing__feed_run__isnull=True,
+                event_type=SyncLog.EVENT_LISTING_PUBLISH,
+                status=SyncLog.STATUS_OK,
+                created_at__lte=cutoff,
+            )
+            if account.last_feed_flush_at is not None:
+                evidence = evidence.filter(
+                    created_at__gt=account.last_feed_flush_at,
+                )
+            publication = evidence.order_by('-created_at', '-pk').first()
+            if publication is None:
+                continue
+            already_repaired = SyncLog.objects.filter(
+                listing__account_id=account_id,
+                event_type=SyncLog.EVENT_LISTING_PUBLISH,
+                status=SyncLog.STATUS_WARN,
+                payload__repair='orphan_pending_feed_intent',
+                created_at__gte=publication.created_at,
+            ).exists()
+            if already_repaired:
+                continue
+
+            selected += 1
+            revision = bump_feed_intents([account_id], now())[account_id]
+            SyncLog.objects.create(
+                tenant=account.tenant,
+                listing_id=publication.listing_id,
+                event_type=SyncLog.EVENT_LISTING_PUBLISH,
+                status=SyncLog.STATUS_WARN,
+                message=(
+                    'MAP обнаружил публикацию, которая не дошла до границы '
+                    'отправки фида, и безопасно создал новую feed revision.'
+                ),
+                payload={
+                    'repair': 'orphan_pending_feed_intent',
+                    'feed_intent_revision': revision,
+                },
+            )
+            repaired += 1
+    return {'selected': selected, 'repaired': repaired}
+
+
 @shared_task(queue='avito_update')
 def check_moderation_status():
     """
@@ -5151,6 +5268,8 @@ def check_moderation_status():
 
     Запускается каждые 30 минут через Celery Beat.
     """
+    orphan_repair = _repair_orphaned_pending_feed_intents()
+
     pending_account_ids = list(Listing.objects.filter(
         status=Listing.STATUS_PENDING,
         external_id__isnull=True,
@@ -5189,6 +5308,8 @@ def check_moderation_status():
         confirm_removal_task.delay(listing_id)
 
     return {
+        'orphan_pending_selected': orphan_repair['selected'],
+        'orphan_pending_repaired': orphan_repair['repaired'],
         'pending_accounts_queued': len(pending_account_ids),
         'queued_accounts_started': len(queued_account_ids),
         'active_listings_queued': len(active_listing_ids),

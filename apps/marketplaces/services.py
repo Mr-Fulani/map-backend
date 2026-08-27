@@ -1059,9 +1059,10 @@ class ListingService:
             )
         expected = _listing_expected_state(listing)
         listing.status = Listing.STATUS_QUEUED
+        listing.rejection_reason = ''
         applied = _save_local_listing_intent(
             listing,
-            ('status',),
+            ('status', 'rejection_reason'),
             **expected,
         )
 
