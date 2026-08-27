@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -18,10 +19,46 @@ defaults:
     shell: bash --noprofile --norc -euo pipefail {0}
 
 jobs:
-  test:
+  scope:
+    name: Определить объём CI
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 5
+    outputs:
+      base_sha: ${{ steps.plan.outputs.base_sha }}
+      head_sha: ${{ steps.plan.outputs.head_sha }}
+      mode: ${{ steps.plan.outputs.mode }}
+      tree_sha: ${{ steps.plan.outputs.tree_sha }}
+    steps:
+      - name: Получить полную историю для точного diff
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
 
+      - name: Классифицировать docs, full или проверенное exact-tree reuse
+        id: plan
+        env:
+          ACTIONS_READ_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/ci_scope.py
+          --event-file "$GITHUB_EVENT_PATH"
+          --event-name "$GITHUB_EVENT_NAME"
+          --repository "$GITHUB_REPOSITORY"
+          --run-id "$GITHUB_RUN_ID"
+
+      - name: Проверить формат docs-only diff
+        if: steps.plan.outputs.mode == 'docs'
+        env:
+          BASE_SHA: ${{ steps.plan.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.plan.outputs.head_sha }}
+        run: git diff --check "$BASE_SHA" "$HEAD_SHA"
+
+  backend-quality:
+    name: Backend contracts, schema и supply chain
+    needs: scope
+    if: needs.scope.outputs.mode == 'full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     services:
       db:
         image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
@@ -36,7 +73,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-
       redis:
         image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
         ports:
@@ -46,7 +82,6 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
-
     env:
       DJANGO_SETTINGS_MODULE: config.settings.development
       DATABASE_URL: postgres://map_user:map_password@localhost:5432/map_db
@@ -54,7 +89,6 @@ jobs:
       DJANGO_SECRET_KEY: ci-secret-key-for-testing-only
       FIELD_ENCRYPTION_KEY: Y2ktb25seS1mZXJuZXQta2V5LTMyLWJ5dGVzISEhISE=
       BACKUP_INTEGRATION_DATABASE_URL: postgres://map_user:map_password@localhost:5432/map_db
-
     steps:
       - name: Получить исходный код
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -174,10 +208,179 @@ jobs:
           tests/test_deploy_contract.py
           -q
 
+      - name: Проверить незаписанные изменения моделей
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Применить миграции
+        run: python manage.py migrate --noinput
+
+      - name: Проверить OpenAPI-схему
+        run: python manage.py spectacular --file /tmp/openapi-schema.yml --validate --fail-on-warn
+
+      - name: Сохранить backend SBOM
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sbom-backend-${{ github.sha }}
+          path: ${{ runner.temp }}/sbom/*.cdx.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
+          overwrite: true
+
+  backend-tests:
+    name: Backend tests, shard ${{ matrix.shard }}
+    needs: scope
+    if: needs.scope.outputs.mode == 'full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    services:
+      db:
+        image: postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+        env:
+          POSTGRES_DB: map_db
+          POSTGRES_USER: map_user
+          POSTGRES_PASSWORD: map_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DJANGO_SETTINGS_MODULE: config.settings.development
+      DATABASE_URL: postgres://map_user:map_password@localhost:5432/map_db
+      REDIS_URL: redis://localhost:6379/0
+      DJANGO_SECRET_KEY: ci-secret-key-for-testing-only
+      FIELD_ENCRYPTION_KEY: Y2ktb25seS1mZXJuZXQta2V5LTMyLWJ5dGVzISEhISE=
+      BACKUP_INTEGRATION_DATABASE_URL: postgres://map_user:map_password@localhost:5432/map_db
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Настроить Python 3.12.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12.13'
+          cache: 'pip'
+          cache-dependency-path: requirements/dev.txt
+
+      - name: Установить проверенные dev-зависимости
+        run: >-
+          python -m pip install
+          --require-hashes
+          --only-binary=:all:
+          --requirement requirements/dev.txt
+
+      - name: Запустить свою полную часть backend-тестов
+        env:
+          COVERAGE_FILE: coverage.${{ matrix.shard }}
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: |
+          mapfile -t test_files < <(
+            python scripts/ci_pytest_shard.py \
+              --shard-index "$SHARD_INDEX" \
+              --shard-count 3
+          )
+          test "${#test_files[@]}" -gt 0
+          pytest "${test_files[@]}" \
+            --cov=apps \
+            --cov-config=.coveragerc \
+            --cov-report= \
+            --cov-fail-under=0
+
+      - name: Передать coverage своей части
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: coverage-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage.${{ matrix.shard }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  coverage:
+    name: Объединить backend coverage
+    needs: [scope, backend-tests]
+    if: needs.scope.outputs.mode == 'full' && needs.backend-tests.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
+      - name: Настроить Python 3.12.13
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: '3.12.13'
+          cache: 'pip'
+          cache-dependency-path: requirements/dev.txt
+
+      - name: Установить hash-locked coverage toolchain
+        run: >-
+          python -m pip install
+          --require-hashes
+          --only-binary=:all:
+          --requirement requirements/dev.txt
+
+      - name: Получить coverage всех частей
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          pattern: coverage-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage-parts
+          merge-multiple: true
+
+      - name: Проверить общее покрытие
+        run: |
+          shopt -s nullglob
+          coverage_files=(coverage-parts/coverage.*)
+          test "${#coverage_files[@]}" -eq 3
+          for coverage_file in "${coverage_files[@]}"
+          do
+            mv "$coverage_file" ".${coverage_file##*/}"
+          done
+          coverage combine
+          coverage report
+          coverage xml
+
+      - name: Загрузить объединённое покрытие
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: coverage.xml
+          disable_search: true
+          disable_telem: true
+          version: v11.3.1
+
+  images:
+    name: Production images и runtime security
+    needs: scope
+    if: needs.scope.outputs.mode == 'full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+
       - name: Установить checksum-проверенный Trivy 0.72.0
         env:
-          # Direct release assets are not updated by Dependabot: bump the
-          # version, URL and official checksum together during runtime review.
           TRIVY_TARBALL_SHA256: bbb64b9695866ce4a7a8f5c9592002c5961cab378577fa3f8a040df362b9b2ea
         run: |
           trivy_tarball="$RUNNER_TEMP/trivy_0.72.0_Linux-64bit.tar.gz"
@@ -289,26 +492,17 @@ jobs:
               "$image_id"
           done
 
-      - name: Проверить незаписанные изменения моделей
-        run: python manage.py makemigrations --check --dry-run
-
-      - name: Применить миграции
-        run: python manage.py migrate --noinput
-
-      - name: Проверить OpenAPI-схему
-        run: python manage.py spectacular --file /tmp/openapi-schema.yml --validate --fail-on-warn
-
-      - name: Запустить тесты
-        run: pytest --cov=apps --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml
-
-      - name: Загрузить покрытие
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: ${{ !cancelled() && hashFiles('coverage.xml') != '' }}
+  frontend:
+    name: Frontend checks и build
+    needs: scope
+    if: needs.scope.outputs.mode == 'full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Получить исходный код
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          files: coverage.xml
-          disable_search: true
-          disable_telem: true
-          version: v11.3.1
+          persist-credentials: false
 
       - name: Настроить Node.js 24.18.0
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -357,7 +551,13 @@ jobs:
           --omit=dev
           --sbom-format=cyclonedx
           --sbom-type=application
-          > "$RUNNER_TEMP/sbom/frontend.cdx.json"
+          > "$RUNNER_TEMP/frontend.cdx.json"
+
+      - name: Восстановить exact-input Next.js build cache
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: frontend/.next/cache
+          key: next-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json', 'frontend/package.json', 'frontend/next.config.*', 'frontend/postcss.config.*', 'frontend/tailwind.config.*', 'frontend/tsconfig*.json', 'frontend/public/**', 'frontend/src/**') }}
 
       - name: Проверить и собрать frontend
         working-directory: frontend
@@ -367,12 +567,70 @@ jobs:
           npm run test:unit
           npm run build
 
-      - name: Сохранить SBOM артефакты
+      - name: Сохранить frontend SBOM
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: sbom-${{ github.sha }}
-          path: ${{ runner.temp }}/sbom/*.cdx.json
+          name: sbom-frontend-${{ github.sha }}
+          path: ${{ runner.temp }}/frontend.cdx.json
           if-no-files-found: error
           retention-days: 14
           compression-level: 9
+          overwrite: true
+
+  test:
+    name: test
+    needs: [scope, backend-quality, backend-tests, coverage, images, frontend]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Свести обязательный gate без изменения имени required check
+        env:
+          MODE: ${{ needs.scope.outputs.mode }}
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          BACKEND_QUALITY_RESULT: ${{ needs.backend-quality.result }}
+          BACKEND_TESTS_RESULT: ${{ needs.backend-tests.result }}
+          COVERAGE_RESULT: ${{ needs.coverage.result }}
+          IMAGES_RESULT: ${{ needs.images.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+        run: |
+          test "$SCOPE_RESULT" = success
+          case "$MODE" in
+            docs|reuse)
+              test "$BACKEND_QUALITY_RESULT" = skipped
+              test "$BACKEND_TESTS_RESULT" = skipped
+              test "$COVERAGE_RESULT" = skipped
+              test "$IMAGES_RESULT" = skipped
+              test "$FRONTEND_RESULT" = skipped
+              ;;
+            full)
+              test "$BACKEND_QUALITY_RESULT" = success
+              test "$BACKEND_TESTS_RESULT" = success
+              test "$COVERAGE_RESULT" = success
+              test "$IMAGES_RESULT" = success
+              test "$FRONTEND_RESULT" = success
+              ;;
+            *)
+              echo "Unknown CI mode: $MODE" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Создать exact-tree gate evidence
+        env:
+          MODE: ${{ needs.scope.outputs.mode }}
+          TREE_SHA: ${{ needs.scope.outputs.tree_sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/ci-gate"
+          printf 'tree=%s\nmode=%s\n' "$TREE_SHA" "$MODE" \
+            > "$RUNNER_TEMP/ci-gate/evidence.txt"
+
+      - name: Сохранить exact-tree gate evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: ci-gate-${{ needs.scope.outputs.tree_sha }}-${{ needs.scope.outputs.mode }}
+          path: ${{ runner.temp }}/ci-gate/evidence.txt
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
           overwrite: true

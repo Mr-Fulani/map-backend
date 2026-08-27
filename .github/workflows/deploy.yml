@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 defaults:
   run:
@@ -17,7 +18,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  gate:
+    name: Проверить режим завершённого CI
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    if: >-
+      ${{
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_branch == 'main' &&
+        vars.PROD_DEPLOY_ENABLED == 'true'
+      }}
+    outputs:
+      mode: ${{ steps.mode.outputs.mode }}
+    steps:
+      - name: Получить exact-run CI gate evidence
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+          pattern: ci-gate-*
+          path: ${{ runner.temp }}/ci-gate
+          merge-multiple: true
+
+      - name: Проверить режим CI без исполнения artifact content
+        id: mode
+        run: |
+          mapfile -t evidence_files < <(
+            find "$RUNNER_TEMP/ci-gate" -type f -name evidence.txt -print
+          )
+          test "${#evidence_files[@]}" -eq 1
+          tree="$(sed -n 's/^tree=//p' "${evidence_files[0]}")"
+          mode="$(sed -n 's/^mode=//p' "${evidence_files[0]}")"
+          case "$tree" in
+            *[!0-9a-f]*|'') exit 1 ;;
+          esac
+          test "${#tree}" -eq 40
+          case "$mode" in
+            docs|full|reuse) ;;
+            *) exit 1 ;;
+          esac
+          printf 'mode=%s\n' "$mode" >> "$GITHUB_OUTPUT"
+
   deploy:
+    needs: gate
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     environment:
@@ -30,6 +74,8 @@ jobs:
         github.event.workflow_run.conclusion == 'success' &&
         github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.head_branch == 'main' &&
+        needs.gate.result == 'success' &&
+        needs.gate.outputs.mode != 'docs' &&
         vars.PROD_DEPLOY_ENABLED == 'true'
       }}
 

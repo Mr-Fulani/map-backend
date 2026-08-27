@@ -336,13 +336,27 @@ checkout вручную: script сам проверит target и вернёт p
 Канонический путь — успешный `CI` для `push` в `main`, после которого workflow
 `Deploy`:
 
-1. получает `workflow_run.head_sha` и проверяет, что это полный SHA успешного
-   `push` в `main`;
+1. получает exact-run CI gate artifact и `workflow_run.head_sha`; режим `docs`
+   завершает workflow без production deploy, а `full`/`reuse` разрешает
+   продолжение только для успешного `push` в `main`;
 2. подключается как `mapdeploy` по SSH с проверкой host fingerprint;
 3. передаёт forced-command протоколу только `deploy <40-char-sha>`;
 4. root-owned release entrypoint выполняет `git fetch --no-tags origin main`,
    пропускает устаревший SHA, проверяет ancestry, сохраняет предыдущий SHA,
    переключает checkout в detached HEAD и запускает `deploy.sh`.
+
+Required check сохраняет имя `test`. Markdown-only изменения в `docs/` и
+корневые `*.md` проходят короткий `git diff --check`; любой другой файл
+fail-closed включает полный gate. Полный gate параллельно выполняет backend
+contracts/schema/supply-chain, три исчерпывающих backend test shards с единым
+coverage threshold, frontend и production image/runtime security.
+
+После успешного полного gate CI сохраняет evidence проверенного Git tree. Для
+последующего `push` того же дерева полный gate можно не повторять только если
+GitHub API подтверждает неистёкший artifact успешного workflow этого же
+репозитория. Совпадения commit SHA недостаточно; сравнивается tree SHA. Ошибка
+API, foreign/fork run, иной workflow, неуспешный run или другое дерево всегда
+возвращают полный CI.
 
 `deploy.sh` затем:
 

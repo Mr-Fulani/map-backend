@@ -164,8 +164,9 @@ MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
   Celery workers/Beat, Next.js, Nginx, ограничивающий egress proxy и backup job
 - **Nginx** — reverse proxy, rate limiting
 - **GitHub Actions** — CI (backend/frontend тесты, OpenAPI, dependency/OCI
-  vulnerability gates, SBOM) и gated deploy workflow; автоматический production
-  deploy требует отдельно настроенных GitHub environment, variable и secrets
+  vulnerability gates, SBOM; docs-only fast path, параллельные backend shards)
+  и gated deploy workflow; автоматический production deploy требует отдельно
+  настроенных GitHub environment, variable и secrets
 - **Hetzner Cloud** — текущий production host
 
 ---
