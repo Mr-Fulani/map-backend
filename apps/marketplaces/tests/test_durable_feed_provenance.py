@@ -8,7 +8,7 @@ import requests
 from django.utils import timezone
 
 from apps.datasources.encryption import encrypt
-from apps.marketplaces.adapters.avito.adapter import FeedItemErrorPage
+from apps.marketplaces.adapters.avito.adapter import FeedItemOutcomePage
 from apps.marketplaces.feed_workflow import (
     PROVIDER_RESULT_HORIZON,
     claim_due_run_for_account,
@@ -20,6 +20,7 @@ from apps.marketplaces.feed_workflow import (
 from apps.marketplaces.models import Listing, MarketplaceAccount, MarketplaceFeedRun
 from apps.marketplaces.tasks import (
     _coalesced_flush_durable,
+    _provider_page_observation_is_consistent,
     process_marketplace_feed_run_step,
 )
 from apps.products.models import Product
@@ -163,6 +164,119 @@ def test_processing_upload_never_reads_global_feed_results(
     results.assert_not_called()
 
 
+def test_current_page_observation_allows_only_safe_status_advance():
+    assert _provider_page_observation_is_consistent(
+        ('upload-current', 'processing'),
+        ('upload-current', 'success'),
+    )
+    assert not _provider_page_observation_is_consistent(
+        ('upload-current', 'success'),
+        ('upload-current', 'processing'),
+    )
+    assert not _provider_page_observation_is_consistent(
+        ('upload-current', 'processing'),
+        ('upload-next', 'processing'),
+    )
+
+
+def test_processing_upload_starts_exact_current_item_reporting(
+    django_capture_on_commit_callbacks,
+):
+    account = _account('processing-report')
+    _listing(account)
+    run = _submitted_run(account)
+
+    with (
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_latest_upload',
+            return_value=_upload(run, 'upload-current', status='processing'),
+        ),
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_current_feed_item_outcome_page',
+        ) as current_page,
+        patch('apps.core.dispatch.publish_dispatch', return_value=False),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            result = _run_claimed_feed_step_for_test(
+                str(run.pk),
+                run.revision,
+            )
+
+    current = MarketplaceFeedRun.objects.get(pk=run.pk)
+    assert result['status'] == 'reporting'
+    assert current.state == MarketplaceFeedRun.State.REPORTING
+    assert current.report_completed_at is None
+    current_page.assert_not_called()
+
+
+def test_processing_current_page_applies_proven_item_outcomes(
+    django_capture_on_commit_callbacks,
+):
+    account = _account('processing-outcomes')
+    first_active = _listing(account, 'first-active')
+    second_active = _listing(account, 'second-active')
+    rejected = _listing(account, 'rejected')
+    run = _submitted_run(account)
+    transition_at = timezone.now()
+    claim = claim_due_run_for_account(
+        account.pk,
+        expected_generation_id=run.pk,
+        expected_revision=run.revision,
+        now=transition_at,
+    )
+    assert claim is not None
+    reporting = start_reporting(
+        claim,
+        provider_run_id='upload-current',
+        next_attempt_at=transition_at,
+        now=transition_at,
+    )
+
+    with (
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_latest_upload',
+            side_effect=[
+                _upload(reporting, 'upload-current', status='processing'),
+                _upload(reporting, 'upload-current', status='processing'),
+            ],
+        ),
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_current_feed_item_outcome_page',
+            return_value=FeedItemOutcomePage(
+                errors={str(rejected.publish_idempotency_key): 'Invalid OEM'},
+                external_ids={
+                    str(first_active.publish_idempotency_key): '8273167174',
+                    str(second_active.publish_idempotency_key): '8385631878',
+                },
+                next_page=None,
+            ),
+        ) as current_page,
+        patch('apps.core.dispatch.publish_dispatch', return_value=False),
+    ):
+        with django_capture_on_commit_callbacks(execute=True):
+            result = _run_claimed_feed_step_for_test(
+                str(reporting.pk),
+                reporting.revision,
+            )
+
+    first_active.refresh_from_db()
+    second_active.refresh_from_db()
+    rejected.refresh_from_db()
+    current = MarketplaceFeedRun.objects.get(pk=reporting.pk)
+    assert result['status'] == 'completed'
+    assert result['published'] == 2
+    assert result['rejected'] == 1
+    assert current.state == MarketplaceFeedRun.State.SUCCEEDED
+    assert current.published_count == 2
+    assert current.rejected_count == 1
+    assert current.pending_count == 0
+    assert first_active.external_id == '8273167174'
+    assert second_active.external_id == '8385631878'
+    assert rejected.status == Listing.STATUS_REJECTED
+    assert rejected.rejection_reason == 'Invalid OEM'
+    current_page.assert_called_once_with(1)
+
+
 def test_report_page_pre_post_mismatch_fails_closed_without_mutation(
     django_capture_on_commit_callbacks,
 ):
@@ -191,9 +305,10 @@ def test_report_page_pre_post_mismatch_fails_closed_without_mutation(
             ],
         ),
         patch(
-            'apps.marketplaces.tasks.AvitoAdapter.get_feed_item_error_page',
-            return_value=FeedItemErrorPage(
+            'apps.marketplaces.tasks.AvitoAdapter.get_current_feed_item_outcome_page',
+            return_value=FeedItemOutcomePage(
                 errors={str(listing.publish_idempotency_key): 'must not apply'},
+                external_ids={},
                 next_page=None,
             ),
         ),

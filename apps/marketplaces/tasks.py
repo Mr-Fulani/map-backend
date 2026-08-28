@@ -3963,6 +3963,10 @@ def _process_submission_unknown(
 
 
 _PROVIDER_SUCCESS_STATUSES = frozenset({'success', 'success_warning'})
+_PROVIDER_CURRENT_ITEM_STATUSES = frozenset({
+    'processing',
+    *_PROVIDER_SUCCESS_STATUSES,
+})
 _PROVIDER_READ_EXCEPTIONS = (
     FeedUploadError,
     AvitoError,
@@ -3980,6 +3984,27 @@ _PROVIDER_READ_EXCEPTIONS = (
 def _provider_result_deadline_reached(claim: FeedRunClaim) -> bool:
     deadline = claim.provider_result_deadline_at
     return deadline is None or now() >= deadline
+
+
+def _provider_page_observation_is_consistent(
+    before: tuple[str, str],
+    after: tuple[str, str],
+) -> bool:
+    """Keep exact upload identity while allowing processing to finish."""
+
+    before_id, before_status = before
+    after_id, after_status = after
+    if before_id != after_id:
+        return False
+    if (
+        before_status not in _PROVIDER_CURRENT_ITEM_STATUSES
+        or after_status not in _PROVIDER_CURRENT_ITEM_STATUSES
+    ):
+        return False
+    return not (
+        before_status in _PROVIDER_SUCCESS_STATUSES
+        and after_status == 'processing'
+    )
 
 
 def _finish_provider_result_uncertain(
@@ -4065,19 +4090,14 @@ def _process_polling_feed_run(
             claim,
             'The provider latest-upload identity moved away from the bound run.',
         )
-    if provider_status == 'processing':
-        return _retry_provider_result_read(
-            claim,
-            'Площадка продолжает обрабатывать точный запуск фида.',
-        )
-    if provider_status not in _PROVIDER_SUCCESS_STATUSES:
+    if provider_status not in _PROVIDER_CURRENT_ITEM_STATUSES:
         return _retry_provider_result_read(
             claim,
             f'Запуск фида ещё не подтверждён: {provider_status}.',
         )
 
-    # The provider report is the generation-wide rejection authority. It must
-    # complete before any global ad-id endpoint can mutate local listings.
+    # The exact current-upload page can expose final per-item outcomes before
+    # Avito changes the aggregate upload status from ``processing``.
     if claim.report_completed_at is None:
         transition_at = now()
         with transaction.atomic():
@@ -4089,6 +4109,12 @@ def _process_polling_feed_run(
             )
             _enqueue_feed_run_snapshot(snapshot)
         return {'status': 'reporting', 'run_id': str(snapshot.run_id)}
+
+    if provider_status == 'processing':
+        return _retry_provider_result_read(
+            claim,
+            'Площадка продолжает обрабатывать точный запуск фида.',
+        )
 
     batch = load_poll_batch(claim, limit=_FEED_POLL_BATCH_SIZE, now=now())
     if not batch:
@@ -4209,14 +4235,16 @@ def _process_reporting_feed_run(
             claim,
             'The provider latest-upload identity moved away from the reporting run.',
         )
-    if provider_status not in _PROVIDER_SUCCESS_STATUSES:
+    if provider_status not in _PROVIDER_CURRENT_ITEM_STATUSES:
         return _retry_reporting_or_fail(
             claim,
-            f'Точный запуск фида ещё не завершён: {provider_status}.',
+            f'Точный запуск фида нельзя сверить: {provider_status}.',
         )
 
     try:
-        page = AvitoAdapter(account).get_feed_item_error_page(claim.report_page)
+        page = AvitoAdapter(account).get_current_feed_item_outcome_page(
+            claim.report_page,
+        )
     except _PROVIDER_READ_EXCEPTIONS as exc:
         return _retry_reporting_or_fail(claim, exc)
     if page.next_page is not None and page.next_page > max_pages:
@@ -4229,10 +4257,10 @@ def _process_reporting_feed_run(
         after = _strict_latest_upload_observation(account, claim)
     except _PROVIDER_READ_EXCEPTIONS as exc:
         return _retry_reporting_or_fail(claim, exc)
-    if after != before:
+    if after is None or not _provider_page_observation_is_consistent(before, after):
         return _finish_provider_result_uncertain(
             claim,
-            'The exact upload changed while a provider report page was being read.',
+            'The exact upload changed while a current item page was being read.',
         )
     if _provider_result_deadline_reached(claim):
         return _finish_provider_result_uncertain(
@@ -4246,13 +4274,19 @@ def _process_reporting_feed_run(
             claim,
             current_page=claim.report_page,
             errors_by_ad_id=page.errors,
+            external_ids_by_ad_id=page.external_ids,
             next_page=page.next_page,
             next_attempt_at=(
                 transition_at + _DURABLE_FEED_REPORT_DELAY
                 if page.next_page is not None
-                else None
+                else (
+                    transition_at + _POLL_RETRY_DELAY
+                    if after[1] == 'processing'
+                    else None
+                )
             ),
             occurred_at=transition_at,
+            provider_complete=after[1] in _PROVIDER_SUCCESS_STATUSES,
         )
         if applied.snapshot.state in MarketplaceFeedRun.TERMINAL_STATES:
             _record_feed_run_summary(applied.snapshot)
@@ -4268,6 +4302,7 @@ def _process_reporting_feed_run(
             )
         ),
         'run_id': str(applied.snapshot.run_id),
+        'published': applied.published_count,
         'rejected': applied.rejected_count,
     }
 
