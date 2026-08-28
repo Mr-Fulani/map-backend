@@ -18,6 +18,7 @@ from apps.marketplaces.feed_artifact_storage import (
     FeedArtifactResumeRequired,
     PrivateFeedArtifactStorageService,
 )
+from apps.marketplaces.feed_intents import bump_feed_intents
 from apps.marketplaces.feed_workflow import (
     FeedRunClaim,
     account_identity_digest,
@@ -419,8 +420,29 @@ def test_profile_drift_after_external_read_is_rejected(settings):
             submitted_at=timezone.now(),
         )
 
+
+def test_newer_local_feed_revision_fences_attached_generation_before_submission(
+    settings,
+):
+    context = _attached_generation('promotion-source-drift')
+    _enable_promotion(settings)
+
+    with transaction.atomic():
+        revision = bump_feed_intents(
+            [context.account.pk],
+            timezone.now(),
+        )[context.account.pk]
+
+    assert revision == 2
+    with pytest.raises(StaleFeedArtifactPromotion):
+        _promote(context)
+
     context.endpoint.refresh_from_db()
+    context.run.refresh_from_db()
     assert context.endpoint.current_artifact_id is None
+    assert context.endpoint.source_intent_revision == 2
+    assert context.run.state == MarketplaceFeedRun.State.PREPARING
+    assert context.run.submitted_at is None
 
 
 @pytest.mark.parametrize(

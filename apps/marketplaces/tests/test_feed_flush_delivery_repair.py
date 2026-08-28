@@ -159,10 +159,47 @@ def test_dual_write_request_captures_without_double_bump_and_sets_repair_lease(
     args = publish.call_args.kwargs['args']
     assert args[:2] == [account.pk, 4]
     assert isinstance(args[2], str) and args[2]
+    assert publish.call_args.kwargs['countdown'] == 0
     assert publish.call_args.kwargs['expires'] < 300
     assert account.feed_intent_revision == 4
     assert account.feed_intent_dispatched_revision == 3
     assert account.feed_intent_due_at > due_at
+
+
+def test_followup_feed_waits_for_hourly_window_but_keeps_exact_revision(settings):
+    settings.MARKETPLACE_FEED_INGRESS_MODE = 'dual_write'
+    flushed_at = timezone.now()
+    account = _account(
+        'hourly-followup',
+        revision=5,
+        dispatched_revision=4,
+        due_at=flushed_at,
+    )
+    MarketplaceAccount.objects.filter(pk=account.pk).update(
+        last_feed_flush_at=flushed_at,
+    )
+    account.refresh_from_db()
+
+    with (
+        patch(
+            'apps.marketplaces.tasks._cache_add_feed_flush_owner',
+            return_value=True,
+        ),
+        patch('apps.marketplaces.tasks._cache_refresh_feed_flush_owner'),
+        patch(
+            'apps.marketplaces.tasks.coalesced_flush_task.apply_async',
+        ) as publish,
+    ):
+        request_feed_flush(account)
+
+    account.refresh_from_db()
+    args = publish.call_args.kwargs['args']
+    countdown = publish.call_args.kwargs['countdown']
+    assert args[:2] == [account.pk, 5]
+    assert 3590 <= countdown <= 3600
+    assert account.feed_intent_revision == 5
+    assert account.feed_intent_dispatched_revision == 4
+    assert account.feed_intent_due_at >= flushed_at + timedelta(hours=1)
 
 
 def test_legacy_scanner_schedules_exact_coordinator_not_private_worker():

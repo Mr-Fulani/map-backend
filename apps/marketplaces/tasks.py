@@ -2489,28 +2489,64 @@ def _retry_private_pre_submission(
     task,
     claim: FeedRunClaim,
     error: Exception,
+    *,
+    source_revision: int,
+    owner_token: str | None,
+    reason_code: str,
 ) -> dict:
-    """Release one proven pre-provider claim and retry the same immutable run."""
+    """Retry one private generation without losing its flush ownership.
+
+    The feed-run cursor and the account-level flush cursor are one recovery
+    unit.  Advancing only ``run.next_attempt_at`` leaves the account scanner's
+    five-minute repair deadline behind; it can then install a replacement
+    owner before this task's longer provider retry wakes up.  Keep the DB
+    deadline, cache owner and Celery retry on the same clock.
+    """
 
     retry_delay = _provider_retry_delay(error)
+    retry_at = now() + retry_delay
     retry_step(
         claim,
-        next_attempt_at=now() + retry_delay,
-        error=error,
+        next_attempt_at=retry_at,
+        error=f'{reason_code}: {error}',
         now=now(),
     )
     if task.request.retries >= task.max_retries:
+        repair_deadline = retry_at + _FEED_FLUSH_REPAIR_GRACE
+        with transaction.atomic():
+            account = (
+                MarketplaceAccount.all_objects.select_for_update(of=('self',))
+                .filter(pk=claim.account_id)
+                .first()
+            )
+            if account is not None:
+                _set_feed_flush_repair_deadline(
+                    account,
+                    captured_revision=source_revision,
+                    repair_deadline=repair_deadline,
+                    release_provider_hold=True,
+                )
+        _cache_clear_feed_flush_owner(claim.account_id, owner_token)
         return {
             'status': 'private_pre_submission_retry_exhausted',
             'run_id': str(claim.run_id),
         }
-    raise task.retry(
-        exc=error,
+    return _retry_owned_feed_flush(
+        task,
+        error,
+        account_id=claim.account_id,
+        captured_revision=source_revision,
+        owner_token=owner_token,
         countdown=max(1, int(retry_delay.total_seconds())),
     )
 
 
-def _coalesced_flush_private_durable(task, account: MarketplaceAccount):
+def _coalesced_flush_private_durable(
+    task,
+    account: MarketplaceAccount,
+    *,
+    owner_token: str | None = None,
+):
     """Upload, verify, promote and submit one private immutable generation."""
 
     from apps.marketplaces.feed_artifact_clients import private_feed_object_client
@@ -2589,7 +2625,14 @@ def _coalesced_flush_private_durable(task, account: MarketplaceAccount):
                 'attempt_id': str(exc.upload_attempt_id),
             }
         except (FeedArtifactResumeRequired, FeedArtifactVerificationError) as exc:
-            return _retry_private_pre_submission(task, claim, exc)
+            return _retry_private_pre_submission(
+                task,
+                claim,
+                exc,
+                source_revision=source_revision,
+                owner_token=owner_token,
+                reason_code='private_artifact_verification',
+            )
         except StaleFeedArtifactClaim as exc:
             snapshot = _finish_durable_feed_run(
                 claim,
@@ -2617,7 +2660,14 @@ def _coalesced_flush_private_durable(task, account: MarketplaceAccount):
                 predecessor_upload,
             )
         except _PROVIDER_READ_EXCEPTIONS as exc:
-            return _retry_private_pre_submission(task, claim, exc)
+            return _retry_private_pre_submission(
+                task,
+                claim,
+                exc,
+                source_revision=source_revision,
+                owner_token=owner_token,
+                reason_code='provider_baseline_read',
+            )
 
         submitted_at = now()
         try:
@@ -2631,13 +2681,27 @@ def _coalesced_flush_private_durable(task, account: MarketplaceAccount):
                 now=submitted_at,
             )
         except Exception as exc:
-            return _retry_private_pre_submission(task, claim, exc)
+            return _retry_private_pre_submission(
+                task,
+                claim,
+                exc,
+                source_revision=source_revision,
+                owner_token=owner_token,
+                reason_code='private_promotion_boundary',
+            )
 
         try:
             adapter._trigger_autoload()
         except RateLimitError as exc:
             claim = _clear_rejected_feed_submission_boundary(claim)
-            return _retry_private_pre_submission(task, claim, exc)
+            return _retry_private_pre_submission(
+                task,
+                claim,
+                exc,
+                source_revision=source_revision,
+                owner_token=owner_token,
+                reason_code='provider_rate_limit',
+            )
         except (
             AmbiguousFeedSubmissionError,
             requests.RequestException,
@@ -2696,11 +2760,20 @@ def _coalesced_flush_private_durable(task, account: MarketplaceAccount):
         return {'status': 'submitted', 'run_id': str(snapshot.run_id)}
 
 
-def _coalesced_flush_durable(task, account: MarketplaceAccount):
+def _coalesced_flush_durable(
+    task,
+    account: MarketplaceAccount,
+    *,
+    owner_token: str | None = None,
+):
     """Submit one exact feed generation without replaying ambiguous POSTs."""
 
     if private_feed_cutover_enabled(account.pk):
-        return _coalesced_flush_private_durable(task, account)
+        return _coalesced_flush_private_durable(
+            task,
+            account,
+            owner_token=owner_token,
+        )
 
     # Local writers use the same account-first lock order.  The byte snapshot
     # and generation tags therefore describe one coherent local intent.
@@ -3496,7 +3569,11 @@ def coalesced_flush_task(
                 )
                 return {'status': completion, 'rejected': rejected}
 
-            result = _coalesced_flush_durable(self, account)
+            result = _coalesced_flush_durable(
+                self,
+                account,
+                owner_token=normalized_owner_token,
+            )
             if result.get('status') == 'submitted':
                 _finish_owned_feed_flush(
                     account_id,

@@ -7,6 +7,7 @@ write fences use the same evidence.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from django.conf import settings
 
@@ -21,6 +22,32 @@ class ListingDeliveryPresentation:
     provider_submission_started: bool
     lifecycle_actions_blocked: bool
     can_check_avito_status: bool
+    retry_at: datetime | None = None
+    retry_reason: str = ''
+
+
+_PRIVATE_RETRY_REASONS = {
+    'private_artifact_verification': (
+        'MAP повторно проверяет сохранённую версию XML-фида.'
+    ),
+    'provider_baseline_read': (
+        'Avito временно не вернул состояние предыдущей автозагрузки.'
+    ),
+    'private_promotion_boundary': (
+        'MAP повторно проверяет, что URL и версия XML-фида не изменились.'
+    ),
+    'provider_rate_limit': (
+        'Avito временно ограничил частоту запросов.'
+    ),
+}
+
+
+def _retry_reason(last_error: str) -> str:
+    reason_code = str(last_error or '').partition(':')[0].strip()
+    return _PRIVATE_RETRY_REASONS.get(
+        reason_code,
+        'Временная техническая ошибка произошла до отправки фида в Avito.',
+    )
 
 
 def durable_feed_run_enabled(account_id: int) -> bool:
@@ -32,10 +59,20 @@ def durable_feed_run_enabled(account_id: int) -> bool:
     ) or private_feed_cutover_enabled(account_id)
 
 
-def feed_run_may_publish(run: MarketplaceFeedRun | None) -> bool:
-    """Return whether provider work may still publish the immutable payload."""
+def _legacy_submission_outcome_unknown(listing: Listing) -> bool:
+    """Return whether the account cursor proves an unresolved legacy POST.
 
-    return run is not None and run.state in MarketplaceFeedRun.OWNERSHIP_STATES
+    A normal legacy PENDING row kept the old editable lifecycle.  Only the
+    explicit ``desired > dispatched`` plus ``due=NULL`` boundary means that a
+    provider POST may have crossed the wire and cannot yet be followed safely.
+    """
+
+    account = listing.account
+    return (
+        account.feed_intent_revision
+        > account.feed_intent_dispatched_revision
+        and account.feed_intent_due_at is None
+    )
 
 
 def _provider_submission_started(run: MarketplaceFeedRun) -> bool:
@@ -98,23 +135,35 @@ def listing_delivery_presentation(
                 lifecycle_actions_blocked=False,
                 can_check_avito_status=False,
             )
-        # Legacy delivery has no immutable generation membership.  Be honest
-        # about that ambiguity and fail closed for destructive lifecycle edits.
+        # Preserve the old lifecycle behavior unless the account cursor proves
+        # a genuinely ambiguous provider boundary.
         return ListingDeliveryPresentation(
             stage='legacy_delivery',
             label='Отправляется или обрабатывается Avito',
             provider_submission_started=True,
-            lifecycle_actions_blocked=True,
+            lifecycle_actions_blocked=_legacy_submission_outcome_unknown(
+                listing,
+            ),
             can_check_avito_status=True,
         )
 
     state = run.state
     if state == MarketplaceFeedRun.State.PREPARING:
+        if run.last_error and run.next_attempt_at is not None:
+            return ListingDeliveryPresentation(
+                stage='delivery_retry',
+                label='Отправка временно задержана, повторяем',
+                provider_submission_started=False,
+                lifecycle_actions_blocked=False,
+                can_check_avito_status=False,
+                retry_at=run.next_attempt_at,
+                retry_reason=_retry_reason(run.last_error),
+            )
         return ListingDeliveryPresentation(
             stage='feed_preparing',
             label='Фид готовится к отправке',
             provider_submission_started=False,
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=False,
             can_check_avito_status=False,
         )
     if state == MarketplaceFeedRun.State.SUBMIT_UNKNOWN:
@@ -122,7 +171,7 @@ def listing_delivery_presentation(
             stage='submission_unknown',
             label='Проверяем, принял ли Avito фид',
             provider_submission_started=True,
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=True,
             can_check_avito_status=True,
         )
     if state == MarketplaceFeedRun.State.POLLING:
@@ -130,7 +179,7 @@ def listing_delivery_presentation(
             stage='avito_processing',
             label='Avito обрабатывает фид',
             provider_submission_started=True,
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=False,
             can_check_avito_status=True,
         )
     if state == MarketplaceFeedRun.State.REPORTING:
@@ -138,7 +187,7 @@ def listing_delivery_presentation(
             stage='avito_reporting',
             label='Получаем результат Avito',
             provider_submission_started=True,
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=False,
             can_check_avito_status=True,
         )
     if state == MarketplaceFeedRun.State.RETRY_WAIT:
@@ -146,15 +195,16 @@ def listing_delivery_presentation(
             stage='delivery_retry',
             label='Отправка временно задержана, повторяем',
             provider_submission_started=_provider_submission_started(run),
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=False,
             can_check_avito_status=True,
+            retry_at=run.next_attempt_at,
         )
     if state == MarketplaceFeedRun.State.OUTCOME_UNCERTAIN:
         return ListingDeliveryPresentation(
             stage='manual_review',
             label='Результат Avito требует ручной проверки',
             provider_submission_started=True,
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=True,
             can_check_avito_status=False,
         )
     if state == MarketplaceFeedRun.State.FAILED:

@@ -328,9 +328,9 @@ def _save_local_listing_intent(
                 if delivery.lifecycle_actions_blocked:
                     raise InvalidListingStatus(
                         'Нельзя архивировать, удалять или переносить объявление '
-                        'на другой Avito-аккаунт, пока текущая отправка может '
-                        'быть опубликована площадкой. Дождитесь итогового '
-                        'статуса или выполните ручную сверку запуска.',
+                        'на другой Avito-аккаунт, пока неизвестно, принял ли '
+                        'Avito предыдущую отправку. Дождитесь автоматической '
+                        'сверки или выполните ручную сверку запуска.',
                     )
             target_account = locked_accounts_by_id.get(intended_account_id)
             target_account_is_writable = (
