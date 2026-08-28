@@ -1479,16 +1479,20 @@ class TestCoalescedFlushTask:
 
 @pytest.mark.django_db
 class TestFeedWindowCoordinator:
-    def test_flushes_immediately_when_window_open(self):
-        """Окно открыто (давно/никогда не слали) → flush сразу."""
+    def test_coalesces_for_five_minutes_when_window_open(self):
+        """Открытое окно даёт тенанту пять минут собрать первый общий фид."""
         from apps.marketplaces.tasks import request_feed_flush
         tenant = make_tenant('window-open-co')
         account = make_account(tenant)  # last_feed_flush_at = None → окно открыто
 
-        with patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush:
+        with patch('apps.marketplaces.tasks.coalesced_flush_task') as mock_flush, \
+             patch('apps.marketplaces.tasks.cache') as mock_cache:
+            mock_cache.add.return_value = True
             request_feed_flush(account)
 
         assert_exact_feed_flush_scheduled(mock_flush, account)
+        _, kwargs = mock_flush.apply_async.call_args
+        assert kwargs['countdown'] == 5 * 60
 
     def test_defers_one_flush_when_window_closed(self):
         """Окно закрыто (только что слали) → один отложенный flush на момент открытия."""

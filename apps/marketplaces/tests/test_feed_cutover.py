@@ -30,6 +30,7 @@ from apps.marketplaces.models import (
     Listing,
     MarketplaceAccount,
     MarketplaceFeedEndpoint,
+    MarketplaceFeedArtifactUploadAttempt,
     MarketplaceFeedRun,
 )
 from apps.marketplaces.tasks import (
@@ -323,6 +324,45 @@ def test_private_retry_keeps_exact_flush_owner_until_retry_can_run(settings):
     assert refresh_owner.call_args.kwargs['timeout'] >= 34 * 60
     clear_owner.assert_not_called()
     trigger.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_private_client_bootstrap_failure_is_retryable_before_any_put(settings):
+    account, _endpoint = _cutover_endpoint(settings, 'cutover-client-bootstrap')
+    owner_token = 'private-client-bootstrap-owner'
+    task = SimpleNamespace(
+        request=SimpleNamespace(retries=0),
+        max_retries=5,
+        retry=Mock(side_effect=Retry('replacement accepted')),
+    )
+
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_clients.private_feed_object_client',
+            side_effect=MemoryError('private storage client bootstrap exhausted memory'),
+        ),
+        patch('apps.marketplaces.tasks._cache_refresh_feed_flush_owner'),
+        patch('apps.marketplaces.tasks._cache_clear_feed_flush_owner'),
+    ):
+        with pytest.raises(Retry):
+            _coalesced_flush_durable(
+                task,
+                account,
+                owner_token=owner_token,
+            )
+
+    account.refresh_from_db()
+    run = MarketplaceFeedRun.objects.get(account=account)
+    assert run.state == MarketplaceFeedRun.State.PREPARING
+    assert run.last_error == (
+        'private_artifact_preflight: private storage client bootstrap exhausted memory'
+    )
+    assert run.next_attempt_at > timezone.now() + timedelta(minutes=29)
+    assert account.feed_intent_due_at > run.next_attempt_at
+    assert not MarketplaceFeedArtifactUploadAttempt.objects.filter(
+        run=run,
+    ).exists()
+    assert task.retry.call_args.kwargs['countdown'] == 30 * 60
 
 
 @pytest.mark.django_db

@@ -1231,8 +1231,11 @@ def _flush_account_or_stop(account) -> None:
 
 
 # Avito читает автозагрузку ~раз в час. Изменения тенанта между окнами копятся
-# и уходят одним фидом — см. request_feed_flush / coalesced_flush_task.
+# и уходят одним фидом — см. request_feed_flush / coalesced_flush_task. Даже
+# открытое окно получает короткую tenant-facing паузу, чтобы несколько товаров,
+# опубликованных подряд, попали уже в первую фактическую отправку.
 FEED_WINDOW_SECONDS = 3600
+_FEED_OPEN_WINDOW_COALESCE_SECONDS = 5 * 60
 _FEED_FLUSH_REPAIR_GRACE = datetime.timedelta(minutes=5)
 _FEED_FLUSH_MESSAGE_EXPIRY_SAFETY_SECONDS = 30
 _FEED_FLUSH_MARKER_PREFIX = 'avito:flush_scheduled:'
@@ -1513,11 +1516,11 @@ def _feed_window_remaining(account) -> int:
 
 def request_feed_flush(account) -> None:
     """
-    Координатор часового окна автозагрузки (каденс «первый сразу, дальше копим»).
+    Координатор часового окна автозагрузки с коротким первым накоплением.
 
-    Окно открыто → flush сразу. Окно закрыто → копим: гарантируем, что ровно один
-    отложенный flush запланирован на момент открытия (debounce через cache-маркер,
-    чтобы десятки действий тенанта не наплодили задач).
+    Открытое окно → даём тенанту пять минут опубликовать несколько товаров
+    подряд. Закрытое окно → сохраняем часовой cadence. Cache-маркер гарантирует,
+    что десятки действий тенанта не наплодят параллельных задач.
     """
     with transaction.atomic():
         locked_account = (
@@ -1574,6 +1577,10 @@ def request_feed_flush(account) -> None:
         _schedule_locked_feed_flush(
             locked_account,
             captured_revision=captured_revision,
+            countdown_override=max(
+                _feed_window_remaining(locked_account),
+                _FEED_OPEN_WINDOW_COALESCE_SECONDS,
+            ),
         )
 
 
@@ -2596,14 +2603,28 @@ def _coalesced_flush_private_durable(
         if claim is None:
             return {'status': 'private_generation_owned', 'run_id': str(run.run_id)}
 
-        service = PrivateFeedArtifactStorageService(
-            private_feed_object_client(),
-            bucket=str(settings.MARKETPLACE_FEED_ARTIFACT_BUCKET),
-            expected_bucket_owner=str(
-                settings.MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER,
-            ),
-            max_bytes=settings.MARKETPLACE_FEED_ARTIFACT_MAX_BYTES,
-        )
+        try:
+            # This boundary is deliberately broad but still strictly before
+            # any object-store call. Client/service construction is local
+            # preflight; recording and retrying every failure here cannot
+            # duplicate a PUT and keeps the original cause on the run.
+            service = PrivateFeedArtifactStorageService(
+                private_feed_object_client(),
+                bucket=str(settings.MARKETPLACE_FEED_ARTIFACT_BUCKET),
+                expected_bucket_owner=str(
+                    settings.MARKETPLACE_FEED_ARTIFACT_EXPECTED_BUCKET_OWNER,
+                ),
+                max_bytes=settings.MARKETPLACE_FEED_ARTIFACT_MAX_BYTES,
+            )
+        except Exception as exc:
+            return _retry_private_pre_submission(
+                task,
+                claim,
+                exc,
+                source_revision=source_revision,
+                owner_token=owner_token,
+                reason_code='private_artifact_preflight',
+            )
         try:
             artifact = service.upload_and_attach(
                 claim,
@@ -4587,10 +4608,14 @@ def process_marketplace_feed_run_step(run_id: str, revision: int, /):
             # PREPARING is strictly before the persisted provider boundary.
             # Recovery has proof no POST was attempted and must never invent
             # an ambiguous timestamp or submit outside the flush owner.
+            pre_submission_error = (
+                run.last_error.strip()
+                or 'Flush worker was lost before the provider submission boundary.'
+            )
             snapshot = _finish_durable_feed_run(
                 claim,
                 state=MarketplaceFeedRun.State.FAILED,
-                error='Flush worker was lost before the provider submission boundary.',
+                error=pre_submission_error,
             )
             return {'status': 'failed_pre_submission', 'run_id': str(snapshot.run_id)}
         if claim.state == MarketplaceFeedRun.State.SUBMIT_UNKNOWN:
