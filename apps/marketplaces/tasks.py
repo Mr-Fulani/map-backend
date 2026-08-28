@@ -14,7 +14,7 @@ from celery.exceptions import Retry
 from django.conf import settings
 from django.core.cache import caches
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import F, Min, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.utils.timezone import now
@@ -118,6 +118,17 @@ _DURABLE_FEED_SUBMISSION_NEGATIVE_THRESHOLD = 4
 _DURABLE_FEED_REPORT_DELAY = datetime.timedelta(seconds=30)
 _DURABLE_FEED_UPLOAD_CLOCK_SKEW = datetime.timedelta(minutes=5)
 _MAX_DURABLE_FEED_PAYLOAD_LISTINGS = 10_000
+_STATS_RECOVERY_WINDOW_DAYS = 14
+_STATUS_BATCH_SCAN_LIMIT = 100
+_STATUS_BATCH_LISTING_LIMIT = 100
+_STATUS_BATCH_CLAIM_LEASE = datetime.timedelta(minutes=5)
+_STATUS_BATCH_DISPATCH_COOLDOWN = datetime.timedelta(minutes=10)
+_STATUS_PROVIDER_CHECK_STATES = (
+    Listing.STATUS_PENDING,
+    Listing.STATUS_ACTIVE,
+    Listing.STATUS_REJECTED,
+    Listing.STATUS_ARCHIVING,
+)
 _LISTING_EXPIRY_THRESHOLDS = (0, 1, 3, 7, 14)
 _LISTING_EXPIRY_NOTICE_CACHE_MIN = datetime.timedelta(days=7)
 _LISTING_EXPIRY_NOTICE_CACHE_MAX = datetime.timedelta(days=60)
@@ -151,6 +162,14 @@ class _ListingStatusClaim:
     expected_account_updated_at: datetime.datetime
     expected_status: str
     expected_external_id: str | None
+    claim_token: uuid.UUID
+    claimed_until: datetime.datetime
+
+
+@dataclass(frozen=True, slots=True)
+class _AccountStatusBatchClaim:
+    account_id: int
+    tenant_id: int
     claim_token: uuid.UUID
     claimed_until: datetime.datetime
 
@@ -539,6 +558,36 @@ def _min_nudge_account_status_due(
     ).update(status_batch_due_at=due_at)
 
 
+def _exact_account_status_due(account_id: int) -> datetime.datetime | None:
+    return (
+        Listing.objects.filter(
+            account_id=account_id,
+            account__is_active=True,
+            account__tenant__is_active=True,
+            status__in=_STATUS_PROVIDER_CHECK_STATES,
+            external_id__isnull=False,
+            next_status_check_at__isnull=False,
+        )
+        .exclude(external_id='')
+        .aggregate(value=Min('next_status_check_at'))['value']
+    )
+
+
+def _recompute_claimed_account_status_due(claim: _ListingStatusClaim) -> int:
+    """Advance the account cursor after its exact listing due value changed."""
+
+    due_at = _exact_account_status_due(claim.account_id)
+    return MarketplaceAccount.objects.filter(
+        pk=claim.account_id,
+        tenant_id=claim.tenant_id,
+        tenant__is_active=True,
+        marketplace=claim.expected_marketplace,
+        external_id=claim.expected_account_external_id,
+        updated_at=claim.expected_account_updated_at,
+        is_active=True,
+    ).update(status_batch_due_at=due_at)
+
+
 def _apply_claimed_listing_values(
     claim: _ListingStatusClaim,
     *,
@@ -616,10 +665,7 @@ def _apply_claimed_listing_values(
             if affected != 1:
                 raise _StaleProviderListingResult
             if nudge_status_due:
-                _min_nudge_account_status_due(
-                    claim,
-                    next_status_check_at,
-                )
+                _recompute_claimed_account_status_due(claim)
             return 1
     except _StaleProviderListingResult:
         return 0
@@ -667,7 +713,7 @@ def _release_status_claim(
             next_status_check_at=next_status_check_at,
         ).as_update_kwargs())
         if affected == 1 and nudge_account:
-            _min_nudge_account_status_due(claim, next_status_check_at)
+            _recompute_claimed_account_status_due(claim)
         return affected
 
 
@@ -776,6 +822,17 @@ def _write_log(tenant, event_type: str, status: str, message: str, listing=None)
         )
     except Exception:
         pass
+
+
+def _try_delay(task, *args: object, context: str) -> bool:
+    """Best-effort periodic dispatch whose source cursor remains retryable."""
+
+    try:
+        task.delay(*args)
+        return True
+    except Exception:
+        logger.exception('Periodic task dispatch failed context=%s', context)
+        return False
 
 
 def _notify_critical(tenant, message: str) -> None:
@@ -5264,6 +5321,173 @@ def _repair_orphaned_pending_feed_intents() -> dict[str, int]:
     return {'selected': selected, 'repaired': repaired}
 
 
+def _claim_due_status_accounts(
+    *,
+    limit: int = _STATUS_BATCH_SCAN_LIMIT,
+) -> list[_AccountStatusBatchClaim]:
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError('status account limit must be between 1 and 100.')
+    claimed_at = now()
+    lease_until = claimed_at + _STATUS_BATCH_CLAIM_LEASE
+    available_claim = (
+        Q(status_batch_claim_token__isnull=True)
+        | Q(status_batch_claimed_until__isnull=True)
+        | Q(status_batch_claimed_until__lte=claimed_at)
+    )
+    with transaction.atomic():
+        accounts = list(
+            MarketplaceAccount.objects.select_for_update(
+                skip_locked=True,
+                of=('self',),
+            )
+            .filter(
+                available_claim,
+                tenant__is_active=True,
+                marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+                is_active=True,
+                status_batch_due_at__isnull=False,
+                status_batch_due_at__lte=claimed_at,
+            )
+            .filter(
+                Q(status_batch_cooldown_until__isnull=True)
+                | Q(status_batch_cooldown_until__lte=claimed_at),
+            )
+            .only('pk', 'tenant_id')
+            .order_by('status_batch_due_at', 'pk')[:limit]
+        )
+        claims = []
+        for account in accounts:
+            token = uuid.uuid4()
+            account.status_batch_claim_token = token
+            account.status_batch_claimed_until = lease_until
+            claims.append(_AccountStatusBatchClaim(
+                account_id=account.pk,
+                tenant_id=account.tenant_id,
+                claim_token=token,
+                claimed_until=lease_until,
+            ))
+        if accounts:
+            MarketplaceAccount.objects.bulk_update(
+                accounts,
+                ('status_batch_claim_token', 'status_batch_claimed_until'),
+            )
+        return claims
+
+
+def _release_account_status_batch_claim(
+    claim: _AccountStatusBatchClaim,
+    *,
+    cooldown_until: datetime.datetime | None,
+) -> bool:
+    released_at = now()
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.objects.select_for_update(of=('self',))
+            .filter(
+                pk=claim.account_id,
+                tenant_id=claim.tenant_id,
+                tenant__is_active=True,
+                marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+                is_active=True,
+                status_batch_claim_token=claim.claim_token,
+                status_batch_claimed_until=claim.claimed_until,
+                status_batch_claimed_until__gt=released_at,
+            )
+            .only('pk')
+            .first()
+        )
+        if account is None:
+            return False
+        next_due = _exact_account_status_due(account.pk)
+        updated = MarketplaceAccount.objects.filter(
+            pk=account.pk,
+            status_batch_claim_token=claim.claim_token,
+            status_batch_claimed_until=claim.claimed_until,
+        ).update(
+            status_batch_due_at=next_due,
+            status_batch_cooldown_until=cooldown_until,
+            status_batch_claim_token=None,
+            status_batch_claimed_until=None,
+        )
+        return updated == 1
+
+
+def _dispatch_due_listing_status_checks(
+    *,
+    account_limit: int = _STATUS_BATCH_SCAN_LIMIT,
+    listing_limit: int = _STATUS_BATCH_LISTING_LIMIT,
+) -> dict[str, int]:
+    if (
+        isinstance(listing_limit, bool)
+        or not isinstance(listing_limit, int)
+        or not 1 <= listing_limit <= 100
+    ):
+        raise ValueError('status listing limit must be between 1 and 100.')
+    claims = _claim_due_status_accounts(limit=account_limit)
+    selected = scheduled = failed = released = 0
+    moderation_scheduled = removal_scheduled = 0
+    for claim in claims:
+        checked_at = now()
+        available_claim = (
+            Q(status_check_claim_token__isnull=True)
+            | Q(status_check_claimed_until__isnull=True)
+            | Q(status_check_claimed_until__lte=checked_at)
+        )
+        rows = list(
+            Listing.objects.filter(
+                available_claim,
+                account_id=claim.account_id,
+                tenant_id=claim.tenant_id,
+                tenant__is_active=True,
+                account__is_active=True,
+                status__in=_STATUS_PROVIDER_CHECK_STATES,
+                external_id__isnull=False,
+                next_status_check_at__isnull=False,
+                next_status_check_at__lte=checked_at,
+            )
+            .exclude(external_id='')
+            .order_by('next_status_check_at', 'pk')
+            .values('pk', 'status')[:listing_limit]
+        )
+        selected += len(rows)
+        for row in rows:
+            try:
+                if row['status'] == Listing.STATUS_ARCHIVING:
+                    confirm_removal_task.delay(row['pk'])
+                    removal_scheduled += 1
+                else:
+                    check_moderation_task.delay(row['pk'])
+                    moderation_scheduled += 1
+                scheduled += 1
+            except Exception:
+                failed += 1
+                logger.exception(
+                    'Unable to dispatch due Avito listing status check '
+                    'account_id=%s listing_id=%s',
+                    claim.account_id,
+                    row['pk'],
+                )
+        cooldown_until = (
+            now() + _STATUS_BATCH_DISPATCH_COOLDOWN
+            if rows
+            else None
+        )
+        if _release_account_status_batch_claim(
+            claim,
+            cooldown_until=cooldown_until,
+        ):
+            released += 1
+    return {
+        'accounts_claimed': len(claims),
+        'accounts_released': released,
+        'selected': selected,
+        'scheduled': scheduled,
+        'moderation_scheduled': moderation_scheduled,
+        'removal_scheduled': removal_scheduled,
+        'dispatch_failed': failed,
+    }
+
+
 @shared_task(queue='avito_update')
 def check_moderation_status():
     """
@@ -5273,50 +5497,106 @@ def check_moderation_status():
     """
     orphan_repair = _repair_orphaned_pending_feed_intents()
 
-    pending_account_ids = list(Listing.objects.filter(
+    live_listings = Listing.objects.filter(
+        tenant__is_active=True,
+        account__is_active=True,
+        account__marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+    )
+    pending_account_ids = list(live_listings.filter(
         status=Listing.STATUS_PENDING,
         external_id__isnull=True,
     ).values_list('account_id', flat=True).distinct())
+    pending_queued = 0
+    periodic_dispatch_failed = 0
     for account_id in pending_account_ids:
-        poll_feed_results_task.delay(account_id)
+        if _try_delay(
+            poll_feed_results_task,
+            account_id,
+            context=f'feed-poll-account-{account_id}',
+        ):
+            pending_queued += 1
+        else:
+            periodic_dispatch_failed += 1
 
-    queued_account_ids = list(Listing.objects.filter(
+    queued_account_ids = list(live_listings.filter(
         status=Listing.STATUS_QUEUED,
         external_id__isnull=True,
     ).values_list('account_id', flat=True).distinct())
+    queued_started = 0
     for account_id in queued_account_ids:
         listing_id = (
-            Listing.objects.filter(
+            live_listings.filter(
                 account_id=account_id,
                 status=Listing.STATUS_QUEUED,
                 external_id__isnull=True,
             ).order_by('created_at', 'pk').values_list('pk', flat=True).first()
         )
         if listing_id:
-            publish_listing_task.delay(listing_id)
+            if _try_delay(
+                publish_listing_task,
+                listing_id,
+                context=f'queued-listing-{listing_id}',
+            ):
+                queued_started += 1
+            else:
+                periodic_dispatch_failed += 1
 
-    active_listing_ids = list(Listing.objects.filter(
-        status=Listing.STATUS_ACTIVE,
-    ).values_list('pk', flat=True))
+    status_dispatch = {
+        'accounts_claimed': 0,
+        'accounts_released': 0,
+        'selected': 0,
+        'scheduled': 0,
+        'moderation_scheduled': 0,
+        'removal_scheduled': 0,
+        'dispatch_failed': 0,
+    }
+    active_listings_queued = 0
+    archiving_confirmed = 0
+    if _status_lifecycle_dual_write_enabled():
+        status_dispatch = _dispatch_due_listing_status_checks()
+        active_listings_queued = status_dispatch['moderation_scheduled']
+        archiving_confirmed = status_dispatch['removal_scheduled']
+    else:
+        active_listing_ids = list(live_listings.filter(
+            status=Listing.STATUS_ACTIVE,
+        ).values_list('pk', flat=True))
+        for listing_id in active_listing_ids:
+            if _try_delay(
+                check_moderation_task,
+                listing_id,
+                context=f'legacy-active-listing-{listing_id}',
+            ):
+                active_listings_queued += 1
+            else:
+                periodic_dispatch_failed += 1
 
-    for listing_id in active_listing_ids:
-        check_moderation_task.delay(listing_id)
-
-    # «Снимается» → подтверждаем снятие (Avito обрабатывает пакетно).
-    archiving_ids = list(Listing.objects.filter(
-        status=Listing.STATUS_ARCHIVING,
-        external_id__isnull=False,
-    ).values_list('pk', flat=True))
-    for listing_id in archiving_ids:
-        confirm_removal_task.delay(listing_id)
+        # Legacy mode has no due cursor for removal confirmation.
+        archiving_ids = list(live_listings.filter(
+            status=Listing.STATUS_ARCHIVING,
+            external_id__isnull=False,
+        ).values_list('pk', flat=True))
+        for listing_id in archiving_ids:
+            if _try_delay(
+                confirm_removal_task,
+                listing_id,
+                context=f'legacy-archiving-listing-{listing_id}',
+            ):
+                archiving_confirmed += 1
+            else:
+                periodic_dispatch_failed += 1
 
     return {
         'orphan_pending_selected': orphan_repair['selected'],
         'orphan_pending_repaired': orphan_repair['repaired'],
-        'pending_accounts_queued': len(pending_account_ids),
-        'queued_accounts_started': len(queued_account_ids),
-        'active_listings_queued': len(active_listing_ids),
-        'archiving_confirmed': len(archiving_ids),
+        'pending_accounts_queued': pending_queued,
+        'queued_accounts_started': queued_started,
+        'active_listings_queued': active_listings_queued,
+        'archiving_confirmed': archiving_confirmed,
+        'status_accounts_claimed': status_dispatch['accounts_claimed'],
+        'status_accounts_released': status_dispatch['accounts_released'],
+        'status_rows_selected': status_dispatch['selected'],
+        'status_dispatch_failed': status_dispatch['dispatch_failed'],
+        'periodic_dispatch_failed': periodic_dispatch_failed,
     }
 
 
@@ -5343,24 +5623,54 @@ def refresh_avito_stats():
     """
     Ежечасно обновляет ListingStats и запускает проверку теневого бана.
 
-    За каждый аккаунт: запрашивает статистику за вчера и сегодня из Avito Stats API,
-    сохраняет в ListingStats, параллельно проверяет shadow ban.
+    За каждый аккаунт запрашивает bounded recovery-window из Avito Stats API,
+    чтобы плановый запуск закрывал многодневные пропуски идемпотентным upsert.
     """
     from apps.anti_ban.tasks import check_shadow_ban_task
     from apps.marketplaces.models import MarketplaceAccount
 
-    today = datetime.date.today()
-    date_from = today - datetime.timedelta(days=1)
+    today = timezone.localdate()
+    date_from = today - datetime.timedelta(
+        days=_STATS_RECOVERY_WINDOW_DAYS - 1,
+    )
 
     account_ids = list(MarketplaceAccount.objects.filter(
         is_active=True,
+        tenant__is_active=True,
+        marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
     ).values_list('pk', flat=True))
 
+    stats_scheduled = 0
+    shadow_checks_scheduled = 0
+    dispatch_failed = 0
     for account_id in account_ids:
-        check_shadow_ban_task.delay(account_id)
-        fetch_stats_for_account_task.delay(account_id, str(date_from), str(today))
+        if _try_delay(
+            check_shadow_ban_task,
+            account_id,
+            context=f'shadow-stats-account-{account_id}',
+        ):
+            shadow_checks_scheduled += 1
+        else:
+            dispatch_failed += 1
+        if _try_delay(
+            fetch_stats_for_account_task,
+            account_id,
+            date_from.isoformat(),
+            today.isoformat(),
+            context=f'stats-account-{account_id}',
+        ):
+            stats_scheduled += 1
+        else:
+            dispatch_failed += 1
 
-    return {'accounts_scheduled': len(account_ids)}
+    return {
+        'accounts_scheduled': len(account_ids),
+        'stats_scheduled': stats_scheduled,
+        'shadow_checks_scheduled': shadow_checks_scheduled,
+        'dispatch_failed': dispatch_failed,
+        'date_from': date_from.isoformat(),
+        'date_to': today.isoformat(),
+    }
 
 
 @shared_task(bind=True, max_retries=3, retry_backoff=True, queue='avito_update')
@@ -5374,12 +5684,26 @@ def fetch_stats_for_account_task(self, account_id: int, date_from_str: str, date
     from apps.marketplaces.services import StatsService
 
     try:
-        account = MarketplaceAccount.objects.select_related('tenant').get(pk=account_id)
+        account = MarketplaceAccount.objects.select_related('tenant').get(
+            pk=account_id,
+            is_active=True,
+            tenant__is_active=True,
+            marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+        )
     except MarketplaceAccount.DoesNotExist:
         return
 
-    date_from = datetime.date.fromisoformat(date_from_str)
-    date_to = datetime.date.fromisoformat(date_to_str)
+    try:
+        date_from = datetime.date.fromisoformat(date_from_str)
+        date_to = datetime.date.fromisoformat(date_to_str)
+    except (TypeError, ValueError):
+        return {'account_id': account_id, 'status': 'invalid_date_range'}
+
+    if (
+        date_from > date_to
+        or (date_to - date_from).days >= StatsService.MAX_HISTORY_DAYS
+    ):
+        return {'account_id': account_id, 'status': 'invalid_date_range'}
 
     try:
         count = StatsService.fetch_for_account(account, date_from, date_to)

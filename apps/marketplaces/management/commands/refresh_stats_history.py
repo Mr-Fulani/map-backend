@@ -1,7 +1,8 @@
 """Management command для загрузки исторической статистики листингов из Avito Stats API."""
 import datetime
 
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
+from django.utils import timezone
 
 from apps.marketplaces.models import MarketplaceAccount
 from apps.marketplaces.services import StatsService
@@ -25,10 +26,17 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         """Запускает загрузку статистики для всех активных аккаунтов."""
-        today = datetime.date.today()
-        date_from = today - datetime.timedelta(days=options['days'])
+        days = int(options['days'])
+        if not 1 <= days <= StatsService.MAX_HISTORY_DAYS:
+            raise CommandError('--days must be between 1 and 270.')
+        today = timezone.localdate()
+        date_from = today - datetime.timedelta(days=days - 1)
 
-        qs = MarketplaceAccount.objects.filter(is_active=True).select_related('tenant')
+        qs = MarketplaceAccount.objects.filter(
+            is_active=True,
+            tenant__is_active=True,
+            marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+        ).select_related('tenant')
         if options['account']:
             qs = qs.filter(pk=options['account'])
 

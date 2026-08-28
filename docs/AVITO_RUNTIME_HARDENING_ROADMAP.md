@@ -77,7 +77,7 @@ validation, `makemigrations --check --dry-run` и `git diff --check` — exit 0.
 
 ## H3 — статистика и плановая сверка
 
-Статус: `IN_PROGRESS`.
+Статус: `VERIFIED` 2026-08-28.
 
 Результат: московская дата используется последовательно; нечисловой внешний ID
 не ломает весь аккаунт; inactive tenants не планируются; bounded history
@@ -86,9 +86,23 @@ rows, а не весь активный fleet каждые десять мину
 
 Границы: marketplace stats/status tasks, adapter и scheduler. Без новых таблиц.
 
+Результат: статистика ежедневно восстанавливает bounded 14-day окно по
+московской дате и не планирует выключенные tenants/accounts; повреждённый
+external ID или отдельный malformed provider item больше не ломает весь
+аккаунт, дубли дедуплицируются, counters ограничиваются размером DB-поля.
+Worker не ретраит навсегда неверные диапазоны. Account/listing due timestamps,
+lease и cooldown теперь ограничивают status polling точными due rows; broker
+failure освобождает claim и не блокирует остальные dispatch.
+
+Фактический gate: focused cross-package regressions `46 passed`, финальные
+stats/scheduler regressions после metric audit `25 passed`;
+Marketplace `894 passed, 2 skipped`; полный backend `2698 passed, 3 skipped`;
+flake8, mypy (696 sources), strict mypy (350 sources), OpenAPI validation,
+`makemigrations --check --dry-run` и `git diff --check` — exit 0.
+
 ## H4 — итоговый gate и удаление roadmap
 
-Статус: `NOT_STARTED`.
+Статус: `IN_PROGRESS`.
 
 Результат: все узкие и полные проверки зелёные, migration drift отсутствует,
 рабочий diff не содержит личные настройки или P7, этот временный файл удалён.

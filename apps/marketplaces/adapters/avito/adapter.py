@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 AVITO_API_BASE = 'https://api.avito.ru'
 _STATS_CHUNK = 200  # максимум item_ids за один запрос к Stats API
+_STATS_ITEM_ID_RE = re.compile(r'^[1-9][0-9]{0,19}$')
 _FEED_ITEM_ERROR_PAGE_SIZE = 100
 _FEED_ITEM_ERROR_MESSAGE_LIMIT = 100
 _FEED_ITEM_ERROR_TEXT_LIMIT = 2000
@@ -48,6 +49,17 @@ class FeedItemErrorPage:
     @property
     def terminal(self) -> bool:
         return self.next_page is None
+
+
+def normalize_avito_stats_item_id(value: object) -> str | None:
+    """Return one exact positive decimal Avito item id, or skip it safely."""
+
+    if isinstance(value, bool):
+        return None
+    candidate = str(value) if isinstance(value, (int, str)) else ''
+    if _STATS_ITEM_ID_RE.fullmatch(candidate) is None:
+        return None
+    return candidate
 
 
 def _avito_request(requester, *args, operation: str = 'other', **kwargs):
@@ -821,7 +833,12 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         История хранится 270 дней. periodGrouping="day" — обязательно для дневной разбивки.
         Возвращает список: [{itemId, stats: [{date, uniqViews, views, uniqContacts, ...}]}].
         """
-        if not item_ids:
+        normalized_item_ids = [
+            int(candidate)
+            for value in item_ids
+            if (candidate := normalize_avito_stats_item_id(value)) is not None
+        ]
+        if not normalized_item_ids:
             return []
 
         token = self._auth.get_token(self.account)
@@ -829,12 +846,12 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         url = f'{AVITO_API_BASE}/stats/v1/accounts/{self.account.external_id}/items'
 
         result = []
-        for i in range(0, len(item_ids), _STATS_CHUNK):
-            chunk = item_ids[i:i + _STATS_CHUNK]
+        for i in range(0, len(normalized_item_ids), _STATS_CHUNK):
+            chunk = normalized_item_ids[i:i + _STATS_CHUNK]
             payload = {
                 'dateFrom': date_from.isoformat(),
                 'dateTo': date_to.isoformat(),
-                'itemIds': [int(x) for x in chunk],
+                'itemIds': chunk,
                 'fields': ['uniqViews', 'views', 'uniqContacts', 'contacts'],
                 'periodGrouping': 'day',
             }

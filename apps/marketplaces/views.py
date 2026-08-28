@@ -5,6 +5,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Sum
+from django.utils import timezone
 from drf_spectacular.utils import (
     OpenApiParameter,
     OpenApiTypes,
@@ -1352,7 +1353,7 @@ class AnalyticsView(APIView):
     )
     def get(self, request):
         """Возвращает сводку и помесячную/ежедневную статистику просмотров."""
-        today = datetime.date.today()
+        today = timezone.localdate()
         date_from_str = request.query_params.get('date_from', '')
         date_to_str = request.query_params.get('date_to', '')
 
@@ -1369,6 +1370,16 @@ class AnalyticsView(APIView):
             return Response(
                 {'status': 'error', 'code': 'invalid_date',
                  'detail': 'Формат даты: YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if date_from > date_to:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'invalid_date_range',
+                    'detail': 'Дата начала не может быть позже даты окончания',
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

@@ -2600,6 +2600,30 @@ def _enqueue_publish_or_update(listing_id: int, is_new: bool) -> None:
 class StatsService:
     """Сервис получения и сохранения ежедневной статистики листингов с Avito."""
 
+    MAX_HISTORY_DAYS = 270
+    MAX_COUNTER_VALUE = (1 << 31) - 1
+
+    @classmethod
+    def _counter(cls, value: object) -> int:
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return min(max(value, 0), cls.MAX_COUNTER_VALUE)
+        if isinstance(value, str) and value.isascii() and value.isdecimal():
+            if len(value) > 10:
+                return cls.MAX_COUNTER_VALUE
+            return min(int(value), cls.MAX_COUNTER_VALUE)
+        return 0
+
+    @staticmethod
+    def _day(value: object) -> datetime.date | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            return datetime.date.fromisoformat(value)
+        except ValueError:
+            return None
+
     @staticmethod
     def _fetch_raw(account, item_ids: list[str], date_from: datetime.date, date_to: datetime.date) -> list[dict]:
         """
@@ -2623,6 +2647,11 @@ class StatsService:
         Использует bulk_create с update_conflicts — идемпотентен при повторном вызове.
         Возвращает количество обработанных записей (не уникальных: один листинг × N дней).
         """
+        if date_from > date_to:
+            raise ValueError('Statistics date_from must not exceed date_to.')
+        if (date_to - date_from).days >= cls.MAX_HISTORY_DAYS:
+            raise ValueError('Statistics range must not exceed 270 days.')
+
         listings = list(
             Listing.objects.filter(
                 account=account,
@@ -2633,32 +2662,64 @@ class StatsService:
         if not listings:
             return 0
 
-        listing_by_external = {item['external_id']: item for item in listings}
+        from apps.marketplaces.adapters.avito.adapter import (
+            normalize_avito_stats_item_id,
+        )
+
+        listing_by_external: dict[str, dict] = {}
+        ambiguous_ids: set[str] = set()
+        for item in listings:
+            external_id = normalize_avito_stats_item_id(item['external_id'])
+            if external_id is None or external_id in ambiguous_ids:
+                continue
+            if external_id in listing_by_external:
+                listing_by_external.pop(external_id, None)
+                ambiguous_ids.add(external_id)
+                continue
+            listing_by_external[external_id] = item
+        if not listing_by_external:
+            return 0
         raw = cls._fetch_raw(account, list(listing_by_external.keys()), date_from, date_to)
 
-        to_upsert = []
+        by_listing_day: dict[tuple[int, datetime.date], ListingStats] = {}
         for item in raw:
-            info = listing_by_external.get(str(item.get('itemId', '')))
+            if not isinstance(item, dict):
+                continue
+            external_id = normalize_avito_stats_item_id(item.get('itemId'))
+            info = listing_by_external.get(external_id or '')
             if not info:
                 continue
-            for day in item.get('stats', []):
+            days = item.get('stats')
+            if not isinstance(days, list):
+                continue
+            for day in days:
+                if not isinstance(day, dict):
+                    continue
+                stat_date = cls._day(day.get('date'))
+                if (
+                    stat_date is None
+                    or stat_date < date_from
+                    or stat_date > date_to
+                ):
+                    continue
                 # uniqViews — уникальные просмотры карточки (views в нашей модели)
                 # views — все просмотры, используем как прокси для показов (impressions)
                 # uniqContacts — уникальные контакты (contacts в нашей модели)
-                views = int(day.get('uniqViews', 0) or 0)
-                impressions = int(day.get('views', 0) or 0)
-                contacts = int(day.get('uniqContacts', 0) or 0)
+                views = cls._counter(day.get('uniqViews', 0))
+                impressions = cls._counter(day.get('views', 0))
+                contacts = cls._counter(day.get('uniqContacts', 0))
                 ctr = round(views / impressions * 100, 2) if impressions else 0.0
-                to_upsert.append(ListingStats(
+                by_listing_day[(info['id'], stat_date)] = ListingStats(
                     listing_id=info['id'],
                     tenant_id=info['tenant_id'],
-                    date=day['date'],
+                    date=stat_date,
                     views=views,
                     impressions=impressions,
                     contacts=contacts,
                     ctr=ctr,
-                ))
+                )
 
+        to_upsert = list(by_listing_day.values())
         if not to_upsert:
             return 0
 
