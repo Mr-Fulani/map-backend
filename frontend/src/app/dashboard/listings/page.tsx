@@ -32,6 +32,7 @@ interface Listing {
   provider_submission_started: boolean;
   lifecycle_actions_blocked: boolean;
   can_check_avito_status: boolean;
+  can_publish: boolean;
   product_article: string;
   product_name: string;
   account_name: string;
@@ -303,8 +304,13 @@ export default function ListingsPage() {
       }
       await load();
     } catch (err: unknown) {
-      const message = (err as { response?: { data?: { message?: string; detail?: string } } })
+      const message = (err as { response?: { data?: {
+        code?: string;
+        message?: string;
+        detail?: string;
+      } } })
         ?.response?.data;
+      if (message?.code === 'listing_validation_error') openDrawer(listing.id);
       toast.error(message?.message || message?.detail || 'Не удалось выполнить действие');
     } finally {
       setRowActionId(null);
@@ -464,7 +470,7 @@ export default function ListingsPage() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <Badge variant={STATUS_VARIANT[l.status] ?? 'outline'}>
+                    <Badge variant={l.delivery_stage === 'delivery_failed' ? 'destructive' : (STATUS_VARIANT[l.status] ?? 'outline')}>
                       {l.status_display}
                     </Badge>
                     <p className="mt-2 break-words text-sm font-medium leading-5">
@@ -472,6 +478,7 @@ export default function ListingsPage() {
                     </p>
                     {l.rejection_reason && (
                       <p className="mt-1 line-clamp-2 text-xs text-destructive">
+                        {l.delivery_stage === 'delivery_failed' ? 'Прошлая попытка: ' : ''}
                         {l.rejection_reason}
                       </p>
                     )}
@@ -509,12 +516,12 @@ export default function ListingsPage() {
                         <ExternalLink className="h-4 w-4" />
                       </a>
                     )}
-                    {['draft', 'rejected', 'archived', 'limit_reached'].includes(l.status) && (
+                    {l.can_publish && (
                       <Button
                         size="sm"
                         variant="ghost"
                         className="h-8 w-8 p-0"
-                        title="Опубликовать"
+                        title={l.delivery_stage === 'delivery_failed' ? 'Исправить и отправить снова' : 'Опубликовать'}
                         onClick={() => runListingAction(l, 'publish')}
                         disabled={rowActionId === l.id}
                       >
@@ -615,7 +622,7 @@ export default function ListingsPage() {
                     onClick={() => openDrawer(l.id)}
                   >
                     <td className="px-4 py-3">
-                      <Badge variant={STATUS_VARIANT[l.status] ?? 'outline'}>
+                      <Badge variant={l.delivery_stage === 'delivery_failed' ? 'destructive' : (STATUS_VARIANT[l.status] ?? 'outline')}>
                         {l.status_display}
                       </Badge>
                       {l.status === 'active' && l.last_sync_at && (
@@ -635,6 +642,7 @@ export default function ListingsPage() {
                       <p className="line-clamp-1">{l.title || l.product_name}</p>
                       {l.rejection_reason && (
                         <p className="mt-0.5 text-xs text-destructive line-clamp-1">
+                          {l.delivery_stage === 'delivery_failed' ? 'Прошлая попытка: ' : ''}
                           {l.rejection_reason}
                         </p>
                       )}
@@ -663,12 +671,12 @@ export default function ListingsPage() {
                             <ExternalLink className="h-4 w-4" />
                           </a>
                         )}
-                        {['draft', 'rejected', 'archived', 'limit_reached'].includes(l.status) && (
+                        {l.can_publish && (
                           <Button
                             size="sm"
                             variant="ghost"
                             className="h-8 w-8 p-0"
-                            title="Опубликовать"
+                            title={l.delivery_stage === 'delivery_failed' ? 'Исправить и отправить снова' : 'Опубликовать'}
                             onClick={() => runListingAction(l, 'publish')}
                             disabled={rowActionId === l.id}
                           >

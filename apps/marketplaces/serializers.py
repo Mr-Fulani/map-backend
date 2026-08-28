@@ -6,7 +6,10 @@ from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field, inline_serializer
 from rest_framework import serializers
 
-from apps.marketplaces.listing_delivery import listing_delivery_presentation
+from apps.marketplaces.listing_delivery import (
+    listing_delivery_presentation,
+    listing_publication_available,
+)
 from apps.marketplaces.autoload_onboarding import (
     autoload_onboarding_presentation,
 )
@@ -212,6 +215,7 @@ class ListingSerializer(serializers.ModelSerializer):
     provider_submission_started = serializers.SerializerMethodField()
     lifecycle_actions_blocked = serializers.SerializerMethodField()
     can_check_avito_status = serializers.SerializerMethodField()
+    can_publish = serializers.SerializerMethodField()
     delivery_retry_at = serializers.SerializerMethodField()
     delivery_retry_reason = serializers.SerializerMethodField()
 
@@ -221,7 +225,7 @@ class ListingSerializer(serializers.ModelSerializer):
             'id', 'status', 'status_display', 'delivery_stage',
             'provider_submission_started', 'lifecycle_actions_blocked',
             'can_check_avito_status', 'delivery_retry_at',
-            'delivery_retry_reason',
+            'delivery_retry_reason', 'can_publish',
             'product_id', 'product_article', 'product_name', 'product_brand', 'account_id', 'account_name',
             'title', 'price_on_listing', 'external_id', 'external_url',
             'ad_type',
@@ -250,6 +254,9 @@ class ListingSerializer(serializers.ModelSerializer):
 
     def get_can_check_avito_status(self, obj) -> bool:
         return listing_delivery_presentation(obj).can_check_avito_status
+
+    def get_can_publish(self, obj) -> bool:
+        return listing_publication_available(obj)
 
     @extend_schema_field(serializers.DateTimeField(allow_null=True, read_only=True))
     def get_delivery_retry_at(self, obj) -> str | None:
@@ -292,6 +299,7 @@ class ListingDetailSerializer(ListingSerializer):
     catalog_category = serializers.SerializerMethodField()
     base_price = serializers.DecimalField(source='product.price', max_digits=12, decimal_places=2, read_only=True)
     avito_field_warnings = serializers.SerializerMethodField()
+    avito_field_errors = serializers.SerializerMethodField()
     avito_brand_valid = serializers.SerializerMethodField()
     avito_brand_catalog_synced_at = serializers.SerializerMethodField()
 
@@ -299,6 +307,7 @@ class ListingDetailSerializer(ListingSerializer):
         fields = ListingSerializer.Meta.fields + [
             'description_ai', 'ai_confidence', 'ai_confidence_display', 'images',
             'catalog_category', 'margin_pct', 'base_price', 'avito_field_warnings',
+            'avito_field_errors',
             'avito_brand_valid', 'avito_brand_catalog_synced_at',
         ]
         read_only_fields = fields
@@ -314,9 +323,28 @@ class ListingDetailSerializer(ListingSerializer):
         except Exception:
             return []
 
+    @extend_schema_field(serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField()), read_only=True,
+    ))
+    def get_avito_field_errors(self, obj) -> dict:
+        """Blocking publication errors keyed by the editable drawer field."""
+        from apps.marketplaces.adapters.avito.feed_builder import (
+            avito_publication_field_errors,
+        )
+        try:
+            return avito_publication_field_errors(obj)
+        except Exception:
+            return {}
+
     def get_avito_brand_valid(self, obj) -> bool:
-        from apps.marketplaces.adapters.avito.feed_builder import unknown_brand_details
-        return unknown_brand_details(obj) is None
+        from apps.marketplaces.adapters.avito.feed_builder import (
+            product_brand_is_missing,
+            unknown_brand_details,
+        )
+        return (
+            not product_brand_is_missing(obj)
+            and unknown_brand_details(obj) is None
+        )
 
     @extend_schema_field(serializers.DateTimeField(allow_null=True, read_only=True))
     def get_avito_brand_catalog_synced_at(self, obj) -> str | None:

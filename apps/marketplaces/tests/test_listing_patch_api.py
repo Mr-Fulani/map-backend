@@ -111,6 +111,60 @@ class TestListingPatchAPI:
         assert resp.status_code == 404
         assert resp.json()['message']
 
+    def test_save_returns_field_errors_without_discarding_draft_changes(self):
+        tenant, key = make_tenant('listing-save-validation-co')
+        account = make_account(tenant)
+        account.default_manager_name = ''
+        account.default_contact_phone = ''
+        account.save(update_fields=['default_manager_name', 'default_contact_phone'])
+        product = make_product(tenant)
+        listing = make_listing(tenant, product, account)
+
+        c = Client()
+        resp = c.patch(
+            f'/api/v1/listings/{listing.pk}/',
+            data={'title': 'Сохранённый заголовок'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {key}',
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()['data']
+        assert body['title'] == 'Сохранённый заголовок'
+        assert set(body['avito_field_errors']) >= {
+            'manager_name_override',
+            'contact_phone_override',
+        }
+        listing.refresh_from_db()
+        assert listing.title == 'Сохранённый заголовок'
+
+    def test_publish_validation_preserves_terminal_state_and_previous_reason(self):
+        tenant, key = make_tenant('listing-publish-validation-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        product.brand = ''
+        product.save(update_fields=['brand'])
+        listing = make_listing(
+            tenant,
+            product,
+            account,
+            rejection_reason='Результат прошлой попытки',
+        )
+
+        c = Client()
+        resp = c.post(
+            f'/api/v1/listings/{listing.pk}/publish/',
+            HTTP_AUTHORIZATION=f'Bearer {key}',
+        )
+
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body['code'] == 'listing_validation_error'
+        assert 'product_brand' in body['field_errors']
+        listing.refresh_from_db()
+        assert listing.status == Listing.STATUS_ARCHIVED
+        assert listing.rejection_reason == 'Результат прошлой попытки'
+
     def test_active_listing_accepts_price_only_and_enqueues_safe_update(
         self, django_capture_on_commit_callbacks,
     ):

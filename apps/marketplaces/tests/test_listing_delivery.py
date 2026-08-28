@@ -9,7 +9,11 @@ from django.utils.dateparse import parse_datetime
 from apps.marketplaces.listing_delivery import listing_delivery_presentation
 from apps.marketplaces.models import Listing, MarketplaceAccount, MarketplaceFeedRun
 from apps.marketplaces.serializers import ListingSerializer
-from apps.marketplaces.services import InvalidListingStatus, ListingService
+from apps.marketplaces.services import (
+    InvalidListingStatus,
+    ListingPublicationValidationError,
+    ListingService,
+)
 from apps.products.models import Product
 from apps.products.serializers import ProductDetailSerializer
 from apps.tenants.models import Tenant
@@ -200,6 +204,85 @@ def test_failed_run_is_visible_and_no_longer_lifecycle_locked():
     assert delivery.stage == 'delivery_failed'
     assert delivery.label == 'Ошибка отправки в Avito'
     assert delivery.lifecycle_actions_blocked is False
+
+    data = ListingSerializer(listing).data
+    assert data['can_publish'] is True
+
+
+def test_failed_pre_submission_run_can_be_retried_with_fresh_generation(
+    django_capture_on_commit_callbacks,
+):
+    listing = _listing('failed-retry')
+    listing.title = 'Исправный заголовок'
+    listing.description_ai = 'Исправное описание'
+    listing.rejection_reason = 'Ошибка прошлой попытки'
+    listing.save(update_fields=['title', 'description_ai', 'rejection_reason'])
+    listing.product.brand = 'Bosch'
+    listing.product.condition = 'used'
+    listing.product.save(update_fields=['brand', 'condition'])
+    listing.account.default_manager_name = 'Менеджер'
+    listing.account.default_contact_phone = '+79990000000'
+    listing.account.save(update_fields=['default_manager_name', 'default_contact_phone'])
+    failed_run = _feed_run(listing, MarketplaceFeedRun.State.FAILED)
+
+    with patch('apps.marketplaces.services._enqueue_publish_or_update') as enqueue:
+        with django_capture_on_commit_callbacks(execute=True):
+            result = ListingService.publish(listing.pk, listing.tenant)
+
+    result.refresh_from_db()
+    assert result.status == Listing.STATUS_QUEUED
+    assert result.feed_run_id is None
+    assert result.rejection_reason == ''
+    assert MarketplaceFeedRun.objects.filter(pk=failed_run.pk).exists()
+    enqueue.assert_called_once_with(listing.pk, is_new=True)
+
+
+def test_unknown_provider_outcome_never_exposes_blind_retry():
+    listing = _listing('unknown-no-retry')
+    _feed_run(listing, MarketplaceFeedRun.State.SUBMIT_UNKNOWN)
+
+    data = ListingSerializer(listing).data
+    assert data['can_publish'] is False
+    with pytest.raises(InvalidListingStatus, match='текущая стадия: submission_unknown'):
+        ListingService.publish(listing.pk, listing.tenant)
+
+
+def test_failed_retry_keeps_terminal_evidence_until_fields_are_valid():
+    listing = _listing('failed-invalid-fields')
+    listing.title = 'Исправный заголовок'
+    listing.description_ai = 'Исправное описание'
+    listing.rejection_reason = 'Ошибка прошлой попытки'
+    listing.save(update_fields=['title', 'description_ai', 'rejection_reason'])
+    listing.product.condition = 'used'
+    listing.product.save(update_fields=['condition'])
+    failed_run = _feed_run(listing, MarketplaceFeedRun.State.FAILED)
+
+    with pytest.raises(ListingPublicationValidationError) as error:
+        ListingService.publish(listing.pk, listing.tenant)
+
+    assert set(error.value.field_errors) >= {
+        'manager_name_override',
+        'contact_phone_override',
+    }
+    listing.refresh_from_db()
+    assert listing.status == Listing.STATUS_PENDING
+    assert listing.feed_run_id == failed_run.pk
+    assert listing.rejection_reason == 'Ошибка прошлой попытки'
+
+
+def test_failed_row_with_submission_evidence_never_exposes_retry():
+    listing = _listing('failed-with-submission-evidence')
+    failed_run = _feed_run(listing, MarketplaceFeedRun.State.FAILED)
+    failed_run.submitted_at = timezone.now()
+    failed_run.save(update_fields=['submitted_at'])
+    listing.refresh_from_db()
+
+    data = ListingSerializer(listing).data
+    assert data['can_publish'] is False
+    assert data['delivery_stage'] == 'manual_review'
+    assert data['lifecycle_actions_blocked'] is True
+    with pytest.raises(InvalidListingStatus, match='текущая стадия: manual_review'):
+        ListingService.publish(listing.pk, listing.tenant)
 
 
 @pytest.mark.parametrize(
