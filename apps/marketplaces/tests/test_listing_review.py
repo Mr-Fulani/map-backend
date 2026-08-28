@@ -5,6 +5,7 @@
 а также API-эндпоинты detail / approve / regenerate / patch.
 """
 from concurrent.futures import ThreadPoolExecutor
+import datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -717,11 +718,22 @@ class TestListingDetailSerializer:
         listing = make_listing(tenant)
         checked_at = timezone.now().replace(microsecond=0)
         listing.last_sync_at = checked_at
-        listing.save(update_fields=['last_sync_at'])
+        listing.remote_status = Listing.REMOTE_STATUS_ACTIVE
+        listing.remote_status_checked_at = checked_at
+        listing.next_status_check_at = checked_at + datetime.timedelta(minutes=30)
+        listing.save(update_fields=[
+            'last_sync_at', 'remote_status', 'remote_status_checked_at',
+            'next_status_check_at',
+        ])
 
         data = ListingDetailSerializer(listing).data
 
         assert parse_datetime(data['last_sync_at']) == checked_at
+        assert data['remote_status'] == Listing.REMOTE_STATUS_ACTIVE
+        assert parse_datetime(data['remote_status_checked_at']) == checked_at
+        assert parse_datetime(data['next_status_check_at']) == (
+            checked_at + datetime.timedelta(minutes=30)
+        )
 
     def test_detail_includes_images(self):
         """ListingDetailSerializer возвращает список изображений товара."""

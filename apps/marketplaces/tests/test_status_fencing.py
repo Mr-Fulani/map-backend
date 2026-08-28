@@ -74,13 +74,71 @@ def test_moderation_success_dual_writes_observation_and_active_due():
     assert result == {'status': 'active', 'changed': False}
     assert listing.remote_status == Listing.REMOTE_STATUS_ACTIVE
     assert listing.remote_status_checked_at is not None
-    assert datetime.timedelta(hours=23, minutes=59) <= (
+    assert datetime.timedelta(minutes=30) <= (
         listing.next_status_check_at - listing.remote_status_checked_at
-    ) <= datetime.timedelta(hours=24, seconds=1)
+    ) <= datetime.timedelta(minutes=40, seconds=1)
     assert listing.status_check_claim_token is None
     assert listing.status_check_claimed_until is None
     assert listing.account.status_batch_due_at == listing.next_status_check_at
     write_log.assert_not_called()
+
+
+def test_active_status_check_is_advanced_around_provider_finish_time():
+    from apps.marketplaces.tasks import check_moderation_task
+
+    listing = _listing('active-near-finish')
+    checked_at = timezone.now().replace(microsecond=0)
+    finish_time = checked_at + datetime.timedelta(minutes=2)
+
+    with (
+        patch('apps.marketplaces.tasks.now', return_value=checked_at),
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_status',
+            return_value={
+                'status': 'active',
+                'finish_time': finish_time.isoformat(),
+            },
+        ),
+        patch('apps.marketplaces.tasks._queue_listing_expiry_notification'),
+    ):
+        result = check_moderation_task(listing.pk)
+
+    listing.refresh_from_db()
+    assert result == {'status': 'active', 'changed': False}
+    assert listing.next_status_check_at == checked_at + datetime.timedelta(minutes=10)
+
+
+def test_provider_404_archives_and_rotates_deleted_avito_identity():
+    from apps.marketplaces.adapters.avito.error_handler import NotFoundError
+    from apps.marketplaces.tasks import check_moderation_task
+
+    listing = _listing('provider-not-found')
+    old_publication_key = listing.publish_idempotency_key
+
+    with (
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_status',
+            side_effect=NotFoundError('Объявление не найдено'),
+        ),
+        patch('apps.marketplaces.tasks._write_log') as write_log,
+    ):
+        result = check_moderation_task(listing.pk)
+
+    listing.refresh_from_db()
+    assert result == {
+        'status': 'archived',
+        'changed': True,
+        'provider_status': Listing.REMOTE_STATUS_REMOVED,
+        'reason': 'not_found',
+    }
+    assert listing.status == Listing.STATUS_ARCHIVED
+    assert listing.external_id is None
+    assert listing.external_url == ''
+    assert listing.publish_idempotency_key != old_publication_key
+    assert listing.remote_status == Listing.REMOTE_STATUS_REMOVED
+    assert listing.remote_status_checked_at is not None
+    assert listing.next_status_check_at is None
+    write_log.assert_called_once()
 
 
 def test_legacy_active_moderation_queues_bounded_expiry_notice(settings):
@@ -345,6 +403,31 @@ def test_confirm_removal_stale_response_has_no_archive_log():
     write_log.assert_not_called()
 
 
+def test_confirm_removal_404_finishes_archive_with_fresh_publication_key():
+    from apps.marketplaces.adapters.avito.error_handler import NotFoundError
+    from apps.marketplaces.tasks import confirm_removal_task
+
+    listing = _listing('removal-not-found', status=Listing.STATUS_ARCHIVING)
+    old_publication_key = listing.publish_idempotency_key
+
+    with (
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_status',
+            side_effect=NotFoundError('Объявление не найдено'),
+        ),
+        patch('apps.marketplaces.tasks._write_log'),
+    ):
+        result = confirm_removal_task(listing.pk)
+
+    listing.refresh_from_db()
+    assert result['status'] == 'archived'
+    assert result['reason'] == 'not_found'
+    assert listing.status == Listing.STATUS_ARCHIVED
+    assert listing.external_id is None
+    assert listing.publish_idempotency_key != old_publication_key
+    assert listing.remote_status == Listing.REMOTE_STATUS_REMOVED
+
+
 def test_feed_result_stale_response_cannot_activate_rejected_listing():
     from apps.marketplaces.adapters.avito.feed_builder import get_ad_id
     from apps.marketplaces.tasks import poll_feed_results_task
@@ -522,6 +605,35 @@ def test_service_intent_revokes_claim_before_scheduling_provider_work():
     assert listing.status_check_claimed_until is None
     assert listing.next_status_check_at is not None
     assert listing.account.status_batch_due_at == listing.next_status_check_at
+
+
+def test_service_manual_active_check_is_due_now_and_dispatches_exact_item(
+    django_capture_on_commit_callbacks,
+):
+    from apps.marketplaces.services import ListingService
+
+    listing = _listing('manual-active-check')
+    future_due = timezone.now() + datetime.timedelta(hours=1)
+    listing.next_status_check_at = future_due
+    listing.save(update_fields=['next_status_check_at'])
+
+    with (
+        patch(
+            'apps.marketplaces.services._enqueue_provider_listing_status_check',
+        ) as enqueue,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        result = ListingService.check_avito_status(
+            listing.pk,
+            listing.tenant,
+        )
+
+    result.refresh_from_db()
+    result.account.refresh_from_db()
+    assert result.next_status_check_at is not None
+    assert result.next_status_check_at < future_due
+    assert result.account.status_batch_due_at == result.next_status_check_at
+    enqueue.assert_called_once_with(result.pk, is_archiving=False)
 
 
 def test_service_account_change_clears_old_provider_generation():

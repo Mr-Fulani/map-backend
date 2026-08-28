@@ -60,6 +60,7 @@ interface ListingDetail {
   id: number;
   status: string;
   status_display: string;
+  status_explanation: string;
   delivery_stage: string;
   delivery_retry_at: string | null;
   delivery_retry_reason: string;
@@ -93,6 +94,9 @@ interface ListingDetail {
   bulk_contact_phone: string;
   rejection_reason: string;
   last_sync_at: string | null;
+  remote_status: string | null;
+  remote_status_checked_at: string | null;
+  next_status_check_at: string | null;
   avito_field_warnings?: string[];
   avito_field_errors?: PublicationFieldErrors;
   avito_field_warnings_by_field?: PublicationFieldWarnings;
@@ -406,12 +410,16 @@ function ListingDrawerContent({
 
   const liveDeliveryListingId = listing?.id ?? null;
   const liveDeliveryStatus = listing?.status ?? '';
+  const providerStatusCanChange = Boolean(listing?.can_check_avito_status);
 
   useEffect(() => {
     if (
       liveDeliveryListingId === null
       || publishing
-      || !['queued', 'pending', 'archiving'].includes(liveDeliveryStatus)
+      || (
+        !['queued', 'pending', 'archiving'].includes(liveDeliveryStatus)
+        && !providerStatusCanChange
+      )
     ) {
       return undefined;
     }
@@ -422,13 +430,13 @@ function ListingDrawerContent({
           if (active) setListing(response.data.data);
         })
         .catch(() => undefined);
-    }, 15_000);
+    }, ['queued', 'pending', 'archiving'].includes(liveDeliveryStatus) ? 15_000 : 60_000);
 
     return () => {
       active = false;
       window.clearInterval(timer);
     };
-  }, [liveDeliveryListingId, liveDeliveryStatus, publishing]);
+  }, [liveDeliveryListingId, liveDeliveryStatus, providerStatusCanChange, publishing]);
 
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     !editAccountId || address.account === Number(editAccountId)
@@ -681,8 +689,46 @@ function ListingDrawerContent({
   const handleRegenerate = () =>
     callAction('regenerate', () => listingApi.regenerate(listing!.id), 'Задача генерации поставлена в очередь');
 
-  const handleCheckStatus = () =>
-    callAction('checkStatus', () => listingApi.checkStatus(listing!.id), 'Проверка статуса Avito поставлена в очередь', false);
+  const handleCheckStatus = async () => {
+    if (!listing) return;
+    const listingId = listing.id;
+    const initialStatus = listing.status;
+    const initialCheckedAt = listing.remote_status_checked_at;
+    setActionLoading('checkStatus');
+    try {
+      await listingApi.checkStatus(listingId);
+      toast.info('Запросили актуальный статус у Avito…');
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        const response = await listingApi.get(listingId);
+        const updated: ListingDetail = response.data.data;
+        applyListingState(updated);
+        if (
+          updated.status !== initialStatus
+          || (
+            updated.remote_status_checked_at
+            && updated.remote_status_checked_at !== initialCheckedAt
+          )
+        ) {
+          onActionDone();
+          toast.success(`Avito ответил: ${updated.status_display}`);
+          return;
+        }
+      }
+      toast.info('Avito ещё не ответил. MAP продолжит проверку в фоне.');
+    } catch (err: unknown) {
+      const errorData = (err as {
+        response?: { data?: { message?: string; detail?: string } };
+      })?.response?.data;
+      toast.error(
+        errorData?.message
+        || errorData?.detail
+        || 'Не удалось запросить статус Avito.',
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   const handleSaveEdit = async () => {
     if (!listing) return;
@@ -809,7 +855,6 @@ function ListingDrawerContent({
   const isDraft = listing?.status === 'draft';
   const isRejected = listing?.status === 'rejected';
   const isArchived = listing?.status === 'archived';
-  const isPending = listing?.status === 'pending';
   const isLimitReached = listing?.status === 'limit_reached';
   const canPublish = listing?.can_publish ?? (
     isDraft || isRejected || isArchived || isLimitReached
@@ -878,10 +923,24 @@ function ListingDrawerContent({
                     {listing.status_display}
                   </Badge>
                 </div>
-                {listing.status === 'active' && listing.last_sync_at && (
+                {listing.status_explanation && (
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {listing.status_explanation}
+                  </p>
+                )}
+                {listing.remote_status_checked_at && (
                   <p className="text-xs text-green-700 dark:text-green-400">
-                    Статус проверен через Avito:{' '}
-                    {new Date(listing.last_sync_at).toLocaleString('ru-RU', {
+                    Avito проверен:{' '}
+                    {new Date(listing.remote_status_checked_at).toLocaleString('ru-RU', {
+                      day: '2-digit', month: '2-digit', year: 'numeric',
+                      hour: '2-digit', minute: '2-digit',
+                    })}
+                  </p>
+                )}
+                {listing.next_status_check_at && listing.can_check_avito_status && (
+                  <p className="text-xs text-muted-foreground">
+                    Следующая автоматическая проверка:{' '}
+                    {new Date(listing.next_status_check_at).toLocaleString('ru-RU', {
                       day: '2-digit', month: '2-digit', year: 'numeric',
                       hour: '2-digit', minute: '2-digit',
                     })}
@@ -1629,7 +1688,7 @@ function ListingDrawerContent({
                         }
                       </Button>
                     )}
-                    {isPending && listing.can_check_avito_status && (
+                    {listing.can_check_avito_status && (
                       <Button
                         variant="secondary"
                         onClick={handleCheckStatus}
@@ -1637,7 +1696,9 @@ function ListingDrawerContent({
                         className="w-full"
                       >
                         <RefreshCw className="mr-2 h-4 w-4" />
-                        {actionLoading === 'checkStatus' ? 'Проверяем...' : 'Проверить статус Avito'}
+                        {actionLoading === 'checkStatus'
+                          ? 'Ждём ответ Avito…'
+                          : 'Проверить статус в Avito сейчас'}
                       </Button>
                     )}
                     {canRegenerate && (

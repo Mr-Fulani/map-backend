@@ -211,6 +211,7 @@ class ListingSerializer(serializers.ModelSerializer):
     account_id = serializers.IntegerField(source='account.pk', read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
     status_display = serializers.SerializerMethodField()
+    status_explanation = serializers.SerializerMethodField()
     delivery_stage = serializers.SerializerMethodField()
     provider_submission_started = serializers.SerializerMethodField()
     lifecycle_actions_blocked = serializers.SerializerMethodField()
@@ -222,7 +223,8 @@ class ListingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Listing
         fields = [
-            'id', 'status', 'status_display', 'delivery_stage',
+            'id', 'status', 'status_display', 'status_explanation',
+            'delivery_stage',
             'provider_submission_started', 'lifecycle_actions_blocked',
             'can_check_avito_status', 'delivery_retry_at',
             'delivery_retry_reason', 'can_publish',
@@ -236,12 +238,51 @@ class ListingSerializer(serializers.ModelSerializer):
             'bulk_address', 'bulk_seller_address_id',
             'bulk_manager_name', 'bulk_contact_phone',
             'rejection_reason', 'retry_count', 'published_at', 'last_sync_at',
+            'remote_status', 'remote_status_checked_at',
+            'next_status_check_at',
             'created_at',
         ]
         read_only_fields = fields
 
     def get_status_display(self, obj) -> str:
         return listing_delivery_presentation(obj).label
+
+    def get_status_explanation(self, obj) -> str:
+        if obj.status == Listing.STATUS_ACTIVE:
+            return (
+                'Avito подтверждает, что объявление активно. MAP продолжает '
+                'автоматически сверять его статус.'
+            )
+        if obj.status == Listing.STATUS_ARCHIVING:
+            return (
+                'MAP уже исключил объявление из актуального XML-фида. '
+                'Ожидаем, когда Avito подтвердит снятие с публикации.'
+            )
+        if obj.status == Listing.STATUS_ARCHIVED:
+            if (
+                obj.remote_status == Listing.REMOTE_STATUS_REMOVED
+                and not obj.external_id
+            ):
+                return (
+                    'Avito больше не находит это объявление. Оно исключено '
+                    'из фида; повторная публикация создаст новое объявление.'
+                )
+            if obj.remote_status in {
+                Listing.REMOTE_STATUS_REMOVED,
+                Listing.REMOTE_STATUS_ARCHIVED,
+            }:
+                return (
+                    'Avito подтвердил, что объявление больше не активно. '
+                    'Оно исключено из актуального XML-фида.'
+                )
+            return 'Объявление не входит в актуальный XML-фид Avito.'
+        if obj.status == Listing.STATUS_REJECTED and obj.external_id:
+            return (
+                'Avito отклонил или заблокировал объявление. Исправьте '
+                'подсвеченные поля и нажмите «Опубликовать». Кнопка проверки '
+                'только запрашивает текущий статус и не отправляет изменения.'
+            )
+        return ''
 
     def get_delivery_stage(self, obj) -> str:
         return listing_delivery_presentation(obj).stage

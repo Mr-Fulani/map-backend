@@ -93,6 +93,21 @@ def test_pending_without_run_is_truthfully_shown_as_local_preparation():
     assert data['can_check_avito_status'] is False
 
 
+def test_active_listing_exposes_manual_provider_status_check():
+    listing = _listing('active-check')
+    listing.status = Listing.STATUS_ACTIVE
+    listing.external_id = 'avito-active-check'
+    listing.save(update_fields=['status', 'external_id'])
+
+    data = ListingSerializer(listing).data
+
+    assert data['can_check_avito_status'] is True
+    assert data['status_explanation'] == (
+        'Avito подтверждает, что объявление активно. MAP продолжает '
+        'автоматически сверять его статус.'
+    )
+
+
 def test_product_listing_option_uses_the_same_truthful_delivery_label():
     listing = _listing('product-option')
 

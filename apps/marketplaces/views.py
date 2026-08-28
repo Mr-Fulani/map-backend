@@ -1121,7 +1121,7 @@ class ListingDeleteView(APIView):
 
 @extend_schema(tags=['Listings'])
 class ListingCheckStatusView(APIView):
-    """POST /api/v1/listings/{id}/check-status/ — вручную проверить статус Avito feed."""
+    """POST /api/v1/listings/{id}/check-status/ — запросить текущий статус Avito."""
 
     api_key_enabled = True
 
@@ -1147,7 +1147,10 @@ class ListingCheckStatusView(APIView):
                             status=status.HTTP_400_BAD_REQUEST)
         return Response({
             'status': 'ok',
-            'message': 'Проверка статуса Avito поставлена в очередь',
+            'message': (
+                'Запрос текущего статуса Avito поставлен в очередь. '
+                'Он не отправляет изменения объявления.'
+            ),
             'data': ListingDetailSerializer(listing, context={'request': request}).data,
         })
 
