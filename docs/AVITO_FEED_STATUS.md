@@ -960,9 +960,10 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
 После production-наблюдения 2026-08-28 отдельно активирована точечная
 `0031_live_private_successor_guard`: исходный guard разрешал первую private
 generation из legacy bridge, но отвергал следующую immutable generation уже
-у живого `private_generation` endpoint до создания PUT ledger. Миграция меняет
-только этот endpoint-state predicate; все account/tenant/claim/revision,
-payload, predecessor и VersionId fences остаются прежними.
+у живого `private_generation` endpoint при создании PUT ledger и прикреплении
+проверенного artifact. Миграция меняет только этот endpoint-state predicate в
+обоих guards; все account/tenant/claim/revision, payload, predecessor и
+VersionId fences остаются прежними.
 
 Основной пакет merged через PR `#249`; follow-up/recovery PR `#250`–`#254`
 устранили реальные несовпадения Avito schema/schedule, Yandex ACL owner и
