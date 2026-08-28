@@ -80,6 +80,7 @@ from apps.marketplaces.feed_workflow import (
     persist_feed_submission_boundary,
     record_provider_run_observation,
     reset_poll_round,
+    resume_failed_pre_submission_feed_run,
     retry_step,
     start_reporting,
     validate_feed_submission_owner,
@@ -2468,6 +2469,14 @@ def _prepare_private_feed_run(
             predecessor_artifact_id=frozen_predecessor_artifact_id,
             now=now(),
         )
+        if existing_run is not None and run.state == MarketplaceFeedRun.State.FAILED:
+            run = resume_failed_pre_submission_feed_run(
+                account.pk,
+                generation_id=run.run_id,
+                expected_revision=run.revision,
+                payload_sha256=payload.payload_sha256,
+                now=now(),
+            )
     return account, run
 
 

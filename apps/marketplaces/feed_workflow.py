@@ -623,6 +623,116 @@ def create_or_supersede_feed_run(
 create_feed_run = create_or_supersede_feed_run
 
 
+@transaction.atomic
+def resume_failed_pre_submission_feed_run(
+    account_id: int,
+    *,
+    generation_id: uuid.UUID,
+    expected_revision: int,
+    payload_sha256: str,
+    now: datetime | None = None,
+) -> FeedRunSnapshot:
+    """Reopen one exact private generation only when no boundary was crossed.
+
+    A private source revision is unique per account, so a safely failed run
+    cannot be replaced by a second UUID.  Reusing its UUID is allowed only
+    when every storage/provider evidence field is still pristine and all of
+    its pending listing membership is unchanged.
+    """
+
+    transition_at = _now(now)
+    payload_sha256 = _digest(
+        payload_sha256,
+        field_name='payload_sha256',
+        allow_blank=False,
+    )
+    if isinstance(expected_revision, bool) or not isinstance(
+        expected_revision,
+        int,
+    ) or expected_revision < 0:
+        raise ValueError('expected_revision must be a non-negative integer.')
+    if not isinstance(generation_id, uuid.UUID):
+        try:
+            generation_id = uuid.UUID(str(generation_id))
+        except (TypeError, ValueError):
+            raise ValueError('generation_id must be a UUID.') from None
+
+    account = _lock_account(account_id)
+    if not _live(account):
+        raise FeedAccountUnavailable(
+            f'Marketplace account {account_id} is inactive or deleted.',
+        )
+    run = (
+        MarketplaceFeedRun.objects.select_for_update()
+        .filter(pk=generation_id, account_id=account.pk)
+        .first()
+    )
+    if run is None:
+        raise FeedRunConflict('Failed feed generation no longer exists.')
+
+    safe_pre_submission_failure = (
+        run.state == MarketplaceFeedRun.State.FAILED
+        and run.revision == expected_revision
+        and run.source_intent_revision is not None
+        and run.payload_sha256 == payload_sha256
+        and run.account_identity_digest == account_identity_digest(account)
+        and run.claim_token is None
+        and run.claimed_until is None
+        and run.submitted_at is None
+        and run.provider_run_id is None
+        and run.provider_predecessor_run_id is None
+        and run.provider_result_deadline_at is None
+        and run.submission_reconcile_attempt == 0
+        and run.feed_artifact_id is None
+        and run.artifact_upload_attempt == 0
+        and run.published_count == 0
+        and run.rejected_count == 0
+        and run.pending_count == run.total_count
+        and run.poll_cursor_listing_id == 0
+        and run.poll_round == 0
+        and run.report_page == 1
+        and run.report_attempt == 0
+        and run.report_completed_at is None
+        and run.finished_at is not None
+    )
+    if not safe_pre_submission_failure:
+        raise FeedRunConflict(
+            'Failed feed generation has storage, provider, ownership, or '
+            'result evidence and cannot be replayed automatically.',
+        )
+    if run.artifact_upload_attempts.exists():
+        raise FeedRunConflict(
+            'Failed feed generation has a durable object upload attempt.',
+        )
+    tagged_pending_count = Listing.objects.filter(
+        feed_run_id=run.pk,
+        account_id=account.pk,
+        tenant_id=account.tenant_id,
+        status=Listing.STATUS_PENDING,
+        external_id__isnull=True,
+    ).count()
+    if tagged_pending_count != run.pending_count:
+        raise FeedRunConflict(
+            'Failed feed generation membership changed before safe replay.',
+        )
+
+    run.state = MarketplaceFeedRun.State.PREPARING
+    run.revision += 1
+    run.next_attempt_at = transition_at
+    run.last_error = ''
+    run.finished_at = None
+    run.updated_at = transition_at
+    run.save(update_fields=[
+        'state',
+        'revision',
+        'next_attempt_at',
+        'last_error',
+        'finished_at',
+        'updated_at',
+    ])
+    return _snapshot(run)
+
+
 def _claim_locked_account(
     account: MarketplaceAccount,
     *,
