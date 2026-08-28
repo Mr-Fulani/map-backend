@@ -27,6 +27,8 @@ interface Listing {
   status: string;
   status_display: string;
   delivery_stage: string;
+  delivery_retry_at: string | null;
+  delivery_retry_reason: string;
   provider_submission_started: boolean;
   lifecycle_actions_blocked: boolean;
   can_check_avito_status: boolean;
@@ -44,6 +46,16 @@ interface Listing {
 }
 
 function avitoCheckedLabel(value: string): string {
+  return new Date(value).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function deliveryRetryLabel(value: string): string {
   return new Date(value).toLocaleString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
@@ -186,6 +198,32 @@ export default function ListingsPage() {
       .then((res) => setPlacementAddresses(res.data.data ?? res.data))
       .catch(() => setPlacementAddresses([]));
   }, []);
+
+  const hasLiveDelivery = listings.some((listing) => (
+    ['queued', 'pending', 'archiving'].includes(listing.status)
+  ));
+
+  useEffect(() => {
+    if (!hasLiveDelivery) return undefined;
+    let active = true;
+    const params: Record<string, unknown> = { page };
+    if (statusFilter) params.status = statusFilter;
+
+    const timer = window.setInterval(() => {
+      listingApi.list(params)
+        .then((response) => {
+          if (!active) return;
+          setListings(response.data.data);
+          setMeta(response.data.meta);
+        })
+        .catch(() => undefined);
+    }, 15_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [hasLiveDelivery, page, statusFilter]);
 
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     !bulkAccountId || address.account === Number(bulkAccountId)
@@ -452,6 +490,12 @@ export default function ListingsPage() {
                         Проверено через Avito: {avitoCheckedLabel(l.last_sync_at)}
                       </p>
                     )}
+                    {l.delivery_retry_at && (
+                      <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                        {l.delivery_retry_reason || 'Временная задержка.'}{' '}
+                        Следующая попытка: {deliveryRetryLabel(l.delivery_retry_at)}
+                      </p>
+                    )}
                   </div>
                   <div className="flex shrink-0 flex-col gap-1" onClick={(e) => e.stopPropagation()}>
                     {l.external_url && (
@@ -577,6 +621,12 @@ export default function ListingsPage() {
                       {l.status === 'active' && l.last_sync_at && (
                         <p className="mt-1 max-w-40 text-[11px] leading-4 text-green-700 dark:text-green-400">
                           Avito: {avitoCheckedLabel(l.last_sync_at)}
+                        </p>
+                      )}
+                      {l.delivery_retry_at && (
+                        <p className="mt-1 max-w-44 text-[11px] leading-4 text-amber-700 dark:text-amber-400">
+                          {l.delivery_retry_reason || 'Временная задержка.'}<br />
+                          Повтор: {deliveryRetryLabel(l.delivery_retry_at)}
                         </p>
                       )}
                     </td>

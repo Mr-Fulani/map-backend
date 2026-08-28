@@ -42,6 +42,8 @@ interface ListingDetail {
   status: string;
   status_display: string;
   delivery_stage: string;
+  delivery_retry_at: string | null;
+  delivery_retry_reason: string;
   provider_submission_started: boolean;
   lifecycle_actions_blocked: boolean;
   can_check_avito_status: boolean;
@@ -117,6 +119,16 @@ const DEFAULT_AD_TYPE = 'Товар приобретен на продажу';
 // Лимит заголовка в Avito Autoload — 100 символов (отличается от лимита
 // ручной загрузки).
 const AVITO_TITLE_MAX = 100;
+
+function deliveryRetryLabel(value: string): string {
+  return new Date(value).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
 
 const STATUS_VARIANT: Record<string, 'default' | 'secondary' | 'destructive' | 'outline'> = {
   active: 'default',
@@ -301,6 +313,32 @@ function ListingDrawerContent({
       clearTimeout(timer);
     };
   }, [editingBrand, listing, editBrand]);
+
+  const liveDeliveryListingId = listing?.id ?? null;
+  const liveDeliveryStatus = listing?.status ?? '';
+
+  useEffect(() => {
+    if (
+      liveDeliveryListingId === null
+      || publishing
+      || !['queued', 'pending', 'archiving'].includes(liveDeliveryStatus)
+    ) {
+      return undefined;
+    }
+    let active = true;
+    const timer = window.setInterval(() => {
+      listingApi.get(liveDeliveryListingId)
+        .then((response) => {
+          if (active) setListing(response.data.data);
+        })
+        .catch(() => undefined);
+    }, 15_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [liveDeliveryListingId, liveDeliveryStatus, publishing]);
 
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     !editAccountId || address.account === Number(editAccountId)
@@ -678,6 +716,13 @@ function ListingDrawerContent({
                       day: '2-digit', month: '2-digit', year: 'numeric',
                       hour: '2-digit', minute: '2-digit',
                     })}
+                  </p>
+                )}
+                {listing.delivery_retry_at && (
+                  <p className="text-xs text-amber-700 dark:text-amber-400">
+                    {listing.delivery_retry_reason || 'Временная задержка.'}{' '}
+                    Следующая безопасная попытка:{' '}
+                    {deliveryRetryLabel(listing.delivery_retry_at)}
                   </p>
                 )}
               </SheetHeader>
@@ -1181,9 +1226,29 @@ function ListingDrawerContent({
 
               {listing.lifecycle_actions_blocked && (
                 <div className="rounded-md border border-blue-500/40 bg-blue-500/10 p-3 text-sm text-blue-800 dark:text-blue-300">
-                  Текущая генерация фида ещё не завершена и всё ещё может быть отправлена
-                  или принята Avito. До итогового результата нельзя переносить объявление
-                  на другой аккаунт, архивировать или удалять его.
+                  {listing.provider_submission_started ? (
+                    <>
+                      Фид уже передан или мог быть принят Avito. До итогового результата
+                      нельзя переносить объявление на другой аккаунт, архивировать или
+                      удалять его.
+                    </>
+                  ) : listing.delivery_retry_at ? (
+                    <>
+                      {listing.delivery_retry_reason || (
+                        'Временная ошибка произошла до отправки фида в Avito.'
+                      )}{' '}
+                      MAP автоматически повторит безопасную попытку{' '}
+                      {deliveryRetryLabel(listing.delivery_retry_at)}. Текущая генерация
+                      остаётся закреплена за объявлением, поэтому до завершения попытки
+                      его нельзя переносить, архивировать или удалять.
+                    </>
+                  ) : (
+                    <>
+                      Фид уже зафиксирован, но отправка в Avito ещё не началась. Worker
+                      может продолжить эту генерацию в любой момент, поэтому до завершения
+                      текущей попытки объявление нельзя переносить, архивировать или удалять.
+                    </>
+                  )}
                 </div>
               )}
 

@@ -7,6 +7,7 @@ write fences use the same evidence.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 
 from django.conf import settings
 
@@ -21,6 +22,32 @@ class ListingDeliveryPresentation:
     provider_submission_started: bool
     lifecycle_actions_blocked: bool
     can_check_avito_status: bool
+    retry_at: datetime | None = None
+    retry_reason: str = ''
+
+
+_PRIVATE_RETRY_REASONS = {
+    'private_artifact_verification': (
+        'MAP повторно проверяет сохранённую версию XML-фида.'
+    ),
+    'provider_baseline_read': (
+        'Avito временно не вернул состояние предыдущей автозагрузки.'
+    ),
+    'private_promotion_boundary': (
+        'MAP повторно проверяет, что URL и версия XML-фида не изменились.'
+    ),
+    'provider_rate_limit': (
+        'Avito временно ограничил частоту запросов.'
+    ),
+}
+
+
+def _retry_reason(last_error: str) -> str:
+    reason_code = str(last_error or '').partition(':')[0].strip()
+    return _PRIVATE_RETRY_REASONS.get(
+        reason_code,
+        'Временная техническая ошибка произошла до отправки фида в Avito.',
+    )
 
 
 def durable_feed_run_enabled(account_id: int) -> bool:
@@ -110,6 +137,16 @@ def listing_delivery_presentation(
 
     state = run.state
     if state == MarketplaceFeedRun.State.PREPARING:
+        if run.last_error and run.next_attempt_at is not None:
+            return ListingDeliveryPresentation(
+                stage='delivery_retry',
+                label='Отправка временно задержана, повторяем',
+                provider_submission_started=False,
+                lifecycle_actions_blocked=feed_run_may_publish(run),
+                can_check_avito_status=False,
+                retry_at=run.next_attempt_at,
+                retry_reason=_retry_reason(run.last_error),
+            )
         return ListingDeliveryPresentation(
             stage='feed_preparing',
             label='Фид готовится к отправке',
@@ -148,6 +185,7 @@ def listing_delivery_presentation(
             provider_submission_started=_provider_submission_started(run),
             lifecycle_actions_blocked=feed_run_may_publish(run),
             can_check_avito_status=True,
+            retry_at=run.next_attempt_at,
         )
     if state == MarketplaceFeedRun.State.OUTCOME_UNCERTAIN:
         return ListingDeliveryPresentation(

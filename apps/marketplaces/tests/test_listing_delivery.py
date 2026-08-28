@@ -1,8 +1,10 @@
+from datetime import timedelta
 from decimal import Decimal
 from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
 from apps.marketplaces.listing_delivery import listing_delivery_presentation
 from apps.marketplaces.models import Listing, MarketplaceAccount, MarketplaceFeedRun
@@ -106,6 +108,29 @@ def test_preparing_run_is_not_presented_as_provider_processing():
     assert delivery.label == 'Фид готовится к отправке'
     assert delivery.provider_submission_started is False
     assert delivery.lifecycle_actions_blocked is True
+
+
+def test_preparing_retry_exposes_delay_and_next_attempt():
+    listing = _listing('preparing-retry')
+    run = _feed_run(listing, MarketplaceFeedRun.State.PREPARING)
+    retry_at = timezone.now() + timedelta(minutes=30)
+    MarketplaceFeedRun.objects.filter(pk=run.pk).update(
+        last_error='provider_baseline_read: temporary provider timeout',
+        next_attempt_at=retry_at,
+    )
+    listing.refresh_from_db()
+
+    data = ListingSerializer(listing).data
+
+    assert data['status_display'] == 'Отправка временно задержана, повторяем'
+    assert data['delivery_stage'] == 'delivery_retry'
+    assert parse_datetime(data['delivery_retry_at']) == retry_at
+    assert data['delivery_retry_reason'] == (
+        'Avito временно не вернул состояние предыдущей автозагрузки.'
+    )
+    assert data['provider_submission_started'] is False
+    assert data['lifecycle_actions_blocked'] is True
+    assert data['can_check_avito_status'] is False
 
 
 def test_polling_run_is_presented_as_avito_processing_and_locked():

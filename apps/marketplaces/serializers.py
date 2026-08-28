@@ -212,13 +212,16 @@ class ListingSerializer(serializers.ModelSerializer):
     provider_submission_started = serializers.SerializerMethodField()
     lifecycle_actions_blocked = serializers.SerializerMethodField()
     can_check_avito_status = serializers.SerializerMethodField()
+    delivery_retry_at = serializers.SerializerMethodField()
+    delivery_retry_reason = serializers.SerializerMethodField()
 
     class Meta:
         model = Listing
         fields = [
             'id', 'status', 'status_display', 'delivery_stage',
             'provider_submission_started', 'lifecycle_actions_blocked',
-            'can_check_avito_status',
+            'can_check_avito_status', 'delivery_retry_at',
+            'delivery_retry_reason',
             'product_id', 'product_article', 'product_name', 'product_brand', 'account_id', 'account_name',
             'title', 'price_on_listing', 'external_id', 'external_url',
             'ad_type',
@@ -247,6 +250,16 @@ class ListingSerializer(serializers.ModelSerializer):
 
     def get_can_check_avito_status(self, obj) -> bool:
         return listing_delivery_presentation(obj).can_check_avito_status
+
+    @extend_schema_field(serializers.DateTimeField(allow_null=True, read_only=True))
+    def get_delivery_retry_at(self, obj) -> str | None:
+        retry_at = listing_delivery_presentation(obj).retry_at
+        if retry_at is None:
+            return None
+        return serializers.DateTimeField().to_representation(retry_at)
+
+    def get_delivery_retry_reason(self, obj) -> str:
+        return listing_delivery_presentation(obj).retry_reason
 
 
 def _image_url(s3_key: str, fallback: str, request=None) -> str:
