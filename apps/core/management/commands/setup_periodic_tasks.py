@@ -120,6 +120,15 @@ class Command(BaseCommand):
                 'queue': 'billing',
             },
             {
+                'name': 'recover_autoload_profile_onboarding',
+                'task': (
+                    'apps.marketplaces.tasks.'
+                    'recover_autoload_profile_onboarding'
+                ),
+                'schedule': every_5m,
+                'queue': 'avito_update',
+            },
+            {
                 'name': 'update_tenant_counters',
                 'task': 'apps.tenants.tasks.update_tenant_counters',
                 'schedule': every_15m,

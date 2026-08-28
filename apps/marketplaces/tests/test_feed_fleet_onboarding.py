@@ -274,6 +274,39 @@ def test_onboarding_refuses_mixed_or_drifting_owned_feeds():
 
 @pytest.mark.django_db
 @override_settings(**FLEET_SETTINGS)
+def test_onboarding_refuses_unservable_local_route_before_provider_post():
+    account = _account('route-not-ready')
+    endpoint = ensure_fleet_feed_endpoint(account)
+    assert endpoint is not None
+    source = _source_profile(endpoint)
+    client = MagicMock(spec=AvitoProfileMigrationClient)
+    client.adapter = MagicMock()
+    client.adapter.get_autoload_profile.return_value = source
+    client.adapter._build_autoload_profile_payload.return_value = source
+
+    with (
+        patch(
+            'apps.marketplaces.feed_profile_migration.AvitoProfileMigrationClient',
+            return_value=client,
+        ),
+        patch(
+            'apps.marketplaces.feed_profile_migration.legacy_bridge_target_url',
+            return_value=None,
+        ),
+        pytest.raises(FeedProfileMigrationSafetyError),
+    ):
+        run_fleet_feed_onboarding(
+            tenant_id=account.tenant_id,
+            account_id=account.pk,
+            report_email='fallback@example.test',
+        )
+
+    client.prepare_post.assert_not_called()
+    client.post_profile_once.assert_not_called()
+
+
+@pytest.mark.django_db
+@override_settings(**FLEET_SETTINGS)
 def test_account_health_checks_managed_url_without_legacy_fallback():
     account = _account('health')
     endpoint = ensure_fleet_feed_endpoint(account)

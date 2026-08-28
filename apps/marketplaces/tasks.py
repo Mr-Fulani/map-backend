@@ -14,7 +14,7 @@ from celery.exceptions import Retry
 from django.conf import settings
 from django.core.cache import caches
 from django.db import transaction
-from django.db.models import F, Q
+from django.db.models import F, Min, Q
 from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from django.utils.timezone import now
@@ -98,6 +98,8 @@ _TRANSIENT_STATUS_RECHECK_DELAY = datetime.timedelta(minutes=10)
 _POLL_RETRY_DELAY = datetime.timedelta(minutes=30)
 _FEED_POLL_BATCH_SIZE = 100
 _FEED_POLL_BATCH_DELAY_SECONDS = 30
+_ORPHAN_PENDING_REPAIR_AGE = datetime.timedelta(minutes=5)
+_ORPHAN_PENDING_REPAIR_BATCH_SIZE = 100
 _MAX_PROVIDER_REASON_LENGTH = 2000
 _DURABLE_FEED_INTENT_TASK_NAME = (
     'apps.marketplaces.tasks.process_marketplace_feed_intent'
@@ -116,6 +118,17 @@ _DURABLE_FEED_SUBMISSION_NEGATIVE_THRESHOLD = 4
 _DURABLE_FEED_REPORT_DELAY = datetime.timedelta(seconds=30)
 _DURABLE_FEED_UPLOAD_CLOCK_SKEW = datetime.timedelta(minutes=5)
 _MAX_DURABLE_FEED_PAYLOAD_LISTINGS = 10_000
+_STATS_RECOVERY_WINDOW_DAYS = 14
+_STATUS_BATCH_SCAN_LIMIT = 100
+_STATUS_BATCH_LISTING_LIMIT = 100
+_STATUS_BATCH_CLAIM_LEASE = datetime.timedelta(minutes=5)
+_STATUS_BATCH_DISPATCH_COOLDOWN = datetime.timedelta(minutes=10)
+_STATUS_PROVIDER_CHECK_STATES = (
+    Listing.STATUS_PENDING,
+    Listing.STATUS_ACTIVE,
+    Listing.STATUS_REJECTED,
+    Listing.STATUS_ARCHIVING,
+)
 _LISTING_EXPIRY_THRESHOLDS = (0, 1, 3, 7, 14)
 _LISTING_EXPIRY_NOTICE_CACHE_MIN = datetime.timedelta(days=7)
 _LISTING_EXPIRY_NOTICE_CACHE_MAX = datetime.timedelta(days=60)
@@ -149,6 +162,14 @@ class _ListingStatusClaim:
     expected_account_updated_at: datetime.datetime
     expected_status: str
     expected_external_id: str | None
+    claim_token: uuid.UUID
+    claimed_until: datetime.datetime
+
+
+@dataclass(frozen=True, slots=True)
+class _AccountStatusBatchClaim:
+    account_id: int
+    tenant_id: int
     claim_token: uuid.UUID
     claimed_until: datetime.datetime
 
@@ -537,6 +558,36 @@ def _min_nudge_account_status_due(
     ).update(status_batch_due_at=due_at)
 
 
+def _exact_account_status_due(account_id: int) -> datetime.datetime | None:
+    return (
+        Listing.objects.filter(
+            account_id=account_id,
+            account__is_active=True,
+            account__tenant__is_active=True,
+            status__in=_STATUS_PROVIDER_CHECK_STATES,
+            external_id__isnull=False,
+            next_status_check_at__isnull=False,
+        )
+        .exclude(external_id='')
+        .aggregate(value=Min('next_status_check_at'))['value']
+    )
+
+
+def _recompute_claimed_account_status_due(claim: _ListingStatusClaim) -> int:
+    """Advance the account cursor after its exact listing due value changed."""
+
+    due_at = _exact_account_status_due(claim.account_id)
+    return MarketplaceAccount.objects.filter(
+        pk=claim.account_id,
+        tenant_id=claim.tenant_id,
+        tenant__is_active=True,
+        marketplace=claim.expected_marketplace,
+        external_id=claim.expected_account_external_id,
+        updated_at=claim.expected_account_updated_at,
+        is_active=True,
+    ).update(status_batch_due_at=due_at)
+
+
 def _apply_claimed_listing_values(
     claim: _ListingStatusClaim,
     *,
@@ -614,10 +665,7 @@ def _apply_claimed_listing_values(
             if affected != 1:
                 raise _StaleProviderListingResult
             if nudge_status_due:
-                _min_nudge_account_status_due(
-                    claim,
-                    next_status_check_at,
-                )
+                _recompute_claimed_account_status_due(claim)
             return 1
     except _StaleProviderListingResult:
         return 0
@@ -665,7 +713,7 @@ def _release_status_claim(
             next_status_check_at=next_status_check_at,
         ).as_update_kwargs())
         if affected == 1 and nudge_account:
-            _min_nudge_account_status_due(claim, next_status_check_at)
+            _recompute_claimed_account_status_due(claim)
         return affected
 
 
@@ -774,6 +822,17 @@ def _write_log(tenant, event_type: str, status: str, message: str, listing=None)
         )
     except Exception:
         pass
+
+
+def _try_delay(task, *args: object, context: str) -> bool:
+    """Best-effort periodic dispatch whose source cursor remains retryable."""
+
+    try:
+        task.delay(*args)
+        return True
+    except Exception:
+        logger.exception('Periodic task dispatch failed context=%s', context)
+        return False
 
 
 def _notify_critical(tenant, message: str) -> None:
@@ -1731,6 +1790,7 @@ def publish_listing_task(self, listing_id: int):
             update_fields=('status',),
             expected_status=Listing.STATUS_QUEUED,
             expected_external_id=None,
+            feed_projection_changed=True,
         ):
             return {'status': 'stale'}
         _write_log(
@@ -1827,6 +1887,7 @@ def unpublish_listing_task(self, listing_id: int):
         update_fields=('status',),
         expected_status=expected_status,
         expected_external_id=expected_external_id,
+        feed_projection_changed=True,
     ):
         return {'status': 'stale'}
     _write_log(
@@ -3394,7 +3455,10 @@ def coalesced_flush_task(
                     fleet_feed_onboarding_ready,
                 )
                 if not fleet_feed_onboarding_ready(account.pk):
-                    setup_autoload_profile_task.delay(
+                    from apps.marketplaces.autoload_onboarding import (
+                        schedule_autoload_profile_setup,
+                    )
+                    schedule_autoload_profile_setup(
                         account.pk,
                         account.tenant_id,
                     )
@@ -5144,6 +5208,286 @@ def check_moderation_task(self, listing_id: int):
         raise self.retry(exc=exc, countdown=backoff(self.request.retries))
 
 
+def _repair_orphaned_pending_feed_intents() -> dict[str, int]:
+    """Re-arm proven local publications that never reached a feed boundary.
+
+    A PENDING row alone is not replay proof: an older legacy upload may have
+    submitted it without a durable ``feed_run``.  The repair therefore requires
+    a local publication log newer than the account's last recorded provider
+    boundary, no current/held desired revision and no prior repair for that
+    publication evidence.  The account lock fences every compliant listing
+    writer while the evidence is re-checked.
+    """
+
+    if not (
+        _feed_ingress_dual_write_enabled()
+        and _status_lifecycle_dual_write_enabled()
+    ):
+        return {'selected': 0, 'repaired': 0}
+
+    from apps.marketplaces.feed_intents import bump_feed_intents
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+    from apps.sync.models import SyncLog
+
+    candidate_account_ids = list(
+        Listing.objects.filter(
+            status=Listing.STATUS_PENDING,
+            external_id__isnull=True,
+            feed_run__isnull=True,
+            account__deleted_at__isnull=True,
+            account__is_active=True,
+            account__tenant__is_active=True,
+            account__feed_intent_due_at__isnull=True,
+            account__feed_intent_revision__lte=F(
+                'account__feed_intent_dispatched_revision',
+            ),
+        )
+        .order_by('account_id')
+        .values_list('account_id', flat=True)
+        .distinct()[:_ORPHAN_PENDING_REPAIR_BATCH_SIZE]
+    )
+    selected = 0
+    repaired = 0
+    cutoff = now() - _ORPHAN_PENDING_REPAIR_AGE
+    for account_id in candidate_account_ids:
+        if not _durable_feed_run_enabled(account_id):
+            continue
+        with transaction.atomic():
+            account = (
+                MarketplaceAccount.all_objects.select_for_update(of=('self',))
+                .select_related('tenant')
+                .filter(
+                    pk=account_id,
+                    deleted_at__isnull=True,
+                    is_active=True,
+                    tenant__is_active=True,
+                    feed_intent_due_at__isnull=True,
+                    feed_intent_revision__lte=F(
+                        'feed_intent_dispatched_revision',
+                    ),
+                )
+                .first()
+            )
+            if account is None:
+                continue
+            list(
+                MarketplaceFeedEndpoint.objects.select_for_update(of=('self',))
+                .filter(account_id=account_id)
+                .order_by('account_id')
+            )
+            evidence = SyncLog.objects.filter(
+                listing__account_id=account_id,
+                listing__status=Listing.STATUS_PENDING,
+                listing__external_id__isnull=True,
+                listing__feed_run__isnull=True,
+                event_type=SyncLog.EVENT_LISTING_PUBLISH,
+                status=SyncLog.STATUS_OK,
+                created_at__lte=cutoff,
+            )
+            if account.last_feed_flush_at is not None:
+                evidence = evidence.filter(
+                    created_at__gt=account.last_feed_flush_at,
+                )
+            publication = evidence.order_by('-created_at', '-pk').first()
+            if publication is None:
+                continue
+            already_repaired = SyncLog.objects.filter(
+                listing__account_id=account_id,
+                event_type=SyncLog.EVENT_LISTING_PUBLISH,
+                status=SyncLog.STATUS_WARN,
+                payload__repair='orphan_pending_feed_intent',
+                created_at__gte=publication.created_at,
+            ).exists()
+            if already_repaired:
+                continue
+
+            selected += 1
+            revision = bump_feed_intents([account_id], now())[account_id]
+            SyncLog.objects.create(
+                tenant=account.tenant,
+                listing_id=publication.listing_id,
+                event_type=SyncLog.EVENT_LISTING_PUBLISH,
+                status=SyncLog.STATUS_WARN,
+                message=(
+                    'MAP обнаружил публикацию, которая не дошла до границы '
+                    'отправки фида, и безопасно создал новую feed revision.'
+                ),
+                payload={
+                    'repair': 'orphan_pending_feed_intent',
+                    'feed_intent_revision': revision,
+                },
+            )
+            repaired += 1
+    return {'selected': selected, 'repaired': repaired}
+
+
+def _claim_due_status_accounts(
+    *,
+    limit: int = _STATUS_BATCH_SCAN_LIMIT,
+) -> list[_AccountStatusBatchClaim]:
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError('status account limit must be between 1 and 100.')
+    claimed_at = now()
+    lease_until = claimed_at + _STATUS_BATCH_CLAIM_LEASE
+    available_claim = (
+        Q(status_batch_claim_token__isnull=True)
+        | Q(status_batch_claimed_until__isnull=True)
+        | Q(status_batch_claimed_until__lte=claimed_at)
+    )
+    with transaction.atomic():
+        accounts = list(
+            MarketplaceAccount.objects.select_for_update(
+                skip_locked=True,
+                of=('self',),
+            )
+            .filter(
+                available_claim,
+                tenant__is_active=True,
+                marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+                is_active=True,
+                status_batch_due_at__isnull=False,
+                status_batch_due_at__lte=claimed_at,
+            )
+            .filter(
+                Q(status_batch_cooldown_until__isnull=True)
+                | Q(status_batch_cooldown_until__lte=claimed_at),
+            )
+            .only('pk', 'tenant_id')
+            .order_by('status_batch_due_at', 'pk')[:limit]
+        )
+        claims = []
+        for account in accounts:
+            token = uuid.uuid4()
+            account.status_batch_claim_token = token
+            account.status_batch_claimed_until = lease_until
+            claims.append(_AccountStatusBatchClaim(
+                account_id=account.pk,
+                tenant_id=account.tenant_id,
+                claim_token=token,
+                claimed_until=lease_until,
+            ))
+        if accounts:
+            MarketplaceAccount.objects.bulk_update(
+                accounts,
+                ('status_batch_claim_token', 'status_batch_claimed_until'),
+            )
+        return claims
+
+
+def _release_account_status_batch_claim(
+    claim: _AccountStatusBatchClaim,
+    *,
+    cooldown_until: datetime.datetime | None,
+) -> bool:
+    released_at = now()
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.objects.select_for_update(of=('self',))
+            .filter(
+                pk=claim.account_id,
+                tenant_id=claim.tenant_id,
+                tenant__is_active=True,
+                marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+                is_active=True,
+                status_batch_claim_token=claim.claim_token,
+                status_batch_claimed_until=claim.claimed_until,
+                status_batch_claimed_until__gt=released_at,
+            )
+            .only('pk')
+            .first()
+        )
+        if account is None:
+            return False
+        next_due = _exact_account_status_due(account.pk)
+        updated = MarketplaceAccount.objects.filter(
+            pk=account.pk,
+            status_batch_claim_token=claim.claim_token,
+            status_batch_claimed_until=claim.claimed_until,
+        ).update(
+            status_batch_due_at=next_due,
+            status_batch_cooldown_until=cooldown_until,
+            status_batch_claim_token=None,
+            status_batch_claimed_until=None,
+        )
+        return updated == 1
+
+
+def _dispatch_due_listing_status_checks(
+    *,
+    account_limit: int = _STATUS_BATCH_SCAN_LIMIT,
+    listing_limit: int = _STATUS_BATCH_LISTING_LIMIT,
+) -> dict[str, int]:
+    if (
+        isinstance(listing_limit, bool)
+        or not isinstance(listing_limit, int)
+        or not 1 <= listing_limit <= 100
+    ):
+        raise ValueError('status listing limit must be between 1 and 100.')
+    claims = _claim_due_status_accounts(limit=account_limit)
+    selected = scheduled = failed = released = 0
+    moderation_scheduled = removal_scheduled = 0
+    for claim in claims:
+        checked_at = now()
+        available_claim = (
+            Q(status_check_claim_token__isnull=True)
+            | Q(status_check_claimed_until__isnull=True)
+            | Q(status_check_claimed_until__lte=checked_at)
+        )
+        rows = list(
+            Listing.objects.filter(
+                available_claim,
+                account_id=claim.account_id,
+                tenant_id=claim.tenant_id,
+                tenant__is_active=True,
+                account__is_active=True,
+                status__in=_STATUS_PROVIDER_CHECK_STATES,
+                external_id__isnull=False,
+                next_status_check_at__isnull=False,
+                next_status_check_at__lte=checked_at,
+            )
+            .exclude(external_id='')
+            .order_by('next_status_check_at', 'pk')
+            .values('pk', 'status')[:listing_limit]
+        )
+        selected += len(rows)
+        for row in rows:
+            try:
+                if row['status'] == Listing.STATUS_ARCHIVING:
+                    confirm_removal_task.delay(row['pk'])
+                    removal_scheduled += 1
+                else:
+                    check_moderation_task.delay(row['pk'])
+                    moderation_scheduled += 1
+                scheduled += 1
+            except Exception:
+                failed += 1
+                logger.exception(
+                    'Unable to dispatch due Avito listing status check '
+                    'account_id=%s listing_id=%s',
+                    claim.account_id,
+                    row['pk'],
+                )
+        cooldown_until = (
+            now() + _STATUS_BATCH_DISPATCH_COOLDOWN
+            if rows
+            else None
+        )
+        if _release_account_status_batch_claim(
+            claim,
+            cooldown_until=cooldown_until,
+        ):
+            released += 1
+    return {
+        'accounts_claimed': len(claims),
+        'accounts_released': released,
+        'selected': selected,
+        'scheduled': scheduled,
+        'moderation_scheduled': moderation_scheduled,
+        'removal_scheduled': removal_scheduled,
+        'dispatch_failed': failed,
+    }
+
+
 @shared_task(queue='avito_update')
 def check_moderation_status():
     """
@@ -5151,48 +5495,108 @@ def check_moderation_status():
 
     Запускается каждые 30 минут через Celery Beat.
     """
-    pending_account_ids = list(Listing.objects.filter(
+    orphan_repair = _repair_orphaned_pending_feed_intents()
+
+    live_listings = Listing.objects.filter(
+        tenant__is_active=True,
+        account__is_active=True,
+        account__marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+    )
+    pending_account_ids = list(live_listings.filter(
         status=Listing.STATUS_PENDING,
         external_id__isnull=True,
     ).values_list('account_id', flat=True).distinct())
+    pending_queued = 0
+    periodic_dispatch_failed = 0
     for account_id in pending_account_ids:
-        poll_feed_results_task.delay(account_id)
+        if _try_delay(
+            poll_feed_results_task,
+            account_id,
+            context=f'feed-poll-account-{account_id}',
+        ):
+            pending_queued += 1
+        else:
+            periodic_dispatch_failed += 1
 
-    queued_account_ids = list(Listing.objects.filter(
+    queued_account_ids = list(live_listings.filter(
         status=Listing.STATUS_QUEUED,
         external_id__isnull=True,
     ).values_list('account_id', flat=True).distinct())
+    queued_started = 0
     for account_id in queued_account_ids:
         listing_id = (
-            Listing.objects.filter(
+            live_listings.filter(
                 account_id=account_id,
                 status=Listing.STATUS_QUEUED,
                 external_id__isnull=True,
             ).order_by('created_at', 'pk').values_list('pk', flat=True).first()
         )
         if listing_id:
-            publish_listing_task.delay(listing_id)
+            if _try_delay(
+                publish_listing_task,
+                listing_id,
+                context=f'queued-listing-{listing_id}',
+            ):
+                queued_started += 1
+            else:
+                periodic_dispatch_failed += 1
 
-    active_listing_ids = list(Listing.objects.filter(
-        status=Listing.STATUS_ACTIVE,
-    ).values_list('pk', flat=True))
+    status_dispatch = {
+        'accounts_claimed': 0,
+        'accounts_released': 0,
+        'selected': 0,
+        'scheduled': 0,
+        'moderation_scheduled': 0,
+        'removal_scheduled': 0,
+        'dispatch_failed': 0,
+    }
+    active_listings_queued = 0
+    archiving_confirmed = 0
+    if _status_lifecycle_dual_write_enabled():
+        status_dispatch = _dispatch_due_listing_status_checks()
+        active_listings_queued = status_dispatch['moderation_scheduled']
+        archiving_confirmed = status_dispatch['removal_scheduled']
+    else:
+        active_listing_ids = list(live_listings.filter(
+            status=Listing.STATUS_ACTIVE,
+        ).values_list('pk', flat=True))
+        for listing_id in active_listing_ids:
+            if _try_delay(
+                check_moderation_task,
+                listing_id,
+                context=f'legacy-active-listing-{listing_id}',
+            ):
+                active_listings_queued += 1
+            else:
+                periodic_dispatch_failed += 1
 
-    for listing_id in active_listing_ids:
-        check_moderation_task.delay(listing_id)
-
-    # «Снимается» → подтверждаем снятие (Avito обрабатывает пакетно).
-    archiving_ids = list(Listing.objects.filter(
-        status=Listing.STATUS_ARCHIVING,
-        external_id__isnull=False,
-    ).values_list('pk', flat=True))
-    for listing_id in archiving_ids:
-        confirm_removal_task.delay(listing_id)
+        # Legacy mode has no due cursor for removal confirmation.
+        archiving_ids = list(live_listings.filter(
+            status=Listing.STATUS_ARCHIVING,
+            external_id__isnull=False,
+        ).values_list('pk', flat=True))
+        for listing_id in archiving_ids:
+            if _try_delay(
+                confirm_removal_task,
+                listing_id,
+                context=f'legacy-archiving-listing-{listing_id}',
+            ):
+                archiving_confirmed += 1
+            else:
+                periodic_dispatch_failed += 1
 
     return {
-        'pending_accounts_queued': len(pending_account_ids),
-        'queued_accounts_started': len(queued_account_ids),
-        'active_listings_queued': len(active_listing_ids),
-        'archiving_confirmed': len(archiving_ids),
+        'orphan_pending_selected': orphan_repair['selected'],
+        'orphan_pending_repaired': orphan_repair['repaired'],
+        'pending_accounts_queued': pending_queued,
+        'queued_accounts_started': queued_started,
+        'active_listings_queued': active_listings_queued,
+        'archiving_confirmed': archiving_confirmed,
+        'status_accounts_claimed': status_dispatch['accounts_claimed'],
+        'status_accounts_released': status_dispatch['accounts_released'],
+        'status_rows_selected': status_dispatch['selected'],
+        'status_dispatch_failed': status_dispatch['dispatch_failed'],
+        'periodic_dispatch_failed': periodic_dispatch_failed,
     }
 
 
@@ -5219,24 +5623,54 @@ def refresh_avito_stats():
     """
     Ежечасно обновляет ListingStats и запускает проверку теневого бана.
 
-    За каждый аккаунт: запрашивает статистику за вчера и сегодня из Avito Stats API,
-    сохраняет в ListingStats, параллельно проверяет shadow ban.
+    За каждый аккаунт запрашивает bounded recovery-window из Avito Stats API,
+    чтобы плановый запуск закрывал многодневные пропуски идемпотентным upsert.
     """
     from apps.anti_ban.tasks import check_shadow_ban_task
     from apps.marketplaces.models import MarketplaceAccount
 
-    today = datetime.date.today()
-    date_from = today - datetime.timedelta(days=1)
+    today = timezone.localdate()
+    date_from = today - datetime.timedelta(
+        days=_STATS_RECOVERY_WINDOW_DAYS - 1,
+    )
 
     account_ids = list(MarketplaceAccount.objects.filter(
         is_active=True,
+        tenant__is_active=True,
+        marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
     ).values_list('pk', flat=True))
 
+    stats_scheduled = 0
+    shadow_checks_scheduled = 0
+    dispatch_failed = 0
     for account_id in account_ids:
-        check_shadow_ban_task.delay(account_id)
-        fetch_stats_for_account_task.delay(account_id, str(date_from), str(today))
+        if _try_delay(
+            check_shadow_ban_task,
+            account_id,
+            context=f'shadow-stats-account-{account_id}',
+        ):
+            shadow_checks_scheduled += 1
+        else:
+            dispatch_failed += 1
+        if _try_delay(
+            fetch_stats_for_account_task,
+            account_id,
+            date_from.isoformat(),
+            today.isoformat(),
+            context=f'stats-account-{account_id}',
+        ):
+            stats_scheduled += 1
+        else:
+            dispatch_failed += 1
 
-    return {'accounts_scheduled': len(account_ids)}
+    return {
+        'accounts_scheduled': len(account_ids),
+        'stats_scheduled': stats_scheduled,
+        'shadow_checks_scheduled': shadow_checks_scheduled,
+        'dispatch_failed': dispatch_failed,
+        'date_from': date_from.isoformat(),
+        'date_to': today.isoformat(),
+    }
 
 
 @shared_task(bind=True, max_retries=3, retry_backoff=True, queue='avito_update')
@@ -5250,18 +5684,81 @@ def fetch_stats_for_account_task(self, account_id: int, date_from_str: str, date
     from apps.marketplaces.services import StatsService
 
     try:
-        account = MarketplaceAccount.objects.select_related('tenant').get(pk=account_id)
+        account = MarketplaceAccount.objects.select_related('tenant').get(
+            pk=account_id,
+            is_active=True,
+            tenant__is_active=True,
+            marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+        )
     except MarketplaceAccount.DoesNotExist:
         return
 
-    date_from = datetime.date.fromisoformat(date_from_str)
-    date_to = datetime.date.fromisoformat(date_to_str)
+    try:
+        date_from = datetime.date.fromisoformat(date_from_str)
+        date_to = datetime.date.fromisoformat(date_to_str)
+    except (TypeError, ValueError):
+        return {'account_id': account_id, 'status': 'invalid_date_range'}
+
+    if (
+        date_from > date_to
+        or (date_to - date_from).days >= StatsService.MAX_HISTORY_DAYS
+    ):
+        return {'account_id': account_id, 'status': 'invalid_date_range'}
 
     try:
         count = StatsService.fetch_for_account(account, date_from, date_to)
         return {'account_id': account_id, 'records': count}
     except Exception as exc:
         raise self.retry(exc=exc)
+
+
+def _retry_or_exhaust_autoload_setup(
+    task,
+    account: MarketplaceAccount,
+    *,
+    exc: Exception,
+    reason: str,
+):
+    """Persist a safe terminal outcome instead of losing the last retry."""
+
+    from apps.marketplaces.autoload_onboarding import (
+        EXHAUSTED,
+        RETRYING,
+        record_autoload_onboarding_state,
+    )
+
+    retries = int(getattr(task.request, 'retries', 0) or 0)
+    max_retries = int(getattr(task, 'max_retries', 0) or 0)
+    if retries >= max_retries:
+        record_autoload_onboarding_state(
+            account,
+            code=EXHAUSTED,
+            message=(
+                'MAP не смог завершить настройку после нескольких попыток. '
+                'Проверьте подключение и запустите повтор в настройках.'
+            ),
+        )
+        _write_log(
+            account.tenant,
+            'autoload_profile_setup',
+            'error',
+            f'Autoload onboarding exhausted for account {account.pk}: {reason}',
+        )
+        logger.error(
+            'Avito Autoload onboarding exhausted account_id=%s tenant_id=%s '
+            'reason=%s',
+            account.pk,
+            account.tenant_id,
+            reason,
+        )
+        return {'status': 'exhausted', 'reason': reason}
+
+    record_autoload_onboarding_state(
+        account,
+        code=RETRYING,
+        message='MAP повторяет безопасную настройку подключения к Avito.',
+    )
+    raise task.retry(exc=exc, countdown=backoff(retries))
 
 
 @shared_task(bind=True, max_retries=3, queue='avito_publish')
@@ -5284,6 +5781,17 @@ def setup_autoload_profile_task(self, account_id: int, tenant_id: int):
     except MarketplaceAccount.DoesNotExist:
         return
 
+    from apps.marketplaces.autoload_onboarding import (
+        clear_autoload_onboarding_state,
+        mark_autoload_onboarding_manual_review,
+        touch_autoload_onboarding_attempt,
+    )
+    from apps.marketplaces.feed_profile_migration import (
+        FeedProfileMigrationSafetyError,
+    )
+
+    touch_autoload_onboarding_attempt(account)
+
     owner = (
         TenantUser.objects
         .filter(tenant=account.tenant, role=TenantUser.ROLE_OWNER)
@@ -5297,7 +5805,12 @@ def setup_autoload_profile_task(self, account_id: int, tenant_id: int):
         timeout=300,
     )
     if not lock.acquire(blocking=False):
-        return {'status': 'locked'}
+        return _retry_or_exhaust_autoload_setup(
+            self,
+            account,
+            exc=RuntimeError('Autoload onboarding coordination lock is busy.'),
+            reason='lock_contended',
+        )
 
     try:
         if private_feed_fleet_enabled():
@@ -5314,15 +5827,120 @@ def setup_autoload_profile_task(self, account_id: int, tenant_id: int):
             result = 'legacy_configured'
         from apps.marketplaces.services import AvitoAccountStatusService
         AvitoAccountStatusService.refresh(account)
+        clear_autoload_onboarding_state(account)
         _write_log(
             account.tenant, 'autoload_profile_setup', 'ok',
             f'Autoload профиль Avito настроен для {account.name}',
         )
         return {'status': result}
+    except FeedProfileMigrationSafetyError:
+        mark_autoload_onboarding_manual_review(account.pk)
+        _write_log(
+            account.tenant,
+            'autoload_profile_setup',
+            'error',
+            f'Autoload onboarding requires manual review for account {account.pk}',
+        )
+        logger.error(
+            'Avito Autoload onboarding safety refusal account_id=%s tenant_id=%s',
+            account.pk,
+            account.tenant_id,
+        )
+        return {'status': 'manual_review'}
     except Exception as exc:
-        raise self.retry(exc=exc, countdown=backoff(self.request.retries))
+        return _retry_or_exhaust_autoload_setup(
+            self,
+            account,
+            exc=exc,
+            reason='setup_failed',
+        )
     finally:
         lock.release()
+
+
+@shared_task(queue='avito_update')
+def recover_autoload_profile_onboarding(limit: int = 100):
+    """Boundedly recover onboarding work whose first dispatch was lost."""
+
+    from apps.marketplaces.autoload_onboarding import (
+        DISPATCH_FAILED,
+        EXHAUSTED,
+        MANUAL_REVIEW,
+        RETRYING,
+        record_autoload_onboarding_state,
+        schedule_autoload_profile_setup,
+    )
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+        raise ValueError('limit must be an integer between 1 and 100.')
+
+    state_lookup = 'avito_status__notification_state__autoload_onboarding__code'
+    accounts = MarketplaceAccount.objects.filter(
+        tenant__is_active=True,
+        marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+        is_active=True,
+    ).select_related('tenant', 'avito_status', 'feed_endpoint')
+    if private_feed_fleet_enabled():
+        accounts = accounts.filter(
+            Q(feed_endpoint__isnull=True)
+            | Q(feed_endpoint__profile_state__in=(
+                MarketplaceFeedEndpoint.ProfileState.NEW,
+                MarketplaceFeedEndpoint.ProfileState.BRIDGE_READY,
+                MarketplaceFeedEndpoint.ProfileState.UPDATE_UNKNOWN,
+            )),
+        ).exclude(**{
+            f'{state_lookup}__in': (EXHAUSTED, MANUAL_REVIEW),
+        })
+    else:
+        accounts = accounts.filter(**{
+            f'{state_lookup}__in': (DISPATCH_FAILED, RETRYING),
+        })
+    candidates = list(accounts.order_by(
+        F('avito_status__last_attempted_at').asc(nulls_first=True),
+        'pk',
+    )[:limit])
+
+    scheduled = 0
+    dispatch_failed = 0
+    for account in candidates:
+        if private_feed_fleet_enabled() and not hasattr(account, 'feed_endpoint'):
+            try:
+                from apps.marketplaces.feed_profile_migration import (
+                    ensure_fleet_feed_endpoint,
+                )
+                ensure_fleet_feed_endpoint(account)
+            except Exception:
+                record_autoload_onboarding_state(
+                    account,
+                    code=EXHAUSTED,
+                    message=(
+                        'MAP не смог безопасно подготовить feed endpoint. '
+                        'Проверьте конфигурацию и запустите повтор.'
+                    ),
+                )
+                logger.exception(
+                    'Unable to reserve Avito feed endpoint account_id=%s '
+                    'tenant_id=%s',
+                    account.pk,
+                    account.tenant_id,
+                )
+                continue
+        record_autoload_onboarding_state(
+            account,
+            code=RETRYING,
+            message='MAP поставил безопасную настройку подключения в очередь.',
+        )
+        if schedule_autoload_profile_setup(account.pk, account.tenant_id):
+            scheduled += 1
+        else:
+            dispatch_failed += 1
+
+    return {
+        'selected': len(candidates),
+        'scheduled': scheduled,
+        'dispatch_failed': dispatch_failed,
+    }
 
 
 @shared_task(queue='avito_update')

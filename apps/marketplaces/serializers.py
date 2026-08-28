@@ -6,6 +6,10 @@ from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field, inline_serializer
 from rest_framework import serializers
 
+from apps.marketplaces.listing_delivery import listing_delivery_presentation
+from apps.marketplaces.autoload_onboarding import (
+    autoload_onboarding_presentation,
+)
 from apps.marketplaces.models import (
     AvitoAccountStatus,
     AvitoCategory,
@@ -129,11 +133,22 @@ class CategoryMappingWriteSerializer(serializers.ModelSerializer):
         fields = ['category_source', 'category_target', 'category_id', 'attributes_map']
 
 
+class AutoloadOnboardingSerializer(serializers.Serializer):
+    """Tenant-safe state of MAP's managed Autoload endpoint setup."""
+
+    state = serializers.CharField(read_only=True)
+    profile_state = serializers.CharField(read_only=True)
+    ready = serializers.BooleanField(read_only=True)
+    retryable = serializers.BooleanField(read_only=True)
+    message = serializers.CharField(read_only=True)
+
+
 class MarketplaceAccountSerializer(serializers.ModelSerializer):
     """Чтение: credentials не возвращаются никогда."""
 
     avito_status = serializers.SerializerMethodField()
     feed_endpoint_managed = serializers.SerializerMethodField()
+    autoload_onboarding = serializers.SerializerMethodField()
 
     class Meta:
         model = MarketplaceAccount
@@ -144,6 +159,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
             'autoload_active', 'autoload_checked_at',
             'autoload_subscription_ends_at',
             'feed_endpoint_managed',
+            'autoload_onboarding',
             'avito_status',
             'created_at',
         ]
@@ -161,6 +177,12 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
     def get_feed_endpoint_managed(self, obj) -> bool:
         """Сообщает UI, что URL защищён и полностью управляется MAP."""
         return hasattr(obj, 'feed_endpoint')
+
+    @extend_schema_field(AutoloadOnboardingSerializer)
+    def get_autoload_onboarding(self, obj):
+        """Отделяет готовность endpoint MAP от тарифа Avito."""
+        presentation = autoload_onboarding_presentation(obj)
+        return AutoloadOnboardingSerializer(presentation).data
 
 
 class MarketplacePlacementAddressSerializer(serializers.ModelSerializer):
@@ -185,12 +207,18 @@ class ListingSerializer(serializers.ModelSerializer):
     product_brand = serializers.CharField(source='product.brand', read_only=True)
     account_id = serializers.IntegerField(source='account.pk', read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    status_display = serializers.SerializerMethodField()
+    delivery_stage = serializers.SerializerMethodField()
+    provider_submission_started = serializers.SerializerMethodField()
+    lifecycle_actions_blocked = serializers.SerializerMethodField()
+    can_check_avito_status = serializers.SerializerMethodField()
 
     class Meta:
         model = Listing
         fields = [
-            'id', 'status', 'status_display',
+            'id', 'status', 'status_display', 'delivery_stage',
+            'provider_submission_started', 'lifecycle_actions_blocked',
+            'can_check_avito_status',
             'product_id', 'product_article', 'product_name', 'product_brand', 'account_id', 'account_name',
             'title', 'price_on_listing', 'external_id', 'external_url',
             'ad_type',
@@ -204,6 +232,21 @@ class ListingSerializer(serializers.ModelSerializer):
             'created_at',
         ]
         read_only_fields = fields
+
+    def get_status_display(self, obj) -> str:
+        return listing_delivery_presentation(obj).label
+
+    def get_delivery_stage(self, obj) -> str:
+        return listing_delivery_presentation(obj).stage
+
+    def get_provider_submission_started(self, obj) -> bool:
+        return listing_delivery_presentation(obj).provider_submission_started
+
+    def get_lifecycle_actions_blocked(self, obj) -> bool:
+        return listing_delivery_presentation(obj).lifecycle_actions_blocked
+
+    def get_can_check_avito_status(self, obj) -> bool:
+        return listing_delivery_presentation(obj).can_check_avito_status
 
 
 def _image_url(s3_key: str, fallback: str, request=None) -> str:

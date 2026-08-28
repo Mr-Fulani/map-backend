@@ -1230,6 +1230,7 @@ export const accountApi = {
   patch: (id: number, data: Record<string, unknown>) => api.patch(`/accounts/${id}/`, data),
   delete: (id: number) => api.delete(`/accounts/${id}/`),
   checkAutoload: (id: number) => api.get(`/accounts/${id}/autoload-status/`),
+  retryAutoload: (id: number) => api.post(`/accounts/${id}/autoload-status/`),
   listPlacementAddresses: (params?: Record<string, unknown>) =>
     api.get('/accounts/placement-addresses/', { params }),
   createPlacementAddress: (data: Record<string, unknown>) =>

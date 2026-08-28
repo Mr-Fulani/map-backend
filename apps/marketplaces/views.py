@@ -5,6 +5,7 @@ from decimal import Decimal
 from django.conf import settings
 from django.db import transaction
 from django.db.models import Sum
+from django.utils import timezone
 from drf_spectacular.utils import (
     OpenApiParameter,
     OpenApiTypes,
@@ -33,6 +34,7 @@ from apps.core.models import BackgroundJobDispatch, PaidIngressIntent
 from apps.marketplaces.serializers import (
     CategoryMappingSerializer,
     CategoryMappingWriteSerializer,
+    AutoloadOnboardingSerializer,
     AvitoAccountStatusSerializer,
     ListingDetailSerializer,
     ListingFieldsSerializer,
@@ -196,7 +198,21 @@ class MarketplaceAccountListView(APIView):
         try:
             account = MarketplaceAccountService.create(request.tenant, serializer.validated_data)
         except AccountAlreadyExists as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+            payload: dict[str, object] = {
+                'detail': str(exc),
+                'code': 'account_exists',
+            }
+            existing = (
+                MarketplaceAccount.objects.select_related(
+                    'avito_status', 'feed_endpoint',
+                ).filter(
+                    pk=exc.account_id,
+                    tenant=request.tenant,
+                ).first()
+            )
+            if existing is not None:
+                payload['account'] = MarketplaceAccountSerializer(existing).data
+            return Response(payload, status=status.HTTP_409_CONFLICT)
         except MarketplaceAccountFeedConflict as exc:
             return Response({
                 'status': 'error',
@@ -346,7 +362,7 @@ class MarketplaceAccountDetailView(APIView):
 
 @extend_schema(tags=['Accounts'])
 class AutoloadStatusView(APIView):
-    """GET /api/v1/accounts/{id}/autoload-status/ — проверить активирована ли Автозагрузка Avito."""
+    """Read Avito status and explicitly retry managed endpoint onboarding."""
 
     permission_classes = [IsAuthenticated, TenantAdminPermission]
 
@@ -365,6 +381,9 @@ class AutoloadStatusView(APIView):
                 ),
                 'stale': serializers.BooleanField(read_only=True),
                 'status': AvitoAccountStatusSerializer(read_only=True),
+                'autoload_onboarding': AutoloadOnboardingSerializer(
+                    read_only=True,
+                ),
                 'activate_url': serializers.URLField(
                     required=False,
                 ),
@@ -379,30 +398,43 @@ class AutoloadStatusView(APIView):
         capability URL не раскрывается: ``feed_url`` равен ``null``.
         """
         try:
-            account = MarketplaceAccount.objects.get(pk=pk, tenant=request.tenant)
+            account = MarketplaceAccount.objects.select_related(
+                'avito_status', 'feed_endpoint',
+            ).get(pk=pk, tenant=request.tenant)
         except MarketplaceAccount.DoesNotExist:
             return Response(status=status.HTTP_404_NOT_FOUND)
 
         from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
+        from apps.marketplaces.autoload_onboarding import (
+            autoload_onboarding_presentation,
+        )
         from apps.marketplaces.feed_cutover import private_feed_fleet_enabled
         from apps.marketplaces.feed_profile_migration import (
             ensure_fleet_feed_endpoint,
-            fleet_feed_onboarding_ready,
         )
         from apps.marketplaces.models import MarketplaceFeedEndpoint
 
         if private_feed_fleet_enabled():
-            ensure_fleet_feed_endpoint(account)
-            if not fleet_feed_onboarding_ready(account.pk):
-                from apps.marketplaces.tasks import setup_autoload_profile_task
-                transaction.on_commit(
-                    lambda: setup_autoload_profile_task.delay(
-                        account.pk,
-                        account.tenant_id,
-                    )
+            try:
+                ensure_fleet_feed_endpoint(account)
+            except Exception:
+                from apps.marketplaces.autoload_onboarding import (
+                    EXHAUSTED,
+                    record_autoload_onboarding_state,
+                )
+                record_autoload_onboarding_state(
+                    account,
+                    code=EXHAUSTED,
+                    message=(
+                        'MAP не смог безопасно подготовить feed endpoint. '
+                        'Повторите после проверки конфигурации.'
+                    ),
                 )
 
         status_obj = AvitoAccountStatusService.refresh(account)
+        account = MarketplaceAccount.objects.select_related(
+            'avito_status', 'feed_endpoint',
+        ).get(pk=account.pk)
         snapshot = AvitoAccountStatusSerializer(status_obj).data
         activated = status_obj.autoload_status == status_obj.AUTOLOAD_ENABLED
         feed_endpoint_managed = MarketplaceFeedEndpoint.objects.filter(
@@ -418,10 +450,90 @@ class AutoloadStatusView(APIView):
             'feed_endpoint_managed': feed_endpoint_managed,
             'stale': snapshot['profile_stale'],
             'status': snapshot,
+            'autoload_onboarding': AutoloadOnboardingSerializer(
+                autoload_onboarding_presentation(account),
+            ).data,
         }
         if not activated:
             payload['activate_url'] = 'https://www.avito.ru/autoload/settings'
         return Response(payload)
+
+    @extend_schema(
+        operation_id='marketplace_account_autoload_retry',
+        request=None,
+        responses={
+            200: AutoloadOnboardingSerializer,
+            202: AutoloadOnboardingSerializer,
+            409: AutoloadOnboardingSerializer,
+        },
+    )
+    def post(self, request, pk):
+        """Explicitly retry only a replay-safe Autoload onboarding state."""
+
+        try:
+            account = MarketplaceAccount.objects.select_related(
+                'avito_status', 'feed_endpoint',
+            ).get(pk=pk, tenant=request.tenant)
+        except MarketplaceAccount.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        from apps.marketplaces.autoload_onboarding import (
+            autoload_onboarding_presentation,
+            clear_autoload_onboarding_state,
+            schedule_autoload_profile_setup,
+        )
+        from apps.marketplaces.feed_cutover import private_feed_fleet_enabled
+        from apps.marketplaces.feed_profile_migration import (
+            ensure_fleet_feed_endpoint,
+        )
+
+        if private_feed_fleet_enabled():
+            try:
+                ensure_fleet_feed_endpoint(account)
+            except Exception:
+                from apps.marketplaces.autoload_onboarding import (
+                    EXHAUSTED,
+                    record_autoload_onboarding_state,
+                )
+                record_autoload_onboarding_state(
+                    account,
+                    code=EXHAUSTED,
+                    message=(
+                        'MAP не смог безопасно подготовить feed endpoint. '
+                        'Повторите после проверки конфигурации.'
+                    ),
+                )
+                account = MarketplaceAccount.objects.select_related(
+                    'avito_status', 'feed_endpoint',
+                ).get(pk=account.pk)
+                presentation = autoload_onboarding_presentation(account)
+                return Response(
+                    AutoloadOnboardingSerializer(presentation).data,
+                    status=status.HTTP_409_CONFLICT,
+                )
+        account = MarketplaceAccount.objects.select_related(
+            'avito_status', 'feed_endpoint',
+        ).get(pk=account.pk)
+        presentation = autoload_onboarding_presentation(account)
+        if presentation.ready:
+            return Response(AutoloadOnboardingSerializer(presentation).data)
+        if presentation.state == 'manual_review':
+            return Response(
+                AutoloadOnboardingSerializer(presentation).data,
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        clear_autoload_onboarding_state(account)
+        schedule_autoload_profile_setup(account.pk, account.tenant_id)
+        account = MarketplaceAccount.objects.select_related(
+            'avito_status', 'feed_endpoint',
+        ).get(pk=account.pk)
+        return Response(
+            AutoloadOnboardingSerializer(
+                autoload_onboarding_presentation(account),
+            ).data,
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 @extend_schema(tags=['Accounts'])
@@ -672,7 +784,7 @@ class ListingListView(APIView):
         qs = (
             Listing.objects.filter(tenant=request.tenant, account__is_active=True)
             .exclude(status=Listing.STATUS_DELETED)
-            .select_related('product', 'account')
+            .select_related('product', 'account', 'feed_run')
             .order_by('-created_at')
         )
 
@@ -1241,7 +1353,7 @@ class AnalyticsView(APIView):
     )
     def get(self, request):
         """Возвращает сводку и помесячную/ежедневную статистику просмотров."""
-        today = datetime.date.today()
+        today = timezone.localdate()
         date_from_str = request.query_params.get('date_from', '')
         date_to_str = request.query_params.get('date_to', '')
 
@@ -1258,6 +1370,16 @@ class AnalyticsView(APIView):
             return Response(
                 {'status': 'error', 'code': 'invalid_date',
                  'detail': 'Формат даты: YYYY-MM-DD'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if date_from > date_to:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'invalid_date_range',
+                    'detail': 'Дата начала не может быть позже даты окончания',
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 

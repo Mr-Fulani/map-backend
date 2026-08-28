@@ -374,7 +374,7 @@ class ProductDetailView(APIView):
         try:
             product = Product.objects.select_related('catalog_category', 'catalog_classification').prefetch_related(
                 'images', 'attributes', 'cross_codes', 'fitments', 'enrichment_facts',
-                'parse_jobs', 'listings__account',
+                'parse_jobs', 'listings__account', 'listings__feed_run',
             ).get(
                 pk=pk, tenant=request.tenant
             )
