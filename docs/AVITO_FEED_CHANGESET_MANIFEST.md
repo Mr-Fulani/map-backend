@@ -269,12 +269,12 @@ Foundation merged через PR `#246` и deployed exact commit `2e9958c` с
 settings. Deploy кода выполняется только с прежними legacy-флагами;
 `dual_write` — отдельный rollout после release gate.
 
-## P6 — private artifacts и fleet onboarding, миграции 0029–0030 — завершён
+## P6 — private artifacts и fleet onboarding, миграции 0029–0031 — завершён
 
 Основные файлы:
 
-- `0029_private_feed_artifacts` и `0030_private_feed_artifact_guards`,
-  свёрнутые поверх production `0028`;
+- `0029_private_feed_artifacts`, `0030_private_feed_artifact_guards` и
+  точечная runtime-коррекция `0031_live_private_successor_guard`;
 - feed_artifact_storage.py, feed_artifact_promotion.py,
   feed_artifact_serving.py, feed_artifact_put_reconciliation.py;
 - feed_artifact_clients.py, feed_artifact_canary.py и ручная bounded
