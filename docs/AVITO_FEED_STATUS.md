@@ -60,7 +60,8 @@ P0–P6 внедрены. Новая цепочка Avito является шт�
 
 До отдельного нового решения запрещено:
 
-- добавлять миграции после P6 `0030` или новые режимы;
+- добавлять миграции после точечной P6 runtime-коррекции `0031` или новые
+  режимы;
 - продолжать `0039`, retention delete, автоматическое удаление файлов или GC;
 - удалять, отвязывать или перезаписывать artifact/evidence записи и S3-версии;
 - выполнять массовую миграцию старых профилей отдельным sweep-процессом;
@@ -938,7 +939,7 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
 | P3 durable feed foundation `0023`–`0024` | `ENABLED`, run сейчас `durable` |
 | P4 stable endpoint/profile `0025` | `ENABLED` в штатном onboarding |
 | P5 feed-intent foundation/activation `0026`–`0028` | `ENABLED`, ingress сейчас `dual_write` |
-| P6 private artifacts и fleet onboarding `0029`–`0030` | `ENABLED`, PR `#249`–`#256`, production `0762ab5` |
+| P6 private artifacts и fleet onboarding `0029`–`0031` | `ENABLED`; `0031` отдельно исправляет только live successor guard, без нового режима |
 | P7 cleanup/GC/0039 | `FROZEN` |
 
 Физическое разделение не выполняется автоматически: общие файлы
@@ -955,6 +956,13 @@ PR `#234` merged в `1f053674617c491abeeac60a8afe7376943aa5bb`. PR CI run
   ledger;
 - `0030_private_feed_artifact_guards` — PostgreSQL-защита promotion,
   exact-version serving и rollback.
+
+После production-наблюдения 2026-08-28 отдельно активирована точечная
+`0031_live_private_successor_guard`: исходный guard разрешал первую private
+generation из legacy bridge, но отвергал следующую immutable generation уже
+у живого `private_generation` endpoint до создания PUT ledger. Миграция меняет
+только этот endpoint-state predicate; все account/tenant/claim/revision,
+payload, predecessor и VersionId fences остаются прежними.
 
 Основной пакет merged через PR `#249`; follow-up/recovery PR `#250`–`#254`
 устранили реальные несовпадения Avito schema/schedule, Yandex ACL owner и
