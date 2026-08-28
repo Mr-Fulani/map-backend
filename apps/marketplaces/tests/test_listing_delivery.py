@@ -107,7 +107,7 @@ def test_preparing_run_is_not_presented_as_provider_processing():
     assert delivery.stage == 'feed_preparing'
     assert delivery.label == 'Фид готовится к отправке'
     assert delivery.provider_submission_started is False
-    assert delivery.lifecycle_actions_blocked is True
+    assert delivery.lifecycle_actions_blocked is False
 
 
 def test_preparing_retry_exposes_delay_and_next_attempt():
@@ -129,11 +129,33 @@ def test_preparing_retry_exposes_delay_and_next_attempt():
         'Avito временно не вернул состояние предыдущей автозагрузки.'
     )
     assert data['provider_submission_started'] is False
-    assert data['lifecycle_actions_blocked'] is True
+    assert data['lifecycle_actions_blocked'] is False
     assert data['can_check_avito_status'] is False
 
 
-def test_polling_run_is_presented_as_avito_processing_and_locked():
+def test_pending_content_edit_during_preparation_creates_successor_revision():
+    listing = _listing('preparing-edit')
+    run = _feed_run(listing, MarketplaceFeedRun.State.PREPARING)
+
+    ListingService.update_content(
+        listing.pk,
+        listing.tenant,
+        'Актуальный заголовок',
+        'Актуальное описание',
+    )
+
+    listing.refresh_from_db()
+    listing.account.refresh_from_db()
+    run.refresh_from_db()
+    assert listing.title == 'Актуальный заголовок'
+    assert listing.description_ai == 'Актуальное описание'
+    assert listing.feed_run_id == run.pk
+    assert listing.account.feed_intent_revision == 1
+    assert listing.account.feed_intent_due_at is not None
+    assert run.state == MarketplaceFeedRun.State.PREPARING
+
+
+def test_polling_run_is_presented_as_avito_processing_with_successor_edits_allowed():
     listing = _listing('polling')
     _feed_run(listing, MarketplaceFeedRun.State.POLLING)
 
@@ -142,8 +164,19 @@ def test_polling_run_is_presented_as_avito_processing_and_locked():
     assert data['status_display'] == 'Avito обрабатывает фид'
     assert data['delivery_stage'] == 'avito_processing'
     assert data['provider_submission_started'] is True
-    assert data['lifecycle_actions_blocked'] is True
+    assert data['lifecycle_actions_blocked'] is False
     assert data['can_check_avito_status'] is True
+
+
+def test_ambiguous_submission_blocks_destructive_lifecycle_until_reconciled():
+    listing = _listing('submit-unknown')
+    _feed_run(listing, MarketplaceFeedRun.State.SUBMIT_UNKNOWN)
+
+    delivery = listing_delivery_presentation(listing)
+
+    assert delivery.stage == 'submission_unknown'
+    assert delivery.provider_submission_started is True
+    assert delivery.lifecycle_actions_blocked is True
 
 
 def test_uncertain_run_requires_manual_review_and_disables_noop_check():
@@ -169,19 +202,28 @@ def test_failed_run_is_visible_and_no_longer_lifecycle_locked():
     assert delivery.lifecycle_actions_blocked is False
 
 
+@pytest.mark.parametrize(
+    'state',
+    [
+        MarketplaceFeedRun.State.PREPARING,
+        MarketplaceFeedRun.State.POLLING,
+        MarketplaceFeedRun.State.REPORTING,
+        MarketplaceFeedRun.State.RETRY_WAIT,
+    ],
+)
 @pytest.mark.parametrize('operation', ['archive', 'delete', 'account_move'])
-def test_provider_owned_pending_listing_blocks_destructive_lifecycle(operation):
-    listing = _listing(f'blocked-{operation}')
-    run = _feed_run(listing, MarketplaceFeedRun.State.POLLING)
+def test_known_generation_accepts_successor_lifecycle_intent(state, operation):
+    listing = _listing(f'successor-{state}-{operation}')
+    run = _feed_run(listing, state)
     replacement = MarketplaceAccount.objects.create(
         tenant=listing.tenant,
         name='Replacement',
         marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
-        external_id=f'replacement-{operation}',
+        external_id=f'replacement-{state}-{operation}',
         credentials_enc=b'opaque-replacement-credentials',
     )
 
-    with pytest.raises(InvalidListingStatus, match='текущая отправка'):
+    with patch('apps.marketplaces.services.transaction.on_commit'):
         if operation == 'archive':
             ListingService.archive(listing.pk, listing.tenant)
         elif operation == 'delete':
@@ -194,23 +236,62 @@ def test_provider_owned_pending_listing_blocks_destructive_lifecycle(operation):
             )
 
     listing.refresh_from_db()
-    assert listing.status == Listing.STATUS_PENDING
-    assert listing.account_id != replacement.pk
-    assert listing.feed_run_id == run.pk
+    listing.account.refresh_from_db()
+    if operation == 'archive':
+        assert listing.status == Listing.STATUS_ARCHIVING
+        assert listing.account.feed_intent_revision == 1
+        assert listing.feed_run_id == run.pk
+    elif operation == 'delete':
+        assert listing.status == Listing.STATUS_DELETED
+        assert listing.account.feed_intent_revision == 1
+        assert listing.feed_run_id == run.pk
+    else:
+        original_account = MarketplaceAccount.all_objects.get(pk=run.account_id)
+        replacement.refresh_from_db()
+        assert listing.status == Listing.STATUS_PENDING
+        assert listing.account_id == replacement.pk
+        assert listing.feed_run_id is None
+        assert original_account.feed_intent_revision == 1
+        assert replacement.feed_intent_revision == 1
 
 
-def test_preparing_generation_blocks_archive_before_worker_can_submit_it():
-    listing = _listing('preparing-race')
-    run = _feed_run(listing, MarketplaceFeedRun.State.PREPARING)
+@pytest.mark.parametrize(
+    'state',
+    [
+        MarketplaceFeedRun.State.SUBMIT_UNKNOWN,
+        MarketplaceFeedRun.State.OUTCOME_UNCERTAIN,
+    ],
+)
+@pytest.mark.parametrize('operation', ['archive', 'delete', 'account_move'])
+def test_unknown_provider_outcome_blocks_destructive_lifecycle(state, operation):
+    listing = _listing(f'blocked-{state}-{operation}')
+    run = _feed_run(listing, state)
+    replacement = MarketplaceAccount.objects.create(
+        tenant=listing.tenant,
+        name='Replacement',
+        marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+        external_id=f'blocked-replacement-{state}-{operation}',
+        credentials_enc=b'opaque-replacement-credentials',
+    )
 
-    with pytest.raises(InvalidListingStatus, match='текущая отправка'):
-        ListingService.archive(listing.pk, listing.tenant)
+    with pytest.raises(InvalidListingStatus, match='неизвестно, принял ли'):
+        if operation == 'archive':
+            ListingService.archive(listing.pk, listing.tenant)
+        elif operation == 'delete':
+            ListingService.delete(listing.pk, listing.tenant)
+        else:
+            ListingService.update_listing_fields(
+                listing.pk,
+                listing.tenant,
+                {'account_id': replacement.pk},
+            )
 
     listing.refresh_from_db()
     run.refresh_from_db()
     assert listing.status == Listing.STATUS_PENDING
+    assert listing.account_id != replacement.pk
     assert listing.feed_run_id == run.pk
-    assert run.state == MarketplaceFeedRun.State.PREPARING
+    assert run.state == state
 
 
 def test_local_pending_without_run_can_be_cancelled_before_submission():
@@ -224,7 +305,7 @@ def test_local_pending_without_run_can_be_cancelled_before_submission():
     assert listing.status == Listing.STATUS_ARCHIVING
 
 
-def test_legacy_pending_without_generation_fails_closed(settings):
+def test_legacy_pending_without_unknown_boundary_keeps_old_lifecycle_behavior(settings):
     listing = _listing('legacy')
     settings.AVITO_STATUS_LIFECYCLE_MODE = 'legacy'
     settings.MARKETPLACE_FEED_RUN_MODE = 'legacy'
@@ -232,13 +313,33 @@ def test_legacy_pending_without_generation_fails_closed(settings):
 
     delivery = listing_delivery_presentation(listing)
     assert delivery.stage == 'legacy_delivery'
-    assert delivery.lifecycle_actions_blocked is True
+    assert delivery.lifecycle_actions_blocked is False
 
-    with pytest.raises(InvalidListingStatus, match='текущая отправка'):
+    with patch('apps.marketplaces.services.transaction.on_commit'):
         ListingService.delete(listing.pk, listing.tenant)
 
     listing.refresh_from_db()
-    assert listing.status == Listing.STATUS_PENDING
+    assert listing.status == Listing.STATUS_DELETED
+
+
+def test_legacy_unknown_provider_boundary_still_fails_closed(settings):
+    listing = _listing('legacy-unknown')
+    settings.AVITO_STATUS_LIFECYCLE_MODE = 'legacy'
+    settings.MARKETPLACE_FEED_RUN_MODE = 'legacy'
+    settings.MARKETPLACE_FEED_INGRESS_MODE = 'legacy'
+    MarketplaceAccount.objects.filter(pk=listing.account_id).update(
+        feed_intent_revision=1,
+        feed_intent_dispatched_revision=0,
+        feed_intent_due_at=None,
+    )
+    listing.refresh_from_db()
+
+    delivery = listing_delivery_presentation(listing)
+    assert delivery.stage == 'legacy_delivery'
+    assert delivery.lifecycle_actions_blocked is True
+
+    with pytest.raises(InvalidListingStatus, match='неизвестно, принял ли'):
+        ListingService.delete(listing.pk, listing.tenant)
 
 
 def test_manual_check_is_rejected_until_provider_submission_starts():

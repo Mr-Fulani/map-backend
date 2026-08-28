@@ -529,7 +529,7 @@ export default function ListingsPage() {
                         variant="ghost"
                         className="h-8 w-8 p-0"
                         title={l.lifecycle_actions_blocked
-                          ? 'Дождитесь итогового результата текущей отправки Avito'
+                          ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
                           : 'В архив'}
                         onClick={() => runListingAction(l, 'archive')}
                         disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
@@ -559,7 +559,7 @@ export default function ListingsPage() {
                         variant="ghost"
                         className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                         title={l.lifecycle_actions_blocked
-                          ? 'Дождитесь итогового результата текущей отправки Avito'
+                          ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
                           : 'Удалить'}
                         onClick={() => runListingAction(l, 'delete')}
                         disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
@@ -683,7 +683,7 @@ export default function ListingsPage() {
                             variant="ghost"
                             className="h-8 w-8 p-0"
                             title={l.lifecycle_actions_blocked
-                              ? 'Дождитесь итогового результата текущей отправки Avito'
+                              ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
                               : 'В архив'}
                             onClick={() => runListingAction(l, 'archive')}
                             disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
@@ -713,7 +713,7 @@ export default function ListingsPage() {
                             variant="ghost"
                             className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                             title={l.lifecycle_actions_blocked
-                              ? 'Дождитесь итогового результата текущей отправки Avito'
+                              ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
                               : 'Удалить'}
                             onClick={() => runListingAction(l, 'delete')}
                             disabled={rowActionId === l.id || l.lifecycle_actions_blocked}

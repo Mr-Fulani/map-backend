@@ -59,10 +59,20 @@ def durable_feed_run_enabled(account_id: int) -> bool:
     ) or private_feed_cutover_enabled(account_id)
 
 
-def feed_run_may_publish(run: MarketplaceFeedRun | None) -> bool:
-    """Return whether provider work may still publish the immutable payload."""
+def _legacy_submission_outcome_unknown(listing: Listing) -> bool:
+    """Return whether the account cursor proves an unresolved legacy POST.
 
-    return run is not None and run.state in MarketplaceFeedRun.OWNERSHIP_STATES
+    A normal legacy PENDING row kept the old editable lifecycle.  Only the
+    explicit ``desired > dispatched`` plus ``due=NULL`` boundary means that a
+    provider POST may have crossed the wire and cannot yet be followed safely.
+    """
+
+    account = listing.account
+    return (
+        account.feed_intent_revision
+        > account.feed_intent_dispatched_revision
+        and account.feed_intent_due_at is None
+    )
 
 
 def _provider_submission_started(run: MarketplaceFeedRun) -> bool:
@@ -125,13 +135,15 @@ def listing_delivery_presentation(
                 lifecycle_actions_blocked=False,
                 can_check_avito_status=False,
             )
-        # Legacy delivery has no immutable generation membership.  Be honest
-        # about that ambiguity and fail closed for destructive lifecycle edits.
+        # Preserve the old lifecycle behavior unless the account cursor proves
+        # a genuinely ambiguous provider boundary.
         return ListingDeliveryPresentation(
             stage='legacy_delivery',
             label='Отправляется или обрабатывается Avito',
             provider_submission_started=True,
-            lifecycle_actions_blocked=True,
+            lifecycle_actions_blocked=_legacy_submission_outcome_unknown(
+                listing,
+            ),
             can_check_avito_status=True,
         )
 
@@ -142,7 +154,7 @@ def listing_delivery_presentation(
                 stage='delivery_retry',
                 label='Отправка временно задержана, повторяем',
                 provider_submission_started=False,
-                lifecycle_actions_blocked=feed_run_may_publish(run),
+                lifecycle_actions_blocked=False,
                 can_check_avito_status=False,
                 retry_at=run.next_attempt_at,
                 retry_reason=_retry_reason(run.last_error),
@@ -151,7 +163,7 @@ def listing_delivery_presentation(
             stage='feed_preparing',
             label='Фид готовится к отправке',
             provider_submission_started=False,
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=False,
             can_check_avito_status=False,
         )
     if state == MarketplaceFeedRun.State.SUBMIT_UNKNOWN:
@@ -159,7 +171,7 @@ def listing_delivery_presentation(
             stage='submission_unknown',
             label='Проверяем, принял ли Avito фид',
             provider_submission_started=True,
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=True,
             can_check_avito_status=True,
         )
     if state == MarketplaceFeedRun.State.POLLING:
@@ -167,7 +179,7 @@ def listing_delivery_presentation(
             stage='avito_processing',
             label='Avito обрабатывает фид',
             provider_submission_started=True,
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=False,
             can_check_avito_status=True,
         )
     if state == MarketplaceFeedRun.State.REPORTING:
@@ -175,7 +187,7 @@ def listing_delivery_presentation(
             stage='avito_reporting',
             label='Получаем результат Avito',
             provider_submission_started=True,
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=False,
             can_check_avito_status=True,
         )
     if state == MarketplaceFeedRun.State.RETRY_WAIT:
@@ -183,7 +195,7 @@ def listing_delivery_presentation(
             stage='delivery_retry',
             label='Отправка временно задержана, повторяем',
             provider_submission_started=_provider_submission_started(run),
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=False,
             can_check_avito_status=True,
             retry_at=run.next_attempt_at,
         )
@@ -192,7 +204,7 @@ def listing_delivery_presentation(
             stage='manual_review',
             label='Результат Avito требует ручной проверки',
             provider_submission_started=True,
-            lifecycle_actions_blocked=feed_run_may_publish(run),
+            lifecycle_actions_blocked=True,
             can_check_avito_status=False,
         )
     if state == MarketplaceFeedRun.State.FAILED:
