@@ -11,7 +11,7 @@ from apps.core.models import BackgroundJobDispatch
 from apps.datasources.encryption import encrypt
 from apps.marketplaces.adapters.avito.adapter import (
     AmbiguousFeedSubmissionError,
-    FeedItemErrorPage,
+    FeedItemOutcomePage,
     FeedUploadError,
 )
 from apps.marketplaces.feed_workflow import (
@@ -636,9 +636,10 @@ def test_reporting_rechecks_exact_upload_and_old_report_cannot_reject(
             return_value=_latest_upload(reporting, upload_id='upload-old'),
         ),
         patch(
-            'apps.marketplaces.tasks.AvitoAdapter.get_feed_item_error_page',
-            return_value=FeedItemErrorPage(
+            'apps.marketplaces.tasks.AvitoAdapter.get_current_feed_item_outcome_page',
+            return_value=FeedItemOutcomePage(
                 errors={str(listing.publish_idempotency_key): 'old error'},
+                external_ids={},
                 next_page=None,
             ),
         ) as get_report,
@@ -729,8 +730,12 @@ def test_report_terminal_transition_persists_one_durable_digest_leaf(
             ],
         ),
         patch(
-            'apps.marketplaces.tasks.AvitoAdapter.get_feed_item_error_page',
-            return_value=FeedItemErrorPage(errors={}, next_page=None),
+            'apps.marketplaces.tasks.AvitoAdapter.get_current_feed_item_outcome_page',
+            return_value=FeedItemOutcomePage(
+                errors={},
+                external_ids={},
+                next_page=None,
+            ),
         ),
         patch('apps.core.dispatch.publish_dispatch', return_value=False),
     ):
