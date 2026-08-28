@@ -320,6 +320,11 @@ def test_preparing_recovery_fails_before_boundary_without_provider_call(
     account = _account('preparing-recovery')
     _listing(account, 'one')
     run = create_or_supersede_feed_run(account.pk, now=timezone.now())
+    MarketplaceFeedRun.objects.filter(pk=run.run_id).update(
+        last_error=(
+            'private_artifact_preflight: private storage client bootstrap failed'
+        ),
+    )
 
     with (
         patch('apps.marketplaces.tasks.AvitoAdapter.get_latest_upload') as latest,
@@ -335,6 +340,9 @@ def test_preparing_recovery_fails_before_boundary_without_provider_call(
     assert result['status'] == 'failed_pre_submission'
     assert current.state == MarketplaceFeedRun.State.FAILED
     assert current.submitted_at is None
+    assert current.last_error == (
+        'private_artifact_preflight: private storage client bootstrap failed'
+    )
     latest.assert_not_called()
 
 

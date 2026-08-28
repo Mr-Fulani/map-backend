@@ -74,7 +74,10 @@ services:
       context: .
       args:
         REQUIREMENTS: requirements/prod.txt
-    command: celery -A config worker -Q sync_import,avito_publish,avito_update,avito_price,avito_delete,ai_generate,notifications,billing,part_parsing,part_parsing_bulk --concurrency=2 -n worker-main@%h -l warning
+    # One prefork child leaves headroom for private-feed SDK initialization
+    # inside this fixed 448 MiB cgroup budget. Production recorded repeated
+    # memory.max pressure while two children were resident.
+    command: celery -A config worker -Q sync_import,avito_publish,avito_update,avito_price,avito_delete,ai_generate,notifications,billing,part_parsing,part_parsing_bulk --concurrency=1 -n worker-main@%h -l warning
     cpus: "1.5"
     mem_limit: 448m
     pids_limit: 256
