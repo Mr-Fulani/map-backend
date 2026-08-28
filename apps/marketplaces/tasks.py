@@ -1587,118 +1587,38 @@ def request_feed_flush(account) -> None:
 
 def _validate_feed_batch(listings: list) -> list:
     """
-    Отсеивает из партии объявления, которые Avito точно не примет, с понятным
-    пояснением тенанту; по «мягким» проблемам (нет OEM, незаполненные поля) только
-    предупреждает. Возвращает валидную часть партии.
+    Defensive worker-side preflight using the same field contract as the API.
+
+    API publish normally blocks red errors before enqueue. This second check
+    protects direct/replayed tasks and keeps yellow optional warnings visible
+    without stopping the rest of a batch.
     """
     from apps.marketplaces.adapters.avito.feed_builder import (
-        AVITO_SUBTYPE_LABELS, blocking_missing_avito_fields, get_contact_fields,
-        format_avito_field_requirements, has_resolved_category,
-        missing_required_avito_fields, product_brand_is_missing, product_has_oem,
-        unknown_brand_details,
+        avito_publication_preflight,
     )
     valid = []
-    catalog_refresh_attempted = False
     for item in listings:
-        manager_name, contact_phone = get_contact_fields(item)
-        if not manager_name or not contact_phone:
-            _reject_listing(
-                item,
-                'Не указано контактное лицо и/или телефон. Заполните их в профиле '
-                'аккаунта Avito (Настройки → Маркетплейсы) или в самом листинге — '
-                'Avito не публикует объявления без контактов.',
+        field_errors, field_warnings = avito_publication_preflight(item)
+        if field_errors:
+            reason = ' '.join(
+                message
+                for messages in field_errors.values()
+                for message in messages
             )
+            _reject_listing(item, reason)
             continue
-        # Производитель обязателен для новых запчастей и валидируется по каталогу
-        # Avito: пустой бренд уходил фолбэком «имя тенанта» и отклонялся с
-        # непонятным «Значение не найдено». Отсекаем сразу с понятной причиной.
-        if product_brand_is_missing(item):
-            _reject_listing(
-                item,
-                'У товара не указан производитель. Для новой запчасти это обязательное '
-                'поле: без него Avito отклонит объявление. Укажите производителя '
-                'в карточке товара, проверьте написание по справочнику Avito и '
-                'опубликуйте объявление снова.',
+
+        if field_warnings:
+            warning = ' '.join(
+                message
+                for messages in field_warnings.values()
+                for message in messages
             )
-            continue
-        # Бренд, которого нет в каталоге Avito → на проверку тенанту, остальная
-        # партия публикуется без задержки. Устаревший справочник один раз за партию
-        # обновляем вне расписания и затем проверяем бренд повторно.
-        unknown_brand = unknown_brand_details(item)
-        if unknown_brand is not None and not catalog_refresh_attempted:
-            from apps.marketplaces.adapters.avito.brand_catalog import catalog_status
-            if catalog_status()['stale']:
-                catalog_refresh_attempted = True
-                try:
-                    from apps.marketplaces.adapters.avito.brand_sync import sync_brand_catalog
-                    sync_brand_catalog(item.account)
-                except Exception as exc:
-                    _write_log(
-                        item.tenant, 'listing_publish', 'warn',
-                        f'Не удалось обновить справочник брендов Avito: {exc}. '
-                        'Используется последняя рабочая версия.',
-                        listing=item,
-                    )
-                unknown_brand = unknown_brand_details(item)
-        if unknown_brand is not None:
-            brand, suggestions = unknown_brand
-            hint = ''
-            if suggestions:
-                variants = ', '.join(f'«{suggestion}»' for suggestion in suggestions)
-                hint = (
-                    f' В справочнике есть похожее название: {variants}. Выбирайте его '
-                    'только в том случае, если это действительно тот же производитель.'
-                )
-            _send_listing_to_review(
-                item,
-                f'Avito не распознал производителя «{brand}». Для новой запчасти '
-                f'объявление с таким значением будет отклонено. Проверьте написание '
-                f'производителя в карточке товара.{hint} Если название указано верно, '
-                f'обратитесь в поддержку Avito с просьбой добавить производителя '
-                f'в справочник. Остальные объявления продолжают публиковаться.',
-            )
-            continue
-        # Под-вид детали (Подкатегория 3) обязателен для листьев Двигатель/Кузов/
-        # Трансмиссия — без него Avito отклоняет объявление. Отсекаем сразу
-        # с понятной причиной, а не постфактум из отчёта автозагрузки.
-        blocking = blocking_missing_avito_fields(item)
-        if blocking:
-            labels = ', '.join(f'«{AVITO_SUBTYPE_LABELS[tag]}»' for tag in blocking)
-            category = getattr(item.product, 'catalog_category', None)
-            category_name = getattr(category, 'name', '') or 'категории товара'
-            _reject_listing(
-                item,
-                f'Для категории «{category_name}» нужно точнее указать вид детали: '
-                f'{labels}. Без этого Avito отклонит объявление. Откройте листинг, '
-                f'в поле «Категория Avito» выберите конечную подкатегорию и '
-                f'опубликуйте объявление снова.',
-            )
-            continue
-        # Категория не определена → фид уйдёт с дефолтной Avito-категорией и часто
-        # отклоняется («ошибка описания»). Раньше тут была тишина — предупреждаем.
-        if not has_resolved_category(item):
             _write_log(
-                item.tenant, 'listing_publish', 'warn',
-                f'У «{item.title or item.product.name}» не определена категория — '
-                f'Avito может отклонить объявление («ошибка описания»). Укажите категорию у товара.',
-                listing=item,
-            )
-        if not product_has_oem(item):
-            _write_log(
-                item.tenant, 'listing_publish', 'warn',
-                f'У «{item.title or item.product.name}» нет OEM-номера — в объявление '
-                f'подставлен артикул {item.product.article}. Укажите OEM вручную при необходимости.',
-                listing=item,
-            )
-        missing_fields = missing_required_avito_fields(item)
-        if missing_fields:
-            readable_fields = format_avito_field_requirements(missing_fields)
-            _write_log(
-                item.tenant, 'listing_publish', 'warn',
-                f'Для товара «{item.title or item.product.name}» Avito требует '
-                f'дополнительные характеристики: {readable_fields}. Без них объявление '
-                f'может быть отклонено. Передайте значения администратору или в '
-                f'поддержку MAP для настройки выгрузки.',
+                item.tenant,
+                'listing_publish',
+                'warn',
+                f'Перед отправкой «{item.title or item.product.name}»: {warning}',
                 listing=item,
             )
         valid.append(item)

@@ -123,6 +123,7 @@ class _FeedBuildContext:
         self._addresses = {}
         self._default_addresses = {}
         self._images_by_product = {}
+        self._brand_lookups = {}
 
     def prepare_batch(self, listings) -> None:
         # These relations are batch-local. Keeping prior model instances would
@@ -264,6 +265,13 @@ class _FeedBuildContext:
         if key not in self._category_specs:
             self._category_specs[key] = _resolve_avito_spec(category, self.parent_of)
         return self._category_specs[key]
+
+    def brand_for(self, listing, *, spec) -> str:
+        return _get_brand(
+            listing,
+            spec=spec,
+            lookup_cache=self._brand_lookups,
+        )
 
     @staticmethod
     def _register_explicit_address(address, addresses) -> None:
@@ -559,9 +567,14 @@ def _build_feed_ad(listing, context: _FeedBuildContext):
     )
     if subtype_tag and subtype_value:
         ET.SubElement(ad, subtype_tag).text = subtype_value
-    # Brand (Производитель) и OEM (Номер детали) — обязательны для запчастей.
-    ET.SubElement(ad, 'Brand').text = _get_brand(listing)
-    ET.SubElement(ad, 'OEM').text = _get_oem(listing)
+    # Необязательные Brand/OEM нельзя заполнять сомнительными fallback-значениями:
+    # Avito валидирует даже переданный optional field и может отклонить весь Ad.
+    brand = context.brand_for(listing, spec=spec)
+    if brand:
+        ET.SubElement(ad, 'Brand').text = brand
+    oem = _get_oem(listing)
+    if oem:
+        ET.SubElement(ad, 'OEM').text = oem
     _add_placement(
         ad,
         listing,
@@ -734,56 +747,64 @@ def _get_goods_type(listing, *, mapping=_MISSING, spec=_MISSING) -> str:
     )
 
 
-def _get_brand(listing) -> str:
-    """
-    Производитель (Brand) запчасти.
+def _brand_is_required(listing, *, spec=_MISSING) -> bool:
+    """Требует ли выбранный лист Avito поле Brand."""
+    if spec is _MISSING:
+        spec = _avito_spec(listing)
+    return 'Brand' in (spec.get('required') or [])
 
-    Бренд товара; если пуст — fallback на название организации тенанта.
+
+def _brand_lookup(brand: str) -> dict:
+    from apps.marketplaces.adapters.avito.brand_catalog import lookup_brand
+    return lookup_brand(brand)
+
+
+def _get_brand(listing, *, spec=_MISSING, lookup_cache=None) -> str:
+    """
+    Безопасное значение производителя для XML.
+
+    Неизвестный бренд отправляется только когда поле действительно обязательно:
+    preflight тогда заблокирует публикацию и покажет поле тенанту. В optional
+    категории неизвестное значение пропускается, чтобы оно само не стало
+    причиной отклонения. Имя организации вместо производителя не подставляется.
     """
     brand = str(getattr(listing.product, 'brand', '') or '').strip()
-    if brand:
-        return brand
-    return str(getattr(getattr(listing, 'tenant', None), 'name', '') or '').strip()
+    if not brand:
+        return ''
+    if lookup_cache is not None and brand in lookup_cache:
+        lookup = lookup_cache[brand]
+    else:
+        lookup = _brand_lookup(brand)
+        if lookup_cache is not None:
+            lookup_cache[brand] = lookup
+    if lookup['known']:
+        return str(lookup.get('canonical') or brand)
+    return brand if _brand_is_required(listing, spec=spec) else ''
+
+
+def _oem_values(listing) -> list[str]:
+    """Непустые уникальные OEM-значения ровно в том виде, как хранит товар."""
+    values = []
+    for raw in (getattr(listing.product, 'oem_numbers', None) or []):
+        value = str(raw).strip()
+        if value and value not in values:
+            values.append(value)
+    return values
 
 
 def _get_oem(listing) -> str:
     """
-    Номер детали OEM.
+    Один однозначный OEM-номер, допустимый для XML Avito.
 
-    Приоритет: oem_numbers товара → артикул → сгенерированное значение
-    OEM-формата (когда нет ни OEM, ни артикула). При отсутствии настоящего
-    OEM тенант предупреждается отдельно в publish_listing_task.
+    Поле необязательное. Не подставляем артикул и не генерируем фиктивный OEM:
+    у аналогов настоящего OEM может не быть. Несколько найденных номеров также
+    не склеиваем — поле Avito имеет тип ``input`` и отклоняет запятые/пробелы.
     """
-    product = listing.product
-    oem = [str(x).strip() for x in (getattr(product, 'oem_numbers', None) or []) if str(x).strip()]
-    if oem:
-        return ', '.join(oem)
-    article = str(getattr(product, 'article', '') or '').strip()
-    if article:
-        return article
-    # A durable feed generation must be byte-for-byte reproducible after a
-    # worker crash.  A random fallback made the same saved Listing produce a
-    # different payload and therefore a different artifact SHA on every
-    # rebuild.  Listing primary keys are platform-wide stable; hash the value
-    # with an explicit domain/version instead of exposing the raw identifier.
-    listing_id = getattr(listing, 'pk', None)
-    if (
-        isinstance(listing_id, bool)
-        or not isinstance(listing_id, int)
-        or listing_id < 1
-    ):
-        raise ValueError(
-            'A saved listing is required for the deterministic OEM fallback.',
-        )
-    fallback = hashlib.sha256(
-        f'avito-oem-fallback:v1:{listing_id}'.encode('ascii'),
-    ).hexdigest()[:10].upper()
-    return f'NA{fallback}'
-
-
-def product_has_oem(listing) -> bool:
-    """True, если у товара есть настоящие OEM-номера (а не подставленный артикул)."""
-    return bool([x for x in (getattr(listing.product, 'oem_numbers', None) or []) if str(x).strip()])
+    values = _oem_values(listing)
+    if len(values) != 1:
+        return ''
+    value = values[0]
+    return value if value.isascii() and value.isalnum() else ''
 
 
 def _get_product_type(listing, *, mapping=_MISSING, spec=_MISSING) -> str:
@@ -803,12 +824,13 @@ def _get_product_type(listing, *, mapping=_MISSING, spec=_MISSING) -> str:
     )
 
 
-# Поля, которые build_feed формирует всегда. CompatibleCars Avito определяет сам
-# по названию/совместимости (объявления публикуются без него) — не считаем его дырой.
-_FEED_PROVIDED_TAGS = {
-    'Id', 'Title', 'Description', 'Price', 'Category', 'GoodsType', 'ProductType',
-    'SparePartType', 'AdType', 'Brand', 'OEM', 'Condition', 'Address', 'SellerAddressID',
-    'Images', 'CompatibleCars',
+# Поля, которые builder формирует независимо от category mapping. Address имеет
+# отдельный preflight по фактически разрешённому Address/SellerAddressID.
+# CompatibleCars Avito проверенно определяет по названию/совместимости, поэтому
+# отсутствие отдельного тега не считается локальной дырой.
+_FEED_ALWAYS_OR_PROVIDER_INFERRED_TAGS = {
+    'Id', 'Title', 'Description', 'Price', 'Category', 'GoodsType', 'AdType',
+    'Condition', 'Address', 'CompatibleCars',
 }
 
 
@@ -821,7 +843,15 @@ def missing_required_avito_fields(listing) -> list[str]:
     список тегов; пусто — если категория не сопоставлена или всё заполняется.
     """
     required = _avito_spec(listing).get('required') or []
-    provided = set(_FEED_PROVIDED_TAGS)
+    provided = set(_FEED_ALWAYS_OR_PROVIDER_INFERRED_TAGS)
+    if _get_product_type(listing):
+        provided.add('ProductType')
+    if _get_spare_part_type(listing):
+        provided.add('SparePartType')
+    if str(getattr(listing.product, 'brand', '') or '').strip():
+        provided.add('Brand')
+    if _get_oem(listing):
+        provided.add('OEM')
     subtype_tag, subtype_value = _get_part_subtype(listing)
     if subtype_tag and subtype_value:
         provided.add(subtype_tag)  # под-вид заполнен из дерева — не считаем дырой
@@ -897,6 +927,7 @@ AVITO_FIELD_LABELS = {
     'OtherDefects': 'другие повреждения',
     'PartsHindcarriageType': 'тип детали ходовой части',
     'Polarity': 'полярность аккумулятора',
+    'ProductType': 'тип товара',
     'PowerType': 'тип питания',
     'ProductSubType': 'подтип товара',
     'ProtectionType': 'тип защиты',
@@ -918,6 +949,7 @@ AVITO_FIELD_LABELS = {
     'RodDiameter': 'диаметр штока',
     'SAE': 'вязкость масла по SAE',
     'SecondBrushLength': 'длина второй щётки',
+    'SparePartType': 'вид запчасти',
     'Set': 'состав комплекта',
     'ShoeType': 'тип обуви',
     'Size': 'размер',
@@ -978,33 +1010,37 @@ def blocking_missing_avito_fields(listing) -> list[str]:
 
 
 def product_brand_is_missing(listing) -> bool:
-    """Пуст ли производитель у НОВОЙ запчасти — Avito гарантированно отклонит.
-
-    Brand обязателен при Condition='Новое' и принимает только значения из
-    каталога Avito: фолбэк на имя организации тенанта («Значение не найдено»)
-    приводил к отклонению с непонятной для тенанта причиной. Для б/у запчастей
-    Brand не обязателен — не блокируем.
-    """
-    condition = str(getattr(listing.product, 'condition', '') or '')
-    if condition != 'new':
+    """Пуст ли Brand именно в категории, где Avito помечает его required."""
+    if not _brand_is_required(listing):
         return False
     return not str(getattr(listing.product, 'brand', '') or '').strip()
 
 
 def unknown_brand_details(listing) -> tuple[str, list[str]] | None:
-    """Бренд новой запчасти, которого нет в каталоге Avito, и похожие варианты.
+    """Неизвестный Brand в категории, где это поле обязательно.
 
-    None — если бренд известен каталогу, пуст (это отдельная проверка),
-    товар б/у либо локальный каталог брендов недоступен (fail-open).
+    None — если Brand optional, известен каталогу, пуст (отдельная проверка)
+    либо локальный каталог недоступен (fail-open).
     """
-    from apps.marketplaces.adapters.avito.brand_catalog import lookup_brand
-    condition = str(getattr(listing.product, 'condition', '') or '')
-    if condition != 'new':
+    if not _brand_is_required(listing):
         return None
     brand = str(getattr(listing.product, 'brand', '') or '').strip()
     if not brand:
         return None
-    result = lookup_brand(brand)
+    result = _brand_lookup(brand)
+    if result['known']:
+        return None
+    return brand, result['suggestions']
+
+
+def optional_unknown_brand_details(listing) -> tuple[str, list[str]] | None:
+    """Неизвестный optional Brand, который builder безопасно не отправит."""
+    if _brand_is_required(listing):
+        return None
+    brand = str(getattr(listing.product, 'brand', '') or '').strip()
+    if not brand:
+        return None
+    result = _brand_lookup(brand)
     if result['known']:
         return None
     return brand, result['suggestions']
@@ -1019,28 +1055,61 @@ def _unknown_brand_warning(brand: str, suggestions: list[str]) -> str:
             'Выбирайте его только в том случае, если это действительно тот же производитель.'
         )
     return (
-        f'Avito не распознал производителя «{brand}». Для новой запчасти объявление '
-        f'с таким значением будет отклонено. Проверьте написание производителя '
+        f'Avito не распознал производителя «{brand}». В выбранной категории Brand '
+        f'обязателен, поэтому объявление будет отклонено. Проверьте написание '
         f'в карточке товара.{hint} Если название указано верно, обратитесь в '
         f'поддержку Avito с просьбой добавить производителя в справочник.'
     )
 
 
-def avito_publication_field_errors(listing) -> dict[str, list[str]]:
-    """Return proven publication blockers grouped by editable UI field.
+def _optional_unknown_brand_warning(brand: str, suggestions: list[str]) -> str:
+    hint = ''
+    if suggestions:
+        variants = ', '.join(f'«{suggestion}»' for suggestion in suggestions)
+        hint = f' Похожие значения Avito: {variants}.'
+    return (
+        f'Avito не распознал необязательный бренд «{brand}». MAP не добавит его '
+        f'в XML, чтобы необязательное значение не вызвало отклонение.{hint}'
+    )
 
-    This is intentionally narrower than :func:`avito_field_warnings`: a warning
-    may describe data that Avito can infer, while every item returned here is a
-    reason not to create a new provider submission.  The publish API and the
-    listing drawer use this same contract so a field cannot be accepted by one
-    layer and rejected later by another one.
+
+def _optional_oem_warning(listing) -> str:
+    """Жёлтое пояснение, когда сохранённый optional OEM нельзя отправить."""
+    values = _oem_values(listing)
+    if not values or _get_oem(listing):
+        return ''
+    if len(values) > 1:
+        preview = ', '.join(f'«{value}»' for value in values[:3])
+        if len(values) > 3:
+            preview += f' и ещё {len(values) - 3}'
+        return (
+            f'В источнике несколько OEM-номеров: {preview}. Поле Avito '
+            'необязательное и принимает одно значение, поэтому MAP не добавит '
+            'OEM в XML. Если номер нужно передать, оставьте в источнике один.'
+        )
+    return (
+        f'OEM-номер «{values[0]}» содержит символы кроме латинских букв и цифр. '
+        'Поле Avito необязательное, поэтому MAP не добавит его в XML. Исправьте '
+        'номер в источнике, если его нужно передать.'
+    )
+
+
+def avito_publication_preflight(
+    listing,
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Return blocking errors and non-blocking warnings by drawer field.
+
+    The checks intentionally reuse feed value resolvers. Required values are
+    red blockers; optional or safely omitted values are yellow warnings. This
+    keeps drawer, save API, publish API and XML generation on one contract.
     """
 
     product = listing.product
     errors: dict[str, list[str]] = {}
+    warnings: dict[str, list[str]] = {}
 
-    def add(field: str, message: str) -> None:
-        errors.setdefault(field, []).append(message)
+    def add(target: dict[str, list[str]], field: str, message: str) -> None:
+        target.setdefault(field, []).append(message)
 
     title = str(
         getattr(listing, 'title', '')
@@ -1048,7 +1117,7 @@ def avito_publication_field_errors(listing) -> dict[str, list[str]]:
         or ''
     ).strip()
     if not title:
-        add('title', 'Укажите заголовок объявления.')
+        add(errors, 'title', 'Укажите заголовок объявления.')
 
     description = str(
         getattr(listing, 'description_ai', '')
@@ -1056,14 +1125,14 @@ def avito_publication_field_errors(listing) -> dict[str, list[str]]:
         or ''
     ).strip()
     if not description:
-        add('description_ai', 'Добавьте описание объявления.')
+        add(errors, 'description_ai', 'Добавьте описание объявления.')
 
     try:
         price_is_valid = float(getattr(listing, 'price_on_listing', 0) or 0) > 0
     except (TypeError, ValueError):
         price_is_valid = False
     if not price_is_valid:
-        add('price_on_listing', 'Цена объявления должна быть больше нуля.')
+        add(errors, 'price_on_listing', 'Цена объявления должна быть больше нуля.')
 
     account = getattr(listing, 'account', None)
     if (
@@ -1071,79 +1140,116 @@ def avito_publication_field_errors(listing) -> dict[str, list[str]]:
         or not getattr(account, 'is_active', False)
         or getattr(account, 'deleted_at', None) is not None
     ):
-        add('account_id', 'Выберите активный аккаунт Avito.')
+        add(errors, 'account_id', 'Выберите активный аккаунт Avito.')
+
+    seller_address_id, address = get_placement_fields(listing)
+    if not seller_address_id and not address:
+        add(
+            errors,
+            'placement_address',
+            'Выберите адрес размещения или укажите адрес в настройках аккаунта Avito.',
+        )
 
     manager_name, contact_phone = get_contact_fields(listing)
     if not manager_name:
         add(
+            errors,
             'manager_name_override',
             'Укажите контактное лицо в листинге, адресе размещения или настройках аккаунта Avito.',
         )
     if not contact_phone:
         add(
+            errors,
             'contact_phone_override',
             'Укажите телефон в листинге, адресе размещения или настройках аккаунта Avito.',
         )
 
-    if product_brand_is_missing(listing):
+    if not has_resolved_category(listing):
         add(
-            'product_brand',
-            'Укажите производителя новой запчасти и проверьте его по справочнику Avito.',
+            warnings,
+            'catalog_category',
+            'Не определена категория Avito с точным листом. MAP отправит общий '
+            'тип запчастей, но не сможет заранее проверить все характеристики.',
         )
-    else:
-        unknown_brand = unknown_brand_details(listing)
-        if unknown_brand is not None:
-            add('product_brand', _unknown_brand_warning(*unknown_brand))
+
+    brand = str(getattr(product, 'brand', '') or '').strip()
+    brand_required = _brand_is_required(listing)
+    brand_lookup = _brand_lookup(brand) if brand else None
+    if brand_required and not brand:
+        add(
+            errors,
+            'product_brand',
+            'Для выбранной категории Avito производитель обязателен. Укажите бренд из справочника.',
+        )
+    elif brand_lookup is not None and not brand_lookup['known']:
+        details = (brand, brand_lookup['suggestions'])
+        if brand_required:
+            add(errors, 'product_brand', _unknown_brand_warning(*details))
+        else:
+            add(
+                warnings,
+                'product_brand',
+                _optional_unknown_brand_warning(*details),
+            )
+
+    oem_warning = _optional_oem_warning(listing)
+    if oem_warning:
+        add(warnings, 'product_oem', oem_warning)
 
     blocking = blocking_missing_avito_fields(listing)
     if blocking:
         labels = ', '.join(AVITO_SUBTYPE_LABELS[tag] for tag in blocking)
         add(
+            errors,
             'catalog_category',
             f'Выберите конечную категорию Avito, чтобы заполнить: {labels}.',
         )
 
-    return errors
+    other_required = [
+        tag for tag in missing_required_avito_fields(listing)
+        if tag not in AVITO_SUBTYPE_LABELS and tag != 'Brand'
+    ]
+    if other_required:
+        requirements = format_avito_field_requirements(other_required)
+        add(
+            errors,
+            'catalog_category',
+            'Для выбранной категории Avito не заполнены обязательные '
+            f'характеристики: {requirements}. Выберите точную категорию или '
+            'добавьте эти характеристики перед публикацией.',
+        )
+
+    image_urls, uses_category_fallback = get_feed_image_urls(product)
+    if not image_urls:
+        add(
+            warnings,
+            'images',
+            'Добавьте фотографию товара. Поле необязательное, поэтому публикация доступна.',
+        )
+    elif uses_category_fallback:
+        add(
+            warnings,
+            'images',
+            'Сейчас используется общая фотография категории. Добавьте фото конкретного товара.',
+        )
+
+    return errors, warnings
+
+
+def avito_publication_field_errors(listing) -> dict[str, list[str]]:
+    """Blocking preflight errors keyed by editable drawer field."""
+    return avito_publication_preflight(listing)[0]
+
+
+def avito_publication_field_warnings(listing) -> dict[str, list[str]]:
+    """Non-blocking preflight warnings keyed by editable drawer field."""
+    return avito_publication_preflight(listing)[1]
 
 
 def avito_field_warnings(listing) -> list[str]:
-    """Человекочитаемые предупреждения о незаполненных обязательных полях Avito.
-
-    Показываются тенанту в карточке листинга ДО публикации, чтобы не ловить
-    отклонение Avito постфактум.
-    """
-    category = getattr(listing.product, 'catalog_category', None)
-    category_name = getattr(category, 'name', '') or 'категории товара'
-    warnings = []
-    if product_brand_is_missing(listing):
-        warnings.append(
-            'У товара не указан производитель. Для новой запчасти это обязательное '
-            'поле: без него Avito отклонит объявление. Укажите производителя '
-            'в карточке товара и убедитесь, что написание совпадает со справочником Avito.'
-        )
-    unknown_brand = unknown_brand_details(listing)
-    if unknown_brand is not None:
-        warnings.append(_unknown_brand_warning(*unknown_brand))
-    missing_fields = missing_required_avito_fields(listing)
-    for tag in missing_fields:
-        label = AVITO_SUBTYPE_LABELS.get(tag)
-        if label:
-            warnings.append(
-                f'Для категории «{category_name}» нужно точнее указать вид детали '
-                f'({label.lower()}). Без этого Avito отклонит объявление. В поле '
-                f'«Категория Avito» выберите конечную подкатегорию, которая лучше всего '
-                f'описывает товар.'
-            )
-    other_fields = [tag for tag in missing_fields if tag not in AVITO_SUBTYPE_LABELS]
-    if other_fields:
-        requirements = format_avito_field_requirements(other_fields)
-        warnings.append(
-            f'Для категории «{category_name}» Avito требует дополнительные характеристики: '
-            f'{requirements}. Без них объявление может быть отклонено. Сейчас эти данные '
-            f'нельзя заполнить в обычной карточке MAP: передайте значения администратору '
-            f'или в поддержку MAP для настройки выгрузки и пока не публикуйте объявление.'
-        )
-    return warnings
+    """Плоский compatibility-список жёлтых preflight-предупреждений."""
+    warnings_by_field = avito_publication_field_warnings(listing)
+    return [message for messages in warnings_by_field.values() for message in messages]
 
 
 def get_contact_fields(
@@ -1236,11 +1342,11 @@ def has_resolved_category(listing) -> bool:
     """
     True, если у листинга определена категория для Avito.
 
-    Категория считается определённой, если у товара задана catalog_category
-    (из неё берётся спецификация полей) либо нашёлся CategoryMapping. Иначе фид
-    уйдёт с дефолтной Avito-категорией и, скорее всего, будет отклонён.
+    Категория считается определённой, только если catalog_category реально
+    разрешается в Avito leaf spec либо найден legacy CategoryMapping. Само
+    наличие произвольной локальной категории не доказывает корректный feed.
     """
-    if getattr(listing.product, 'catalog_category', None) is not None:
+    if _avito_spec(listing):
         return True
     return _get_category_mapping(listing) is not None
 
@@ -1255,10 +1361,44 @@ def _add_placement(
     account_address=_MISSING,
 ) -> None:
     """Добавляет адрес и контактные поля из листинга, категории или аккаунта."""
+    seller_address_id, address = get_placement_fields(
+        listing,
+        mapping=mapping,
+        manual_address=manual_address,
+        bulk_address=bulk_address,
+        account_address=account_address,
+    )
+    manager_name, contact_phone = get_contact_fields(
+        listing,
+        mapping=mapping,
+        manual_address=manual_address,
+        bulk_address=bulk_address,
+        account_address=account_address,
+    )
+
+    if seller_address_id:
+        ET.SubElement(ad, 'SellerAddressID').text = seller_address_id
+    elif address:
+        ET.SubElement(ad, 'Address').text = address
+    if manager_name:
+        ET.SubElement(ad, 'ManagerName').text = manager_name
+    if contact_phone:
+        ET.SubElement(ad, 'ContactPhone').text = contact_phone
+
+
+def get_placement_fields(
+    listing,
+    *,
+    mapping=_MISSING,
+    manual_address=_MISSING,
+    bulk_address=_MISSING,
+    account_address=_MISSING,
+) -> tuple[str, str]:
+    """Возвращает фактические ``(SellerAddressID, Address)`` из цепочки фида."""
     if mapping is _MISSING:
         mapping = _get_category_mapping(listing)
     attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
-    account = listing.account
+    account = getattr(listing, 'account', None)
     if manual_address is _MISSING:
         manual_address = getattr(listing, 'placement_address', None)
     if bulk_address is _MISSING:
@@ -1286,27 +1426,11 @@ def _add_placement(
         getattr(account_address, 'address', ''),
         getattr(account, 'default_address', ''),
     )
-    manager_name, contact_phone = get_contact_fields(
-        listing,
-        mapping=mapping,
-        manual_address=manual_address,
-        bulk_address=bulk_address,
-        account_address=account_address,
-    )
-
     # Защита от мусорного значения: external_id аккаунта — это не ID адреса.
     # Avito такой SellerAddressID не находит, поэтому игнорируем и шлём текстовый адрес.
     if seller_address_id and seller_address_id == str(getattr(account, 'external_id', '') or ''):
         seller_address_id = ''
-
-    if seller_address_id:
-        ET.SubElement(ad, 'SellerAddressID').text = seller_address_id
-    elif address:
-        ET.SubElement(ad, 'Address').text = address
-    if manager_name:
-        ET.SubElement(ad, 'ManagerName').text = manager_name
-    if contact_phone:
-        ET.SubElement(ad, 'ContactPhone').text = contact_phone
+    return seller_address_id, address
 
 
 def _get_account_default_address(account):
@@ -1338,6 +1462,26 @@ def _first_value(*values) -> str:
 
 def _add_images(ad, product, *, images=_MISSING, category=_MISSING) -> None:
     """Добавляет в фид только одобренные/ручные/импортированные фото."""
+    urls, _uses_category_fallback = get_feed_image_urls(
+        product,
+        images=images,
+        category=category,
+    )
+    if not urls:
+        return
+
+    images_node = ET.SubElement(ad, 'Images')
+    for url in urls:
+        ET.SubElement(images_node, 'Image', url=url)
+
+
+def get_feed_image_urls(
+    product,
+    *,
+    images=_MISSING,
+    category=_MISSING,
+) -> tuple[list[str], bool]:
+    """Возвращает те же URL, что XML, и признак category fallback."""
     from apps.products.media import (
         get_product_image_delivery_key, get_publishable_product_images,
     )
@@ -1350,6 +1494,7 @@ def _add_images(ad, product, *, images=_MISSING, category=_MISSING) -> None:
         if url.startswith('http'):
             urls.append(url)
 
+    uses_category_fallback = False
     if not urls:
         if category is _MISSING:
             category = getattr(product, 'catalog_category', None)
@@ -1357,13 +1502,8 @@ def _add_images(ad, product, *, images=_MISSING, category=_MISSING) -> None:
             url = _image_url(category.default_image_s3_key, '')
             if url.startswith('http'):
                 urls.append(url)
-
-    if not urls:
-        return
-
-    images = ET.SubElement(ad, 'Images')
-    for url in urls[:10]:
-        ET.SubElement(images, 'Image', url=url)
+                uses_category_fallback = True
+    return urls[:10], uses_category_fallback
 
 
 def _image_url(s3_key: str, fallback: str) -> str:

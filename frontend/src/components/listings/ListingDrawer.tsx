@@ -25,11 +25,14 @@ import {
 import MarketPricingPanel from '@/components/listings/MarketPricingPanel';
 import {
   firstPublicationErrorField,
+  firstPublicationWarningField,
   hasPublicationFieldErrors,
+  hasPublicationFieldWarnings,
   publicationActionLabel,
   publicationFieldErrorsFromApi,
   PublicationField,
   PublicationFieldErrors,
+  PublicationFieldWarnings,
 } from '@/lib/listing-publication';
 
 interface ListingImage {
@@ -60,6 +63,7 @@ interface ListingDetail {
   product_article: string;
   product_name: string;
   product_brand: string;
+  product_oem_numbers?: string[];
   account_id: number;
   account_name: string;
   title: string;
@@ -83,6 +87,7 @@ interface ListingDetail {
   last_sync_at: string | null;
   avito_field_warnings?: string[];
   avito_field_errors?: PublicationFieldErrors;
+  avito_field_warnings_by_field?: PublicationFieldWarnings;
   avito_brand_valid: boolean;
   avito_brand_catalog_synced_at: string | null;
   images: ListingImage[];
@@ -168,12 +173,27 @@ function ConfidenceBar({ value, label }: { value: number | null; label: string }
   );
 }
 
-function PublicationFieldMessages({ messages }: { messages: string[] }) {
-  if (messages.length === 0) return null;
+function PublicationFieldMessages({
+  errors,
+  warnings,
+}: {
+  errors: string[];
+  warnings: string[];
+}) {
+  if (errors.length === 0 && warnings.length === 0) return null;
   return (
-    <ul className="space-y-1 text-xs text-destructive" role="alert">
-      {messages.map((message) => <li key={message}>{message}</li>)}
-    </ul>
+    <div className="space-y-1">
+      {errors.length > 0 && (
+        <ul className="space-y-1 text-xs text-destructive" role="alert">
+          {errors.map((message) => <li key={message}>{message}</li>)}
+        </ul>
+      )}
+      {warnings.length > 0 && (
+        <ul className="space-y-1 text-xs text-amber-700 dark:text-amber-400" role="status">
+          {warnings.map((message) => <li key={message}>{message}</li>)}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -227,6 +247,7 @@ function ListingDrawerContent({
   const [marketPriceApplied, setMarketPriceApplied] = useState(false);
   const [pricingRefreshKey, setPricingRefreshKey] = useState(0);
   const [publicationFieldErrors, setPublicationFieldErrors] = useState<PublicationFieldErrors>({});
+  const [publicationFieldWarnings, setPublicationFieldWarnings] = useState<PublicationFieldWarnings>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const publishPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const publicationFieldRefs = useRef<Partial<Record<PublicationField, HTMLDivElement | null>>>({});
@@ -253,6 +274,7 @@ function ListingDrawerContent({
     // Храним выбранную категорию одним id; путь до корня строится по дереву.
     setEditCategoryId(data.catalog_category ? String(data.catalog_category.id) : '');
     setPublicationFieldErrors(data.avito_field_errors ?? {});
+    setPublicationFieldWarnings(data.avito_field_warnings_by_field ?? {});
   }, []);
 
   const showPublicationFieldErrors = useCallback((errors: PublicationFieldErrors) => {
@@ -269,11 +291,26 @@ function ListingDrawerContent({
     });
   }, []);
 
+  const showPublicationFieldWarnings = useCallback((warnings: PublicationFieldWarnings) => {
+    setPublicationFieldWarnings(warnings);
+    const firstField = firstPublicationWarningField(warnings);
+    if (!firstField) return;
+    window.requestAnimationFrame(() => {
+      publicationFieldRefs.current[firstField]?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+  }, []);
+
   const fieldMessages = (field: PublicationField) => publicationFieldErrors[field] ?? [];
+  const fieldWarnings = (field: PublicationField) => publicationFieldWarnings[field] ?? [];
   const fieldClassName = (field: PublicationField) => (
     fieldMessages(field).length > 0
       ? 'border-destructive bg-destructive/5 ring-1 ring-destructive/20'
-      : ''
+      : fieldWarnings(field).length > 0
+        ? 'border-amber-500/60 bg-amber-500/5 ring-1 ring-amber-500/20'
+        : ''
   );
 
   useEffect(() => {
@@ -655,11 +692,17 @@ function ListingDrawerContent({
         toast.warning('Сохранено. Исправьте подсвеченные поля перед отправкой в Avito.');
       } else {
         setEditing(false);
-        toast.success(
-          listing.delivery_stage === 'delivery_failed'
-            ? 'Сохранено и проверено. Теперь объявление можно отправить снова.'
-            : 'Сохранено. Сравнение цен пересчитано.',
-        );
+        const warnings = savedListing.avito_field_warnings_by_field ?? {};
+        if (hasPublicationFieldWarnings(warnings)) {
+          showPublicationFieldWarnings(warnings);
+          toast.warning('Сохранено. Жёлтые поля не блокируют публикацию, но их желательно проверить.');
+        } else {
+          toast.success(
+            listing.delivery_stage === 'delivery_failed'
+              ? 'Сохранено и проверено. Теперь объявление можно отправить снова.'
+              : 'Сохранено. Сравнение цен пересчитано.',
+          );
+        }
       }
     } catch (err: unknown) {
       const message = (err as { response?: { data?: {
@@ -838,7 +881,10 @@ function ListingDrawerContent({
               </SheetHeader>
 
               {/* Фотографии — Avito-стиль */}
-              <div className="space-y-2">
+              <div
+                ref={(element) => { publicationFieldRefs.current.images = element; }}
+                className={`space-y-2 rounded-md border border-transparent p-2 ${fieldClassName('images')}`}
+              >
                 {/* Главное фото */}
                 <div
                   className="relative w-full rounded-lg overflow-hidden bg-muted border"
@@ -952,6 +998,10 @@ function ListingDrawerContent({
                   className="hidden"
                   onChange={handleUploadPhoto}
                 />
+                <PublicationFieldMessages
+                  errors={fieldMessages('images')}
+                  warnings={fieldWarnings('images')}
+                />
               </div>
 
               {/* Уверенность AI */}
@@ -984,7 +1034,10 @@ function ListingDrawerContent({
                 ) : (
                   <p className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">{listing.title || '—'}</p>
                 )}
-                <PublicationFieldMessages messages={fieldMessages('title')} />
+                <PublicationFieldMessages
+                  errors={fieldMessages('title')}
+                  warnings={fieldWarnings('title')}
+                />
               </div>
 
               {/* AI-описание */}
@@ -1005,7 +1058,10 @@ function ListingDrawerContent({
                     {listing.description_ai || '—'}
                   </pre>
                 )}
-                <PublicationFieldMessages messages={fieldMessages('description_ai')} />
+                <PublicationFieldMessages
+                  errors={fieldMessages('description_ai')}
+                  warnings={fieldWarnings('description_ai')}
+                />
               </div>
 
               {/* Бренд хранится у товара и используется в выгрузке Avito. */}
@@ -1102,7 +1158,30 @@ function ListingDrawerContent({
                     {avitoBrandCatalogStale ? ' — требуется обновление' : ''}.
                   </p>
                 )}
-                <PublicationFieldMessages messages={fieldMessages('product_brand')} />
+                <PublicationFieldMessages
+                  errors={fieldMessages('product_brand')}
+                  warnings={fieldWarnings('product_brand')}
+                />
+              </div>
+
+              <div
+                ref={(element) => { publicationFieldRefs.current.product_oem = element; }}
+                className={`space-y-1 rounded-md border border-transparent p-2 ${fieldClassName('product_oem')}`}
+              >
+                <p className="text-sm text-muted-foreground">OEM-номера для Avito</p>
+                <p className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">
+                  {(listing.product_oem_numbers?.length ?? 0) > 0
+                    ? listing.product_oem_numbers!.join(', ')
+                    : 'Не указаны'}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Берутся из товара. OEM у Avito необязателен; MAP передаёт только один
+                  номер, состоящий из латинских букв и цифр.
+                </p>
+                <PublicationFieldMessages
+                  errors={fieldMessages('product_oem')}
+                  warnings={fieldWarnings('product_oem')}
+                />
               </div>
 
               {/* Цена и аккаунт */}
@@ -1127,7 +1206,10 @@ function ListingDrawerContent({
                       </option>
                     ))}
                   </select>
-                  <PublicationFieldMessages messages={fieldMessages('account_id')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('account_id')}
+                    warnings={fieldWarnings('account_id')}
+                  />
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">
@@ -1182,7 +1264,10 @@ function ListingDrawerContent({
                       Рыночная цена подготовлена. Она применится только после сохранения.
                     </p>
                   )}
-                  <PublicationFieldMessages messages={fieldMessages('price_on_listing')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('price_on_listing')}
+                    warnings={fieldWarnings('price_on_listing')}
+                  />
                 </div>
               </div>
 
@@ -1217,7 +1302,10 @@ function ListingDrawerContent({
                     placeholder="Выберите категорию автозапчасти"
                     dropdownClassName="min-w-0 sm:min-w-0"
                   />
-                  <PublicationFieldMessages messages={fieldMessages('catalog_category')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('catalog_category')}
+                    warnings={fieldWarnings('catalog_category')}
+                  />
                 </div>
               ) : listing.catalog_category ? (
                 // Дерево категорий недоступно (домен каталога выключен), но категория
@@ -1235,11 +1323,17 @@ function ListingDrawerContent({
                   <p className="text-xs text-muted-foreground">
                     Чтобы изменить категорию, включите домен каталога в Настройках.
                   </p>
-                  <PublicationFieldMessages messages={fieldMessages('catalog_category')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('catalog_category')}
+                    warnings={fieldWarnings('catalog_category')}
+                  />
                 </div>
               ) : null}
 
-              <div className="space-y-2 rounded-md border p-3">
+              <div
+                ref={(element) => { publicationFieldRefs.current.placement_address = element; }}
+                className={`space-y-2 rounded-md border p-3 ${fieldClassName('placement_address')}`}
+              >
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="text-sm font-medium">Размещение</p>
@@ -1303,6 +1397,10 @@ function ListingDrawerContent({
                       </p>
                     )}
                 </div>
+                <PublicationFieldMessages
+                  errors={fieldMessages('placement_address')}
+                  warnings={fieldWarnings('placement_address')}
+                />
               </div>
 
               {/* Контакты объявления — из сохранённых адресов аккаунта (Настройки → Маркетплейсы) */}
@@ -1326,7 +1424,10 @@ function ListingDrawerContent({
                       <option key={name} value={name}>{name}</option>
                     ))}
                   </select>
-                  <PublicationFieldMessages messages={fieldMessages('manager_name_override')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('manager_name_override')}
+                    warnings={fieldWarnings('manager_name_override')}
+                  />
                 </div>
                 <div
                   ref={(element) => { publicationFieldRefs.current.contact_phone_override = element; }}
@@ -1347,7 +1448,10 @@ function ListingDrawerContent({
                       <option key={phone} value={phone}>{phone}</option>
                     ))}
                   </select>
-                  <PublicationFieldMessages messages={fieldMessages('contact_phone_override')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('contact_phone_override')}
+                    warnings={fieldWarnings('contact_phone_override')}
+                  />
                 </div>
                 {managerOptions.length === 0 && phoneOptions.length === 0 && (
                   <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground sm:col-span-2">
@@ -1358,9 +1462,17 @@ function ListingDrawerContent({
 
               {/* Причина отклонения/проверки — только для этих статусов, иначе висит старый текст */}
               {listing.status === 'rejected' && listing.rejection_reason && (
-                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive whitespace-pre-line">
-                  <span className="font-medium">Причина отклонения: </span>
-                  {listing.rejection_reason}
+                <div className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive whitespace-pre-line">
+                  <p>
+                    <span className="font-medium">Результат предыдущей отправки: </span>
+                    {listing.rejection_reason}
+                  </p>
+                  {!hasPublicationFieldErrors(publicationFieldErrors) && (
+                    <p className="text-xs">
+                      Текущие обязательные поля прошли предварительную проверку. Старый текст
+                      сохранён как история и снимется после постановки новой попытки в очередь.
+                    </p>
+                  )}
                 </div>
               )}
               {listing.status === 'requires_review' && listing.rejection_reason && (
@@ -1415,14 +1527,10 @@ function ListingDrawerContent({
 
               {/* После блокирующих ошибок показываем оставшиеся мягкие предупреждения. */}
               {!hasPublicationFieldErrors(publicationFieldErrors)
-                && (listing.avito_field_warnings?.length ?? 0) > 0 && (
+                && hasPublicationFieldWarnings(publicationFieldWarnings) && (
                 <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-700 dark:text-yellow-400">
-                  <p className="font-medium">Перед публикацией проверьте данные:</p>
-                  <ul className="mt-1 list-disc space-y-1 pl-4">
-                    {listing.avito_field_warnings!.map((warning, i) => (
-                      <li key={i}>{warning}</li>
-                    ))}
-                  </ul>
+                  <p className="font-medium">Есть рекомендации, но публикация доступна.</p>
+                  <p className="mt-1">Необязательные, безопасно пропущенные или заменённые поля подсвечены жёлтым.</p>
                 </div>
               )}
 

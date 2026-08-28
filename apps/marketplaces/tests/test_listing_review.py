@@ -25,7 +25,7 @@ from apps.marketplaces.services import (
     ListingPublicationValidationError,
     ListingService,
 )
-from apps.products.models import Product, ProductImage
+from apps.products.models import Product, ProductImage, TenantCatalogCategory
 from apps.tenants.services import TenantService
 from apps.tenants.tests.auth import create_operator_key
 
@@ -46,6 +46,7 @@ def make_account(tenant):
         marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
         external_id='ext-123',
         credentials_enc=encrypt({'client_id': 'cid', 'client_secret': 'csecret'}),
+        default_address='Москва, Тверская улица, 1',
         default_manager_name='Менеджер',
         default_contact_phone='+79990000000',
     )
@@ -149,7 +150,15 @@ class TestListingServiceApprove:
         listing = make_listing(tenant)
         listing.product.brand = 'НесуществующийБрендXYZ'
         listing.product.condition = 'new'
-        listing.product.save(update_fields=['brand', 'condition'])
+        listing.product.catalog_category = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Поперечные дуги и комплектующие',
+            normalized_name='поперечныедугиикомплектующие',
+            domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+            external_source='avito',
+            external_id='poperechnye_dugi_i_komplektuyushie',
+        )
+        listing.product.save(update_fields=['brand', 'condition', 'catalog_category'])
 
         with pytest.raises(ListingPublicationValidationError) as error:
             ListingService.approve(listing.pk, tenant)
@@ -684,6 +693,21 @@ class TestListingDetailSerializer:
         data = ListingDetailSerializer(listing).data
 
         assert data['product_brand'] == 'Hyundai-KIA'
+
+    def test_detail_explains_ambiguous_optional_oem_at_its_field(self):
+        """Дровер показывает исходные OEM и жёлто объясняет безопасный пропуск XML-тега."""
+        from apps.marketplaces.serializers import ListingDetailSerializer
+
+        tenant = make_tenant('detail-oem-co')
+        listing = make_listing(tenant)
+        listing.product.oem_numbers = ['92402D5000', '92402D4000']
+        listing.product.save(update_fields=['oem_numbers'])
+
+        data = ListingDetailSerializer(listing).data
+
+        assert data['product_oem_numbers'] == ['92402D5000', '92402D4000']
+        assert 'product_oem' not in data['avito_field_errors']
+        assert 'product_oem' in data['avito_field_warnings_by_field']
 
     def test_detail_includes_last_avito_sync_time(self):
         """Tenant UI can explain when the provider last confirmed the status."""

@@ -222,7 +222,12 @@ def test_failed_pre_submission_run_can_be_retried_with_fresh_generation(
     listing.product.save(update_fields=['brand', 'condition'])
     listing.account.default_manager_name = 'Менеджер'
     listing.account.default_contact_phone = '+79990000000'
-    listing.account.save(update_fields=['default_manager_name', 'default_contact_phone'])
+    listing.account.default_address = 'Москва, Загородное шоссе, 1'
+    listing.account.save(update_fields=[
+        'default_manager_name',
+        'default_contact_phone',
+        'default_address',
+    ])
     failed_run = _feed_run(listing, MarketplaceFeedRun.State.FAILED)
 
     with patch('apps.marketplaces.services._enqueue_publish_or_update') as enqueue:

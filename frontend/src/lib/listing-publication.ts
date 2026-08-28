@@ -1,16 +1,21 @@
 export const PUBLICATION_FIELD_ORDER = [
-  'product_brand',
-  'catalog_category',
+  'images',
   'title',
   'description_ai',
+  'product_brand',
+  'product_oem',
   'account_id',
   'price_on_listing',
+  'catalog_category',
+  'placement_address',
   'manager_name_override',
   'contact_phone_override',
 ] as const;
 
 export type PublicationField = typeof PUBLICATION_FIELD_ORDER[number];
-export type PublicationFieldErrors = Partial<Record<PublicationField, string[]>>;
+export type PublicationFieldIssues = Partial<Record<PublicationField, string[]>>;
+export type PublicationFieldErrors = PublicationFieldIssues;
+export type PublicationFieldWarnings = PublicationFieldIssues;
 
 export function firstPublicationErrorField(
   errors: PublicationFieldErrors,
@@ -20,6 +25,16 @@ export function firstPublicationErrorField(
 
 export function hasPublicationFieldErrors(errors: PublicationFieldErrors): boolean {
   return firstPublicationErrorField(errors) !== null;
+}
+
+export function firstPublicationWarningField(
+  warnings: PublicationFieldWarnings,
+): PublicationField | null {
+  return PUBLICATION_FIELD_ORDER.find((field) => (warnings[field]?.length ?? 0) > 0) ?? null;
+}
+
+export function hasPublicationFieldWarnings(warnings: PublicationFieldWarnings): boolean {
+  return firstPublicationWarningField(warnings) !== null;
 }
 
 export function publicationFieldErrorsFromApi(payload: unknown): PublicationFieldErrors {
