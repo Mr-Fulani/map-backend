@@ -19,7 +19,12 @@ from django.utils.dateparse import parse_datetime
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
 from apps.marketplaces.models import Listing, MarketplaceAccount, MarketplacePlacementAddress
-from apps.marketplaces.services import InvalidListingStatus, ListingNotFound, ListingService
+from apps.marketplaces.services import (
+    InvalidListingStatus,
+    ListingNotFound,
+    ListingPublicationValidationError,
+    ListingService,
+)
 from apps.products.models import Product, ProductImage
 from apps.tenants.services import TenantService
 from apps.tenants.tests.auth import create_operator_key
@@ -41,6 +46,8 @@ def make_account(tenant):
         marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
         external_id='ext-123',
         credentials_enc=encrypt({'client_id': 'cid', 'client_secret': 'csecret'}),
+        default_manager_name='Менеджер',
+        default_contact_phone='+79990000000',
     )
 
 
@@ -57,6 +64,8 @@ def make_product(tenant):
         datasource=ds,
         article='ART-001',
         name='Тестовый товар',
+        brand='Bosch',
+        condition='used',
         price=500,
         stock_qty=1,
     )
@@ -139,11 +148,13 @@ class TestListingServiceApprove:
         tenant = make_tenant('approve-unknown-brand-co')
         listing = make_listing(tenant)
         listing.product.brand = 'НесуществующийБрендXYZ'
-        listing.product.save(update_fields=['brand'])
+        listing.product.condition = 'new'
+        listing.product.save(update_fields=['brand', 'condition'])
 
-        with pytest.raises(InvalidListingStatus, match='Неизвестный бренд'):
+        with pytest.raises(ListingPublicationValidationError) as error:
             ListingService.approve(listing.pk, tenant)
 
+        assert 'product_brand' in error.value.field_errors
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_REQUIRES_REVIEW
 

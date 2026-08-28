@@ -16,6 +16,7 @@ from apps.marketplaces.listing_lifecycle import (
 from apps.marketplaces.listing_delivery import (
     durable_feed_run_enabled,
     listing_delivery_presentation,
+    listing_publication_available,
 )
 from apps.marketplaces.feed_cutover import (
     private_feed_cutover_enabled,
@@ -867,6 +868,14 @@ class InvalidListingStatus(Exception):
     """Операция недопустима для текущего статуса листинга."""
 
 
+class ListingPublicationValidationError(InvalidListingStatus):
+    """A new provider submission is blocked by editable listing fields."""
+
+    def __init__(self, field_errors: dict[str, list[str]]):
+        super().__init__('Исправьте отмеченные поля перед отправкой в Avito.')
+        self.field_errors = field_errors
+
+
 class ListingAccountConflict(Exception):
     """Для товара уже есть листинг на выбранном аккаунте."""
 
@@ -1129,12 +1138,12 @@ class ListingService:
                 f'Одобрить можно только листинг в статусе requires_review, '
                 f'текущий статус: {listing.status}'
             )
-        from apps.marketplaces.adapters.avito.feed_builder import unknown_brand_details
-        if unknown_brand_details(listing) is not None:
-            raise InvalidListingStatus(
-                'Неизвестный бренд нельзя отправить в Avito. Выберите значение из '
-                'справочника Avito или запросите добавление бренда в поддержке Avito.'
-            )
+        from apps.marketplaces.adapters.avito.feed_builder import (
+            avito_publication_field_errors,
+        )
+        field_errors = avito_publication_field_errors(listing)
+        if field_errors:
+            raise ListingPublicationValidationError(field_errors)
         expected = _listing_expected_state(listing)
         listing.status = Listing.STATUS_QUEUED
         listing.rejection_reason = ''
@@ -1159,27 +1168,36 @@ class ListingService:
             InvalidListingStatus: листинг не в подходящем статусе для публикации.
         """
         listing = ListingService.get_for_tenant(listing_id, tenant)
-        publishable = (
-            Listing.STATUS_DRAFT,
-            Listing.STATUS_REJECTED,
-            Listing.STATUS_ARCHIVED,
-            # «Лимит достигнут» — после продления подписки/апгрейда плана
-            # листинг должен публиковаться повторно, иначе статус тупиковый.
-            Listing.STATUS_LIMIT_REACHED,
-        )
-        if listing.status not in publishable:
+        if not listing_publication_available(listing):
             raise InvalidListingStatus(
-                f'Публикация доступна для draft/rejected/archived/limit_reached, '
-                f'текущий статус: {listing.status}'
+                'Публикация доступна для черновика, отклонённого, архивного, '
+                'достигшего лимита объявления или доказанной ошибки до отправки '
+                f'в Avito; текущая стадия: {listing_delivery_presentation(listing).stage}'
             )
+        from apps.marketplaces.adapters.avito.feed_builder import (
+            avito_publication_field_errors,
+        )
+        field_errors = avito_publication_field_errors(listing)
+        if field_errors:
+            raise ListingPublicationValidationError(field_errors)
+        retry_failed_delivery = (
+            listing.status == Listing.STATUS_PENDING
+            and listing_delivery_presentation(listing).stage == 'delivery_failed'
+        )
         expected = _listing_expected_state(listing)
         listing.status = Listing.STATUS_QUEUED
         # Сбрасываем причину прошлого отклонения, чтобы старый текст не висел
         # на карточке, пока идёт новая публикация.
         listing.rejection_reason = ''
+        update_fields = ['status', 'rejection_reason']
+        if retry_failed_delivery:
+            # Preserve the failed run as audit evidence, but detach the listing
+            # so the next durable generation owns a fresh, truthful lifecycle.
+            listing.feed_run = None
+            update_fields.append('feed_run')
         applied = _save_local_listing_intent(
             listing,
-            ('status', 'rejection_reason'),
+            update_fields,
             **expected,
         )
         if applied:

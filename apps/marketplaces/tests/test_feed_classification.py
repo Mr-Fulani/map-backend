@@ -123,6 +123,50 @@ def test_brand_warning_for_new_product_without_brand():
     assert any('производитель' in w.lower() for w in avito_field_warnings(listing))
 
 
+def test_publication_errors_are_grouped_by_editable_drawer_field():
+    from apps.marketplaces.adapters.avito.feed_builder import avito_publication_field_errors
+
+    category = _cat('Подвеска', external_id='podveska')
+    product = types.SimpleNamespace(
+        catalog_category=category,
+        category_1c='',
+        name='Деталь',
+        description_1c='',
+        brand='',
+        condition='new',
+    )
+    account = types.SimpleNamespace(
+        is_active=True,
+        external_id='account-1',
+        default_manager_name='',
+        default_contact_phone='',
+        placement_addresses=types.SimpleNamespace(filter=lambda **kwargs: types.SimpleNamespace(first=lambda: None)),
+    )
+    listing = types.SimpleNamespace(
+        product=product,
+        account=account,
+        title='Деталь',
+        description_ai='',
+        price_on_listing=0,
+        placement_address=None,
+        bulk_placement_address=None,
+        manager_name_override='',
+        contact_phone_override='',
+        bulk_manager_name='',
+        bulk_contact_phone='',
+    )
+
+    errors = avito_publication_field_errors(listing)
+
+    assert set(errors) >= {
+        'description_ai',
+        'price_on_listing',
+        'manager_name_override',
+        'contact_phone_override',
+        'product_brand',
+    }
+
+
 def test_no_brand_warning_for_used_product():
     # Для б/у запчастей Brand у Avito не обязателен — не предупреждаем.
     from apps.marketplaces.adapters.avito.feed_builder import product_brand_is_missing

@@ -1213,6 +1213,8 @@ class TestPublishListingTask:
         tenant = make_tenant('svc-limit-co')
         account = make_account(tenant)
         product = make_product(tenant)
+        product.condition = 'used'
+        product.save(update_fields=['condition'])
         listing = make_listing(tenant, product, account, status=Listing.STATUS_LIMIT_REACHED)
 
         with patch('apps.marketplaces.services.transaction'):

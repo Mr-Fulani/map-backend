@@ -1010,6 +1010,102 @@ def unknown_brand_details(listing) -> tuple[str, list[str]] | None:
     return brand, result['suggestions']
 
 
+def _unknown_brand_warning(brand: str, suggestions: list[str]) -> str:
+    hint = ''
+    if suggestions:
+        variants = ', '.join(f'«{suggestion}»' for suggestion in suggestions)
+        hint = (
+            f' В справочнике есть похожее название: {variants}. '
+            'Выбирайте его только в том случае, если это действительно тот же производитель.'
+        )
+    return (
+        f'Avito не распознал производителя «{brand}». Для новой запчасти объявление '
+        f'с таким значением будет отклонено. Проверьте написание производителя '
+        f'в карточке товара.{hint} Если название указано верно, обратитесь в '
+        f'поддержку Avito с просьбой добавить производителя в справочник.'
+    )
+
+
+def avito_publication_field_errors(listing) -> dict[str, list[str]]:
+    """Return proven publication blockers grouped by editable UI field.
+
+    This is intentionally narrower than :func:`avito_field_warnings`: a warning
+    may describe data that Avito can infer, while every item returned here is a
+    reason not to create a new provider submission.  The publish API and the
+    listing drawer use this same contract so a field cannot be accepted by one
+    layer and rejected later by another one.
+    """
+
+    product = listing.product
+    errors: dict[str, list[str]] = {}
+
+    def add(field: str, message: str) -> None:
+        errors.setdefault(field, []).append(message)
+
+    title = str(
+        getattr(listing, 'title', '')
+        or getattr(product, 'name', '')
+        or ''
+    ).strip()
+    if not title:
+        add('title', 'Укажите заголовок объявления.')
+
+    description = str(
+        getattr(listing, 'description_ai', '')
+        or getattr(product, 'description_1c', '')
+        or ''
+    ).strip()
+    if not description:
+        add('description_ai', 'Добавьте описание объявления.')
+
+    try:
+        price_is_valid = float(getattr(listing, 'price_on_listing', 0) or 0) > 0
+    except (TypeError, ValueError):
+        price_is_valid = False
+    if not price_is_valid:
+        add('price_on_listing', 'Цена объявления должна быть больше нуля.')
+
+    account = getattr(listing, 'account', None)
+    if (
+        account is None
+        or not getattr(account, 'is_active', False)
+        or getattr(account, 'deleted_at', None) is not None
+    ):
+        add('account_id', 'Выберите активный аккаунт Avito.')
+
+    manager_name, contact_phone = get_contact_fields(listing)
+    if not manager_name:
+        add(
+            'manager_name_override',
+            'Укажите контактное лицо в листинге, адресе размещения или настройках аккаунта Avito.',
+        )
+    if not contact_phone:
+        add(
+            'contact_phone_override',
+            'Укажите телефон в листинге, адресе размещения или настройках аккаунта Avito.',
+        )
+
+    if product_brand_is_missing(listing):
+        add(
+            'product_brand',
+            'Укажите производителя новой запчасти и проверьте его по справочнику Avito.',
+        )
+    else:
+        unknown_brand = unknown_brand_details(listing)
+        if unknown_brand is not None:
+            add('product_brand', _unknown_brand_warning(*unknown_brand))
+
+    blocking = blocking_missing_avito_fields(listing)
+    if blocking:
+        labels = ', '.join(AVITO_SUBTYPE_LABELS[tag] for tag in blocking)
+        add(
+            'catalog_category',
+            f'Выберите конечную категорию Avito, чтобы заполнить: {labels}.',
+        )
+
+    return errors
+
+
 def avito_field_warnings(listing) -> list[str]:
     """Человекочитаемые предупреждения о незаполненных обязательных полях Avito.
 
@@ -1027,20 +1123,7 @@ def avito_field_warnings(listing) -> list[str]:
         )
     unknown_brand = unknown_brand_details(listing)
     if unknown_brand is not None:
-        brand, suggestions = unknown_brand
-        hint = ''
-        if suggestions:
-            variants = ', '.join(f'«{suggestion}»' for suggestion in suggestions)
-            hint = (
-                f' В справочнике есть похожее название: {variants}. '
-                'Выбирайте его только в том случае, если это действительно тот же производитель.'
-            )
-        warnings.append(
-            f'Avito не распознал производителя «{brand}». Для новой запчасти объявление '
-            f'с таким значением будет отклонено. Проверьте написание производителя '
-            f'в карточке товара.{hint} Если название указано верно, обратитесь в '
-            f'поддержку Avito с просьбой добавить производителя в справочник.'
-        )
+        warnings.append(_unknown_brand_warning(*unknown_brand))
     missing_fields = missing_required_avito_fields(listing)
     for tag in missing_fields:
         label = AVITO_SUBTYPE_LABELS.get(tag)

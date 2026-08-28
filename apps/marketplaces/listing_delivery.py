@@ -208,6 +208,14 @@ def listing_delivery_presentation(
             can_check_avito_status=False,
         )
     if state == MarketplaceFeedRun.State.FAILED:
+        if _provider_submission_started(run):
+            return ListingDeliveryPresentation(
+                stage='manual_review',
+                label='Результат Avito требует ручной проверки',
+                provider_submission_started=True,
+                lifecycle_actions_blocked=True,
+                can_check_avito_status=False,
+            )
         return ListingDeliveryPresentation(
             stage='delivery_failed',
             label='Ошибка отправки в Avito',
@@ -230,3 +238,23 @@ def listing_delivery_presentation(
         lifecycle_actions_blocked=False,
         can_check_avito_status=False,
     )
+
+
+def listing_publication_available(listing: Listing) -> bool:
+    """Whether an explicit publish/retry action is safe for this listing."""
+
+    if listing.status in {
+        Listing.STATUS_DRAFT,
+        Listing.STATUS_REJECTED,
+        Listing.STATUS_ARCHIVED,
+        Listing.STATUS_LIMIT_REACHED,
+    }:
+        return True
+    # FAILED normally proves the provider submission boundary was not crossed.
+    # Keep the action closed if a damaged/legacy row still carries submitted
+    # evidence; that must be reconciled instead of retried blindly.
+    delivery = listing_delivery_presentation(listing)
+    if delivery.stage != 'delivery_failed':
+        return False
+    run = _feed_run(listing)
+    return run is not None and not _provider_submission_started(run)

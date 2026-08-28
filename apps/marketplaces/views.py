@@ -61,6 +61,7 @@ from apps.marketplaces.services import (
     ListingBulkLimitExceeded,
     ListingAccountConflict,
     InvalidListingStatus,
+    ListingPublicationValidationError,
     ListingNotFound,
     ListingService,
     MarketplaceAccountFeedConflict,
@@ -980,6 +981,13 @@ class ListingApproveView(APIView):
             listing = ListingService.approve(pk, request.tenant)
         except ListingNotFound:
             return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        except ListingPublicationValidationError as exc:
+            return Response({
+                'status': 'error',
+                'code': 'listing_validation_error',
+                'message': str(exc),
+                'field_errors': exc.field_errors,
+            }, status=status.HTTP_400_BAD_REQUEST)
         except InvalidListingStatus as exc:
             return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
                             status=status.HTTP_400_BAD_REQUEST)
@@ -1030,7 +1038,7 @@ class ListingRefreshBrandCatalogView(APIView):
 
 @extend_schema(tags=['Listings'])
 class ListingPublishView(APIView):
-    """POST /api/v1/listings/{id}/publish/ — опубликовать черновик/отклонённый/архивный листинг."""
+    """POST /api/v1/listings/{id}/publish/ — публикация или безопасный retry до отправки."""
 
     api_key_enabled = True
 
@@ -1048,6 +1056,13 @@ class ListingPublishView(APIView):
             listing = ListingService.publish(pk, request.tenant)
         except ListingNotFound:
             return Response({'status': 'error', 'code': 'not_found'}, status=status.HTTP_404_NOT_FOUND)
+        except ListingPublicationValidationError as exc:
+            return Response({
+                'status': 'error',
+                'code': 'listing_validation_error',
+                'message': str(exc),
+                'field_errors': exc.field_errors,
+            }, status=status.HTTP_400_BAD_REQUEST)
         except InvalidListingStatus as exc:
             return Response({'status': 'error', 'code': 'invalid_status', 'message': str(exc)},
                             status=status.HTTP_400_BAD_REQUEST)
