@@ -14,6 +14,14 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   CheckCircle, RefreshCw, Pencil, Crown, Trash2, Plus,
   ChevronLeft, ChevronRight, Send, BarChart3, FileText,
 } from 'lucide-react';
@@ -242,6 +250,7 @@ function ListingDrawerContent({
   const [previewImg, setPreviewImg] = useState<string | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [photoLoading, setPhotoLoading] = useState<number | 'upload' | null>(null);
+  const [photoPendingDelete, setPhotoPendingDelete] = useState<ListingImage | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [activePanel, setActivePanel] = useState<'listing' | 'pricing'>(initialPanel);
   const [marketPriceApplied, setMarketPriceApplied] = useState(false);
@@ -329,6 +338,7 @@ function ListingDrawerContent({
         if (cancelled) return;
 
         data = listingResponse.data.data;
+        setPhotoPendingDelete(null);
         applyListingState(data);
 
         const primaryIdx = data.images.findIndex((image) => image.is_primary);
@@ -443,7 +453,10 @@ function ListingDrawerContent({
   };
 
   const handleOpenChange = (isOpen: boolean) => {
-    if (!isOpen) onClose();
+    if (!isOpen) {
+      setPhotoPendingDelete(null);
+      onClose();
+    }
   };
 
   // --- Действия с листингом ---
@@ -739,8 +752,9 @@ function ListingDrawerContent({
     }
   };
 
-  const handleDeletePhoto = async (imageId: number) => {
-    if (!listing) return;
+  const handleDeletePhoto = async () => {
+    const imageId = photoPendingDelete?.id;
+    if (!listing || imageId === null || imageId === undefined) return;
     setPhotoLoading(imageId);
     try {
       await imageApi.delete(listing.product_id, imageId);
@@ -750,6 +764,8 @@ function ListingDrawerContent({
         setActiveIdx((idx) => Math.min(idx, Math.max(0, imgs.length - 1)));
         return { ...prev, images: imgs };
       });
+      setPhotoPendingDelete(null);
+      toast.success('Фото удалено');
     } catch {
       toast.error('Не удалось удалить фото');
     } finally {
@@ -970,10 +986,11 @@ function ListingDrawerContent({
                         {img.id !== null && (
                           <button
                             type="button"
-                            onClick={() => handleDeletePhoto(img.id!)}
+                            onClick={() => setPhotoPendingDelete(img)}
                             disabled={photoLoading === img.id}
                             className="p-1 bg-white/20 rounded hover:bg-red-500/70 disabled:opacity-50"
-                            title="Удалить"
+                            title="Удалить фото"
+                            aria-label="Удалить фото"
                           >
                             <Trash2 className="h-3 w-3 text-white" />
                           </button>
@@ -1653,6 +1670,58 @@ function ListingDrawerContent({
           )}
         </SheetContent>
       </Sheet>
+
+      <Dialog
+        open={photoPendingDelete !== null}
+        onOpenChange={(nextOpen) => {
+          const deleting = photoPendingDelete?.id !== null
+            && photoPendingDelete?.id !== undefined
+            && photoLoading === photoPendingDelete.id;
+          if (!nextOpen && !deleting) setPhotoPendingDelete(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Удалить это фото?</DialogTitle>
+            <DialogDescription>
+              Фото исчезнет из карточки товара и больше не попадёт в следующие
+              фиды Avito. Проверьте изображение и подтвердите удаление.
+            </DialogDescription>
+          </DialogHeader>
+          {photoPendingDelete && (
+            <div className="mx-auto h-36 w-36 overflow-hidden rounded-lg border bg-muted">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={photoPendingDelete.thumb_url || photoPendingDelete.url}
+                alt="Фото, выбранное для удаления"
+                className="h-full w-full object-contain"
+              />
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPhotoPendingDelete(null)}
+              disabled={photoLoading === photoPendingDelete?.id}
+            >
+              Отмена
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleDeletePhoto}
+              disabled={
+                photoPendingDelete?.id === null
+                || photoPendingDelete?.id === undefined
+                || photoLoading === photoPendingDelete?.id
+              }
+            >
+              {photoLoading === photoPendingDelete?.id ? 'Удаляем...' : 'Удалить фото'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Fullscreen предпросмотр */}
       {previewImg && (
