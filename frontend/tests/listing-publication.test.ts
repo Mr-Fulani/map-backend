@@ -39,6 +39,10 @@ test('terminal pre-submission failure has an explicit retry label', () => {
     'Исправить и отправить снова',
   );
   assert.equal(publicationActionLabel('draft'), 'Опубликовать');
+  assert.equal(
+    publicationActionLabel('rejected', true),
+    'Отправить исправленную версию',
+  );
 });
 
 test('backend field errors and DRF serializer errors share one drawer contract', () => {

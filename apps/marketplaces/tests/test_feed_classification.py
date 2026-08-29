@@ -215,7 +215,7 @@ def test_unknown_optional_brand_is_yellow_and_does_not_block():
     assert 'не добавит его в XML' in warnings['product_brand'][0]
 
 
-def test_multiple_oems_send_one_value_and_show_yellow_explanation():
+def test_multiple_valid_oems_send_one_value_without_false_warning():
     from apps.marketplaces.adapters.avito.feed_builder import (
         avito_publication_preflight,
     )
@@ -229,9 +229,7 @@ def test_multiple_oems_send_one_value_and_show_yellow_explanation():
         errors, warnings = avito_publication_preflight(listing)
 
     assert 'product_oem' not in errors
-    assert 'product_oem' in warnings
-    assert 'несколько OEM-номеров' in warnings['product_oem'][0]
-    assert 'MAP отправит «92402D5000»' in warnings['product_oem'][0]
+    assert 'product_oem' not in warnings
 
 
 def test_missing_oem_is_red_when_avito_condition_makes_it_required():
