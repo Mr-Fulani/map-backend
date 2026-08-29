@@ -3,6 +3,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
 import yaml
 
 
@@ -195,3 +196,54 @@ def test_ozon_connection_flag_rejects_ambiguous_values():
 
     assert result.returncode != 0
     assert 'OZON_ACCOUNT_CONNECTION_ENABLED must be true or false' in result.stderr
+
+
+def test_ozon_canary_allowlists_are_exact_and_canonical():
+    env = {
+        **os.environ,
+        'OZON_ACCOUNT_CONNECTION_TENANT_SLUGS': 'alpha-pro,tenant_2',
+        'OZON_ACCOUNT_CONNECTION_CLIENT_IDS': '12345,client-A',
+    }
+    assertions = """
+from config.settings import base as s
+assert s.OZON_ACCOUNT_CONNECTION_TENANT_SLUGS == ('alpha-pro', 'tenant_2')
+assert s.OZON_ACCOUNT_CONNECTION_CLIENT_IDS == ('12345', 'client-A')
+"""
+
+    result = subprocess.run(
+        [sys.executable, '-c', assertions],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize(
+    ('name', 'value'),
+    [
+        ('OZON_ACCOUNT_CONNECTION_TENANT_SLUGS', 'tenant-b,tenant-a'),
+        ('OZON_ACCOUNT_CONNECTION_TENANT_SLUGS', 'tenant,*'),
+        ('OZON_ACCOUNT_CONNECTION_CLIENT_IDS', 'client-a,client-a'),
+        ('OZON_ACCOUNT_CONNECTION_CLIENT_IDS', 'client id'),
+    ],
+)
+def test_ozon_canary_allowlists_reject_ambiguous_or_unsafe_values(name, value):
+    env = {**os.environ, name: value}
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'from config.settings import base'],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert name in result.stderr
