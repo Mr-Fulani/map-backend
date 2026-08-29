@@ -131,6 +131,15 @@ def test_runtime_healthchecks_cover_http_workers_beat_and_proxy():
     assert '/nginx-health' in ' '.join(services['nginx']['healthcheck']['test'])
 
 
+def test_celery_beat_receives_sigterm_through_init():
+    beat = COMPOSE['services']['celery_beat']
+
+    assert beat['init'] is True
+    assert beat['stop_signal'] == 'SIGTERM'
+    assert beat['stop_grace_period'] == '45s'
+    assert not beat['command'].startswith(('sh ', 'bash '))
+
+
 def test_every_declared_celery_queue_has_a_production_consumer():
     base_settings = (ROOT / 'config' / 'settings' / 'base.py').read_text()
     queue_block = re.search(

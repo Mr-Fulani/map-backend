@@ -124,6 +124,8 @@ targets, если daemon занят чужим проектом.
       `payment.succeeded`, `payment.canceled`, `refund.succeeded`; подтверждена
       доставка событий без rejected/retry backlog.
 - [ ] Нет длительных imports/exports/billing jobs; maintenance window объявлено.
+      `PROD_BEAT_STOP_TIMEOUT_SECONDS` не превышает 120 секунд (штатно 45): Beat
+      получает `SIGTERM` и останавливается до закрытия ingress.
       `PROD_DRAIN_TIMEOUT_SECONDS` больше максимального Celery hard time limit.
 
 ## 4. Backup и восстановимость

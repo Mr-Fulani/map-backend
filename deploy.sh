@@ -100,6 +100,7 @@ load_deploy_env() {
         PROD_LOG_TAIL | \
         PROD_ROLLBACK_ENABLED | \
         PROD_BACKUP_TIMEOUT_SECONDS | \
+        PROD_BEAT_STOP_TIMEOUT_SECONDS | \
         PROD_DRAIN_TIMEOUT_SECONDS | \
         PROD_BROKER_MIGRATION_CONFIRMED) ;;
       *)
@@ -188,7 +189,7 @@ BUILD_SERVICES=(django celery_worker celery_beat celery_worker_images frontend b
 ROLLBACK_SERVICES=(egress_proxy "${BUILD_SERVICES[@]}")
 ROLLBACK_INFRASTRUCTURE_SERVICES=(db redis redis_broker egress_proxy)
 ROLLBACK_APPLICATION_SERVICES=(django celery_worker celery_beat celery_worker_images frontend nginx)
-DRAIN_SERVICES=(celery_beat celery_worker celery_worker_images django frontend)
+DRAIN_SERVICES=(celery_worker celery_worker_images django frontend)
 HEALTH_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
 LOG_SERVICES=(db redis redis_broker egress_proxy django celery_worker celery_beat celery_worker_images frontend nginx)
 
@@ -199,6 +200,7 @@ PROD_MIN_FREE_DISK_MB="${PROD_MIN_FREE_DISK_MB:-16384}"
 PROD_ROLLBACK_ENABLED="${PROD_ROLLBACK_ENABLED:-true}"
 PROD_BROKER_MIGRATION_CONFIRMED="${PROD_BROKER_MIGRATION_CONFIRMED:-false}"
 PROD_BACKUP_TIMEOUT_SECONDS="${PROD_BACKUP_TIMEOUT_SECONDS:-7200}"
+PROD_BEAT_STOP_TIMEOUT_SECONDS="${PROD_BEAT_STOP_TIMEOUT_SECONDS:-45}"
 PROD_DRAIN_TIMEOUT_SECONDS="${PROD_DRAIN_TIMEOUT_SECONDS:-3700}"
 PROD_SMOKE_URL="${PROD_SMOKE_URL:-}"
 DEPLOY_PHASE="initialization"
@@ -308,6 +310,7 @@ rollback_deployment() {
     # example during topology or external smoke validation).  Fail closed:
     # never leave a partially verified release accepting traffic or jobs.
     "${COMPOSE[@]}" stop -t 30 nginx || true
+    "${COMPOSE[@]}" stop -t "$PROD_BEAT_STOP_TIMEOUT_SECONDS" celery_beat || true
     "${COMPOSE[@]}" stop -t "$PROD_DRAIN_TIMEOUT_SECONDS" \
       "${DRAIN_SERVICES[@]}" || true
     echo "КРИТИЧЕСКАЯ ОШИБКА: миграция БД уже началась; старый application release автоматически не запускается." >&2
@@ -388,6 +391,9 @@ preflight() {
   (( PROD_MIN_FREE_DISK_MB >= 8192 )) \
     || fail "PROD_MIN_FREE_DISK_MB нельзя задавать ниже 8192 MiB."
   validate_integer_setting PROD_BACKUP_TIMEOUT_SECONDS "$PROD_BACKUP_TIMEOUT_SECONDS"
+  validate_integer_setting PROD_BEAT_STOP_TIMEOUT_SECONDS "$PROD_BEAT_STOP_TIMEOUT_SECONDS"
+  (( PROD_BEAT_STOP_TIMEOUT_SECONDS <= 120 )) \
+    || fail "PROD_BEAT_STOP_TIMEOUT_SECONDS нельзя задавать выше 120 секунд."
   validate_integer_setting PROD_DRAIN_TIMEOUT_SECONDS "$PROD_DRAIN_TIMEOUT_SECONDS"
   [[ "$PROD_ROLLBACK_ENABLED" == "true" || "$PROD_ROLLBACK_ENABLED" == "false" ]] \
     || fail "PROD_ROLLBACK_ENABLED должен быть true или false."
@@ -437,10 +443,15 @@ preflight() {
 
 drain_application_writers() {
   DEPLOY_PHASE="billing maintenance drain"
+  echo "==> Остановка scheduler перед закрытием ingress..."
+  # Beat не выполняет длинные задачи и не должен наследовать часовой worker
+  # drain. Compose посылает ему SIGTERM и ограничивает ожидание коротким
+  # отдельным timeout; пока он завершается, пользовательский ingress доступен.
+  "${COMPOSE[@]}" stop -t "$PROD_BEAT_STOP_TIMEOUT_SECONDS" celery_beat
+
   echo "==> Остановка входящего трафика и drain старых application writers..."
-  # Сначала закрываем ingress и scheduler: после этого новые checkout/webhook и
-  # периодические billing-задачи не появятся. Workers/Gunicorn получают TERM и
-  # должны завершить текущую работу до schema migration.
+  # После остановки scheduler закрываем ingress. Workers/Gunicorn получают TERM
+  # и могут завершать уже начатую работу до schema migration.
   "${COMPOSE[@]}" stop -t 30 nginx
   "${COMPOSE[@]}" stop -t "$PROD_DRAIN_TIMEOUT_SECONDS" "${DRAIN_SERVICES[@]}"
 }
