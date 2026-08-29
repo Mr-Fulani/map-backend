@@ -12,6 +12,15 @@ from apps.marketplaces.models import AvitoBrandCatalog
 pytestmark = pytest.mark.django_db
 
 
+@pytest.fixture(autouse=True)
+def isolate_brand_catalog_cache():
+    """Do not leak a synthetic catalog into later tests in the same worker."""
+
+    clear_brand_catalog_cache()
+    yield
+    clear_brand_catalog_cache()
+
+
 def test_sync_saves_verified_catalog_in_database():
     brands = [f'Brand {index}' for index in range(150)]
     with patch('apps.marketplaces.adapters.avito.brand_sync.fetch_avito_brands', return_value=brands):
