@@ -5,6 +5,7 @@
 а также API-эндпоинты detail / approve / regenerate / patch.
 """
 from concurrent.futures import ThreadPoolExecutor
+import datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -19,8 +20,13 @@ from django.utils.dateparse import parse_datetime
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
 from apps.marketplaces.models import Listing, MarketplaceAccount, MarketplacePlacementAddress
-from apps.marketplaces.services import InvalidListingStatus, ListingNotFound, ListingService
-from apps.products.models import Product, ProductImage
+from apps.marketplaces.services import (
+    InvalidListingStatus,
+    ListingNotFound,
+    ListingPublicationValidationError,
+    ListingService,
+)
+from apps.products.models import Product, ProductImage, TenantCatalogCategory
 from apps.tenants.services import TenantService
 from apps.tenants.tests.auth import create_operator_key
 
@@ -41,6 +47,9 @@ def make_account(tenant):
         marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
         external_id='ext-123',
         credentials_enc=encrypt({'client_id': 'cid', 'client_secret': 'csecret'}),
+        default_address='Москва, Тверская улица, 1',
+        default_manager_name='Менеджер',
+        default_contact_phone='+79990000000',
     )
 
 
@@ -57,6 +66,8 @@ def make_product(tenant):
         datasource=ds,
         article='ART-001',
         name='Тестовый товар',
+        brand='Bosch',
+        condition='used',
         price=500,
         stock_qty=1,
     )
@@ -92,6 +103,19 @@ class TestListingServiceApprove:
 
         assert result.status == Listing.STATUS_QUEUED
 
+    def test_approve_clears_previous_review_reason(self):
+        tenant = make_tenant('approve-clears-reason-co')
+        listing = make_listing(tenant)
+        listing.rejection_reason = 'Старая ошибка производителя'
+        listing.save(update_fields=['rejection_reason'])
+
+        with patch('apps.marketplaces.services._enqueue_publish_or_update'):
+            result = ListingService.approve(listing.pk, tenant)
+
+        result.refresh_from_db()
+        assert result.status == Listing.STATUS_QUEUED
+        assert result.rejection_reason == ''
+
     def test_approve_enqueues_publish_task(self):
         """Одобрение регистрирует on_commit-хук с задачей публикации."""
         tenant = make_tenant('approve-queue-co')
@@ -126,11 +150,21 @@ class TestListingServiceApprove:
         tenant = make_tenant('approve-unknown-brand-co')
         listing = make_listing(tenant)
         listing.product.brand = 'НесуществующийБрендXYZ'
-        listing.product.save(update_fields=['brand'])
+        listing.product.condition = 'new'
+        listing.product.catalog_category = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Поперечные дуги и комплектующие',
+            normalized_name='поперечныедугиикомплектующие',
+            domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+            external_source='avito',
+            external_id='poperechnye_dugi_i_komplektuyushie',
+        )
+        listing.product.save(update_fields=['brand', 'condition', 'catalog_category'])
 
-        with pytest.raises(InvalidListingStatus, match='Неизвестный бренд'):
+        with pytest.raises(ListingPublicationValidationError) as error:
             ListingService.approve(listing.pk, tenant)
 
+        assert 'product_brand' in error.value.field_errors
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_REQUIRES_REVIEW
 
@@ -661,6 +695,70 @@ class TestListingDetailSerializer:
 
         assert data['product_brand'] == 'Hyundai-KIA'
 
+    def test_detail_shows_exact_selected_oem_without_false_warning(self):
+        """Drawer exposes both source OEMs and the exact single outgoing value."""
+        from apps.marketplaces.serializers import ListingDetailSerializer
+
+        tenant = make_tenant('detail-oem-co')
+        listing = make_listing(tenant)
+        listing.product.oem_numbers = ['92402D5000', '92402D4000']
+        listing.product.save(update_fields=['oem_numbers'])
+
+        data = ListingDetailSerializer(listing).data
+
+        assert data['product_oem_numbers'] == ['92402D5000', '92402D4000']
+        assert data['product_avito_oem'] == '92402D5000'
+        assert 'product_oem' not in data['avito_field_errors']
+        assert 'product_oem' not in data['avito_field_warnings_by_field']
+
+    def test_corrected_rejected_oem_is_ready_to_retry_and_old_reason_is_history(self):
+        """A valid corrected OEM must not keep looking like a current error."""
+        from apps.marketplaces.serializers import ListingDetailSerializer
+
+        tenant = make_tenant('detail-corrected-oem-co')
+        listing = make_listing(tenant, status=Listing.STATUS_REJECTED)
+        category = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Автосвет',
+            normalized_name='автосвет',
+            domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+            external_source='avito',
+            external_id='avtosvet',
+        )
+        listing.product.condition = 'new'
+        listing.product.catalog_category = category
+        listing.product.oem_numbers = ['92402D5000', '92402D4000']
+        listing.product.save(update_fields=[
+            'condition', 'catalog_category', 'oem_numbers',
+        ])
+        listing.rejection_reason = 'Прошлая ошибка: неверный OEM'
+        listing.save(update_fields=['rejection_reason'])
+
+        data = ListingDetailSerializer(listing).data
+
+        assert data['avito_field_errors'] == {}
+        assert data['rejection_ready_to_retry'] is True
+        assert data['status_display'] == 'Исправлено — отправьте снова'
+        assert 'Текущие поля прошли проверку MAP' in data['status_explanation']
+        assert data['rejection_reason'] == 'Прошлая ошибка: неверный OEM'
+
+    def test_rejected_listing_with_current_errors_is_not_ready_to_retry(self):
+        from apps.marketplaces.serializers import ListingDetailSerializer
+
+        tenant = make_tenant('detail-current-oem-error-co')
+        listing = make_listing(tenant, status=Listing.STATUS_REJECTED)
+        listing.title = ''
+        listing.product.name = ''
+        listing.product.save(update_fields=['name'])
+        listing.rejection_reason = 'Заполните заголовок'
+        listing.save(update_fields=['title', 'rejection_reason'])
+
+        data = ListingDetailSerializer(listing).data
+
+        assert 'title' in data['avito_field_errors']
+        assert data['rejection_ready_to_retry'] is False
+        assert data['status_display'] == 'Отклонено'
+
     def test_detail_includes_last_avito_sync_time(self):
         """Tenant UI can explain when the provider last confirmed the status."""
         from apps.marketplaces.serializers import ListingDetailSerializer
@@ -669,11 +767,22 @@ class TestListingDetailSerializer:
         listing = make_listing(tenant)
         checked_at = timezone.now().replace(microsecond=0)
         listing.last_sync_at = checked_at
-        listing.save(update_fields=['last_sync_at'])
+        listing.remote_status = Listing.REMOTE_STATUS_ACTIVE
+        listing.remote_status_checked_at = checked_at
+        listing.next_status_check_at = checked_at + datetime.timedelta(minutes=30)
+        listing.save(update_fields=[
+            'last_sync_at', 'remote_status', 'remote_status_checked_at',
+            'next_status_check_at',
+        ])
 
         data = ListingDetailSerializer(listing).data
 
         assert parse_datetime(data['last_sync_at']) == checked_at
+        assert data['remote_status'] == Listing.REMOTE_STATUS_ACTIVE
+        assert parse_datetime(data['remote_status_checked_at']) == checked_at
+        assert parse_datetime(data['next_status_check_at']) == (
+            checked_at + datetime.timedelta(minutes=30)
+        )
 
     def test_detail_includes_images(self):
         """ListingDetailSerializer возвращает список изображений товара."""

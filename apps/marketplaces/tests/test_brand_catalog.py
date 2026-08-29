@@ -48,7 +48,11 @@ def _listing(brand, condition='new'):
 
 
 def test_unknown_brand_details_for_new_product():
-    brand, suggestions = unknown_brand_details(_listing('НесуществующийБрендХ'))
+    with patch(
+        'apps.marketplaces.adapters.avito.feed_builder._avito_spec',
+        return_value={'required': ['Brand']},
+    ):
+        brand, suggestions = unknown_brand_details(_listing('НесуществующийБрендХ'))
     assert brand == 'НесуществующийБрендХ'
     assert isinstance(suggestions, list)
 

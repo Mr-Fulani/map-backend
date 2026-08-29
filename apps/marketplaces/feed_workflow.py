@@ -623,6 +623,116 @@ def create_or_supersede_feed_run(
 create_feed_run = create_or_supersede_feed_run
 
 
+@transaction.atomic
+def resume_failed_pre_submission_feed_run(
+    account_id: int,
+    *,
+    generation_id: uuid.UUID,
+    expected_revision: int,
+    payload_sha256: str,
+    now: datetime | None = None,
+) -> FeedRunSnapshot:
+    """Reopen one exact private generation only when no boundary was crossed.
+
+    A private source revision is unique per account, so a safely failed run
+    cannot be replaced by a second UUID.  Reusing its UUID is allowed only
+    when every storage/provider evidence field is still pristine and all of
+    its pending listing membership is unchanged.
+    """
+
+    transition_at = _now(now)
+    payload_sha256 = _digest(
+        payload_sha256,
+        field_name='payload_sha256',
+        allow_blank=False,
+    )
+    if isinstance(expected_revision, bool) or not isinstance(
+        expected_revision,
+        int,
+    ) or expected_revision < 0:
+        raise ValueError('expected_revision must be a non-negative integer.')
+    if not isinstance(generation_id, uuid.UUID):
+        try:
+            generation_id = uuid.UUID(str(generation_id))
+        except (TypeError, ValueError):
+            raise ValueError('generation_id must be a UUID.') from None
+
+    account = _lock_account(account_id)
+    if not _live(account):
+        raise FeedAccountUnavailable(
+            f'Marketplace account {account_id} is inactive or deleted.',
+        )
+    run = (
+        MarketplaceFeedRun.objects.select_for_update()
+        .filter(pk=generation_id, account_id=account.pk)
+        .first()
+    )
+    if run is None:
+        raise FeedRunConflict('Failed feed generation no longer exists.')
+
+    safe_pre_submission_failure = (
+        run.state == MarketplaceFeedRun.State.FAILED
+        and run.revision == expected_revision
+        and run.source_intent_revision is not None
+        and run.payload_sha256 == payload_sha256
+        and run.account_identity_digest == account_identity_digest(account)
+        and run.claim_token is None
+        and run.claimed_until is None
+        and run.submitted_at is None
+        and run.provider_run_id is None
+        and run.provider_predecessor_run_id is None
+        and run.provider_result_deadline_at is None
+        and run.submission_reconcile_attempt == 0
+        and run.feed_artifact_id is None
+        and run.artifact_upload_attempt == 0
+        and run.published_count == 0
+        and run.rejected_count == 0
+        and run.pending_count == run.total_count
+        and run.poll_cursor_listing_id == 0
+        and run.poll_round == 0
+        and run.report_page == 1
+        and run.report_attempt == 0
+        and run.report_completed_at is None
+        and run.finished_at is not None
+    )
+    if not safe_pre_submission_failure:
+        raise FeedRunConflict(
+            'Failed feed generation has storage, provider, ownership, or '
+            'result evidence and cannot be replayed automatically.',
+        )
+    if run.artifact_upload_attempts.exists():
+        raise FeedRunConflict(
+            'Failed feed generation has a durable object upload attempt.',
+        )
+    tagged_pending_count = Listing.objects.filter(
+        feed_run_id=run.pk,
+        account_id=account.pk,
+        tenant_id=account.tenant_id,
+        status=Listing.STATUS_PENDING,
+        external_id__isnull=True,
+    ).count()
+    if tagged_pending_count != run.pending_count:
+        raise FeedRunConflict(
+            'Failed feed generation membership changed before safe replay.',
+        )
+
+    run.state = MarketplaceFeedRun.State.PREPARING
+    run.revision += 1
+    run.next_attempt_at = transition_at
+    run.last_error = ''
+    run.finished_at = None
+    run.updated_at = transition_at
+    run.save(update_fields=[
+        'state',
+        'revision',
+        'next_attempt_at',
+        'last_error',
+        'finished_at',
+        'updated_at',
+    ])
+    return _snapshot(run)
+
+
 def _claim_locked_account(
     account: MarketplaceAccount,
     *,
@@ -1068,6 +1178,40 @@ def _normalized_report_errors(values: Mapping[Any, object]) -> dict[uuid.UUID, s
         if ad_id in result:
             raise ValueError('errors_by_ad_id contains the same UUID more than once.')
         result[ad_id] = _report_reason(raw_reason)
+    return result
+
+
+def _normalized_report_external_ids(
+    values: Mapping[Any, object],
+) -> dict[uuid.UUID, str]:
+    if not isinstance(values, Mapping) or len(values) > MAX_POLL_BATCH_SIZE:
+        raise ValueError(
+            'external_ids_by_ad_id must be a mapping of at most '
+            f'{MAX_POLL_BATCH_SIZE} rows.',
+        )
+    result: dict[uuid.UUID, str] = {}
+    for raw_ad_id, raw_external_id in values.items():
+        if isinstance(raw_ad_id, uuid.UUID):
+            ad_id = raw_ad_id
+        else:
+            try:
+                ad_id = uuid.UUID(str(raw_ad_id))
+            except (AttributeError, TypeError, ValueError):
+                raise ValueError(
+                    'external_ids_by_ad_id keys must be UUID values.',
+                ) from None
+        if ad_id in result:
+            raise ValueError(
+                'external_ids_by_ad_id contains the same UUID more than once.',
+            )
+        if not isinstance(raw_external_id, str):
+            raise ValueError('A resolved provider listing id must be a string.')
+        external_id = raw_external_id.strip()
+        if not external_id or len(external_id) > 100:
+            raise ValueError(
+                'A resolved provider listing id must contain 1 to 100 characters.',
+            )
+        result[ad_id] = external_id
     return result
 
 
@@ -1765,11 +1909,13 @@ def apply_report_page(
     *,
     current_page: int,
     errors_by_ad_id: Mapping[Any, object],
+    external_ids_by_ad_id: Mapping[Any, object] | None = None,
     next_page: int | None,
     next_attempt_at: datetime | None,
     occurred_at: datetime,
+    provider_complete: bool = True,
 ) -> FeedPageApplyResult:
-    """Apply one exact-generation report page without notification fan-out."""
+    """Apply one exact-generation current-upload page atomically."""
 
     transition_at = _now(occurred_at)
     if (
@@ -1789,7 +1935,25 @@ def apply_report_page(
             raise ValueError('next_attempt_at is required when another report page exists.')
     if next_attempt_at is not None:
         next_attempt_at = _future(next_attempt_at, field_name='next_attempt_at')
+    if not isinstance(provider_complete, bool):
+        raise ValueError('provider_complete must be a boolean.')
+    if not provider_complete and next_page is None and next_attempt_at is None:
+        raise ValueError(
+            'next_attempt_at is required while the provider upload is incomplete.',
+        )
     errors = _normalized_report_errors(errors_by_ad_id)
+    external_ids = _normalized_report_external_ids(
+        {} if external_ids_by_ad_id is None else external_ids_by_ad_id,
+    )
+    if set(errors).intersection(external_ids):
+        raise ValueError(
+            'One report item cannot be both rejected and published.',
+        )
+    outcome_ad_ids = tuple(set(errors).union(external_ids))
+    if len(outcome_ad_ids) > MAX_POLL_BATCH_SIZE:
+        raise ValueError(
+            f'One report page must contain at most {MAX_POLL_BATCH_SIZE} outcomes.',
+        )
 
     run = _lock_claimed_run(
         claim,
@@ -1808,11 +1972,14 @@ def apply_report_page(
             deleted_at__isnull=True,
             status=Listing.STATUS_PENDING,
             external_id__isnull=True,
-            publish_idempotency_key__in=tuple(errors),
+            publish_idempotency_key__in=outcome_ad_ids,
         )
         .order_by('pk')[:MAX_POLL_BATCH_SIZE]
     )
     changed: list[Listing] = []
+    published: list[Listing] = []
+    rejected: list[Listing] = []
+    due_at = transition_at + PUBLISHED_STATUS_RECHECK_DELAY
     for listing in listings:
         if (
             listing.feed_run_id != run.pk
@@ -1823,12 +1990,27 @@ def apply_report_page(
             or listing.external_id is not None
         ):
             continue
-        listing.status = Listing.STATUS_REJECTED
-        listing.rejection_reason = errors[listing.publish_idempotency_key]
+        ad_id = listing.publish_idempotency_key
+        rejection_reason = errors.get(ad_id)
+        external_id = external_ids.get(ad_id)
+        if rejection_reason is not None:
+            listing.status = Listing.STATUS_REJECTED
+            listing.rejection_reason = rejection_reason
+            listing.next_status_check_at = None
+            rejected.append(listing)
+        elif external_id is not None:
+            listing.external_id = external_id
+            listing.status = Listing.STATUS_ACTIVE
+            listing.rejection_reason = ''
+            if listing.published_at is None:
+                listing.published_at = transition_at
+            listing.next_status_check_at = due_at
+            published.append(listing)
+        else:
+            continue
         listing.last_sync_at = transition_at
         listing.remote_status = None
         listing.remote_status_checked_at = None
-        listing.next_status_check_at = None
         listing.status_check_claim_token = None
         listing.status_check_claimed_until = None
         listing.updated_at = transition_at
@@ -1836,8 +2018,10 @@ def apply_report_page(
 
     if changed:
         Listing.all_objects.bulk_update(changed, [
+            'external_id',
             'status',
             'rejection_reason',
+            'published_at',
             'last_sync_at',
             'remote_status',
             'remote_status_checked_at',
@@ -1856,27 +2040,55 @@ def apply_report_page(
                 message=listing.rejection_reason,
                 payload={'feed_generation_id': str(run.pk)},
             )
-            for listing in changed
+            for listing in rejected
+        ] + [
+            SyncLog(
+                tenant_id=listing.tenant_id,
+                product_id=listing.product_id,
+                listing_id=listing.pk,
+                event_type=SyncLog.EVENT_LISTING_PUBLISH,
+                status=SyncLog.STATUS_OK,
+                message='Listing published by marketplace feed.',
+                payload={
+                    'feed_generation_id': str(run.pk),
+                    'provider_listing_id': listing.external_id,
+                },
+            )
+            for listing in published
         ])
 
     if next_page is None:
         counters = _recomputed_counters(run)
         if counters['pending_count']:
-            # A complete rejection report is not proof that every listing was
-            # resolved.  Return unresolved rows to a fresh bounded poll round;
-            # declaring success here would strand them forever.
-            updates: dict[str, object] = {
-                **counters,
-                'state': MarketplaceFeedRun.State.POLLING,
-                'poll_cursor_listing_id': 0,
-                'poll_round': run.poll_round + 1,
-                'report_page': 1,
-                'report_attempt': 0,
-                'report_completed_at': transition_at,
-                'next_attempt_at': transition_at + UNRESOLVED_POLL_RETRY_DELAY,
-                'last_error': '',
-                'finished_at': None,
-            }
+            if provider_complete:
+                # A complete provider report is not proof that every listing
+                # was resolved. Return unresolved rows to the bounded ID poll.
+                updates: dict[str, object] = {
+                    **counters,
+                    'state': MarketplaceFeedRun.State.POLLING,
+                    'poll_cursor_listing_id': 0,
+                    'poll_round': run.poll_round + 1,
+                    'report_page': 1,
+                    'report_attempt': 0,
+                    'report_completed_at': transition_at,
+                    'next_attempt_at': transition_at + UNRESOLVED_POLL_RETRY_DELAY,
+                    'last_error': '',
+                    'finished_at': None,
+                }
+            else:
+                # ``current/items`` can expose proven rows while the upload is
+                # still processing. Re-scan it later so unresolved rows can
+                # receive their eventual error or active id.
+                updates = {
+                    **counters,
+                    'state': MarketplaceFeedRun.State.REPORTING,
+                    'report_page': 1,
+                    'report_attempt': 0,
+                    'report_completed_at': None,
+                    'next_attempt_at': next_attempt_at,
+                    'last_error': '',
+                    'finished_at': None,
+                }
         else:
             updates = {
                 **counters,
@@ -1891,8 +2103,8 @@ def apply_report_page(
         updates = {
             **_counter_values(
                 run,
-                published_delta=0,
-                rejected_delta=len(changed),
+                published_delta=len(published),
+                rejected_delta=len(rejected),
                 other_resolved_delta=0,
             ),
             'report_page': next_page,
@@ -1906,11 +2118,19 @@ def apply_report_page(
         now=transition_at,
         updates=updates,
     )
+    if published:
+        MarketplaceAccount.all_objects.filter(
+            pk=run.account_id,
+        ).filter(
+            Q(status_batch_due_at__isnull=True)
+            | Q(status_batch_due_at__gt=due_at),
+        ).update(status_batch_due_at=due_at)
     changed_ids = tuple(listing.pk for listing in changed)
     return FeedPageApplyResult(
         snapshot=snapshot,
         changed_listing_ids=changed_ids,
-        rejected_count=len(changed_ids),
+        published_count=len(published),
+        rejected_count=len(rejected),
     )
 
 

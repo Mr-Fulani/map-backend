@@ -51,8 +51,30 @@ class ProductDetailResponseSerializer(serializers.Serializer):
     data = ProductDetailSerializer()  # type: ignore[assignment]
 
 
-class ProductBrandUpdateRequestSerializer(serializers.Serializer):
-    brand = serializers.CharField(max_length=200, allow_blank=True)
+class ProductFeedFieldUpdateRequestSerializer(serializers.Serializer):
+    """Tenant-editable product fields that directly affect Avito XML."""
+
+    brand = serializers.CharField(max_length=200, allow_blank=True, required=False)
+    avito_oem = serializers.RegexField(
+        regex=r'^[A-Za-z0-9-]*$',
+        max_length=50,
+        allow_blank=True,
+        required=False,
+        error_messages={
+            'invalid': 'OEM должен состоять из латинских букв, цифр или дефиса.',
+        },
+    )
+
+    def validate(self, attrs):
+        allowed = {'brand', 'avito_oem'}
+        unknown = set(self.initial_data) - allowed
+        if unknown:
+            raise serializers.ValidationError(
+                f'Неподдерживаемые поля: {", ".join(sorted(unknown))}',
+            )
+        if not set(self.initial_data) & allowed:
+            raise serializers.ValidationError('Передайте поле brand или avito_oem.')
+        return attrs
 
 
 class BrandOptionSerializer(serializers.Serializer):

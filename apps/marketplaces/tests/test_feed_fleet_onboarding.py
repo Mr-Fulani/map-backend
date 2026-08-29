@@ -1,5 +1,5 @@
 from copy import deepcopy
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 from django.test import override_settings
@@ -13,6 +13,7 @@ from apps.marketplaces.adapters.avito.profile_migration import (
 )
 from apps.marketplaces.feed_endpoint import marketplace_feed_public_url
 from apps.marketplaces.feed_profile_migration import (
+    FeedProfileMigrationConflict,
     FeedProfileMigrationProviderUncertain,
     FeedProfileMigrationSafetyError,
     ensure_fleet_feed_endpoint,
@@ -123,6 +124,133 @@ def test_new_account_response_is_managed_before_background_onboarding():
     assert MarketplaceAccountSerializer(account).data[
         'feed_endpoint_managed'
     ] is True
+
+
+@pytest.mark.django_db
+@override_settings(**FLEET_SETTINGS)
+def test_fleet_onboarding_isolated_for_more_accounts_and_new_tenants(
+    django_capture_on_commit_callbacks,
+):
+    """Every distinct Avito account follows the same tenant-scoped path."""
+
+    existing_tenant = Tenant.objects.create(
+        name='Existing fleet tenant',
+        slug='existing-fleet-tenant',
+    )
+    new_tenant = Tenant.objects.create(
+        name='New fleet tenant',
+        slug='new-fleet-tenant',
+    )
+    account_payloads = (
+        (existing_tenant, 'Existing Avito A', 'avito-existing-a'),
+        (existing_tenant, 'Existing Avito B', 'avito-existing-b'),
+        (new_tenant, 'New tenant Avito', 'avito-new-tenant'),
+    )
+
+    with (
+        patch.object(
+            MarketplaceAccountService,
+            '_fetch_avito_user_id',
+            side_effect=[item[2] for item in account_payloads],
+        ),
+        patch(
+            'apps.marketplaces.autoload_onboarding.'
+            'schedule_autoload_profile_setup',
+            return_value=True,
+        ) as schedule,
+        django_capture_on_commit_callbacks(execute=True),
+    ):
+        accounts = [
+            MarketplaceAccountService.create(tenant, {
+                'marketplace': MarketplaceAccount.MARKETPLACE_AVITO,
+                'name': name,
+                'client_id': f'client-{external_id}',
+                'client_secret': f'secret-{external_id}',
+            })
+            for tenant, name, external_id in account_payloads
+        ]
+
+    assert [account.external_id for account in accounts] == [
+        item[2] for item in account_payloads
+    ]
+    assert schedule.call_args_list == [
+        call(account.pk, account.tenant_id) for account in accounts
+    ]
+
+    endpoints = {
+        account.pk: MarketplaceFeedEndpoint.objects.get(account=account)
+        for account in accounts
+    }
+    stable_urls = {
+        account.pk: marketplace_feed_public_url(endpoints[account.pk])
+        for account in accounts
+    }
+    assert len(set(stable_urls.values())) == len(accounts)
+    assert len({endpoint.legacy_object_key for endpoint in endpoints.values()}) == len(
+        accounts,
+    )
+
+    clients: dict[int, MagicMock] = {}
+
+    def fake_client(account):
+        endpoint = endpoints[account.pk]
+        source = _source_profile(endpoint)
+        observation = build_profile_plan(
+            account=account,
+            profile=source,
+            source_url=endpoint.legacy_profile_url,
+            source_object_key=endpoint.legacy_object_key,
+            stable_url=stable_urls[account.pk],
+        )
+        client = MagicMock(spec=AvitoProfileMigrationClient)
+        client.adapter = MagicMock()
+        client.adapter.get_autoload_profile.return_value = deepcopy(source)
+        client.prepare_post.return_value = PreparedAvitoProfilePost(
+            f'token-{account.pk}',
+        )
+        client.get_profile.return_value = deepcopy(
+            observation.plan.target_profile,
+        )
+        clients[account.pk] = client
+        return client
+
+    with patch(
+        'apps.marketplaces.feed_profile_migration.AvitoProfileMigrationClient',
+        side_effect=fake_client,
+    ):
+        results = [
+            run_fleet_feed_onboarding(
+                tenant_id=account.tenant_id,
+                account_id=account.pk,
+                report_email='fallback@example.test',
+            )
+            for account in accounts
+        ]
+
+    assert results == ['verified', 'verified', 'verified']
+    for account in accounts:
+        endpoint = endpoints[account.pk]
+        endpoint.refresh_from_db()
+        assert endpoint.profile_state == MarketplaceFeedEndpoint.ProfileState.VERIFIED
+        assert endpoint.serve_enabled is True
+        assert fleet_feed_onboarding_ready(account.pk) is True
+
+        posted = clients[account.pk].post_profile_once.call_args.args[1]
+        posted_urls = {feed['feed_url'] for feed in posted['feeds_data']}
+        assert stable_urls[account.pk] in posted_urls
+        assert posted_urls.isdisjoint(
+            set(stable_urls.values()) - {stable_urls[account.pk]},
+        )
+
+    with pytest.raises(
+        FeedProfileMigrationConflict,
+        match='does not match the requested tenant scope',
+    ):
+        run_fleet_feed_onboarding(
+            tenant_id=new_tenant.pk,
+            account_id=accounts[0].pk,
+            report_email='fallback@example.test',
+        )
 
 
 @pytest.mark.django_db
@@ -259,6 +387,39 @@ def test_onboarding_refuses_mixed_or_drifting_owned_feeds():
         patch(
             'apps.marketplaces.feed_profile_migration.AvitoProfileMigrationClient',
             return_value=client,
+        ),
+        pytest.raises(FeedProfileMigrationSafetyError),
+    ):
+        run_fleet_feed_onboarding(
+            tenant_id=account.tenant_id,
+            account_id=account.pk,
+            report_email='fallback@example.test',
+        )
+
+    client.prepare_post.assert_not_called()
+    client.post_profile_once.assert_not_called()
+
+
+@pytest.mark.django_db
+@override_settings(**FLEET_SETTINGS)
+def test_onboarding_refuses_unservable_local_route_before_provider_post():
+    account = _account('route-not-ready')
+    endpoint = ensure_fleet_feed_endpoint(account)
+    assert endpoint is not None
+    source = _source_profile(endpoint)
+    client = MagicMock(spec=AvitoProfileMigrationClient)
+    client.adapter = MagicMock()
+    client.adapter.get_autoload_profile.return_value = source
+    client.adapter._build_autoload_profile_payload.return_value = source
+
+    with (
+        patch(
+            'apps.marketplaces.feed_profile_migration.AvitoProfileMigrationClient',
+            return_value=client,
+        ),
+        patch(
+            'apps.marketplaces.feed_profile_migration.legacy_bridge_target_url',
+            return_value=None,
         ),
         pytest.raises(FeedProfileMigrationSafetyError),
     ):

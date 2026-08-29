@@ -5,6 +5,7 @@
 apps/marketplaces/data/avito_field_specs.json. На него опираются маппинг
 категорий и валидация фида перед публикацией.
 """
+import gzip
 import json
 import time
 from pathlib import Path
@@ -16,6 +17,7 @@ from apps.marketplaces.adapters.avito.adapter import AvitoAdapter
 from apps.marketplaces.models import MarketplaceAccount
 
 DATA_PATH = Path(__file__).resolve().parents[2] / 'data' / 'avito_field_specs.json'
+RULES_PATH = DATA_PATH.with_name('avito_field_rules.json.gz')
 DEFAULT_ROOT = 'Запчасти и аксессуары'
 
 
@@ -36,6 +38,40 @@ def _find(nodes: list, name: str):
         if found:
             return found
     return None
+
+
+def _dependency_rules(content: dict) -> list[dict]:
+    """Keep the schema predicates needed to decide whether a field applies.
+
+    Avito marks many fields as ``required_by_dependency`` instead of setting
+    ``required`` directly (for example OEM/Brand when Condition=New).  Dropping
+    these predicates makes local preflight disagree with the provider.
+    """
+    result = []
+    for dependency in content.get('dependencies') or []:
+        action = dependency.get('action')
+        expression = dependency.get('expression') or dependency
+        if action not in {'required', 'visible', 'hidden'}:
+            continue
+        pairs = []
+        for pair in expression.get('pairs') or []:
+            clause = pair.get('clause')
+            tag = pair.get('tag') or pair.get('source_field_tag')
+            if not tag or clause not in {'empty', 'filled', 'value'}:
+                continue
+            values = []
+            for item in pair.get('values') or []:
+                value = item.get('value') if isinstance(item, dict) else item
+                if value is not None:
+                    values.append(str(value))
+            pairs.append({'tag': tag, 'clause': clause, 'values': values})
+        if pairs:
+            result.append({
+                'action': action,
+                'clause': expression.get('clause') if expression.get('clause') in {'and', 'or'} else 'and',
+                'pairs': pairs,
+            })
+    return result
 
 
 class Command(BaseCommand):
@@ -62,12 +98,46 @@ class Command(BaseCommand):
         self._collect_leaves(root, [], leaves)
         self.stdout.write(f'Найдено листьев: {len(leaves)}')
 
-        result, errors = [], 0
+        existing, existing_rules = {}, {}
+        if DATA_PATH.exists():
+            try:
+                existing = {
+                    leaf['slug']: leaf
+                    for leaf in json.loads(DATA_PATH.read_text(encoding='utf-8')).get('leaves', [])
+                }
+            except (KeyError, TypeError, ValueError):
+                existing = {}
+        if existing and len(leaves) < len(existing):
+            self.stdout.write(self.style.WARNING(
+                'API вернул неполное дерево; обновляем сохранённый inventory листьев.',
+            ))
+            leaves = [
+                {key: item[key] for key in ('slug', 'name', 'path')}
+                for item in existing.values()
+            ]
+        if RULES_PATH.exists():
+            try:
+                existing_rules = json.loads(gzip.decompress(RULES_PATH.read_bytes()))
+            except (OSError, TypeError, ValueError):
+                existing_rules = {}
+
+        result, collected_rules, errors = [], {}, 0
         for leaf in leaves:
-            required, fixed, http = self._leaf_fields(adapter, leaf['slug'])
+            required, fixed, field_rules, http = self._leaf_fields(adapter, leaf['slug'])
             if http != 200:
                 errors += 1
-            result.append({**leaf, 'required': required, 'fixed': fixed})
+                previous = existing.get(leaf['slug']) or {}
+                required = previous.get('required', required)
+                fixed = previous.get('fixed', fixed)
+                field_rules = existing_rules.get(leaf['slug'], field_rules)
+            result.append({
+                **leaf,
+                'required': required,
+                'fixed': fixed,
+                'http': http,
+            })
+            if field_rules:
+                collected_rules[leaf['slug']] = field_rules
             time.sleep(0.12)
 
         DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -76,6 +146,10 @@ class Command(BaseCommand):
                        ensure_ascii=False, indent=2),
             encoding='utf-8',
         )
+        RULES_PATH.write_bytes(gzip.compress(
+            json.dumps(collected_rules, ensure_ascii=False, separators=(',', ':')).encode(),
+            mtime=0,
+        ))
         self.stdout.write(self.style.SUCCESS(
             f'Готово: {len(result)} листьев записано в {DATA_PATH.name}, ошибок: {errors}'
         ))
@@ -98,7 +172,7 @@ class Command(BaseCommand):
             self._collect_leaves(child, new_path, acc)
 
     def _leaf_fields(self, adapter, slug):
-        """Возвращает (required_tags, fixed_values, http_status) для листа; ретрай на 429."""
+        """Return static fields, conditional rules and HTTP status for a leaf."""
         for _ in range(3):
             try:
                 data = adapter.get_node_fields(slug)
@@ -107,17 +181,26 @@ class Command(BaseCommand):
                 if status == 429:
                     time.sleep(2)
                     continue
-                return [], {}, status or -1
-            required, fixed = [], {}
+                return [], {}, {}, status or -1
+            required, fixed, field_rules = [], {}, {}
             for field in data.get('fields', []):
                 tag = field.get('tag')
+                variants = []
                 for content in (field.get('content') or []):
-                    if not content.get('required'):
-                        continue
-                    if tag not in required:
+                    is_required = bool(content.get('required'))
+                    required_by_dependency = bool(content.get('required_by_dependency'))
+                    rules = _dependency_rules(content)
+                    if is_required and not required_by_dependency and tag not in required:
                         required.append(tag)
-                    values = [v.get('value') for v in (content.get('values') or [])]
-                    if len(values) == 1:
-                        fixed[tag] = values[0]
-            return required, fixed, 200
-        return [], {}, 429
+                    if is_required and not required_by_dependency:
+                        values = [v.get('value') for v in (content.get('values') or [])]
+                        if len(values) == 1:
+                            fixed[tag] = values[0]
+                    variants.append({
+                        'required': is_required and not required_by_dependency,
+                        'dependencies': rules,
+                    })
+                if any(variant['dependencies'] for variant in variants):
+                    field_rules[tag] = variants
+            return required, fixed, field_rules, 200
+        return [], {}, {}, 429

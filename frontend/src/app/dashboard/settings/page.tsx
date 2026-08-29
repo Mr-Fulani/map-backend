@@ -60,8 +60,17 @@ interface Account {
   autoload_checked_at: string | null;
   autoload_subscription_ends_at: string | null;
   feed_endpoint_managed: boolean;
+  autoload_onboarding: AutoloadOnboarding;
   avito_status: AvitoAccountHealth | null;
   created_at: string;
+}
+
+interface AutoloadOnboarding {
+  state: 'legacy' | 'pending' | 'retrying' | 'reconciling' | 'ready' | 'exhausted' | 'manual_review';
+  profile_state: string;
+  ready: boolean;
+  retryable: boolean;
+  message: string;
 }
 
 interface AvitoAccountHealth {
@@ -94,6 +103,7 @@ interface AutoloadCheck {
   feed_endpoint_managed?: boolean;
   stale?: boolean;
   status?: AvitoAccountHealth;
+  autoload_onboarding?: AutoloadOnboarding;
 }
 
 interface PlacementAddress {
@@ -368,6 +378,7 @@ export default function SettingsPage() {
   const [editAccountName, setEditAccountName] = useState('');
   const [autoloadStatus, setAutoloadStatus] = useState<Record<number, AutoloadCheck | null>>({});
   const [checkingAutoloadId, setCheckingAutoloadId] = useState<number | null>(null);
+  const [retryingAutoloadId, setRetryingAutoloadId] = useState<number | null>(null);
   const [copiedFeedId, setCopiedFeedId] = useState<number | null>(null);
   const [savingPlacementAccountId, setSavingPlacementAccountId] = useState<number | null>(null);
   const [savingSubscriptionAccountId, setSavingSubscriptionAccountId] = useState<number | null>(null);
@@ -548,6 +559,7 @@ export default function SettingsPage() {
                     feed_endpoint_managed: acc.feed_endpoint_managed,
                     stale: acc.avito_status?.profile_stale,
                     status: acc.avito_status ?? undefined,
+                    autoload_onboarding: acc.autoload_onboarding,
                   };
                 }
               }
@@ -988,6 +1000,42 @@ export default function SettingsPage() {
       toast.error('Не удалось проверить статус');
     } finally {
       setCheckingAutoloadId(null);
+    }
+  }
+
+  async function retryAutoloadOnboarding(id: number) {
+    setRetryingAutoloadId(id);
+    try {
+      const { data } = await accountApi.retryAutoload(id);
+      setAccounts((prev) => prev.map((account) => (
+        account.id === id
+          ? { ...account, autoload_onboarding: data }
+          : account
+      )));
+      setAutoloadStatus((prev) => {
+        const account = accounts.find((item) => item.id === id);
+        const current = prev[id] ?? {
+          activated: account?.avito_status?.autoload_status === 'enabled',
+          feed_url: null,
+          feed_endpoint_managed: account?.feed_endpoint_managed,
+          stale: account?.avito_status?.profile_stale,
+          status: account?.avito_status ?? undefined,
+        };
+        return {
+          ...prev,
+          [id]: { ...current, autoload_onboarding: data },
+        };
+      });
+      toast.success('Повторная настройка фида поставлена в очередь');
+    } catch (error: unknown) {
+      const response = (error as { response?: { data?: AutoloadOnboarding } }).response;
+      if (response?.data?.state === 'manual_review') {
+        toast.error(response.data.message);
+      } else {
+        toast.error('Не удалось запустить повторную настройку');
+      }
+    } finally {
+      setRetryingAutoloadId(null);
     }
   }
 
@@ -1847,6 +1895,7 @@ export default function SettingsPage() {
                   {accounts.map((acc) => {
                     const al = autoloadStatus[acc.id];
                     const health = al?.status ?? acc.avito_status;
+                    const onboarding = al?.autoload_onboarding ?? acc.autoload_onboarding;
                     const accAddresses = placementAddresses.filter((item) => item.account === acc.id && item.is_active);
                     const addressDraft = addressDrafts[acc.id] || {
                       name: '',
@@ -1920,12 +1969,70 @@ export default function SettingsPage() {
                         </div>
                       </div>
 
+                      {onboarding && onboarding.state !== 'legacy' && (
+                        <div className={`rounded-md border px-3 py-2 text-sm ${
+                          onboarding.ready
+                            ? 'border-green-500/20 bg-green-500/5'
+                            : onboarding.state === 'manual_review' || onboarding.state === 'exhausted'
+                              ? 'border-red-500/20 bg-red-500/5'
+                              : 'border-amber-500/20 bg-amber-500/5'
+                        }`}>
+                          <div className="flex items-start gap-2">
+                            {onboarding.ready ? (
+                              <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
+                            ) : (
+                              <AlertCircle className={`mt-0.5 h-4 w-4 shrink-0 ${
+                                onboarding.state === 'manual_review' || onboarding.state === 'exhausted'
+                                  ? 'text-red-500'
+                                  : 'text-amber-500'
+                              }`} />
+                            )}
+                            <div className="min-w-0 flex-1">
+                              <p className={`font-medium ${
+                                onboarding.ready
+                                  ? 'text-green-600'
+                                  : onboarding.state === 'manual_review' || onboarding.state === 'exhausted'
+                                    ? 'text-red-600'
+                                    : 'text-amber-600'
+                              }`}>
+                                {onboarding.ready
+                                  ? 'Защищённый фид MAP подключён'
+                                  : onboarding.state === 'manual_review'
+                                    ? 'Нужна ручная проверка подключения'
+                                    : onboarding.state === 'exhausted'
+                                      ? 'Настройка фида не завершена'
+                                      : onboarding.state === 'reconciling'
+                                        ? 'MAP сверяет изменение с Avito'
+                                        : 'MAP настраивает защищённый фид'}
+                              </p>
+                              <p className="mt-0.5 text-xs text-muted-foreground">
+                                {onboarding.message}
+                              </p>
+                              {onboarding.retryable && (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="mt-2 h-7 text-xs"
+                                  onClick={() => retryAutoloadOnboarding(acc.id)}
+                                  disabled={retryingAutoloadId === acc.id}
+                                >
+                                  {retryingAutoloadId === acc.id && (
+                                    <Loader2 className="mr-1.5 h-3 w-3 animate-spin" />
+                                  )}
+                                  Повторить настройку MAP
+                                </Button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                       {/* Статус Avito Автозагрузки */}
                       {al?.activated ? (
                         <div className="rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-sm">
                           <div className="flex items-center gap-2">
                             <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
-                            <span className="font-medium text-green-600">Автозагрузка активирована</span>
+                            <span className="font-medium text-green-600">Автозагрузка Avito включена</span>
                           </div>
                           {health?.feed_configured === false && (
                             <p className="mt-1 pl-6 text-xs text-amber-600">

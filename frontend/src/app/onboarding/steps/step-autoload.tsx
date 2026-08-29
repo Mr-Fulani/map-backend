@@ -24,6 +24,13 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+interface AutoloadOnboarding {
+  state: string;
+  ready: boolean;
+  retryable: boolean;
+  message: string;
+}
+
 interface StepAutoloadProps {
   data: Record<string, unknown>;
   onNext: (data?: Record<string, unknown>) => void;
@@ -38,6 +45,8 @@ export function StepAutoload({ data, onNext, onBack }: StepAutoloadProps) {
   const [feedEndpointManaged, setFeedEndpointManaged] = useState(
     Boolean(data.avito_feed_endpoint_managed),
   );
+  const [onboarding, setOnboarding] = useState<AutoloadOnboarding | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
   const [copied, setCopied] = useState(false);
 
   async function handleCheck() {
@@ -50,16 +59,40 @@ export function StepAutoload({ data, onNext, onBack }: StepAutoloadProps) {
       const { data: result } = await accountApi.checkAutoload(accountId);
       setFeedUrl(result.feed_url || '');
       setFeedEndpointManaged(Boolean(result.feed_endpoint_managed));
-      if (result.activated) {
+      setOnboarding(result.autoload_onboarding ?? null);
+      const endpointReady = (
+        !result.feed_endpoint_managed
+        || result.autoload_onboarding?.ready === true
+      );
+      if (result.activated && endpointReady) {
         setActivated(true);
-        toast.success('Автозагрузка активирована!');
+        toast.success('Автозагрузка и фид MAP готовы!');
+      } else if (result.activated) {
+        setActivated(false);
+        toast.warning('Avito включён, но MAP ещё завершает настройку защищённого фида.');
       } else {
+        setActivated(false);
         toast.error('Автозагрузка ещё не активирована. Выполните шаги ниже и проверьте снова.');
       }
     } catch {
       toast.error('Не удалось проверить статус. Попробуйте ещё раз.');
     } finally {
       setIsChecking(false);
+    }
+  }
+
+  async function retryOnboarding() {
+    if (!accountId) return;
+    setIsRetrying(true);
+    try {
+      const { data: result } = await accountApi.retryAutoload(accountId);
+      setOnboarding(result);
+      toast.success('Повторная настройка фида поставлена в очередь');
+    } catch (error: unknown) {
+      const response = (error as { response?: { data?: AutoloadOnboarding } }).response;
+      toast.error(response?.data?.message || 'Не удалось повторить настройку фида');
+    } finally {
+      setIsRetrying(false);
     }
   }
 
@@ -128,10 +161,15 @@ export function StepAutoload({ data, onNext, onBack }: StepAutoloadProps) {
             </span>
             <div className="space-y-2 min-w-0 flex-1">
               <p className="text-sm">
-                {feedEndpointManaged ? (
+                {feedEndpointManaged && onboarding?.ready ? (
                   <>
                     MAP уже добавил защищённую ссылку фида автоматически.
                     Включите Автозагрузку — копировать URL не нужно.
+                  </>
+                ) : feedEndpointManaged ? (
+                  <>
+                    MAP настраивает защищённую ссылку фида автоматически.
+                    Копировать URL не нужно; дождитесь подтверждения ниже.
                   </>
                 ) : (
                   <>
@@ -176,11 +214,37 @@ export function StepAutoload({ data, onNext, onBack }: StepAutoloadProps) {
       </div>
 
       {/* Статус */}
+      {feedEndpointManaged && onboarding && !onboarding.ready && (
+        <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-4">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium text-amber-600">
+                Защищённый фид MAP ещё не готов
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">{onboarding.message}</p>
+              {onboarding.retryable && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="mt-3"
+                  onClick={retryOnboarding}
+                  disabled={isRetrying}
+                >
+                  {isRetrying && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Повторить настройку MAP
+                </Button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {activated && (
         <div className="flex items-center gap-3 rounded-lg border border-green-500/20 bg-green-500/5 p-4">
           <CheckCircle2 className="h-5 w-5 shrink-0 text-green-500" />
           <p className="text-sm font-medium text-green-500">
-            Автозагрузка активирована! Можно продолжать.
+            Автозагрузка Avito и защищённый фид MAP готовы. Можно продолжать.
           </p>
         </div>
       )}

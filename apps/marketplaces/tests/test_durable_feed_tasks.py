@@ -11,7 +11,7 @@ from apps.core.models import BackgroundJobDispatch
 from apps.datasources.encryption import encrypt
 from apps.marketplaces.adapters.avito.adapter import (
     AmbiguousFeedSubmissionError,
-    FeedItemErrorPage,
+    FeedItemOutcomePage,
     FeedUploadError,
 )
 from apps.marketplaces.feed_workflow import (
@@ -320,6 +320,11 @@ def test_preparing_recovery_fails_before_boundary_without_provider_call(
     account = _account('preparing-recovery')
     _listing(account, 'one')
     run = create_or_supersede_feed_run(account.pk, now=timezone.now())
+    MarketplaceFeedRun.objects.filter(pk=run.run_id).update(
+        last_error=(
+            'private_artifact_preflight: private storage client bootstrap failed'
+        ),
+    )
 
     with (
         patch('apps.marketplaces.tasks.AvitoAdapter.get_latest_upload') as latest,
@@ -335,6 +340,9 @@ def test_preparing_recovery_fails_before_boundary_without_provider_call(
     assert result['status'] == 'failed_pre_submission'
     assert current.state == MarketplaceFeedRun.State.FAILED
     assert current.submitted_at is None
+    assert current.last_error == (
+        'private_artifact_preflight: private storage client bootstrap failed'
+    )
     latest.assert_not_called()
 
 
@@ -628,9 +636,10 @@ def test_reporting_rechecks_exact_upload_and_old_report_cannot_reject(
             return_value=_latest_upload(reporting, upload_id='upload-old'),
         ),
         patch(
-            'apps.marketplaces.tasks.AvitoAdapter.get_feed_item_error_page',
-            return_value=FeedItemErrorPage(
+            'apps.marketplaces.tasks.AvitoAdapter.get_current_feed_item_outcome_page',
+            return_value=FeedItemOutcomePage(
                 errors={str(listing.publish_idempotency_key): 'old error'},
+                external_ids={},
                 next_page=None,
             ),
         ) as get_report,
@@ -721,8 +730,12 @@ def test_report_terminal_transition_persists_one_durable_digest_leaf(
             ],
         ),
         patch(
-            'apps.marketplaces.tasks.AvitoAdapter.get_feed_item_error_page',
-            return_value=FeedItemErrorPage(errors={}, next_page=None),
+            'apps.marketplaces.tasks.AvitoAdapter.get_current_feed_item_outcome_page',
+            return_value=FeedItemOutcomePage(
+                errors={},
+                external_ids={},
+                next_page=None,
+            ),
         ),
         patch('apps.core.dispatch.publish_dispatch', return_value=False),
     ):

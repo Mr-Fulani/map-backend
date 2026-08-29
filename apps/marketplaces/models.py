@@ -165,9 +165,7 @@ class MarketplaceAccount(SoftDeleteModel):
     # Когда последний раз триггерили Autoload. Avito читает фид ~раз в час, поэтому
     # изменения копятся в окне и уходят одним фидом (см. request_feed_flush).
     last_feed_flush_at = models.DateTimeField(null=True, blank=True, verbose_name='Последняя автозагрузка фида')
-    # Provider-neutral scheduler state. This release only expands the schema;
-    # no scheduler reads these fields until the separately reviewed lifecycle
-    # rollout.
+    # Provider-neutral due cursor and short account-batch dispatch lease.
     status_batch_due_at = models.DateTimeField(
         null=True,
         blank=True,
@@ -2180,7 +2178,7 @@ class Listing(SoftDeleteModel):
     last_sync_at = models.DateTimeField(null=True, blank=True, verbose_name='Последняя синхронизация')
     # The canonical lifecycle remains ``status``. These fields store a bounded
     # provider observation and a future due cursor without inferring remote
-    # truth from local state. They remain nullable during schema expansion.
+    # truth from local state.
     remote_status = models.CharField(
         max_length=32,
         choices=REMOTE_STATUS_CHOICES,

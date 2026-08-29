@@ -26,6 +26,15 @@ interface Listing {
   id: number;
   status: string;
   status_display: string;
+  status_explanation: string;
+  delivery_stage: string;
+  delivery_retry_at: string | null;
+  delivery_retry_reason: string;
+  provider_submission_started: boolean;
+  lifecycle_actions_blocked: boolean;
+  can_check_avito_status: boolean;
+  can_publish: boolean;
+  rejection_ready_to_retry: boolean;
   product_article: string;
   product_name: string;
   account_name: string;
@@ -36,10 +45,27 @@ interface Listing {
   retry_count: number;
   published_at: string | null;
   last_sync_at: string | null;
+  remote_status: string | null;
+  remote_status_checked_at: string | null;
+  next_status_check_at: string | null;
   created_at: string;
 }
 
 function avitoCheckedLabel(value: string): string {
+  return new Date(value).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function providerCheckedAt(listing: Listing): string | null {
+  return listing.remote_status_checked_at;
+}
+
+function deliveryRetryLabel(value: string): string {
   return new Date(value).toLocaleString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
@@ -78,11 +104,12 @@ const STATUS_FILTERS = [
   { value: '', label: 'Все' },
   { value: 'active', label: 'Активные' },
   { value: 'queued', label: 'В очереди' },
-  { value: 'pending', label: 'Модерация Avito' },
+  { value: 'pending', label: 'Отправка в Avito' },
   { value: 'draft', label: 'Черновики' },
   { value: 'rejected', label: 'Отклонены' },
   { value: 'requires_review', label: 'Требуют проверки' },
   { value: 'limit_reached', label: 'Лимит достигнут' },
+  { value: 'archiving', label: 'Снимаются' },
   { value: 'archived', label: 'Архив' },
 ];
 
@@ -183,6 +210,35 @@ export default function ListingsPage() {
       .catch(() => setPlacementAddresses([]));
   }, []);
 
+  const hasLiveDelivery = listings.some((listing) => (
+    ['queued', 'pending', 'archiving'].includes(listing.status)
+  ));
+  const hasProviderTrackedListings = listings.some((listing) => (
+    listing.can_check_avito_status
+  ));
+
+  useEffect(() => {
+    if (!hasLiveDelivery && !hasProviderTrackedListings) return undefined;
+    let active = true;
+    const params: Record<string, unknown> = { page };
+    if (statusFilter) params.status = statusFilter;
+
+    const timer = window.setInterval(() => {
+      listingApi.list(params)
+        .then((response) => {
+          if (!active) return;
+          setListings(response.data.data);
+          setMeta(response.data.meta);
+        })
+        .catch(() => undefined);
+    }, hasLiveDelivery ? 15_000 : 60_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [hasLiveDelivery, hasProviderTrackedListings, page, statusFilter]);
+
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     !bulkAccountId || address.account === Number(bulkAccountId)
   ));
@@ -257,12 +313,20 @@ export default function ListingsPage() {
         toast.success('Удаление поставлено в очередь');
       } else {
         await listingApi.checkStatus(listing.id);
-        toast.success('Проверка статуса Avito поставлена в очередь');
+        toast.success(
+          'Запросили актуальный статус у Avito. '
+          + 'Результат обновится автоматически.',
+        );
       }
       await load();
     } catch (err: unknown) {
-      const message = (err as { response?: { data?: { message?: string; detail?: string } } })
+      const message = (err as { response?: { data?: {
+        code?: string;
+        message?: string;
+        detail?: string;
+      } } })
         ?.response?.data;
+      if (message?.code === 'listing_validation_error') openDrawer(listing.id);
       toast.error(message?.message || message?.detail || 'Не удалось выполнить действие');
     } finally {
       setRowActionId(null);
@@ -422,14 +486,20 @@ export default function ListingsPage() {
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
-                    <Badge variant={STATUS_VARIANT[l.status] ?? 'outline'}>
+                    <Badge variant={l.rejection_ready_to_retry ? 'secondary' : (l.delivery_stage === 'delivery_failed' ? 'destructive' : (STATUS_VARIANT[l.status] ?? 'outline'))}>
                       {l.status_display}
                     </Badge>
+                    {l.status_explanation && (
+                      <p className="mt-1 text-xs leading-4 text-muted-foreground">
+                        {l.status_explanation}
+                      </p>
+                    )}
                     <p className="mt-2 break-words text-sm font-medium leading-5">
                       {l.title || l.product_name}
                     </p>
-                    {l.rejection_reason && (
+                    {l.rejection_reason && !l.rejection_ready_to_retry && (
                       <p className="mt-1 line-clamp-2 text-xs text-destructive">
+                        {l.delivery_stage === 'delivery_failed' ? 'Прошлая попытка: ' : ''}
                         {l.rejection_reason}
                       </p>
                     )}
@@ -443,9 +513,20 @@ export default function ListingsPage() {
                         ? `Опубликован: ${new Date(l.published_at).toLocaleDateString('ru-RU')}`
                         : `Создан: ${new Date(l.created_at).toLocaleDateString('ru-RU')}`}
                     </p>
-                    {l.status === 'active' && l.last_sync_at && (
+                    {providerCheckedAt(l) && (
                       <p className="mt-1 text-xs text-green-700 dark:text-green-400">
-                        Проверено через Avito: {avitoCheckedLabel(l.last_sync_at)}
+                        Avito проверен: {avitoCheckedLabel(providerCheckedAt(l)!)}
+                      </p>
+                    )}
+                    {l.next_status_check_at && l.can_check_avito_status && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        Следующая проверка: {avitoCheckedLabel(l.next_status_check_at)}
+                      </p>
+                    )}
+                    {l.delivery_retry_at && (
+                      <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+                        {l.delivery_retry_reason || 'Временная задержка.'}{' '}
+                        Следующая попытка: {deliveryRetryLabel(l.delivery_retry_at)}
                       </p>
                     )}
                   </div>
@@ -461,12 +542,12 @@ export default function ListingsPage() {
                         <ExternalLink className="h-4 w-4" />
                       </a>
                     )}
-                    {['draft', 'rejected', 'archived', 'limit_reached'].includes(l.status) && (
+                    {l.can_publish && (
                       <Button
                         size="sm"
                         variant="ghost"
                         className="h-8 w-8 p-0"
-                        title="Опубликовать"
+                        title={l.rejection_ready_to_retry ? 'Отправить исправленную версию' : (l.delivery_stage === 'delivery_failed' ? 'Исправить и отправить снова' : 'Опубликовать')}
                         onClick={() => runListingAction(l, 'publish')}
                         disabled={rowActionId === l.id}
                       >
@@ -480,16 +561,18 @@ export default function ListingsPage() {
                         size="sm"
                         variant="ghost"
                         className="h-8 w-8 p-0"
-                        title="В архив"
+                        title={l.lifecycle_actions_blocked
+                          ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
+                          : 'В архив'}
                         onClick={() => runListingAction(l, 'archive')}
-                        disabled={rowActionId === l.id}
+                        disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
                       >
                         {rowActionId === l.id
                           ? <Loader2 className="h-4 w-4 animate-spin" />
                           : <Archive className="h-4 w-4" />}
                       </Button>
                     )}
-                    {l.status === 'pending' && (
+                    {l.can_check_avito_status && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -508,9 +591,11 @@ export default function ListingsPage() {
                         size="sm"
                         variant="ghost"
                         className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                        title="Удалить"
+                        title={l.lifecycle_actions_blocked
+                          ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
+                          : 'Удалить'}
                         onClick={() => runListingAction(l, 'delete')}
-                        disabled={rowActionId === l.id}
+                        disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
                       >
                         {rowActionId === l.id
                           ? <Loader2 className="h-4 w-4 animate-spin" />
@@ -563,20 +648,37 @@ export default function ListingsPage() {
                     onClick={() => openDrawer(l.id)}
                   >
                     <td className="px-4 py-3">
-                      <Badge variant={STATUS_VARIANT[l.status] ?? 'outline'}>
+                      <Badge variant={l.rejection_ready_to_retry ? 'secondary' : (l.delivery_stage === 'delivery_failed' ? 'destructive' : (STATUS_VARIANT[l.status] ?? 'outline'))}>
                         {l.status_display}
                       </Badge>
-                      {l.status === 'active' && l.last_sync_at && (
+                      {providerCheckedAt(l) && (
                         <p className="mt-1 max-w-40 text-[11px] leading-4 text-green-700 dark:text-green-400">
-                          Avito: {avitoCheckedLabel(l.last_sync_at)}
+                          Avito проверен: {avitoCheckedLabel(providerCheckedAt(l)!)}
+                        </p>
+                      )}
+                      {l.next_status_check_at && l.can_check_avito_status && (
+                        <p className="mt-1 max-w-44 text-[11px] leading-4 text-muted-foreground">
+                          Следующая проверка: {avitoCheckedLabel(l.next_status_check_at)}
+                        </p>
+                      )}
+                      {l.delivery_retry_at && (
+                        <p className="mt-1 max-w-44 text-[11px] leading-4 text-amber-700 dark:text-amber-400">
+                          {l.delivery_retry_reason || 'Временная задержка.'}<br />
+                          Повтор: {deliveryRetryLabel(l.delivery_retry_at)}
                         </p>
                       )}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs">{l.product_article}</td>
                     <td className="px-4 py-3">
                       <p className="line-clamp-1">{l.title || l.product_name}</p>
-                      {l.rejection_reason && (
+                      {l.status_explanation && (
+                        <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+                          {l.status_explanation}
+                        </p>
+                      )}
+                      {l.rejection_reason && !l.rejection_ready_to_retry && (
                         <p className="mt-0.5 text-xs text-destructive line-clamp-1">
+                          {l.delivery_stage === 'delivery_failed' ? 'Прошлая попытка: ' : ''}
                           {l.rejection_reason}
                         </p>
                       )}
@@ -605,12 +707,12 @@ export default function ListingsPage() {
                             <ExternalLink className="h-4 w-4" />
                           </a>
                         )}
-                        {['draft', 'rejected', 'archived', 'limit_reached'].includes(l.status) && (
+                        {l.can_publish && (
                           <Button
                             size="sm"
                             variant="ghost"
                             className="h-8 w-8 p-0"
-                            title="Опубликовать"
+                            title={l.rejection_ready_to_retry ? 'Отправить исправленную версию' : (l.delivery_stage === 'delivery_failed' ? 'Исправить и отправить снова' : 'Опубликовать')}
                             onClick={() => runListingAction(l, 'publish')}
                             disabled={rowActionId === l.id}
                           >
@@ -624,16 +726,18 @@ export default function ListingsPage() {
                             size="sm"
                             variant="ghost"
                             className="h-8 w-8 p-0"
-                            title="В архив"
+                            title={l.lifecycle_actions_blocked
+                              ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
+                              : 'В архив'}
                             onClick={() => runListingAction(l, 'archive')}
-                            disabled={rowActionId === l.id}
+                            disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
                           >
                             {rowActionId === l.id
                               ? <Loader2 className="h-4 w-4 animate-spin" />
                               : <Archive className="h-4 w-4" />}
                           </Button>
                         )}
-                        {l.status === 'pending' && (
+                        {l.can_check_avito_status && (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -652,9 +756,11 @@ export default function ListingsPage() {
                             size="sm"
                             variant="ghost"
                             className="h-8 w-8 p-0 text-destructive hover:text-destructive"
-                            title="Удалить"
+                            title={l.lifecycle_actions_blocked
+                              ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
+                              : 'Удалить'}
                             onClick={() => runListingAction(l, 'delete')}
-                            disabled={rowActionId === l.id}
+                            disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
                           >
                             {rowActionId === l.id
                               ? <Loader2 className="h-4 w-4 animate-spin" />

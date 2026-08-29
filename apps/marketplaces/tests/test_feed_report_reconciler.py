@@ -10,6 +10,7 @@ from django.utils import timezone
 from apps.marketplaces.adapters.avito.adapter import (
     AvitoAdapter,
     FeedItemErrorPage,
+    FeedItemOutcomePage,
 )
 from apps.marketplaces.feed_report_reconciler import (
     FEED_REPORT_MAX_RETRY_DELAY_SECONDS,
@@ -124,6 +125,50 @@ class TestAvitoFeedItemErrorPage:
 
         request.assert_called_once()
         adapter._auth.invalidate.assert_called_once_with(adapter.account)
+
+    def test_current_page_returns_only_proven_active_ids_and_blocking_errors(self):
+        response = MagicMock(status_code=200, ok=True)
+        response.json.return_value = {
+            'items': [
+                {
+                    'ad_id': 'active-id',
+                    'avito_status': 'active',
+                    'avito_id': 8273167174,
+                    'messages': [{'type': 'warning', 'title': 'Adjusted'}],
+                },
+                {
+                    'ad_id': 'error-id',
+                    'avito_status': 'active',
+                    'avito_id': 8385631878,
+                    'messages': [{
+                        'type': 'error',
+                        'title': 'Неверный OEM',
+                        'description': 'Исправьте обязательное поле',
+                    }],
+                },
+                {
+                    'ad_id': 'unresolved-id',
+                    'avito_status': 'processing',
+                    'avito_id': None,
+                    'messages': [],
+                },
+            ],
+            'meta': {'page': 1, 'perPage': 100, 'pages': 1},
+        }
+
+        with patch(
+            'apps.marketplaces.adapters.avito.adapter._avito_request',
+            return_value=response,
+        ) as request:
+            result = self._adapter().get_current_feed_item_outcome_page(1)
+
+        assert isinstance(result, FeedItemOutcomePage)
+        assert request.call_args.args[1].endswith('/autoload/v4/uploads/current/items')
+        assert request.call_args.kwargs['params'] == {'perPage': 100, 'page': 1}
+        assert result.external_ids == {'active-id': '8273167174'}
+        assert set(result.errors) == {'error-id'}
+        assert 'Неверный OEM' in result.errors['error-id']
+        assert result.terminal is True
 
 
 pytestmark = pytest.mark.django_db

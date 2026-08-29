@@ -996,6 +996,6 @@ def test_every_production_service_has_cpu_memory_and_pid_guardrails():
         assert service['mem_limit'], name
         assert 1 <= int(service['pids_limit']) <= 512, name
 
-    assert '--concurrency=2' in COMPOSE['services']['celery_worker']['command']
+    assert '--concurrency=1' in COMPOSE['services']['celery_worker']['command']
     assert '--concurrency=1' in COMPOSE['services']['celery_worker_images']['command']
     assert '-w 2' in COMPOSE['services']['django']['command']

@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 
 AVITO_API_BASE = 'https://api.avito.ru'
 _STATS_CHUNK = 200  # максимум item_ids за один запрос к Stats API
+_STATS_ITEM_ID_RE = re.compile(r'^[1-9][0-9]{0,19}$')
 _FEED_ITEM_ERROR_PAGE_SIZE = 100
 _FEED_ITEM_ERROR_MESSAGE_LIMIT = 100
 _FEED_ITEM_ERROR_TEXT_LIMIT = 2000
@@ -48,6 +49,30 @@ class FeedItemErrorPage:
     @property
     def terminal(self) -> bool:
         return self.next_page is None
+
+
+@dataclass(frozen=True)
+class FeedItemOutcomePage:
+    """One bounded page of outcomes from the current Autoload upload."""
+
+    errors: dict[str, str]
+    external_ids: dict[str, str]
+    next_page: int | None
+
+    @property
+    def terminal(self) -> bool:
+        return self.next_page is None
+
+
+def normalize_avito_stats_item_id(value: object) -> str | None:
+    """Return one exact positive decimal Avito item id, or skip it safely."""
+
+    if isinstance(value, bool):
+        return None
+    candidate = str(value) if isinstance(value, (int, str)) else ''
+    if _STATS_ITEM_ID_RE.fullmatch(candidate) is None:
+        return None
+    return candidate
 
 
 def _avito_request(requester, *args, operation: str = 'other', **kwargs):
@@ -768,6 +793,104 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         next_page = page + 1 if page < total_pages else None
         return FeedItemErrorPage(errors=result, next_page=next_page)
 
+    def get_current_feed_item_outcome_page(self, page: int) -> FeedItemOutcomePage:
+        """Return one validated page of exact current-upload item outcomes."""
+
+        if isinstance(page, bool) or not isinstance(page, int) or not 1 <= page <= 100:
+            raise ValueError('Avito current feed outcomes page must be between 1 and 100')
+
+        token = self._auth.get_token(self.account)
+        resp = _avito_request(
+            requests.get,
+            f'{AVITO_API_BASE}/autoload/v4/uploads/current/items',
+            operation='feed_poll',
+            headers={'Authorization': f'Bearer {token}'},
+            params={'perPage': _FEED_ITEM_ERROR_PAGE_SIZE, 'page': page},
+            timeout=30,
+        )
+        if resp.status_code == 401:
+            self._auth.invalidate(self.account)
+        if not resp.ok:
+            handle_avito_error(resp)
+
+        body = _json_object(resp.json(), 'current feed item outcomes')
+        items = _json_list(body.get('items'), 'current feed item outcomes items')
+        if len(items) > _FEED_ITEM_ERROR_PAGE_SIZE:
+            raise ValueError('Avito current feed outcomes page exceeds 100 items')
+
+        errors: dict[str, str] = {}
+        external_ids: dict[str, str] = {}
+        for item in items:
+            if not isinstance(item, dict):
+                raise ValueError('Avito current feed outcome item must be an object')
+            ad_id = item.get('ad_id')
+            if not isinstance(ad_id, str) or not 0 < len(ad_id) <= _FEED_ITEM_AD_ID_LIMIT:
+                continue
+            item_messages = _json_list(
+                item.get('messages'), 'current feed item outcome messages',
+            )
+            if len(item_messages) > _FEED_ITEM_ERROR_MESSAGE_LIMIT:
+                raise ValueError('Avito current feed outcome exceeds 100 messages')
+            if not all(isinstance(message, dict) for message in item_messages):
+                raise ValueError('Avito current feed outcome message must be an object')
+
+            if any(message.get('type') == 'error' for message in item_messages):
+                messages = [
+                    _format_avito_message(message)
+                    for message in item_messages
+                    if message.get('type') in ('error', 'alarm')
+                ]
+                messages = [message for message in messages if message]
+                if messages:
+                    combined = _bounded_feed_item_error(messages)
+                    if ad_id in errors:
+                        combined = _bounded_feed_item_error([errors[ad_id], combined])
+                    errors[ad_id] = combined
+                    external_ids.pop(ad_id, None)
+                continue
+
+            if str(item.get('avito_status') or '').strip().casefold() != 'active':
+                continue
+            external_id = normalize_avito_stats_item_id(item.get('avito_id'))
+            if external_id is None or ad_id in errors:
+                continue
+            previous = external_ids.get(ad_id)
+            if previous is not None and previous != external_id:
+                raise ValueError(
+                    'Avito current feed outcomes contain conflicting item ids',
+                )
+            external_ids[ad_id] = external_id
+
+        meta = body.get('meta')
+        if meta is None:
+            meta = {}
+        if not isinstance(meta, dict):
+            raise ValueError('Avito current feed outcomes metadata must be an object')
+        total_pages = meta.get('pages', 1)
+        if (
+            isinstance(total_pages, bool)
+            or not isinstance(total_pages, int)
+            or total_pages < 1
+        ):
+            raise ValueError('Avito current feed outcomes page count must be positive')
+        reported_page = meta.get('page')
+        if reported_page is not None and reported_page != page:
+            raise ValueError('Avito current feed outcomes metadata page mismatch')
+        per_page = meta.get('perPage', meta.get('per_page'))
+        if per_page is not None and (
+            isinstance(per_page, bool)
+            or not isinstance(per_page, int)
+            or not 1 <= per_page <= _FEED_ITEM_ERROR_PAGE_SIZE
+        ):
+            raise ValueError('Avito current feed outcomes perPage exceeds 100')
+
+        next_page = page + 1 if page < total_pages else None
+        return FeedItemOutcomePage(
+            errors=errors,
+            external_ids=external_ids,
+            next_page=next_page,
+        )
+
     def get_feed_item_errors(self, ad_ids: list[str]) -> dict[str, str]:
         """
         Возвращает {ad_id: человекочитаемый текст ошибок} из последней успешной загрузки.
@@ -821,7 +944,12 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         История хранится 270 дней. periodGrouping="day" — обязательно для дневной разбивки.
         Возвращает список: [{itemId, stats: [{date, uniqViews, views, uniqContacts, ...}]}].
         """
-        if not item_ids:
+        normalized_item_ids = [
+            int(candidate)
+            for value in item_ids
+            if (candidate := normalize_avito_stats_item_id(value)) is not None
+        ]
+        if not normalized_item_ids:
             return []
 
         token = self._auth.get_token(self.account)
@@ -829,12 +957,12 @@ class AvitoAdapter(BaseMarketplaceAdapter):
         url = f'{AVITO_API_BASE}/stats/v1/accounts/{self.account.external_id}/items'
 
         result = []
-        for i in range(0, len(item_ids), _STATS_CHUNK):
-            chunk = item_ids[i:i + _STATS_CHUNK]
+        for i in range(0, len(normalized_item_ids), _STATS_CHUNK):
+            chunk = normalized_item_ids[i:i + _STATS_CHUNK]
             payload = {
                 'dateFrom': date_from.isoformat(),
                 'dateTo': date_to.isoformat(),
-                'itemIds': [int(x) for x in chunk],
+                'itemIds': chunk,
                 'fields': ['uniqViews', 'views', 'uniqContacts', 'contacts'],
                 'periodGrouping': 'day',
             }

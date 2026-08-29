@@ -1,11 +1,14 @@
 import base64
 import io
 import json
+from datetime import timedelta
 from decimal import Decimal
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
+import requests
+from celery.exceptions import Retry
 from django.core.management import call_command
 from django.db import transaction
 from django.utils import timezone
@@ -27,6 +30,7 @@ from apps.marketplaces.models import (
     Listing,
     MarketplaceAccount,
     MarketplaceFeedEndpoint,
+    MarketplaceFeedArtifactUploadAttempt,
     MarketplaceFeedRun,
 )
 from apps.marketplaces.tasks import (
@@ -197,7 +201,7 @@ def test_durable_flush_routes_only_allowlisted_account_to_private_worker(setting
     ) as private_worker:
         assert _coalesced_flush_durable(task, account) == expected
 
-    private_worker.assert_called_once_with(task, account)
+    private_worker.assert_called_once_with(task, account, owner_token=None)
 
 
 @pytest.mark.django_db
@@ -271,8 +275,287 @@ def test_private_cutover_streams_current_nonempty_feed(settings):
     run = MarketplaceFeedRun.objects.get(account=account)
     assert result == {'status': 'submitted', 'run_id': str(run.pk)}
     assert b'<Ad>' in client.body
-    assert b'CUTOVER-NONEMPTY-1' in client.body
+    assert b'Cutover nonempty product' in client.body
+    assert b'<OEM>' not in client.body
     assert endpoint.current_artifact_id == run.feed_artifact_id
+
+
+@pytest.mark.django_db
+def test_live_private_endpoint_accepts_next_private_generation(settings):
+    account, endpoint = _cutover_endpoint(settings, 'cutover-live-successor')
+    task = SimpleNamespace(request=SimpleNamespace(retries=0), max_retries=5)
+
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_clients.private_feed_object_client',
+            return_value=_ExactVersionClient(),
+        ),
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_latest_upload',
+            return_value={},
+        ),
+        patch('apps.marketplaces.tasks.AvitoAdapter._trigger_autoload'),
+        patch('apps.marketplaces.tasks._enqueue_feed_run_snapshot'),
+    ):
+        first_result = _coalesced_flush_durable(task, account)
+
+    first = MarketplaceFeedRun.objects.get(
+        account=account,
+        source_intent_revision=1,
+    )
+    endpoint.refresh_from_db()
+    assert first_result == {'status': 'submitted', 'run_id': str(first.pk)}
+    assert endpoint.storage_mode == (
+        MarketplaceFeedEndpoint.StorageMode.PRIVATE_GENERATION
+    )
+    assert endpoint.serve_enabled is True
+
+    completed_at = timezone.now()
+    MarketplaceFeedRun.objects.filter(pk=first.pk).update(
+        state=MarketplaceFeedRun.State.SUCCEEDED,
+        claim_token=None,
+        claimed_until=None,
+        next_attempt_at=None,
+        finished_at=completed_at,
+        updated_at=completed_at,
+    )
+    MarketplaceAccount.objects.filter(pk=account.pk).update(
+        feed_intent_dispatched_revision=1,
+        feed_intent_due_at=None,
+    )
+    with transaction.atomic():
+        bump_feed_intents([account.pk], timezone.now())
+    account.refresh_from_db()
+
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_clients.private_feed_object_client',
+            return_value=_ExactVersionClient(),
+        ),
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_latest_upload',
+            return_value={},
+        ),
+        patch('apps.marketplaces.tasks.AvitoAdapter._trigger_autoload') as trigger,
+        patch('apps.marketplaces.tasks._enqueue_feed_run_snapshot'),
+    ):
+        second_result = _coalesced_flush_durable(task, account)
+
+    second = MarketplaceFeedRun.objects.get(
+        account=account,
+        source_intent_revision=2,
+    )
+    endpoint.refresh_from_db()
+    assert second_result == {'status': 'submitted', 'run_id': str(second.pk)}
+    assert second.pk != first.pk
+    assert second.predecessor_artifact_id == first.feed_artifact_id
+    assert second.feed_artifact_id != first.feed_artifact_id
+    assert endpoint.current_artifact_id == second.feed_artifact_id
+    assert MarketplaceFeedArtifactUploadAttempt.objects.filter(
+        run=second,
+        state=MarketplaceFeedArtifactUploadAttempt.State.ATTACHED,
+    ).exists()
+    trigger.assert_called_once_with()
+
+
+@pytest.mark.django_db
+def test_private_retry_keeps_exact_flush_owner_until_retry_can_run(settings):
+    account, _endpoint = _cutover_endpoint(settings, 'cutover-owned-retry')
+    owner_token = 'private-retry-owner'
+    task = SimpleNamespace(
+        request=SimpleNamespace(retries=0),
+        max_retries=5,
+        retry=Mock(side_effect=Retry('replacement accepted')),
+    )
+    client = _ExactVersionClient()
+
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_clients.private_feed_object_client',
+            return_value=client,
+        ),
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_latest_upload',
+            side_effect=requests.Timeout('temporary Avito read timeout'),
+        ),
+        patch('apps.marketplaces.tasks.AvitoAdapter._trigger_autoload') as trigger,
+        patch('apps.marketplaces.tasks._cache_refresh_feed_flush_owner') as refresh_owner,
+        patch('apps.marketplaces.tasks._cache_clear_feed_flush_owner') as clear_owner,
+    ):
+        with pytest.raises(Retry):
+            _coalesced_flush_durable(
+                task,
+                account,
+                owner_token=owner_token,
+            )
+
+    account.refresh_from_db()
+    run = MarketplaceFeedRun.objects.get(account=account)
+    assert run.state == MarketplaceFeedRun.State.PREPARING
+    assert run.last_error == (
+        'provider_baseline_read: temporary Avito read timeout'
+    )
+    assert run.next_attempt_at > timezone.now() + timedelta(minutes=29)
+    assert account.feed_intent_due_at > run.next_attempt_at
+    assert task.retry.call_args.kwargs['countdown'] == 30 * 60
+    assert task.retry.call_args.kwargs['expires'] < 35 * 60
+    assert refresh_owner.call_args.args == (account.pk, owner_token)
+    assert refresh_owner.call_args.kwargs['timeout'] >= 34 * 60
+    clear_owner.assert_not_called()
+    trigger.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_private_client_bootstrap_failure_is_retryable_before_any_put(settings):
+    account, _endpoint = _cutover_endpoint(settings, 'cutover-client-bootstrap')
+    owner_token = 'private-client-bootstrap-owner'
+    task = SimpleNamespace(
+        request=SimpleNamespace(retries=0),
+        max_retries=5,
+        retry=Mock(side_effect=Retry('replacement accepted')),
+    )
+
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_clients.private_feed_object_client',
+            side_effect=MemoryError('private storage client bootstrap exhausted memory'),
+        ),
+        patch('apps.marketplaces.tasks._cache_refresh_feed_flush_owner'),
+        patch('apps.marketplaces.tasks._cache_clear_feed_flush_owner'),
+    ):
+        with pytest.raises(Retry):
+            _coalesced_flush_durable(
+                task,
+                account,
+                owner_token=owner_token,
+            )
+
+    account.refresh_from_db()
+    run = MarketplaceFeedRun.objects.get(account=account)
+    assert run.state == MarketplaceFeedRun.State.PREPARING
+    assert run.last_error == (
+        'private_artifact_preflight: private storage client bootstrap exhausted memory'
+    )
+    assert run.next_attempt_at > timezone.now() + timedelta(minutes=29)
+    assert account.feed_intent_due_at > run.next_attempt_at
+    assert not MarketplaceFeedArtifactUploadAttempt.objects.filter(
+        run=run,
+    ).exists()
+    assert task.retry.call_args.kwargs['countdown'] == 30 * 60
+
+
+@pytest.mark.django_db
+def test_private_flush_reopens_same_failed_revision_before_any_put(settings):
+    account, _endpoint = _cutover_endpoint(
+        settings,
+        'cutover-safe-failed-revision',
+    )
+    failed_task = SimpleNamespace(
+        request=SimpleNamespace(retries=0),
+        max_retries=5,
+        retry=Mock(side_effect=Retry('replacement accepted')),
+    )
+
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_clients.private_feed_object_client',
+            side_effect=MemoryError('simulated pre-submission worker loss'),
+        ),
+        patch('apps.marketplaces.tasks._cache_refresh_feed_flush_owner'),
+        patch('apps.marketplaces.tasks._cache_clear_feed_flush_owner'),
+    ):
+        with pytest.raises(Retry):
+            _coalesced_flush_durable(failed_task, account)
+
+    run = MarketplaceFeedRun.objects.get(account=account)
+    failed_revision = run.revision
+    failed_at = timezone.now()
+    MarketplaceFeedRun.objects.filter(pk=run.pk).update(
+        state=MarketplaceFeedRun.State.FAILED,
+        claim_token=None,
+        claimed_until=None,
+        next_attempt_at=None,
+        finished_at=failed_at,
+        last_error='Flush worker was lost before the provider submission boundary.',
+        updated_at=failed_at,
+    )
+    assert not MarketplaceFeedArtifactUploadAttempt.objects.filter(
+        run=run,
+    ).exists()
+
+    client = _ExactVersionClient()
+    successful_task = SimpleNamespace(
+        request=SimpleNamespace(retries=0),
+        max_retries=5,
+    )
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_clients.private_feed_object_client',
+            return_value=client,
+        ),
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_latest_upload',
+            return_value={},
+        ),
+        patch('apps.marketplaces.tasks.AvitoAdapter._trigger_autoload') as trigger,
+        patch('apps.marketplaces.tasks._enqueue_feed_run_snapshot'),
+    ):
+        result = _coalesced_flush_durable(successful_task, account)
+
+    run.refresh_from_db()
+    assert result == {'status': 'submitted', 'run_id': str(run.pk)}
+    assert MarketplaceFeedRun.objects.filter(account=account).count() == 1
+    assert run.state == MarketplaceFeedRun.State.POLLING
+    assert run.revision > failed_revision
+    assert run.feed_artifact_id is not None
+    assert MarketplaceFeedArtifactUploadAttempt.objects.filter(
+        run=run,
+        state=MarketplaceFeedArtifactUploadAttempt.State.ATTACHED,
+    ).exists()
+    trigger.assert_called_once_with()
+
+
+@pytest.mark.django_db
+def test_private_retry_exhaustion_defers_scanner_until_run_is_due(settings):
+    account, _endpoint = _cutover_endpoint(settings, 'cutover-retry-exhausted')
+    owner_token = 'private-exhausted-owner'
+    task = SimpleNamespace(
+        request=SimpleNamespace(retries=5),
+        max_retries=5,
+        retry=Mock(),
+    )
+
+    with (
+        patch(
+            'apps.marketplaces.feed_artifact_clients.private_feed_object_client',
+            return_value=_ExactVersionClient(),
+        ),
+        patch(
+            'apps.marketplaces.tasks.AvitoAdapter.get_latest_upload',
+            side_effect=requests.Timeout('temporary Avito read timeout'),
+        ),
+        patch('apps.marketplaces.tasks.AvitoAdapter._trigger_autoload') as trigger,
+        patch('apps.marketplaces.tasks._cache_refresh_feed_flush_owner') as refresh_owner,
+        patch('apps.marketplaces.tasks._cache_clear_feed_flush_owner') as clear_owner,
+    ):
+        result = _coalesced_flush_durable(
+            task,
+            account,
+            owner_token=owner_token,
+        )
+
+    account.refresh_from_db()
+    run = MarketplaceFeedRun.objects.get(account=account)
+    assert result == {
+        'status': 'private_pre_submission_retry_exhausted',
+        'run_id': str(run.pk),
+    }
+    assert run.next_attempt_at > timezone.now() + timedelta(minutes=29)
+    assert account.feed_intent_due_at > run.next_attempt_at
+    task.retry.assert_not_called()
+    refresh_owner.assert_not_called()
+    clear_owner.assert_called_once_with(account.pk, owner_token)
+    trigger.assert_not_called()
 
 
 @pytest.mark.django_db

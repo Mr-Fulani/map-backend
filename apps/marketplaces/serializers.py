@@ -6,6 +6,13 @@ from django.utils import timezone
 from drf_spectacular.utils import extend_schema_field, inline_serializer
 from rest_framework import serializers
 
+from apps.marketplaces.listing_delivery import (
+    listing_delivery_presentation,
+    listing_publication_available,
+)
+from apps.marketplaces.autoload_onboarding import (
+    autoload_onboarding_presentation,
+)
 from apps.marketplaces.models import (
     AvitoAccountStatus,
     AvitoCategory,
@@ -129,11 +136,22 @@ class CategoryMappingWriteSerializer(serializers.ModelSerializer):
         fields = ['category_source', 'category_target', 'category_id', 'attributes_map']
 
 
+class AutoloadOnboardingSerializer(serializers.Serializer):
+    """Tenant-safe state of MAP's managed Autoload endpoint setup."""
+
+    state = serializers.CharField(read_only=True)
+    profile_state = serializers.CharField(read_only=True)
+    ready = serializers.BooleanField(read_only=True)
+    retryable = serializers.BooleanField(read_only=True)
+    message = serializers.CharField(read_only=True)
+
+
 class MarketplaceAccountSerializer(serializers.ModelSerializer):
     """Чтение: credentials не возвращаются никогда."""
 
     avito_status = serializers.SerializerMethodField()
     feed_endpoint_managed = serializers.SerializerMethodField()
+    autoload_onboarding = serializers.SerializerMethodField()
 
     class Meta:
         model = MarketplaceAccount
@@ -144,6 +162,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
             'autoload_active', 'autoload_checked_at',
             'autoload_subscription_ends_at',
             'feed_endpoint_managed',
+            'autoload_onboarding',
             'avito_status',
             'created_at',
         ]
@@ -161,6 +180,12 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
     def get_feed_endpoint_managed(self, obj) -> bool:
         """Сообщает UI, что URL защищён и полностью управляется MAP."""
         return hasattr(obj, 'feed_endpoint')
+
+    @extend_schema_field(AutoloadOnboardingSerializer)
+    def get_autoload_onboarding(self, obj):
+        """Отделяет готовность endpoint MAP от тарифа Avito."""
+        presentation = autoload_onboarding_presentation(obj)
+        return AutoloadOnboardingSerializer(presentation).data
 
 
 class MarketplacePlacementAddressSerializer(serializers.ModelSerializer):
@@ -185,12 +210,26 @@ class ListingSerializer(serializers.ModelSerializer):
     product_brand = serializers.CharField(source='product.brand', read_only=True)
     account_id = serializers.IntegerField(source='account.pk', read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
-    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    status_display = serializers.SerializerMethodField()
+    status_explanation = serializers.SerializerMethodField()
+    delivery_stage = serializers.SerializerMethodField()
+    provider_submission_started = serializers.SerializerMethodField()
+    lifecycle_actions_blocked = serializers.SerializerMethodField()
+    can_check_avito_status = serializers.SerializerMethodField()
+    can_publish = serializers.SerializerMethodField()
+    rejection_ready_to_retry = serializers.SerializerMethodField()
+    delivery_retry_at = serializers.SerializerMethodField()
+    delivery_retry_reason = serializers.SerializerMethodField()
 
     class Meta:
         model = Listing
         fields = [
-            'id', 'status', 'status_display',
+            'id', 'status', 'status_display', 'status_explanation',
+            'delivery_stage',
+            'provider_submission_started', 'lifecycle_actions_blocked',
+            'can_check_avito_status', 'delivery_retry_at',
+            'delivery_retry_reason', 'can_publish',
+            'rejection_ready_to_retry',
             'product_id', 'product_article', 'product_name', 'product_brand', 'account_id', 'account_name',
             'title', 'price_on_listing', 'external_id', 'external_url',
             'ad_type',
@@ -201,9 +240,113 @@ class ListingSerializer(serializers.ModelSerializer):
             'bulk_address', 'bulk_seller_address_id',
             'bulk_manager_name', 'bulk_contact_phone',
             'rejection_reason', 'retry_count', 'published_at', 'last_sync_at',
+            'remote_status', 'remote_status_checked_at',
+            'next_status_check_at',
             'created_at',
         ]
         read_only_fields = fields
+
+    def get_status_display(self, obj) -> str:
+        if self._rejection_ready_to_retry(obj):
+            return 'Исправлено — отправьте снова'
+        return listing_delivery_presentation(obj).label
+
+    def get_status_explanation(self, obj) -> str:
+        if obj.status == Listing.STATUS_ACTIVE:
+            return (
+                'Avito подтверждает, что объявление активно. MAP продолжает '
+                'автоматически сверять его статус.'
+            )
+        if obj.status == Listing.STATUS_ARCHIVING:
+            return (
+                'MAP уже исключил объявление из актуального XML-фида. '
+                'Ожидаем, когда Avito подтвердит снятие с публикации.'
+            )
+        if obj.status == Listing.STATUS_ARCHIVED:
+            if (
+                obj.remote_status == Listing.REMOTE_STATUS_REMOVED
+                and not obj.external_id
+            ):
+                return (
+                    'Avito больше не находит это объявление. Оно исключено '
+                    'из фида; повторная публикация создаст новое объявление.'
+                )
+            if obj.remote_status in {
+                Listing.REMOTE_STATUS_REMOVED,
+                Listing.REMOTE_STATUS_ARCHIVED,
+            }:
+                return (
+                    'Avito подтвердил, что объявление больше не активно. '
+                    'Оно исключено из актуального XML-фида.'
+                )
+            return 'Объявление не входит в актуальный XML-фид Avito.'
+        if self._rejection_ready_to_retry(obj):
+            return (
+                'Предыдущая версия была отклонена Avito. Текущие поля '
+                'прошли проверку MAP. Нажмите «Опубликовать», чтобы '
+                'отправить исправленную версию.'
+            )
+        if obj.status == Listing.STATUS_REJECTED:
+            return (
+                'Avito отклонил или заблокировал объявление. Исправьте '
+                'подсвеченные поля и нажмите «Опубликовать». Кнопка проверки '
+                'только запрашивает текущий статус и не отправляет изменения.'
+            )
+        return ''
+
+    def get_delivery_stage(self, obj) -> str:
+        return listing_delivery_presentation(obj).stage
+
+    def get_provider_submission_started(self, obj) -> bool:
+        return listing_delivery_presentation(obj).provider_submission_started
+
+    def get_lifecycle_actions_blocked(self, obj) -> bool:
+        return listing_delivery_presentation(obj).lifecycle_actions_blocked
+
+    def get_can_check_avito_status(self, obj) -> bool:
+        return listing_delivery_presentation(obj).can_check_avito_status
+
+    def get_can_publish(self, obj) -> bool:
+        return listing_publication_available(obj)
+
+    def get_rejection_ready_to_retry(self, obj) -> bool:
+        """Whether Publish would accept the corrected rejected listing now."""
+        return self._rejection_ready_to_retry(obj)
+
+    def _rejection_ready_to_retry(self, obj) -> bool:
+        if (
+            obj.status != Listing.STATUS_REJECTED
+            or not listing_publication_available(obj)
+        ):
+            return False
+        try:
+            errors, _warnings = self._get_avito_preflight(obj)
+        except Exception:
+            return False
+        return not errors
+
+    def _get_avito_preflight(self, obj) -> tuple[dict, dict]:
+        from apps.marketplaces.adapters.avito.feed_builder import (
+            avito_publication_preflight,
+        )
+        cache = getattr(self, '_avito_preflight_cache', None)
+        if cache is None:
+            cache = {}
+            self._avito_preflight_cache = cache
+        key = getattr(obj, 'pk', id(obj))
+        if key not in cache:
+            cache[key] = avito_publication_preflight(obj)
+        return cache[key]
+
+    @extend_schema_field(serializers.DateTimeField(allow_null=True, read_only=True))
+    def get_delivery_retry_at(self, obj) -> str | None:
+        retry_at = listing_delivery_presentation(obj).retry_at
+        if retry_at is None:
+            return None
+        return serializers.DateTimeField().to_representation(retry_at)
+
+    def get_delivery_retry_reason(self, obj) -> str:
+        return listing_delivery_presentation(obj).retry_reason
 
 
 def _image_url(s3_key: str, fallback: str, request=None) -> str:
@@ -235,32 +378,80 @@ class ListingDetailSerializer(ListingSerializer):
     images = serializers.SerializerMethodField()
     catalog_category = serializers.SerializerMethodField()
     base_price = serializers.DecimalField(source='product.price', max_digits=12, decimal_places=2, read_only=True)
+    product_oem_numbers = serializers.ListField(
+        source='product.oem_numbers',
+        child=serializers.CharField(),
+        read_only=True,
+    )
+    product_avito_oem = serializers.SerializerMethodField()
     avito_field_warnings = serializers.SerializerMethodField()
+    avito_field_errors = serializers.SerializerMethodField()
+    avito_field_warnings_by_field = serializers.SerializerMethodField()
     avito_brand_valid = serializers.SerializerMethodField()
     avito_brand_catalog_synced_at = serializers.SerializerMethodField()
 
     class Meta(ListingSerializer.Meta):
         fields = ListingSerializer.Meta.fields + [
             'description_ai', 'ai_confidence', 'ai_confidence_display', 'images',
-            'catalog_category', 'margin_pct', 'base_price', 'avito_field_warnings',
+            'catalog_category', 'margin_pct', 'base_price', 'product_oem_numbers',
+            'product_avito_oem',
+            'avito_field_warnings',
+            'avito_field_errors', 'avito_field_warnings_by_field',
             'avito_brand_valid', 'avito_brand_catalog_synced_at',
         ]
         read_only_fields = fields
+
+    def get_product_avito_oem(self, obj) -> str:
+        """Exact single OEM value the current feed builder will emit."""
+        from apps.marketplaces.adapters.avito.feed_builder import _get_oem
+        return _get_oem(obj)
 
     @extend_schema_field(serializers.ListField(
         child=serializers.CharField(), read_only=True,
     ))
     def get_avito_field_warnings(self, obj) -> list:
-        """Предупреждения о незаполненных обязательных полях Avito — видны тенанту до публикации."""
-        from apps.marketplaces.adapters.avito.feed_builder import avito_field_warnings
+        """Неблокирующие рекомендации Avito, видимые тенанту до публикации."""
         try:
-            return avito_field_warnings(obj)
+            _errors, warnings = self._get_avito_preflight(obj)
+            return [
+                message
+                for messages in warnings.values()
+                for message in messages
+            ]
         except Exception:
             return []
 
+    @extend_schema_field(serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField()), read_only=True,
+    ))
+    def get_avito_field_errors(self, obj) -> dict:
+        """Blocking publication errors keyed by the editable drawer field."""
+        try:
+            errors, _warnings = self._get_avito_preflight(obj)
+            return errors
+        except Exception:
+            return {}
+
+    @extend_schema_field(serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField()), read_only=True,
+    ))
+    def get_avito_field_warnings_by_field(self, obj) -> dict:
+        """Non-blocking publication warnings keyed by drawer field."""
+        try:
+            _errors, warnings = self._get_avito_preflight(obj)
+            return warnings
+        except Exception:
+            return {}
+
     def get_avito_brand_valid(self, obj) -> bool:
-        from apps.marketplaces.adapters.avito.feed_builder import unknown_brand_details
-        return unknown_brand_details(obj) is None
+        from apps.marketplaces.adapters.avito.feed_builder import (
+            product_brand_is_missing,
+            unknown_brand_details,
+        )
+        return (
+            not product_brand_is_missing(obj)
+            and unknown_brand_details(obj) is None
+        )
 
     @extend_schema_field(serializers.DateTimeField(allow_null=True, read_only=True))
     def get_avito_brand_catalog_synced_at(self, obj) -> str | None:

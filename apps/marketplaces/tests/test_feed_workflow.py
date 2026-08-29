@@ -1130,6 +1130,114 @@ def test_final_report_with_unresolved_rows_returns_to_bounded_polling():
     assert result.snapshot.next_attempt_at == now + timedelta(minutes=30)
 
 
+def test_current_upload_page_applies_active_and_rejected_outcomes_together():
+    now = timezone.now()
+    account = _account('current-outcomes')
+    published = _listing(account, 'published')
+    rejected = _listing(account, 'rejected')
+    submitted = _submitted_run(account, now)
+    poll_claim = claim_due_run_for_account(
+        account.pk,
+        expected_revision=submitted.revision,
+        now=now,
+    )
+    reporting = start_reporting(
+        poll_claim,
+        provider_run_id='upload-1',
+        next_attempt_at=now,
+        now=now,
+    )
+    report_claim = claim_due_run_for_account(
+        account.pk,
+        expected_revision=reporting.revision,
+        now=now,
+    )
+
+    result = apply_report_page(
+        report_claim,
+        current_page=1,
+        errors_by_ad_id={rejected.publish_idempotency_key: 'Invalid OEM'},
+        external_ids_by_ad_id={published.publish_idempotency_key: '8273167174'},
+        next_page=None,
+        next_attempt_at=now + timedelta(minutes=30),
+        occurred_at=now,
+        provider_complete=False,
+    )
+
+    published.refresh_from_db()
+    rejected.refresh_from_db()
+    assert result.snapshot.state == MarketplaceFeedRun.State.SUCCEEDED
+    assert result.snapshot.published_count == 1
+    assert result.snapshot.rejected_count == 1
+    assert result.snapshot.pending_count == 0
+    assert result.snapshot.report_completed_at == now
+    assert result.published_count == 1
+    assert result.rejected_count == 1
+    assert published.status == Listing.STATUS_ACTIVE
+    assert published.external_id == '8273167174'
+    assert published.next_status_check_at == (
+        now + feed_workflow.PUBLISHED_STATUS_RECHECK_DELAY
+    )
+    assert rejected.status == Listing.STATUS_REJECTED
+    assert rejected.rejection_reason == 'Invalid OEM'
+    assert SyncLog.objects.filter(
+        listing=published,
+        event_type=SyncLog.EVENT_LISTING_PUBLISH,
+    ).count() == 1
+    assert SyncLog.objects.filter(
+        listing=rejected,
+        event_type=SyncLog.EVENT_LISTING_ERROR,
+    ).count() == 1
+
+
+def test_incomplete_current_upload_page_keeps_unresolved_rows_in_reporting():
+    now = timezone.now()
+    account = _account('current-incomplete')
+    published = _listing(account, 'published')
+    unresolved = _listing(account, 'unresolved')
+    submitted = _submitted_run(account, now)
+    poll_claim = claim_due_run_for_account(
+        account.pk,
+        expected_revision=submitted.revision,
+        now=now,
+    )
+    reporting = start_reporting(
+        poll_claim,
+        provider_run_id='upload-1',
+        next_attempt_at=now,
+        now=now,
+    )
+    report_claim = claim_due_run_for_account(
+        account.pk,
+        expected_revision=reporting.revision,
+        now=now,
+    )
+    retry_at = now + timedelta(minutes=30)
+
+    result = apply_report_page(
+        report_claim,
+        current_page=1,
+        errors_by_ad_id={},
+        external_ids_by_ad_id={published.publish_idempotency_key: '8385631878'},
+        next_page=None,
+        next_attempt_at=retry_at,
+        occurred_at=now,
+        provider_complete=False,
+    )
+
+    published.refresh_from_db()
+    unresolved.refresh_from_db()
+    assert published.status == Listing.STATUS_ACTIVE
+    assert unresolved.status == Listing.STATUS_PENDING
+    assert result.snapshot.state == MarketplaceFeedRun.State.REPORTING
+    assert result.snapshot.published_count == 1
+    assert result.snapshot.pending_count == 1
+    assert result.snapshot.report_page == 1
+    assert result.snapshot.report_completed_at is None
+    assert result.snapshot.next_attempt_at == retry_at
+    assert result.snapshot.finished_at is None
+
+
 def test_report_pagination_cannot_advance_beyond_100_pages():
     now = timezone.now()
     account = _account('report-page-limit')

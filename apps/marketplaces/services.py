@@ -1,4 +1,5 @@
 import datetime
+import hmac
 from decimal import Decimal, InvalidOperation
 from functools import partial
 from typing import Any, TypedDict, cast
@@ -11,6 +12,11 @@ from django.utils import timezone
 from apps.marketplaces.listing_lifecycle import (
     clear_remote_observation,
     release_status_check,
+)
+from apps.marketplaces.listing_delivery import (
+    durable_feed_run_enabled,
+    listing_delivery_presentation,
+    listing_publication_available,
 )
 from apps.marketplaces.feed_cutover import (
     private_feed_cutover_enabled,
@@ -170,6 +176,50 @@ def _local_status_due_at(listing: Listing):
     return None
 
 
+def _make_provider_status_check_due_now(listing: Listing) -> Listing:
+    """Nudge one exact live provider identity without revoking an owner lease."""
+
+    due_at = timezone.now()
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.objects.select_for_update(of=('self',))
+            .filter(
+                pk=listing.account_id,
+                tenant_id=listing.tenant_id,
+                deleted_at__isnull=True,
+                is_active=True,
+            )
+            .first()
+        )
+        if account is None:
+            raise InvalidListingStatus('Аккаунт Avito недоступен для проверки.')
+        current = (
+            Listing.objects.select_for_update(of=('self',))
+            .select_related('product', 'account', 'feed_run')
+            .filter(
+                pk=listing.pk,
+                tenant_id=listing.tenant_id,
+                account_id=account.pk,
+                status__in={
+                    Listing.STATUS_ACTIVE,
+                    Listing.STATUS_REJECTED,
+                    Listing.STATUS_ARCHIVING,
+                },
+            )
+            .exclude(external_id__isnull=True)
+            .exclude(external_id='')
+            .first()
+        )
+        if current is None:
+            raise InvalidListingStatus(
+                'У объявления нет действующего Avito ID для проверки.',
+            )
+        current.next_status_check_at = due_at
+        current.save(update_fields=['next_status_check_at'])
+        _min_nudge_account_status_due(account.pk, due_at)
+        return current
+
+
 def _min_nudge_account_status_due(account_id: int, due_at) -> int:
     if due_at is None:
         return 0
@@ -199,6 +249,7 @@ def _save_local_listing_intent(
     expected_product_updated_at=None,
     reset_provider_identity: bool = False,
     require_target_account_active: bool = False,
+    block_provider_owned_pending: bool = False,
 ) -> bool:
     """Compare-and-apply one local intent under account-to-listing locks.
 
@@ -231,7 +282,11 @@ def _save_local_listing_intent(
 
     lifecycle_enabled = _status_lifecycle_dual_write_enabled()
     feed_ingress_enabled = _feed_ingress_dual_write_enabled()
-    if not lifecycle_enabled and not feed_ingress_enabled:
+    if (
+        not lifecycle_enabled
+        and not feed_ingress_enabled
+        and not block_provider_owned_pending
+    ):
         listing.save(update_fields=fields)
         return True
 
@@ -297,6 +352,31 @@ def _save_local_listing_intent(
             )
             if current_snapshot is None:
                 return False
+            if (
+                block_provider_owned_pending
+                and current_snapshot.status == Listing.STATUS_PENDING
+            ):
+                current_run = None
+                if current_snapshot.feed_run_id is not None:
+                    current_run = (
+                        MarketplaceFeedRun.objects.select_for_update()
+                        .filter(pk=current_snapshot.feed_run_id)
+                        .first()
+                    )
+                delivery = listing_delivery_presentation(
+                    current_snapshot,
+                    run=current_run,
+                    durable_enabled=durable_feed_run_enabled(
+                        current_snapshot.account_id,
+                    ),
+                )
+                if delivery.lifecycle_actions_blocked:
+                    raise InvalidListingStatus(
+                        'Нельзя архивировать, удалять или переносить объявление '
+                        'на другой Avito-аккаунт, пока неизвестно, принял ли '
+                        'Avito предыдущую отправку. Дождитесь автоматической '
+                        'сверки или выполните ручную сверку запуска.',
+                    )
             target_account = locked_accounts_by_id.get(intended_account_id)
             target_account_is_writable = (
                 target_account is not None
@@ -832,6 +912,14 @@ class InvalidListingStatus(Exception):
     """Операция недопустима для текущего статуса листинга."""
 
 
+class ListingPublicationValidationError(InvalidListingStatus):
+    """A new provider submission is blocked by editable listing fields."""
+
+    def __init__(self, field_errors: dict[str, list[str]]):
+        super().__init__('Исправьте отмеченные поля перед отправкой в Avito.')
+        self.field_errors = field_errors
+
+
 class ListingAccountConflict(Exception):
     """Для товара уже есть листинг на выбранном аккаунте."""
 
@@ -846,6 +934,10 @@ class NoActiveAccounts(Exception):
 
 class AccountAlreadyExists(Exception):
     """Аккаунт с таким external_id уже существует у тенанта."""
+
+    def __init__(self, message: str, *, account_id: int | None = None):
+        super().__init__(message)
+        self.account_id = account_id
 
 
 class InvalidMarketplaceCredentials(Exception):
@@ -992,6 +1084,44 @@ def _fence_marketplace_feed_endpoint_identity(account, endpoint) -> None:
     ))
 
 
+def _refresh_new_feed_endpoint_identity(account, endpoint) -> None:
+    """Re-key an endpoint that has never been exposed or posted to Avito."""
+
+    if endpoint is None:
+        return
+    from apps.marketplaces.feed_workflow import account_identity_digest
+    from apps.marketplaces.models import MarketplaceFeedEndpoint
+
+    if (
+        endpoint.profile_state != MarketplaceFeedEndpoint.ProfileState.NEW
+        or endpoint.serve_enabled
+    ):
+        raise MarketplaceAccountFeedConflict(
+            'Нельзя изменить подключение после начала настройки профиля Avito.',
+        )
+    max_revision = (1 << 63) - 1
+    if (
+        endpoint.capability_revision >= max_revision
+        or endpoint.profile_revision >= max_revision
+    ):
+        raise OverflowError('Marketplace feed endpoint revision is exhausted.')
+    endpoint.owner_identity_digest = account_identity_digest(account)
+    endpoint.capability_revision += 1
+    endpoint.previous_token_key_id = ''
+    endpoint.profile_fingerprint = ''
+    endpoint.profile_verified_at = None
+    endpoint.profile_revision += 1
+    endpoint.save(update_fields=(
+        'owner_identity_digest',
+        'capability_revision',
+        'previous_token_key_id',
+        'profile_fingerprint',
+        'profile_verified_at',
+        'profile_revision',
+        'updated_at',
+    ))
+
+
 def _invalidate_avito_access_token_after_commit(account) -> None:
     """Удаляет старый OAuth token только после успешного commit credentials."""
 
@@ -1027,6 +1157,7 @@ class ListingService:
                     'product',
                     'product__catalog_category',
                     'account',
+                    'feed_run',
                     'placement_address',
                     'bulk_placement_address',
                 )
@@ -1051,17 +1182,18 @@ class ListingService:
                 f'Одобрить можно только листинг в статусе requires_review, '
                 f'текущий статус: {listing.status}'
             )
-        from apps.marketplaces.adapters.avito.feed_builder import unknown_brand_details
-        if unknown_brand_details(listing) is not None:
-            raise InvalidListingStatus(
-                'Неизвестный бренд нельзя отправить в Avito. Выберите значение из '
-                'справочника Avito или запросите добавление бренда в поддержке Avito.'
-            )
+        from apps.marketplaces.adapters.avito.feed_builder import (
+            avito_publication_field_errors,
+        )
+        field_errors = avito_publication_field_errors(listing)
+        if field_errors:
+            raise ListingPublicationValidationError(field_errors)
         expected = _listing_expected_state(listing)
         listing.status = Listing.STATUS_QUEUED
+        listing.rejection_reason = ''
         applied = _save_local_listing_intent(
             listing,
-            ('status',),
+            ('status', 'rejection_reason'),
             **expected,
         )
 
@@ -1080,27 +1212,36 @@ class ListingService:
             InvalidListingStatus: листинг не в подходящем статусе для публикации.
         """
         listing = ListingService.get_for_tenant(listing_id, tenant)
-        publishable = (
-            Listing.STATUS_DRAFT,
-            Listing.STATUS_REJECTED,
-            Listing.STATUS_ARCHIVED,
-            # «Лимит достигнут» — после продления подписки/апгрейда плана
-            # листинг должен публиковаться повторно, иначе статус тупиковый.
-            Listing.STATUS_LIMIT_REACHED,
-        )
-        if listing.status not in publishable:
+        if not listing_publication_available(listing):
             raise InvalidListingStatus(
-                f'Публикация доступна для draft/rejected/archived/limit_reached, '
-                f'текущий статус: {listing.status}'
+                'Публикация доступна для черновика, отклонённого, архивного, '
+                'достигшего лимита объявления или доказанной ошибки до отправки '
+                f'в Avito; текущая стадия: {listing_delivery_presentation(listing).stage}'
             )
+        from apps.marketplaces.adapters.avito.feed_builder import (
+            avito_publication_field_errors,
+        )
+        field_errors = avito_publication_field_errors(listing)
+        if field_errors:
+            raise ListingPublicationValidationError(field_errors)
+        retry_failed_delivery = (
+            listing.status == Listing.STATUS_PENDING
+            and listing_delivery_presentation(listing).stage == 'delivery_failed'
+        )
         expected = _listing_expected_state(listing)
         listing.status = Listing.STATUS_QUEUED
         # Сбрасываем причину прошлого отклонения, чтобы старый текст не висел
         # на карточке, пока идёт новая публикация.
         listing.rejection_reason = ''
+        update_fields = ['status', 'rejection_reason']
+        if retry_failed_delivery:
+            # Preserve the failed run as audit evidence, but detach the listing
+            # so the next durable generation owns a fresh, truthful lifecycle.
+            listing.feed_run = None
+            update_fields.append('feed_run')
         applied = _save_local_listing_intent(
             listing,
-            ('status', 'rejection_reason'),
+            update_fields,
             **expected,
         )
         if applied:
@@ -1121,6 +1262,7 @@ class ListingService:
         applied = _save_local_listing_intent(
             listing,
             ('status',),
+            block_provider_owned_pending=True,
             **expected,
         )
         if applied:
@@ -1139,6 +1281,7 @@ class ListingService:
         applied = _save_local_listing_intent(
             listing,
             ('status',),
+            block_provider_owned_pending=True,
             **expected,
         )
         if applied:
@@ -1148,12 +1291,28 @@ class ListingService:
 
     @staticmethod
     def check_avito_status(listing_id: int, tenant) -> Listing:
-        """Ставит ручную проверку статуса feed/модерации Avito для аккаунта листинга."""
+        """Ставит ручную проверку доставки или живого статуса объявления."""
         listing = ListingService.get_for_tenant(listing_id, tenant)
-        if listing.status != Listing.STATUS_PENDING:
-            raise InvalidListingStatus('Проверка Avito доступна только для объявлений на модерации Avito')
-        account_id = listing.account_id
-        transaction.on_commit(lambda: _enqueue_poll_feed_results(account_id))
+        delivery = listing_delivery_presentation(listing)
+        if not delivery.can_check_avito_status:
+            raise InvalidListingStatus(
+                f'Проверка Avito сейчас недоступна: {delivery.label.lower()}.',
+            )
+        if listing.status == Listing.STATUS_PENDING:
+            account_id = listing.account_id
+            transaction.on_commit(lambda: _enqueue_poll_feed_results(account_id))
+            return listing
+
+        if _status_lifecycle_dual_write_enabled():
+            listing = _make_provider_status_check_due_now(listing)
+        listing_id = listing.pk
+        is_archiving = listing.status == Listing.STATUS_ARCHIVING
+        transaction.on_commit(
+            lambda: _enqueue_provider_listing_status_check(
+                listing_id,
+                is_archiving=is_archiving,
+            ),
+        )
         return listing
 
     @staticmethod
@@ -1296,6 +1455,7 @@ class ListingService:
                 update_fields,
                 reset_provider_identity=account_changed,
                 require_target_account_active=account_changed,
+                block_provider_owned_pending=account_changed,
                 **expected,
             )
             if active_price_only and applied:
@@ -1808,17 +1968,39 @@ class MarketplaceAccountService:
                     .get(pk=deleted_account.pk)
                 )
                 feed_endpoint = _lock_marketplace_feed_endpoint(account.pk)
-                _assert_feed_endpoint_identity_mutation_safe(feed_endpoint)
-                _assert_account_identity_mutation_safe(account)
+                from apps.marketplaces.feed_workflow import account_identity_digest
+                previous_generation = account_identity_digest(account)
                 account.name = data['name']
                 account.credentials_enc = credentials_enc
                 account.is_active = True
                 account.deleted_at = None
+                generation_changed = not hmac.compare_digest(
+                    previous_generation,
+                    account_identity_digest(account),
+                )
+                new_endpoint_rekey = bool(
+                    generation_changed
+                    and feed_endpoint is not None
+                    and feed_endpoint.profile_state
+                    == feed_endpoint.ProfileState.NEW
+                    and not feed_endpoint.serve_enabled
+                )
+                if generation_changed:
+                    if not new_endpoint_rekey:
+                        _assert_feed_endpoint_identity_mutation_safe(feed_endpoint)
+                    _assert_account_identity_mutation_safe(account)
                 account.save(update_fields=(
                     'name', 'credentials_enc', 'is_active', 'deleted_at',
                     'updated_at',
                 ))
-                _fence_marketplace_feed_endpoint_identity(account, feed_endpoint)
+                if generation_changed:
+                    if new_endpoint_rekey:
+                        _refresh_new_feed_endpoint_identity(account, feed_endpoint)
+                    else:
+                        _fence_marketplace_feed_endpoint_identity(
+                            account,
+                            feed_endpoint,
+                        )
                 _invalidate_avito_access_token_after_commit(account)
                 if private_feed_fleet_enabled():
                     from apps.marketplaces.feed_profile_migration import (
@@ -1855,15 +2037,29 @@ class MarketplaceAccountService:
                                 'фид Avito.',
                             ) from exc
             except IntegrityError:
-                raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
+                existing_id = (
+                    MarketplaceAccount.objects.filter(
+                        tenant=tenant,
+                        marketplace=data['marketplace'],
+                        external_id=external_id,
+                    ).values_list('pk', flat=True).first()
+                )
+                raise AccountAlreadyExists(
+                    'Аккаунт с таким external_id уже существует',
+                    account_id=existing_id,
+                )
 
         # Регистрируем feed URL в Avito Autoload после коммита транзакции
         if account.marketplace == MarketplaceAccount.MARKETPLACE_AVITO:
-            from apps.marketplaces.tasks import setup_autoload_profile_task
+            from apps.marketplaces.autoload_onboarding import (
+                schedule_autoload_profile_setup,
+            )
             transaction.on_commit(
-                lambda: setup_autoload_profile_task.delay(
-                    account.pk, account.tenant_id,
-                )
+                partial(
+                    schedule_autoload_profile_setup,
+                    account.pk,
+                    account.tenant_id,
+                ),
             )
 
         return account
@@ -1884,13 +2080,28 @@ class MarketplaceAccountService:
                     .get(pk=account.pk)
                 )
                 feed_endpoint = _lock_marketplace_feed_endpoint(account.pk)
-                _assert_feed_endpoint_identity_mutation_safe(feed_endpoint)
-                _assert_account_identity_mutation_safe(account)
+                from apps.marketplaces.feed_workflow import account_identity_digest
+                previous_generation = account_identity_digest(account)
                 previous_identity = (account.marketplace, account.external_id)
                 account.name = data['name']
                 account.marketplace = data['marketplace']
                 account.external_id = external_id
                 account.credentials_enc = credentials_enc
+                generation_changed = not hmac.compare_digest(
+                    previous_generation,
+                    account_identity_digest(account),
+                )
+                new_endpoint_rekey = bool(
+                    generation_changed
+                    and feed_endpoint is not None
+                    and feed_endpoint.profile_state
+                    == feed_endpoint.ProfileState.NEW
+                    and not feed_endpoint.serve_enabled
+                )
+                if generation_changed:
+                    if not new_endpoint_rekey:
+                        _assert_feed_endpoint_identity_mutation_safe(feed_endpoint)
+                    _assert_account_identity_mutation_safe(account)
                 identity_changed = previous_identity != (
                     account.marketplace, account.external_id,
                 )
@@ -1913,15 +2124,42 @@ class MarketplaceAccountService:
                     ),
                     account_lifecycle_fields,
                 ))
-                _fence_marketplace_feed_endpoint_identity(account, feed_endpoint)
+                if generation_changed:
+                    if new_endpoint_rekey:
+                        _refresh_new_feed_endpoint_identity(account, feed_endpoint)
+                    else:
+                        _fence_marketplace_feed_endpoint_identity(
+                            account,
+                            feed_endpoint,
+                        )
                 _invalidate_avito_access_token_after_commit(account)
-                _bump_account_feed_projection_if_live(account.pk)
+                if generation_changed:
+                    _bump_account_feed_projection_if_live(account.pk)
                 if identity_changed:
                     Listing.all_objects.filter(account=account).update(
                         **_provider_identity_reset_kwargs(),
                     )
+                if new_endpoint_rekey:
+                    from apps.marketplaces.autoload_onboarding import (
+                        schedule_autoload_profile_setup,
+                    )
+                    transaction.on_commit(partial(
+                        schedule_autoload_profile_setup,
+                        account.pk,
+                        account.tenant_id,
+                    ))
         except IntegrityError:
-            raise AccountAlreadyExists('Аккаунт с таким external_id уже существует')
+            existing_id = (
+                type(account).objects.filter(
+                    tenant_id=account.tenant_id,
+                    marketplace=data['marketplace'],
+                    external_id=external_id,
+                ).exclude(pk=account.pk).values_list('pk', flat=True).first()
+            )
+            raise AccountAlreadyExists(
+                'Аккаунт с таким external_id уже существует',
+                account_id=existing_id,
+            )
         return account
 
     @staticmethod
@@ -2185,7 +2423,10 @@ class AvitoAccountStatusService:
         state = dict(status_obj.notification_state or {})
         period_key = cls._period_key(status_obj)
         if state.get('period') != period_key:
+            onboarding_state = state.get('autoload_onboarding')
             state = {'period': period_key}
+            if isinstance(onboarding_state, dict):
+                state['autoload_onboarding'] = onboarding_state
 
         if (
             status_obj.connection_status
@@ -2430,6 +2671,30 @@ def _enqueue_publish_or_update(listing_id: int, is_new: bool) -> None:
 class StatsService:
     """Сервис получения и сохранения ежедневной статистики листингов с Avito."""
 
+    MAX_HISTORY_DAYS = 270
+    MAX_COUNTER_VALUE = (1 << 31) - 1
+
+    @classmethod
+    def _counter(cls, value: object) -> int:
+        if isinstance(value, bool):
+            return 0
+        if isinstance(value, int):
+            return min(max(value, 0), cls.MAX_COUNTER_VALUE)
+        if isinstance(value, str) and value.isascii() and value.isdecimal():
+            if len(value) > 10:
+                return cls.MAX_COUNTER_VALUE
+            return min(int(value), cls.MAX_COUNTER_VALUE)
+        return 0
+
+    @staticmethod
+    def _day(value: object) -> datetime.date | None:
+        if not isinstance(value, str):
+            return None
+        try:
+            return datetime.date.fromisoformat(value)
+        except ValueError:
+            return None
+
     @staticmethod
     def _fetch_raw(account, item_ids: list[str], date_from: datetime.date, date_to: datetime.date) -> list[dict]:
         """
@@ -2453,6 +2718,11 @@ class StatsService:
         Использует bulk_create с update_conflicts — идемпотентен при повторном вызове.
         Возвращает количество обработанных записей (не уникальных: один листинг × N дней).
         """
+        if date_from > date_to:
+            raise ValueError('Statistics date_from must not exceed date_to.')
+        if (date_to - date_from).days >= cls.MAX_HISTORY_DAYS:
+            raise ValueError('Statistics range must not exceed 270 days.')
+
         listings = list(
             Listing.objects.filter(
                 account=account,
@@ -2463,32 +2733,64 @@ class StatsService:
         if not listings:
             return 0
 
-        listing_by_external = {item['external_id']: item for item in listings}
+        from apps.marketplaces.adapters.avito.adapter import (
+            normalize_avito_stats_item_id,
+        )
+
+        listing_by_external: dict[str, dict] = {}
+        ambiguous_ids: set[str] = set()
+        for item in listings:
+            external_id = normalize_avito_stats_item_id(item['external_id'])
+            if external_id is None or external_id in ambiguous_ids:
+                continue
+            if external_id in listing_by_external:
+                listing_by_external.pop(external_id, None)
+                ambiguous_ids.add(external_id)
+                continue
+            listing_by_external[external_id] = item
+        if not listing_by_external:
+            return 0
         raw = cls._fetch_raw(account, list(listing_by_external.keys()), date_from, date_to)
 
-        to_upsert = []
+        by_listing_day: dict[tuple[int, datetime.date], ListingStats] = {}
         for item in raw:
-            info = listing_by_external.get(str(item.get('itemId', '')))
+            if not isinstance(item, dict):
+                continue
+            external_id = normalize_avito_stats_item_id(item.get('itemId'))
+            info = listing_by_external.get(external_id or '')
             if not info:
                 continue
-            for day in item.get('stats', []):
+            days = item.get('stats')
+            if not isinstance(days, list):
+                continue
+            for day in days:
+                if not isinstance(day, dict):
+                    continue
+                stat_date = cls._day(day.get('date'))
+                if (
+                    stat_date is None
+                    or stat_date < date_from
+                    or stat_date > date_to
+                ):
+                    continue
                 # uniqViews — уникальные просмотры карточки (views в нашей модели)
                 # views — все просмотры, используем как прокси для показов (impressions)
                 # uniqContacts — уникальные контакты (contacts в нашей модели)
-                views = int(day.get('uniqViews', 0) or 0)
-                impressions = int(day.get('views', 0) or 0)
-                contacts = int(day.get('uniqContacts', 0) or 0)
+                views = cls._counter(day.get('uniqViews', 0))
+                impressions = cls._counter(day.get('views', 0))
+                contacts = cls._counter(day.get('uniqContacts', 0))
                 ctr = round(views / impressions * 100, 2) if impressions else 0.0
-                to_upsert.append(ListingStats(
+                by_listing_day[(info['id'], stat_date)] = ListingStats(
                     listing_id=info['id'],
                     tenant_id=info['tenant_id'],
-                    date=day['date'],
+                    date=stat_date,
                     views=views,
                     impressions=impressions,
                     contacts=contacts,
                     ctr=ctr,
-                ))
+                )
 
+        to_upsert = list(by_listing_day.values())
         if not to_upsert:
             return 0
 
@@ -2548,3 +2850,19 @@ def _enqueue_poll_feed_results(account_id: int) -> None:
     """Ставит ручную проверку результатов Avito feed в Celery."""
     from apps.marketplaces.tasks import poll_feed_results_task
     poll_feed_results_task.delay(account_id)
+
+
+def _enqueue_provider_listing_status_check(
+    listing_id: int,
+    *,
+    is_archiving: bool,
+) -> None:
+    """Ставит точечную проверку уже известного объявления Avito."""
+
+    from apps.marketplaces.tasks import (
+        check_moderation_task,
+        confirm_removal_task,
+    )
+
+    task = confirm_removal_task if is_archiving else check_moderation_task
+    task.delay(listing_id)
