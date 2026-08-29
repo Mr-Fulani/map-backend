@@ -2,7 +2,7 @@
 
 Обновлено: 2026-08-29.
 
-Статус: M0 `VERIFIED`, M1a `CODE_READY`. Документ описывает состояние
+Статус: M0 `VERIFIED`, M1a `ENABLED`. Документ описывает состояние
 репозитория от commit `fde9564f7ed183c30d852a4024a7957a667fee42` до
 реализации M1a 2026-08-29.
 
@@ -416,11 +416,31 @@ git diff --check
 результат: exit 0
 ```
 
-Штатная команда
+До PR штатная локальная команда
 `docker compose exec django pytest -q
 apps/marketplaces/tests/test_provider_neutral_contract.py
 apps/marketplaces/tests/test_account_api.py
 apps/marketplaces/tests/test_listing_patch_api.py apps/sync/tests/test_views.py
 apps/marketplaces/tests/test_services.py` до сбора тестов вернула Docker Desktop
-`unable to start`. Поэтому M1a остаётся `CODE_READY`; для `VERIFIED` нужны
-штатный полный backend suite и migrations check после восстановления daemon.
+`unable to start`. Полный CI PR `#274` затем закрыл этот gate на GitHub:
+backend shards, coverage, schema/supply-chain, frontend и production
+image/security завершились успешно.
+
+Production evidence:
+
+```text
+PR: #274
+release SHA: 0b84c9a1d209e82fb730fc0abd85c31ff9cd6178
+PR full CI run: 33269221495 — success
+main exact-tree CI run: 33269683305 — success
+Deploy run: 33269694167 — success, 3m4s
+encrypted pre-migration backup: uploaded
+migrations: No migrations to apply
+services: db, Redis, broker, proxy, Django, workers, Beat, frontend, Nginx healthy
+topology: production topology is healthy and exact
+public readiness: четыре последовательных HTTP 200 за минуту
+PROD_DEPLOY_ENABLED: восстановлен в false после запуска exact-SHA release
+```
+
+M1a включён без feature flag и имеет статус `ENABLED`. Подключение Ozon,
+credentials и внешний API I/O не входят в M1a и остаются выключены до M1b/O1.
