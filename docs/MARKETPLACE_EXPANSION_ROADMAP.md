@@ -34,7 +34,7 @@ Gate закрыт в
 риски и точный состав M1a. Изменена только документация; migrations и runtime
 не затронуты.
 
-## M1 — provider-neutral интерфейс — M1a `CODE_READY` 2026-08-29
+## M1 — provider-neutral интерфейс — M1a `ENABLED` 2026-08-29
 
 Результат: пользователь всегда понимает, с каким маркетплейсом и аккаунтом он
 работает, даже до включения Ozon.
@@ -74,11 +74,12 @@ provider-neutral, cross-tenant и Avito regression contracts. Frontend прош�
 unit, typecheck, ESLint и production webpack build. `makemigrations --check
 --dry-run` не обнаружил изменений схемы.
 
-Статус остаётся `CODE_READY`, а не `VERIFIED`: штатный Docker backend gate не
-запустился, потому что Docker Desktop daemon возвращает `unable to start`.
-После восстановления Docker требуются полный `docker compose exec django
-pytest -q` и повторный штатный `makemigrations --check --dry-run` без
-временного тестового settings module.
+Полный CI PR `#274` закрыл backend shards, coverage, schema/supply-chain,
+frontend и production image/security gates. M1a выложен и включён на production
+SHA `0b84c9a1d209e82fb730fc0abd85c31ff9cd6178`: encrypted backup создан,
+миграций к применению не было, все production services и topology healthy,
+public readiness стабильно отвечает HTTP 200. Ozon account connection, API I/O
+и credentials остаются выключены до отдельных пакетов M1b и O1.
 
 ## O1 — безопасное подключение Ozon Seller API
 
