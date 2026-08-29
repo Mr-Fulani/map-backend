@@ -2,9 +2,10 @@
 
 Обновлено: 2026-08-29.
 
-Статус: M0 `VERIFIED`, M1a `ENABLED`, M1b `ENABLED`.
-Документ описывает состояние репозитория от commit
-`fde9564f7ed183c30d852a4024a7957a667fee42` до реализации M1b 2026-08-29.
+Статус: M0 `VERIFIED`, M1a `ENABLED`, M1b `ENABLED`, O1a `DEPLOYED_OFF`.
+Документ описывает развитие репозитория от commit
+`fde9564f7ed183c30d852a4024a7957a667fee42` до production release O1a
+`e5ccef76e8e93677e196f9d10c1b63f763f239bc` 2026-08-29.
 
 Главный roadmap: [MARKETPLACE_EXPANSION_ROADMAP.md](MARKETPLACE_EXPANSION_ROADMAP.md).
 Рабочее состояние Avito: [AVITO_FEED_STATUS.md](AVITO_FEED_STATUS.md).
@@ -53,8 +54,9 @@ Client ID, но API key не создан и настройки кабинета
 | Область | Метод Ozon | Контракт для MAP |
 |---|---|---|
 | Авторизация | headers `Client-Id`, `Api-Key` | Только server-to-server; секрет не попадает в browser, API response, log или telemetry |
-| Права и срок ключа | `POST /v1/roles` | Сохранять expiry и доступные методы; до публикации требовать нужные роли |
+| Права и срок ключа | `POST /v1/roles` | Сохранять возвращённый `expires_at`, роли и разрешённые API methods; до публикации требовать нужные роли |
 | Данные продавца | `POST /v1/seller/info` | Проверить credentials и получить отображаемое имя/валюту аккаунта |
+| Склады | `POST /v2/warehouse/list` | Получить FBS warehouses с bounded cursor pagination; один склад выбрать автоматически, 0 или >1 вернуть как явное состояние onboarding |
 | Дерево типов | `POST /v1/description-category/tree` | Разрешать публикацию только в leaf type |
 | Атрибуты | `POST /v1/description-category/attribute` | Versioned snapshot; `is_required` блокирует публикацию |
 | Значения справочника | `POST /v1/description-category/attribute/values` | Хранить provider ID значения, а не только подпись |
@@ -70,6 +72,12 @@ Client ID, но API key не создан и настройки кабинета
 методов действуют более строгие лимиты. MAP обязан учитывать response headers
 rate limit/retry, вести budget отдельно по account и endpoint и не считать
 общий ceiling разрешением отправлять burst.
+
+Ozon сообщил, что для ключей, создаваемых начиная с 2026-09-03, срок действия
+изменится с шести до трёх месяцев. Поэтому MAP не вычисляет срок по дате
+создания, а сохраняет точный `expires_at` из `/v1/roles`. Источники:
+[уведомление о поле `expires_at`](https://t.me/s/OzonSellerAPI?before=637) и
+[уведомление об изменении срока ключей](https://t.me/s/ozonsellerapi).
 
 Ozon работает в реальной среде без отдельного sandbox. Поэтому порядок rollout:
 fake provider → deployed off → read-only real account → отдельное разрешение
@@ -312,13 +320,39 @@ credentials, health и fake-provider acceptance. Product publish fan-out в M1a
 - provider registry/capabilities вводится без переписывания Avito feed;
 - Avito regression и multi-account/cross-tenant acceptance обязательны.
 
-### O1 — account connection, deployed off
+### O1 — account connection
 
-- добавить Ozon provider choice и provider-specific encrypted credential schema;
-- validate через `/v1/roles` и `/v1/seller/info`;
-- Ozon account health/key expiry/role diagnostics;
-- fake API, 401/403/429/5xx/timeout tests;
-- реальный AlfaPro только read-only после отдельного разрешения.
+#### O1a — backend account foundation (`DEPLOYED_OFF`)
+
+- Ozon provider choice и provider-specific encrypted credential schema;
+- validate через `/v1/roles`, `/v1/seller/info` и `/v2/warehouse/list`;
+- профиль health/key expiry/roles/sanitized API methods/warehouse;
+- глобальная защита от подключения одного Client-Id в разные tenant при
+  поддержке нескольких разных Ozon accounts одного tenant;
+- fixed-origin adapter без redirects, с deadlines, bounded responses/cursors и
+  безопасными ошибками для 401/403/429/5xx/timeout;
+- fake-provider acceptance; production feature flag по умолчанию `false`.
+
+Фактический scope O1a — backend и конфигурация, без Ozon UI, periodic health
+polling и реального API I/O. Ozon-specific логика находится в отдельных
+`adapters/ozon/client.py` и `ozon_account_connection.py`; Avito feed runtime,
+P7 и production feed flags не менялись.
+
+#### O1b — безопасный UI/onboarding (`NEXT`)
+
+- отдельная Ozon account card/list, не смешанная с Autoload/Avito panels;
+- Client ID/API key принимаются write-only и не возвращаются из API/browser
+  state;
+- tenant видит connection state, роли, expiry и выбранный warehouse;
+- UI release сначала остаётся выключенным.
+
+#### O1c — read-only AlfaPro canary (`REQUIRES APPROVAL`)
+
+- непосредственно перед созданием/использованием ключа требуется отдельное
+  подтверждение пользователя;
+- account allowlist и read-only вызовы roles/seller/warehouses;
+- ни одного product/price/stock/archive mutation;
+- health polling и дальнейший rollout только после результатов canary.
 
 Минимальные роли read-only canary: Company, Description Category,
 Product read-only и Warehouse. Роль Product добавляется только перед отдельно
@@ -442,8 +476,8 @@ public readiness: четыре последовательных HTTP 200 за м
 PROD_DEPLOY_ENABLED: восстановлен в false после запуска exact-SHA release
 ```
 
-M1a включён без feature flag и имеет статус `ENABLED`. Подключение Ozon,
-credentials и внешний API I/O не входят в M1a/M1b и остаются выключены до O1.
+M1a включён без feature flag и имеет статус `ENABLED`. На момент этого release
+подключение Ozon, credentials и внешний API I/O ещё не входили в runtime.
 
 ## M1b gate
 
@@ -522,6 +556,91 @@ frontend /dashboard/settings: HTTP 200
 PROD_DEPLOY_ENABLED: восстановлен в false после старта exact-SHA release
 ```
 
-M1b включён без feature flag и имеет статус `ENABLED`. Ozon model choice,
-credentials, API I/O и кабинет AlfaPro не изменялись; они остаются выключены
-до отдельного пакета O1.
+M1b включён без feature flag и имеет статус `ENABLED`. В самом M1b Ozon model
+choice, credentials, API I/O и кабинет AlfaPro не изменялись; backend foundation
+добавлен последующим отдельным пакетом O1a.
+
+## O1a gate
+
+Локально выполнено 2026-08-29:
+
+```text
+docker compose exec django pytest -q \
+  apps/marketplaces/tests/test_ozon_account_api.py \
+  apps/marketplaces/tests/test_ozon_client.py \
+  apps/marketplaces/tests/test_provider_neutral_contract.py \
+  tests/test_settings_resource_caps.py
+результат: exit 0, 44 passed in 27.72s
+
+docker compose exec django pytest -q \
+  apps/marketplaces/tests/test_ozon_account_api.py \
+  apps/marketplaces/tests/test_ozon_client.py \
+  apps/marketplaces/tests/test_provider_neutral_contract.py \
+  apps/marketplaces/tests/test_listing_review.py \
+  apps/marketplaces/tests/test_avito.py \
+  apps/marketplaces/tests/test_status_fencing.py \
+  apps/marketplaces/tests/test_feed_intent_local_writers.py \
+  apps/marketplaces/tests/test_listing_patch_api.py \
+  apps/tenants/tests/test_api_key_authorization.py \
+  tests/test_settings_resource_caps.py
+результат: exit 0, 313 passed in 69.61s
+
+docker compose exec django flake8 .
+результат: exit 0
+
+docker compose exec django mypy
+результат: exit 0, no issues found in 706 source files
+
+docker compose exec django mypy --check-untyped-defs \
+  --exclude '(^|/)(tests?|migrations)/' apps config backup
+результат: exit 0, no issues found in 355 source files
+
+docker compose exec django python manage.py spectacular \
+  --file /tmp/openapi-schema.yml --validate --fail-on-warn
+результат: exit 0
+
+docker compose exec django python manage.py makemigrations --check --dry-run
+результат: exit 0, No changes detected
+
+git diff --check -- . ':!.claude/settings.local.json'
+результат: exit 0
+```
+
+Scope evidence:
+
+```text
+code commit: e1dda3a35b40a55fdfebb8bd4631671d57942da3
+files: 16
+diff: 1 443 additions, 25 deletions
+migrations: 1 (marketplaces.0032_ozon_account_profile)
+repository limits: соблюдены
+```
+
+Production evidence:
+
+```text
+PR: #278
+release SHA: e5ccef76e8e93677e196f9d10c1b63f763f239bc
+PR full CI run: 33273736364 — success
+backend shards: 8m16s, 7m23s, 8m7s — success
+contracts/schema/supply-chain: 2m56s — success
+production images/runtime security: 2m33s — success
+frontend checks/build: 1m20s — success
+combined backend coverage: 57s — success
+main exact-tree CI run: 33274177354 — success
+Deploy run: 33274191198 — success, 2m33s
+encrypted pre-migration backup: uploaded
+migrations: Applying marketplaces.0032_ozon_account_profile... OK
+services: db, Redis, broker, proxy, Django, workers, Beat, frontend, Nginx healthy
+topology: production topology is healthy and exact
+public readiness: HTTP 200 x4 (0.776s, 0.414s, 0.381s, 0.503s)
+frontend /dashboard/settings: HTTP 200 (0.519s)
+PROD_DEPLOY_ENABLED: восстановлен в false после старта exact-SHA release
+```
+
+O1a имеет статус `DEPLOYED_OFF`: migration и backend-контракт находятся на
+production, но `OZON_ACCOUNT_CONNECTION_ENABLED=false` по умолчанию блокирует
+Ozon connection/API I/O. Реальный API key не создавался, credentials AlfaPro не
+сохранялись, запросов к Ozon от MAP не было, кабинет продавца не изменялся.
+Следующий пакет — O1b UI/onboarding; read-only AlfaPro canary остаётся отдельным
+O1c и требует непосредственного подтверждения перед внешним действием.
