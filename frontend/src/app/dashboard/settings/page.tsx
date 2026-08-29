@@ -1500,6 +1500,8 @@ export default function SettingsPage() {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  const avitoAccounts = accounts.filter((account) => account.marketplace === 'avito');
+
   return (
     <div className="space-y-6">
       <div className="min-w-0">
@@ -1886,13 +1888,13 @@ export default function SettingsPage() {
                 <div className="space-y-2">
                   {[1, 2].map((i) => <Skeleton key={i} className="h-16 w-full" />)}
                 </div>
-              ) : accounts.length === 0 ? (
+              ) : avitoAccounts.length === 0 ? (
                 <p className="py-8 text-center text-sm text-muted-foreground">
                   Аккаунтов нет. Нажмите «Добавить», чтобы подключить Avito-аккаунт.
                 </p>
               ) : (
                 <div className="space-y-3">
-                  {accounts.map((acc) => {
+                  {avitoAccounts.map((acc) => {
                     const al = autoloadStatus[acc.id];
                     const health = al?.status ?? acc.avito_status;
                     const onboarding = al?.autoload_onboarding ?? acc.autoload_onboarding;
@@ -2395,10 +2397,12 @@ export default function SettingsPage() {
             <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <CardTitle>Дром</CardTitle>
-                  <Badge variant="secondary">Скоро</Badge>
+                  <CardTitle>Ozon</CardTitle>
+                  <Badge variant="secondary">Следующий этап</Badge>
                 </div>
-                <CardDescription>Заглушка для будущего подключения объявлений на Дром</CardDescription>
+                <CardDescription>
+                  Отдельные кабинеты, API-права и FBS-склад без смешения с настройками Avito
+                </CardDescription>
               </div>
               <Button size="sm" variant="outline" disabled className="w-full sm:w-auto">
                 <Store className="mr-2 h-4 w-4" />
@@ -2407,7 +2411,9 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent>
               <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-                Интеграция с Дром пока не подключена. Здесь появятся аккаунты, статусы публикации и настройки синхронизации.
+                Подключение Ozon появится после provider-neutral этапа. API-ключи,
+                роли и склад здесь пока не принимаются — реальный кабинет AlfaPro
+                не изменяется.
               </div>
             </CardContent>
           </Card>

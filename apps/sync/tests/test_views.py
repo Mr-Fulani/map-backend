@@ -3,8 +3,13 @@
 
 Покрывает: фильтрацию по статусу/типу/дате, пагинацию, изоляцию тенантов.
 """
+from decimal import Decimal
+
 import pytest
 
+from apps.datasources.encryption import encrypt
+from apps.marketplaces.models import Listing, MarketplaceAccount
+from apps.products.models import Product
 from apps.sync.models import SyncLog
 from apps.tenants.services import TenantService
 from apps.tenants.tests.auth import create_operator_key
@@ -194,3 +199,117 @@ def test_logs_unauthenticated_returns_401(client):
     """Без авторизации запрос возвращает 401."""
     resp = client.get('/api/v1/logs/')
     assert resp.status_code == 401
+
+
+@pytest.mark.django_db
+def test_provider_account_operation_filters_are_tenant_fenced(client):
+    tenant, api_key = make_tenant('t-provider-log')
+    other, _ = make_tenant('t-provider-log-other')
+
+    def account(owner, suffix):
+        return MarketplaceAccount.objects.create(
+            tenant=owner,
+            name=f'Ozon {suffix}',
+            marketplace='ozon',
+            external_id=f'ozon-{owner.pk}-{suffix}',
+            credentials_enc=encrypt({'test': suffix}),
+        )
+
+    def listing(owner, owner_account, suffix):
+        product = Product.objects.create(
+            tenant=owner,
+            article=f'LOG-{suffix}',
+            name=f'Product {suffix}',
+            price=Decimal('100.00'),
+        )
+        return Listing.objects.create(
+            tenant=owner,
+            product=product,
+            account=owner_account,
+            title=product.name,
+            price_on_listing=product.price,
+        )
+
+    own_account = account(tenant, 'own')
+    own_listing = listing(tenant, own_account, 'own')
+    foreign_account = account(other, 'foreign')
+    foreign_listing = listing(other, foreign_account, 'foreign')
+    own_log = SyncLog.objects.create(
+        tenant=tenant,
+        listing=own_listing,
+        event_type=SyncLog.EVENT_LISTING_PUBLISH,
+        status=SyncLog.STATUS_OK,
+        message='own',
+    )
+    make_log(tenant, event_type=SyncLog.EVENT_DATASOURCE_IMPORT)
+    SyncLog.objects.create(
+        tenant=tenant,
+        listing=foreign_listing,
+        event_type=SyncLog.EVENT_LISTING_PUBLISH,
+        status=SyncLog.STATUS_ERROR,
+        message='inconsistent relation must not leak',
+    )
+
+    response = client.get(
+        '/api/v1/logs/',
+        {
+            'marketplace': 'ozon',
+            'account': own_account.pk,
+            'operation': SyncLog.EVENT_LISTING_PUBLISH,
+            'provider_result': SyncLog.STATUS_OK,
+        },
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 200
+    assert response.json()['meta']['total'] == 1
+    row = response.json()['data'][0]
+    assert row['id'] == own_log.pk
+    assert row['marketplace'] == 'ozon'
+    assert row['account_id'] == own_account.pk
+    assert row['account_name'] == own_account.name
+    assert row['operation'] == SyncLog.EVENT_LISTING_PUBLISH
+    assert row['provider_result'] == SyncLog.STATUS_OK
+
+
+@pytest.mark.django_db
+def test_log_serializer_hides_inconsistent_cross_tenant_listing_context(client):
+    tenant, api_key = make_tenant('t-log-context')
+    other, _ = make_tenant('t-log-context-other')
+    foreign_account = MarketplaceAccount.objects.create(
+        tenant=other,
+        name='Foreign',
+        marketplace='ozon',
+        external_id='foreign-log-context',
+        credentials_enc=encrypt({'test': 'foreign'}),
+    )
+    product = Product.objects.create(
+        tenant=other,
+        article='FOREIGN-LOG',
+        name='Foreign product',
+        price=Decimal('100.00'),
+    )
+    foreign_listing = Listing.objects.create(
+        tenant=other,
+        product=product,
+        account=foreign_account,
+        title=product.name,
+        price_on_listing=product.price,
+    )
+    log = SyncLog.objects.create(
+        tenant=tenant,
+        listing=foreign_listing,
+        event_type=SyncLog.EVENT_LISTING_ERROR,
+        status=SyncLog.STATUS_ERROR,
+        message='broken relation',
+    )
+
+    response = client.get(
+        '/api/v1/logs/',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    row = next(item for item in response.json()['data'] if item['id'] == log.pk)
+    assert row['marketplace'] is None
+    assert row['account_id'] is None
+    assert row['account_name'] is None

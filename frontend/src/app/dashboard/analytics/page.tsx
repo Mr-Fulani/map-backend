@@ -1,7 +1,16 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { analyticsApi } from '@/lib/api';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { accountApi, analyticsApi } from '@/lib/api';
+import {
+  dashboardMarketplaceParam,
+  dashboardPositiveIdParam,
+  dashboardQueryHref,
+} from '@/lib/dashboard-query';
+import MarketplaceAccountFilter, {
+  marketplaceDisplayName,
+} from '@/components/marketplaces/MarketplaceAccountFilter';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -40,6 +49,12 @@ interface AnalyticsData {
   date_to: string;
 }
 
+interface Account {
+  id: number;
+  name: string;
+  marketplace: string;
+}
+
 function kpi(n: number) {
   return n.toLocaleString('ru-RU');
 }
@@ -57,17 +72,34 @@ function defaultDateRange() {
 }
 
 export default function AnalyticsPage() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const marketplace = dashboardMarketplaceParam(searchParams.get('marketplace'));
+  const accountId = dashboardPositiveIdParam(searchParams.get('account'));
   const [initialRange] = useState(defaultDateRange);
   const [dateFrom, setDateFrom] = useState(initialRange.from);
   const [dateTo, setDateTo] = useState(initialRange.to);
   const [request, setRequest] = useState({ ...initialRange, revision: 0 });
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+
+  useEffect(() => {
+    accountApi.list()
+      .then((response) => setAccounts(response.data.data ?? response.data))
+      .catch(() => setAccounts([]));
+  }, []);
 
   useEffect(() => {
     let active = true;
     analyticsApi
-      .get({ date_from: request.from, date_to: request.to })
+      .get({
+        date_from: request.from,
+        date_to: request.to,
+        marketplace: marketplace || undefined,
+        account: accountId || undefined,
+      })
       .then((response) => {
         if (active) setData(response.data.data);
       })
@@ -78,7 +110,7 @@ export default function AnalyticsPage() {
         if (active) setLoading(false);
       });
     return () => { active = false; };
-  }, [request]);
+  }, [accountId, marketplace, request]);
 
   function applyDateRange() {
     setLoading(true);
@@ -98,8 +130,24 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Аналитика</h1>
-        <p className="text-muted-foreground">Уникальные и все просмотры, а также контакты на Avito</p>
+        <p className="text-muted-foreground">
+          Метрики выбранного маркетплейса и аккаунта
+        </p>
       </div>
+
+      <MarketplaceAccountFilter
+        marketplace={marketplace}
+        accountId={accountId}
+        accounts={accounts}
+        onChange={(next) => {
+          setLoading(true);
+          router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+            marketplace: next.marketplace,
+            account: next.accountId,
+          }), { scroll: false });
+        }}
+        className="max-w-2xl"
+      />
 
       {/* Фильтр дат */}
       <div className="grid gap-3 sm:flex sm:flex-wrap sm:items-end">
@@ -196,9 +244,11 @@ export default function AnalyticsPage() {
           ) : !hasData ? (
             <div className="flex h-64 flex-col items-center justify-center gap-3 text-muted-foreground">
               <BarChart3 className="h-12 w-12 opacity-20" />
-              <p className="text-sm">Статистика Avito пока не собрана.</p>
+              <p className="text-sm">
+                Статистика {marketplace ? marketplaceDisplayName(marketplace) : 'маркетплейсов'} пока не собрана.
+              </p>
               <p className="text-xs opacity-70">
-                После подключения аккаунта Avito данные появятся автоматически.
+                После подключения и выбора аккаунта данные появятся автоматически.
               </p>
             </div>
           ) : (

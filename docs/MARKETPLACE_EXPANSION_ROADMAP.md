@@ -12,7 +12,7 @@ Ozon нельзя добавлять набором условных `if marketp
 названий и статусов Avito. Сначала выделяется provider-neutral слой, при этом
 текущий Avito runtime и его feed-флаги не меняются.
 
-## M0 — инвентаризация контрактов
+## M0 — инвентаризация контрактов — `VERIFIED` 2026-08-29
 
 Результат: точная карта Avito-specific предположений без изменения runtime.
 
@@ -27,7 +27,14 @@ Ozon нельзя добавлять набором условных `if marketp
 Gate: документированная матрица `общий контракт / Avito / Ozon`, список файлов
 первого implementation package и отсутствие runtime-изменений.
 
-## M1 — provider-neutral интерфейс
+Gate закрыт в
+[MARKETPLACE_INTEGRATION_INVENTORY.md](MARKETPLACE_INTEGRATION_INVENTORY.md):
+зафиксированы решения по multi-account, одному FBS warehouse, fallback 1C/MAP,
+реальному AlfaPro canary, проверенные методы Ozon API, текущие backend/frontend
+риски и точный состав M1a. Изменена только документация; migrations и runtime
+не затронуты.
+
+## M1 — provider-neutral интерфейс — M1a `CODE_READY` 2026-08-29
 
 Результат: пользователь всегда понимает, с каким маркетплейсом и аккаунтом он
 работает, даже до включения Ozon.
@@ -44,6 +51,34 @@ Gate: документированная матрица `общий контра
 
 Gate: frontend unit/typecheck/ESLint/build, API contract tests, tenant isolation,
 Avito regression suite. Ozon I/O в этом этапе отсутствует.
+
+Чтобы пакет оставался проверяемым, M1 выполняется двумя последовательными
+частями:
+
+- **M1a** — provider/account presentation, URL filters и conditional panels;
+  без migrations, mutations и значения `ozon` в model choices;
+- **M1b** — явный выбор target accounts для product/bulk mutations и provider
+  capability registry; implicit публикация во все активные аккаунты удаляется
+  до подключения Ozon.
+
+Точный файловый состав и non-goals M1a/M1b находятся в
+[MARKETPLACE_INTEGRATION_INVENTORY.md](MARKETPLACE_INTEGRATION_INVENTORY.md).
+
+M1a реализован в границах read/presentation слоя: API и Dashboard получили
+marketplace/account context, tenant-fenced filters и fail-closed presentation
+для ещё не подключённого provider. Avito mutations, feed runtime, model choices
+и production flags не менялись; migrations и Ozon API I/O отсутствуют.
+
+Целевой backend gate прошёл: 46 тестов marketplace/sync, включая новые
+provider-neutral, cross-tenant и Avito regression contracts. Frontend прошёл
+unit, typecheck, ESLint и production webpack build. `makemigrations --check
+--dry-run` не обнаружил изменений схемы.
+
+Статус остаётся `CODE_READY`, а не `VERIFIED`: штатный Docker backend gate не
+запустился, потому что Docker Desktop daemon возвращает `unable to start`.
+После восстановления Docker требуются полный `docker compose exec django
+pytest -q` и повторный штатный `makemigrations --check --dry-run` без
+временного тестового settings module.
 
 ## O1 — безопасное подключение Ozon Seller API
 
