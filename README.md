@@ -136,7 +136,9 @@ MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
 - [текущее состояние](docs/AVITO_FEED_STATUS.md);
 - [roadmap P0–P7](docs/AVITO_FEED_ROADMAP.md);
 - [карта разделения изменений](docs/AVITO_FEED_CHANGESET_MANIFEST.md);
-- [обязательные правила выполнения](docs/ENGINEERING_EXECUTION_RULES.md).
+- [обязательные правила выполнения](docs/ENGINEERING_EXECUTION_RULES.md);
+- [актуальный технический долг](TECH_DEBT.md);
+- [разделение маркетплейсов и подключение Ozon](docs/MARKETPLACE_EXPANSION_ROADMAP.md).
 
 ---
 
@@ -389,8 +391,9 @@ saas_poster/
 
 ### 🚧 В планах (Phase 3)
 
-- [ ] Auto.ru адаптер (параллельная публикация на Auto.ru)
-- [ ] Мультиплатформенный листинг (один товар → Avito + Auto.ru)
+- [ ] Provider-neutral интерфейс листингов, логов, аналитики и настроек
+- [ ] Ozon Seller API как второй маркетплейс
+- [ ] Мультиплатформенный листинг (один товар → Avito + Ozon)
 - [ ] Расширенная аналитика: A/B тест заголовков, тепловые карты
 - [ ] White-label: кастомный домен и брендинг для Enterprise
 - [ ] Производственная нагрузка: нагрузочное тестирование 50К SKU

@@ -327,7 +327,22 @@ private cutover account `4` на `139ed48`, а PR `#256` завершил fleet-
 был отменён только после этой проверки. Exact deploy/health evidence находится
 в [`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md).
 
-## P7 — замороженный backlog, миграции 0036–0039
+### Post-P6 operational hardening — завершён
+
+PR `#262`–`#270` являются последовательными исправлениями работающего P6, а не
+новым roadmap package. Они затрагивают только доказанные production-сценарии:
+recoverable onboarding, feed retry/generation coordination, current provider
+outcomes и field-level tenant UX. В них нет retention delete, GC, `0039`,
+нового feed mode или нового marketplace. Текущий production evidence и точный
+SHA находятся в [`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md).
+
+Контрактный multi-account acceptance находится в
+`apps/marketplaces/tests/test_feed_fleet_onboarding.py`: два разных Avito
+account одного tenant и первый account нового tenant обязаны получить разные
+endpoint/URL, пройти независимый fake-provider onboarding и отклонить чужой
+`tenant_id` до provider I/O.
+
+## P7 — отложенный backlog, миграции 0036–0039
 
 Сюда относятся:
 
