@@ -100,7 +100,7 @@ services:
       retries: 5
 
   redis:
-    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    image: redis:8.10.1-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
     command: redis-server --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
