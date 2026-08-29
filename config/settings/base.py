@@ -16,6 +16,12 @@ from apps.marketplaces.feed_endpoint import (
 _SAFE_FEED_ARTIFACT_BUCKET_CHARACTERS = frozenset(
     'abcdefghijklmnopqrstuvwxyz0123456789.-',
 )
+_SAFE_OZON_CANARY_TENANT_SLUG_CHARACTERS = frozenset(
+    'abcdefghijklmnopqrstuvwxyz0123456789_-',
+)
+_SAFE_OZON_CANARY_CLIENT_ID_CHARACTERS = frozenset(
+    'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._:-',
+)
 
 
 def _is_safe_feed_artifact_bucket(value: str) -> bool:
@@ -86,6 +92,34 @@ def _strict_feed_cutover_account_ids(raw_value: str) -> tuple[int, ...]:
             'MARKETPLACE_FEED_CUTOVER_ACCOUNT_IDS must be unique and sorted.',
         )
     return account_ids
+
+
+def _strict_ozon_canary_allowlist(
+    name: str,
+    raw_value: str,
+    *,
+    safe_characters: frozenset[str],
+    max_item_length: int,
+) -> tuple[str, ...]:
+    """Parse one canonical bounded allowlist without wildcard semantics."""
+
+    if raw_value == '':
+        return ()
+    values = raw_value.split(',')
+    if len(values) > 10:
+        raise ValueError(f'{name} may contain at most 10 values.')
+    if any(
+        not value
+        or len(value) > max_item_length
+        or any(character not in safe_characters for character in value)
+        for value in values
+    ):
+        raise ValueError(
+            f'{name} contains a non-canonical or unsafe value.',
+        )
+    if len(set(values)) != len(values) or values != sorted(values):
+        raise ValueError(f'{name} values must be unique and sorted.')
+    return tuple(values)
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -809,6 +843,18 @@ if _OZON_ACCOUNT_CONNECTION_ENABLED_RAW not in {'true', 'false'}:
     raise ValueError('OZON_ACCOUNT_CONNECTION_ENABLED must be true or false.')
 OZON_ACCOUNT_CONNECTION_ENABLED = (
     _OZON_ACCOUNT_CONNECTION_ENABLED_RAW == 'true'
+)
+OZON_ACCOUNT_CONNECTION_TENANT_SLUGS = _strict_ozon_canary_allowlist(
+    'OZON_ACCOUNT_CONNECTION_TENANT_SLUGS',
+    os.environ.get('OZON_ACCOUNT_CONNECTION_TENANT_SLUGS', ''),
+    safe_characters=_SAFE_OZON_CANARY_TENANT_SLUG_CHARACTERS,
+    max_item_length=50,
+)
+OZON_ACCOUNT_CONNECTION_CLIENT_IDS = _strict_ozon_canary_allowlist(
+    'OZON_ACCOUNT_CONNECTION_CLIENT_IDS',
+    os.environ.get('OZON_ACCOUNT_CONNECTION_CLIENT_IDS', ''),
+    safe_characters=_SAFE_OZON_CANARY_CLIENT_ID_CHARACTERS,
+    max_item_length=100,
 )
 OZON_API_RESPONSE_MAX_BYTES = min(
     5 * 1024 * 1024,

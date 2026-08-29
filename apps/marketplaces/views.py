@@ -75,6 +75,7 @@ from apps.marketplaces.account_errors import (
     MarketplaceProviderDisabled,
 )
 from apps.marketplaces.provider_registry import ProviderCapabilityUnavailable
+from apps.marketplaces.ozon_rollout import ozon_connection_enabled_for_tenant
 from apps.tenants.permissions import TenantAdminPermission, TenantAdminWritePermission
 
 
@@ -310,7 +311,7 @@ class MarketplaceProviderRolloutView(APIView):
         ),
     )
     def get(self, request):
-        enabled = bool(settings.OZON_ACCOUNT_CONNECTION_ENABLED)
+        enabled = ozon_connection_enabled_for_tenant(request.tenant)
         return Response({
             'ozon': {
                 'account_connection_enabled': enabled,

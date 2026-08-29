@@ -71,10 +71,15 @@ export function OzonAccountSettings({
     const name = String(data.get('name') || '').trim();
     const clientId = String(data.get('client_id') || '').trim();
     const apiKey = String(data.get('api_key') || '').trim();
+    const confirmed = data.get('confirm_ozon_read_only_access') === 'on';
     form.reset();
 
     if (!name || !clientId || !apiKey) {
       toast.error('Укажите название, Client ID и API-ключ Ozon.');
+      return;
+    }
+    if (!confirmed) {
+      toast.error('Подтвердите read-only проверку кабинета Ozon.');
       return;
     }
 
@@ -88,6 +93,7 @@ export function OzonAccountSettings({
         name,
         client_id: clientId,
         api_key: apiKey,
+        confirm_ozon_read_only_access: true,
       });
       onAccountUpsert(accountResponse(response.data));
       toast.success('Аккаунт Ozon проверен и подключён.');
@@ -108,9 +114,14 @@ export function OzonAccountSettings({
     const form = event.currentTarget;
     const data = new FormData(form);
     const apiKey = String(data.get('api_key') || '').trim();
+    const confirmed = data.get('confirm_ozon_read_only_access') === 'on';
     form.reset();
     if (!apiKey) {
       toast.error('Укажите новый API-ключ Ozon.');
+      return;
+    }
+    if (!confirmed) {
+      toast.error('Подтвердите read-only проверку нового ключа Ozon.');
       return;
     }
 
@@ -122,6 +133,7 @@ export function OzonAccountSettings({
         name: account.name,
         client_id: account.external_id,
         api_key: apiKey,
+        confirm_ozon_read_only_access: true,
       });
       onAccountUpsert(accountResponse(response.data));
       toast.success('Новый API-ключ проверен и сохранён.');
@@ -199,6 +211,18 @@ export function OzonAccountSettings({
                 <PasswordInput id="ozon-api-key" name="api_key" maxLength={1000} required className="font-mono" autoComplete="new-password" />
               </div>
             </div>
+            <label className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                name="confirm_ozon_read_only_access"
+                required
+                className="mt-0.5 h-4 w-4 shrink-0"
+              />
+              <span>
+                Подтверждаю однократную read-only проверку ролей API, данных продавца и списка
+                складов. MAP не будет создавать или изменять товары, цены и остатки.
+              </span>
+            </label>
             <div className="flex flex-col gap-2 sm:flex-row sm:justify-between">
               <a
                 href="https://seller.ozon.ru/app/settings/api-keys"
@@ -334,6 +358,18 @@ export function OzonAccountSettings({
                           autoComplete="new-password"
                         />
                       </div>
+                      <label className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          name="confirm_ozon_read_only_access"
+                          required
+                          className="mt-0.5 h-4 w-4 shrink-0"
+                        />
+                        <span>
+                          Подтверждаю read-only проверку нового ключа без изменений товаров,
+                          цен и остатков в Ozon.
+                        </span>
+                      </label>
                       <div className="flex justify-end gap-2">
                         <Button type="button" variant="outline" onClick={() => setShowRotationFor(null)} disabled={rotatingAccountId === account.id}>
                           Отмена

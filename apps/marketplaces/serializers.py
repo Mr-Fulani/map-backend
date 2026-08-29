@@ -724,6 +724,11 @@ class MarketplaceAccountWriteSerializer(serializers.Serializer):
     api_key = serializers.CharField(
         write_only=True, required=False, max_length=1000,
     )
+    confirm_ozon_read_only_access = serializers.BooleanField(
+        write_only=True,
+        required=False,
+        default=False,
+    )
 
     def validate(self, attrs):
         marketplace = attrs['marketplace']
@@ -747,6 +752,15 @@ class MarketplaceAccountWriteSerializer(serializers.Serializer):
         ):
             raise serializers.ValidationError({
                 'client_id': 'Client-Id Ozon не должен превышать 100 символов.',
+            })
+        if (
+            marketplace == MarketplaceAccount.MARKETPLACE_OZON
+            and attrs['confirm_ozon_read_only_access'] is not True
+        ):
+            raise serializers.ValidationError({
+                'confirm_ozon_read_only_access': (
+                    'Подтвердите read-only проверку ролей, продавца и складов Ozon.'
+                ),
             })
         return attrs
 

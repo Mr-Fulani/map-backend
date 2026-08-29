@@ -1,4 +1,3 @@
-from django.conf import settings
 from django.db import IntegrityError, transaction
 from django.utils import timezone
 
@@ -11,6 +10,7 @@ from apps.marketplaces.account_errors import (
 )
 from apps.marketplaces.adapters.ozon.client import OzonAPIError, OzonSellerClient
 from apps.marketplaces.models import MarketplaceAccount, OzonAccountProfile
+from apps.marketplaces.ozon_rollout import ozon_connection_enabled_for_account
 
 
 class OzonAccountConnectionService:
@@ -18,10 +18,6 @@ class OzonAccountConnectionService:
 
     @staticmethod
     def _verify_connection(data: dict):
-        if not settings.OZON_ACCOUNT_CONNECTION_ENABLED:
-            raise MarketplaceProviderDisabled(
-                'Подключение Ozon пока выключено для текущего этапа rollout.',
-            )
         try:
             return OzonSellerClient(
                 client_id=data['client_id'],
@@ -33,6 +29,21 @@ class OzonAccountConnectionService:
                 code=exc.code,
                 retry_after_seconds=exc.retry_after_seconds,
             ) from exc
+
+    @staticmethod
+    def _require_canary_admission(tenant, client_id: object) -> None:
+        if not ozon_connection_enabled_for_account(tenant, client_id):
+            raise MarketplaceProviderDisabled(
+                'Подключение Ozon не разрешено для этого кабинета '
+                'на текущем этапе rollout.',
+            )
+
+    @staticmethod
+    def _require_read_only_confirmation(data: dict) -> None:
+        if data.get('confirm_ozon_read_only_access') is not True:
+            raise InvalidMarketplaceCredentials(
+                'Подтвердите read-only проверку ролей, продавца и складов Ozon.',
+            )
 
     @staticmethod
     def _profile_defaults(snapshot) -> dict:
@@ -61,6 +72,8 @@ class OzonAccountConnectionService:
     @classmethod
     def create(cls, tenant, data: dict) -> MarketplaceAccount:
         client_id = str(data['client_id']).strip()
+        cls._require_read_only_confirmation(data)
+        cls._require_canary_admission(tenant, client_id)
         existing_account = MarketplaceAccount.objects.filter(
             tenant=tenant,
             marketplace=MarketplaceAccount.MARKETPLACE_OZON,
@@ -137,11 +150,13 @@ class OzonAccountConnectionService:
     @classmethod
     def update_credentials(cls, account, data: dict) -> MarketplaceAccount:
         client_id = str(data['client_id']).strip()
+        cls._require_read_only_confirmation(data)
         if client_id != account.external_id:
             raise InvalidMarketplaceCredentials(
                 'Client-Id не совпадает с подключённым аккаунтом Ozon. '
                 'Для другого кабинета создайте отдельный аккаунт.',
             )
+        cls._require_canary_admission(account.tenant, client_id)
         snapshot = cls._verify_connection(data)
         credentials_enc = encrypt({
             'client_id': client_id,

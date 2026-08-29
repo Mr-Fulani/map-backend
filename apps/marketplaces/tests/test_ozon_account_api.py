@@ -9,7 +9,11 @@ from apps.marketplaces.adapters.ozon.client import (
     OzonWarehouse,
 )
 from apps.marketplaces.models import MarketplaceAccount, OzonAccountProfile
-from apps.marketplaces.account_errors import MarketplaceConnectionError
+from apps.marketplaces.account_errors import (
+    InvalidMarketplaceCredentials,
+    MarketplaceConnectionError,
+)
+from apps.marketplaces.ozon_account_connection import OzonAccountConnectionService
 from apps.tenants.services import TenantService
 from apps.tenants.tests.auth import owner_access_token
 
@@ -18,6 +22,29 @@ OZON_VERIFY = (
     'apps.marketplaces.ozon_account_connection.'
     'OzonAccountConnectionService._verify_connection'
 )
+OZON_TEST_TENANT_SLUGS = tuple(sorted({
+    'ozon-client-blocked',
+    'ozon-confirmation',
+    'ozon-create',
+    'ozon-dark',
+    'ozon-duplicate',
+    'ozon-multi-first',
+    'ozon-multi-second',
+    'ozon-no-warehouse',
+    'ozon-rate-limit',
+    'ozon-rollout-false',
+    'ozon-rollout-true',
+    'ozon-rotate',
+    'ozon-service-confirmation',
+    'ozon-warehouses',
+}))
+OZON_TEST_CLIENT_IDS = ('client-a', 'client-b', 'client-c', 'ozon-client-1')
+
+
+@pytest.fixture(autouse=True)
+def ozon_canary_allowlists(settings):
+    settings.OZON_ACCOUNT_CONNECTION_TENANT_SLUGS = OZON_TEST_TENANT_SLUGS
+    settings.OZON_ACCOUNT_CONNECTION_CLIENT_IDS = OZON_TEST_CLIENT_IDS
 
 
 def make_tenant(slug: str):
@@ -43,6 +70,7 @@ def ozon_payload(client_id: str = 'ozon-client-1', api_key: str = 'ozon-secret')
         'marketplace': 'ozon',
         'client_id': client_id,
         'api_key': api_key,
+        'confirm_ozon_read_only_access': True,
     }
 
 
@@ -50,7 +78,7 @@ def ozon_payload(client_id: str = 'ozon-client-1', api_key: str = 'ozon-secret')
 @pytest.mark.parametrize('enabled', [False, True])
 def test_provider_rollout_state_is_read_only_and_fail_closed_for_ui(settings, enabled):
     settings.OZON_ACCOUNT_CONNECTION_ENABLED = enabled
-    _, token = make_tenant(f'ozon-rollout-{enabled}')
+    _, token = make_tenant(f'ozon-rollout-{str(enabled).lower()}')
     with patch(
         'apps.marketplaces.adapters.ozon.client.OzonSellerClient.verify_connection',
     ) as provider_call:
@@ -67,6 +95,90 @@ def test_provider_rollout_state_is_read_only_and_fail_closed_for_ui(settings, en
         },
     }
     provider_call.assert_not_called()
+
+
+@pytest.mark.django_db
+@override_settings(OZON_ACCOUNT_CONNECTION_ENABLED=True)
+def test_global_flag_does_not_open_rollout_for_non_allowlisted_tenant():
+    tenant, token = make_tenant('ozon-not-allowlisted')
+    with patch(
+        'apps.marketplaces.adapters.ozon.client.OzonSellerClient.verify_connection',
+    ) as provider_call:
+        rollout = Client().get(
+            '/api/v1/accounts/provider-rollout/',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        connection = Client().post(
+            '/api/v1/accounts/',
+            ozon_payload(),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+
+    assert rollout.status_code == 200
+    assert rollout.json()['ozon']['account_connection_enabled'] is False
+    assert connection.status_code == 503
+    assert connection.json()['code'] == 'provider_disabled'
+    provider_call.assert_not_called()
+    assert not MarketplaceAccount.objects.filter(tenant=tenant).exists()
+
+
+@pytest.mark.django_db
+@override_settings(OZON_ACCOUNT_CONNECTION_ENABLED=True)
+def test_non_allowlisted_client_id_never_reaches_ozon():
+    tenant, token = make_tenant('ozon-client-blocked')
+    with patch(
+        'apps.marketplaces.adapters.ozon.client.OzonSellerClient.verify_connection',
+    ) as provider_call:
+        response = Client().post(
+            '/api/v1/accounts/',
+            ozon_payload(client_id='not-approved'),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+
+    assert response.status_code == 503
+    assert response.json()['code'] == 'provider_disabled'
+    provider_call.assert_not_called()
+    assert not MarketplaceAccount.objects.filter(tenant=tenant).exists()
+
+
+@pytest.mark.django_db
+@override_settings(OZON_ACCOUNT_CONNECTION_ENABLED=True)
+def test_read_only_confirmation_is_required_before_any_provider_call():
+    tenant, token = make_tenant('ozon-confirmation')
+    payload = ozon_payload()
+    payload.pop('confirm_ozon_read_only_access')
+    with patch(
+        'apps.marketplaces.adapters.ozon.client.OzonSellerClient.verify_connection',
+    ) as provider_call:
+        response = Client().post(
+            '/api/v1/accounts/',
+            payload,
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+
+    assert response.status_code == 400
+    assert 'confirm_ozon_read_only_access' in response.json()['errors']
+    provider_call.assert_not_called()
+    assert not MarketplaceAccount.objects.filter(tenant=tenant).exists()
+
+
+@pytest.mark.django_db
+@override_settings(OZON_ACCOUNT_CONNECTION_ENABLED=True)
+def test_service_layer_also_requires_read_only_confirmation():
+    tenant, _ = make_tenant('ozon-service-confirmation')
+    payload = ozon_payload()
+    payload.pop('confirm_ozon_read_only_access')
+    with patch(
+        'apps.marketplaces.adapters.ozon.client.OzonSellerClient.verify_connection',
+    ) as provider_call:
+        with pytest.raises(InvalidMarketplaceCredentials):
+            OzonAccountConnectionService.create(tenant, payload)
+
+    provider_call.assert_not_called()
+    assert not MarketplaceAccount.objects.filter(tenant=tenant).exists()
 
 
 @pytest.mark.django_db
