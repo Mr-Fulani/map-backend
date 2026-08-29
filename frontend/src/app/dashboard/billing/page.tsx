@@ -15,6 +15,7 @@ import {
   loadBillingPageData,
   type BillingLoadState,
 } from '@/lib/billing-page-loader';
+import { getListingLimitPresentation } from '@/lib/billing-plan-presentation';
 
 interface Plan {
   id: number;
@@ -399,6 +400,7 @@ export default function BillingPage() {
           {plans.map((plan) => {
             const isCurrent = plan.slug === currentPlanSlug;
             const canRenewCurrent = isCurrent && !hasFullAccess;
+            const listingLimits = getListingLimitPresentation(plan.limit_listings);
             return (
               <Card key={plan.id} className={isCurrent ? 'border-primary' : ''}>
                 <CardHeader className="pb-3">
@@ -413,9 +415,15 @@ export default function BillingPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="space-y-1 text-sm text-muted-foreground">
-                    <p>• {fmt(plan.limit_listings)} объявлений</p>
+                    <p>• {listingLimits.total}</p>
+                    <p>• {listingLimits.perAvitoAccount}</p>
                     <p>• {fmt(plan.limit_sku)} SKU</p>
                     <p>• {fmt(plan.limit_ai_credits)} AI-кредитов</p>
+                    {listingLimits.requiresMultipleAvitoAccounts && (
+                      <p className="pt-1 text-xs">
+                        Объём свыше 10 000 распределяется между несколькими Avito-аккаунтами.
+                      </p>
+                    )}
                   </div>
                   <Separator />
                   <div className="space-y-2">
