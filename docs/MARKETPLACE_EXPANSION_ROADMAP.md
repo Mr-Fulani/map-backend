@@ -34,7 +34,7 @@ Gate закрыт в
 риски и точный состав M1a. Изменена только документация; migrations и runtime
 не затронуты.
 
-## M1 — provider-neutral интерфейс — M1a `ENABLED` 2026-08-29
+## M1 — provider-neutral интерфейс — M1a/M1b `ENABLED` 2026-08-29
 
 Результат: пользователь всегда понимает, с каким маркетплейсом и аккаунтом он
 работает, даже до включения Ozon.
@@ -78,10 +78,10 @@ unit, typecheck, ESLint и production webpack build. `makemigrations --check
 frontend и production image/security gates. M1a выложен и включён на production
 SHA `0b84c9a1d209e82fb730fc0abd85c31ff9cd6178`: encrypted backup создан,
 миграций к применению не было, все production services и topology healthy,
-public readiness стабильно отвечает HTTP 200. Ozon account connection, API I/O
-и credentials остаются выключены до отдельных пакетов M1b и O1.
+public readiness стабильно отвечает HTTP 200. На момент релиза M1a Ozon
+account connection, API I/O и credentials оставались выключены до M1b/O1.
 
-## O1 — безопасное подключение Ozon Seller API
+## O1 — безопасное подключение Ozon Seller API — O1a `DEPLOYED_OFF` 2026-08-29
 
 Результат: тенант может добавить Ozon-кабинет, проверить credentials и увидеть
 понятное состояние подключения.
@@ -95,6 +95,48 @@ public readiness стабильно отвечает HTTP 200. Ozon account conn
 
 Gate: один выключенный release, fake API acceptance и отдельное разрешение на
 реальный canary одного Ozon-кабинета.
+
+O1 выполняется тремя последовательными частями:
+
+- **O1a — backend account foundation (`DEPLOYED_OFF`)**: provider choice,
+  encrypted credentials, глобальная защита повторного Client-Id,
+  `OzonAccountProfile`, безопасный read-only adapter для `/v1/roles`,
+  `/v1/seller/info` и `/v2/warehouse/list`, fake-provider acceptance и
+  feature flag `OZON_ACCOUNT_CONNECTION_ENABLED=false`;
+- **O1b — безопасный UI/onboarding**: отдельная Ozon-карточка и список
+  аккаунтов, ввод Client ID/API key без возврата секрета в browser state,
+  роли/expiry/warehouse и понятные provider-specific ошибки; release сначала
+  остаётся выключенным;
+- **O1c — read-only AlfaPro canary**: отдельное подтверждение перед созданием
+  или использованием ключа, account allowlist, проверка ролей/срока/продавца и
+  одного FBS-склада без product mutations. Health polling активируется только
+  после успешного canary и отдельного review.
+
+O1a реализован отдельным Ozon adapter/service и не встроен в Avito feed path.
+Один tenant может иметь несколько разных Ozon accounts, но одинаковый Ozon
+Client-Id нельзя подключить к двум tenant. Если API возвращает ровно один
+склад, он выбирается автоматически; при нуле или нескольких складах account
+переходит в явное диагностическое состояние. Срок ключа хранится только из
+ответа Ozon, без локального расчёта.
+
+Локальный gate O1a: 44 focused теста и 313 Ozon/Avito/provider-neutral
+regression тестов прошли; `flake8`, baseline и strict `mypy`, OpenAPI
+validation, `makemigrations --check --dry-run` и `git diff --check` завершились
+успешно. Изменено 16 файлов, 1 443 добавления, одна migration — внутри
+repository limits.
+
+Полный CI PR `#278` и exact-tree CI на `main` прошли все backend, contracts,
+schema/supply-chain, frontend и production image/security gates. O1a выложен
+на production SHA `e5ccef76e8e93677e196f9d10c1b63f763f239bc`: перед migration создан
+encrypted backup, `marketplaces.0032_ozon_account_profile` применена, все
+production services и topology healthy, четыре внешних readiness-запроса и
+страница `/dashboard/settings` ответили HTTP 200. Deploy gate возвращён в
+`false`.
+
+O1a не создавал API key, не сохранял credentials AlfaPro, не обращался к
+реальному Ozon API и не изменял кабинет продавца. Ozon account connection на
+production остаётся выключенным; пользовательский UI и canary относятся к
+O1b/O1c.
 
 ## O2 — каталог, категории и обязательные атрибуты
 
