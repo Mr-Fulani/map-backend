@@ -1,6 +1,6 @@
 # Roadmap надёжной отправки фидов Avito
 
-Обновлено: 2026-08-27.
+Обновлено: 2026-08-29.
 
 Текущий статус: [`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md).
 Правила выполнения:
@@ -15,7 +15,7 @@
 Эта цель закрыта P0–P6. Автоматическое удаление старых файлов и DB cleanup
 остаются отдельной будущей целью P7.
 
-## Текущая фаза: наблюдение P6 fleet-default; P7 заморожен
+## Текущая фаза: P6 operational; P7 отложен, Ozon не блокируется
 
 P0 и P1 завершены. Полный P1 observability, включая code-owned Sentry Cron
 dead-man, работает в production commit `c2bc2eb`; check-in, test-fire и alerts
@@ -36,6 +36,9 @@ PR `#256` завершил fleet-default release на production SHA `0762ab5`: 
 `durable`, ingress/lifecycle `dual_write`, artifacts `active`, storage
 `stable_bridge`, allowlist пустой. Любой будущий успешно подключённый Avito
 account получает stable endpoint и durable/private delivery автоматически.
+Operational hardening PR `#262`–`#270` исправил реальные узкие места
+onboarding, generation/retry, provider outcomes и tenant-facing preflight.
+Текущий production SHA — `65bdf213c540de15f69f105a2ae3fc4813d59912`.
 
 Текущий gate — observation без изменения кода P7:
 
@@ -45,7 +48,10 @@ account получает stable endpoint и durable/private delivery автом�
 - следить за duplicate POST/PUT, uncertain runs, unresolved attempts, 5xx,
   queue lag и restart;
 - зафиксировать retention/restore policy до разрешения любого object delete;
-- отдельно согласовать P7. Обычные продуктовые задачи вне P7 не блокируются.
+- отдельно согласовать P7 только при доказанной необходимости retention.
+  Разделение интерфейса и подключение Ozon описаны в
+  [`MARKETPLACE_EXPANSION_ROADMAP.md`](MARKETPLACE_EXPANSION_ROADMAP.md) и P7
+  не блокируются.
 
 ## Логическое разделение текущей большой правки
 
@@ -314,7 +320,7 @@ fallback. Неоднозначный POST сверяется только GET-з
 вслепую. Production release/health evidence записано в текущем статусе. P7,
 object delete, GC и `0039` не меняются.
 
-### P7. Удаление старых файлов и DB-защита — backlog
+### P7. Удаление старых файлов и DB-защита — отложенный backlog
 
 Сюда относятся `0036`–`0039`, cleanup служебных исключений, автоматическое
 удаление XML и перевод новой связи заданий в обязательную.
@@ -327,6 +333,11 @@ object delete, GC и `0039` не меняются.
 - dry-run production backfill не показал реальные данные;
 - не утверждена политика хранения и восстановления;
 - владелец продукта отдельно не разрешил этап.
+
+На 2026-08-29 P7 признан неблокирующим: текущая платформа, новые Avito-аккаунты
+и начало Ozon не зависят от удаления старых XML. Активировать пакет следует при
+утверждённой retention policy, заметном росте storage/backup времени либо перед
+обязательным compliance deletion. До этого история и evidence сохраняются.
 
 Bounded cleanup-команда имеет статус `CODE_READY`, но остаётся вне текущих
 релизных пакетов до PostgreSQL/full-suite проверки и production dry-run. Она не
@@ -357,8 +368,9 @@ P0 docs/inventory
   → P4 stable endpoint/profile (off)
   → P5 dual-write observation
   → P6 private storage (off deploy → canary → account 4 → fleet default)
-  → P6 fleet observation (текущий этап)
-  → отдельное решение о P7 cleanup/GC/0039
+  → P6 fleet operational hardening
+  → provider-neutral UI и Ozon (отдельный roadmap)
+  → P7 cleanup/GC/DB constraints только по отдельному решению
 ```
 
 Текущий минимальный admission rollback одной согласованной сменой возвращает
