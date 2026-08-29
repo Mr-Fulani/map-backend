@@ -120,10 +120,14 @@ class CategoryMapping(TimestampedModel):
 
 
 class MarketplaceAccount(SoftDeleteModel):
-    """Аккаунт маркетплейса (Avito) привязанный к тенанту."""
+    """Аккаунт внешнего маркетплейса, принадлежащий одному тенанту."""
 
     MARKETPLACE_AVITO = 'avito'
-    MARKETPLACE_CHOICES = [(MARKETPLACE_AVITO, 'Avito')]
+    MARKETPLACE_OZON = 'ozon'
+    MARKETPLACE_CHOICES = [
+        (MARKETPLACE_AVITO, 'Avito'),
+        (MARKETPLACE_OZON, 'Ozon'),
+    ]
 
     objects = MarketplaceAccountManager()  # type: ignore[misc, assignment]
     all_objects = MarketplaceAccountManagerBase()  # type: ignore[misc]
@@ -137,7 +141,7 @@ class MarketplaceAccount(SoftDeleteModel):
         default=MARKETPLACE_AVITO, verbose_name='Маркетплейс',
     )
     name = models.CharField(max_length=200, verbose_name='Название аккаунта')
-    external_id = models.CharField(max_length=100, verbose_name='ID пользователя на Avito')
+    external_id = models.CharField(max_length=100, verbose_name='ID аккаунта у маркетплейса')
     is_active = models.BooleanField(default=True, verbose_name='Активен')
     credentials_enc = models.BinaryField(verbose_name='Токены доступа (зашифровано)')
     token_expires_at = models.DateTimeField(null=True, blank=True, verbose_name='Токен истекает')
@@ -210,8 +214,8 @@ class MarketplaceAccount(SoftDeleteModel):
     )
 
     class Meta:
-        verbose_name = 'Avito-аккаунт'
-        verbose_name_plural = 'Avito-аккаунты'
+        verbose_name = 'Аккаунт маркетплейса'
+        verbose_name_plural = 'Аккаунты маркетплейсов'
         unique_together = [('tenant', 'marketplace', 'external_id')]
         constraints = [
             models.CheckConstraint(
@@ -221,6 +225,11 @@ class MarketplaceAccount(SoftDeleteModel):
                     ),
                 ),
                 name='mkt_acct_intent_order',
+            ),
+            models.UniqueConstraint(
+                fields=['marketplace', 'external_id'],
+                condition=models.Q(marketplace='ozon'),
+                name='mkt_acct_ozon_identity_uniq',
             ),
         ]
         indexes = [
@@ -335,6 +344,60 @@ class MarketplaceAccount(SoftDeleteModel):
             self.status_batch_cooldown_until = None
             self.status_batch_claim_token = None
             self.status_batch_claimed_until = None
+
+
+class OzonAccountProfile(TimestampedModel):
+    """Проверенный read-only снимок подключения аккаунта Ozon."""
+
+    class ConnectionStatus(models.TextChoices):
+        CONNECTED = 'connected', 'Подключён'
+        WAREHOUSE_MISSING = 'warehouse_missing', 'Склад не найден'
+        WAREHOUSE_SELECTION_REQUIRED = (
+            'warehouse_selection_required',
+            'Требуется выбрать склад',
+        )
+
+    account = models.OneToOneField(
+        MarketplaceAccount,
+        on_delete=models.CASCADE,
+        related_name='ozon_profile',
+        verbose_name='Аккаунт Ozon',
+    )
+    connection_status = models.CharField(
+        max_length=40,
+        choices=ConnectionStatus.choices,
+        default=ConnectionStatus.CONNECTED,
+        verbose_name='Статус подключения',
+    )
+    company_name = models.CharField(max_length=300, blank=True, verbose_name='Компания')
+    seller_name = models.CharField(max_length=300, blank=True, verbose_name='Продавец')
+    currency = models.CharField(max_length=10, blank=True, verbose_name='Валюта')
+    roles = models.JSONField(default=list, verbose_name='Роли API-ключа')
+    api_methods = models.JSONField(default=list, verbose_name='Методы API-ключа')
+    api_key_expires_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name='API-ключ истекает',
+    )
+    warehouse_count = models.PositiveIntegerField(default=0, verbose_name='Количество складов')
+    selected_warehouse_id = models.CharField(
+        max_length=100,
+        blank=True,
+        verbose_name='Выбранный склад Ozon',
+    )
+    selected_warehouse_name = models.CharField(
+        max_length=300,
+        blank=True,
+        verbose_name='Название выбранного склада',
+    )
+    last_checked_at = models.DateTimeField(verbose_name='Подключение проверено')
+
+    class Meta:
+        verbose_name = 'Профиль аккаунта Ozon'
+        verbose_name_plural = 'Профили аккаунтов Ozon'
+
+    def __str__(self):
+        return f'Ozon / {self.account}'
 
 
 class MarketplaceFeedRun(TimestampedModel):

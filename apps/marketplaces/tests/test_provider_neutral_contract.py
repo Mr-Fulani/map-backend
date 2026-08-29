@@ -67,7 +67,7 @@ def test_account_read_contract_is_provider_neutral_and_fail_closed():
     assert account['marketplace'] == 'ozon'
     assert account['marketplace_label'] == 'Ozon'
     assert account['provider_capabilities'] == {
-        'account_health': False,
+        'account_health': True,
         'catalog_schema': False,
         'publication_preflight': False,
         'publish_or_update': False,

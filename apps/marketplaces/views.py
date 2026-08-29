@@ -70,6 +70,10 @@ from apps.marketplaces.services import (
     MarketplaceAccountService,
     MarketplacePlacementAddressService,
 )
+from apps.marketplaces.account_errors import (
+    MarketplaceConnectionError,
+    MarketplaceProviderDisabled,
+)
 from apps.marketplaces.provider_registry import ProviderCapabilityUnavailable
 from apps.tenants.permissions import TenantAdminPermission, TenantAdminWritePermission
 
@@ -212,7 +216,7 @@ class MarketplaceAccountListView(APIView):
         """Возвращает аккаунты маркетплейсов текущего тенанта."""
         qs = MarketplaceAccount.objects.filter(
             tenant=request.tenant,
-        ).select_related('avito_status', 'feed_endpoint')
+        ).select_related('avito_status', 'feed_endpoint', 'ozon_profile')
         marketplace = _marketplace_query_value(request)
         if marketplace:
             qs = qs.filter(marketplace=marketplace)
@@ -236,7 +240,7 @@ class MarketplaceAccountListView(APIView):
             }
             existing = (
                 MarketplaceAccount.objects.select_related(
-                    'avito_status', 'feed_endpoint',
+                    'avito_status', 'feed_endpoint', 'ozon_profile',
                 ).filter(
                     pk=exc.account_id,
                     tenant=request.tenant,
@@ -251,6 +255,26 @@ class MarketplaceAccountListView(APIView):
                 'code': 'feed_owner_conflict',
                 'message': str(exc),
             }, status=status.HTTP_409_CONFLICT)
+        except MarketplaceProviderDisabled as exc:
+            return Response({
+                'status': 'error',
+                'code': 'provider_disabled',
+                'message': str(exc),
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except MarketplaceConnectionError as exc:
+            connection_payload: dict[str, object] = {
+                'status': 'error',
+                'code': exc.code,
+                'message': str(exc),
+            }
+            if exc.retry_after_seconds is not None:
+                connection_payload['retry_after_seconds'] = exc.retry_after_seconds
+            response_status = (
+                status.HTTP_429_TOO_MANY_REQUESTS
+                if exc.code == 'rate_limited'
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return Response(connection_payload, status=response_status)
         except InvalidMarketplaceCredentials as exc:
             return Response({
                 'status': 'error',
@@ -270,7 +294,7 @@ class MarketplaceAccountDetailView(APIView):
         """Возвращает аккаунт тенанта или 404."""
         try:
             return MarketplaceAccount.objects.select_related(
-                'avito_status', 'feed_endpoint',
+                'avito_status', 'feed_endpoint', 'ozon_profile',
             ).get(pk=pk, tenant=tenant)
         except MarketplaceAccount.DoesNotExist:
             return None
@@ -308,6 +332,26 @@ class MarketplaceAccountDetailView(APIView):
                 'code': 'feed_owner_conflict',
                 'message': str(exc),
             }, status=status.HTTP_409_CONFLICT)
+        except MarketplaceProviderDisabled as exc:
+            return Response({
+                'status': 'error',
+                'code': 'provider_disabled',
+                'message': str(exc),
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except MarketplaceConnectionError as exc:
+            connection_payload: dict[str, object] = {
+                'status': 'error',
+                'code': exc.code,
+                'message': str(exc),
+            }
+            if exc.retry_after_seconds is not None:
+                connection_payload['retry_after_seconds'] = exc.retry_after_seconds
+            response_status = (
+                status.HTTP_429_TOO_MANY_REQUESTS
+                if exc.code == 'rate_limited'
+                else status.HTTP_400_BAD_REQUEST
+            )
+            return Response(connection_payload, status=response_status)
         except InvalidMarketplaceCredentials as exc:
             return Response({
                 'status': 'error',

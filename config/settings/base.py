@@ -802,6 +802,24 @@ AVITO_API_RESPONSE_MAX_BYTES = min(
 AVITO_API_MAX_PAGES = min(
     100, max(1, int(os.environ.get('AVITO_API_MAX_PAGES', '100'))),
 )
+_OZON_ACCOUNT_CONNECTION_ENABLED_RAW = os.environ.get(
+    'OZON_ACCOUNT_CONNECTION_ENABLED', 'false',
+).strip().lower()
+if _OZON_ACCOUNT_CONNECTION_ENABLED_RAW not in {'true', 'false'}:
+    raise ValueError('OZON_ACCOUNT_CONNECTION_ENABLED must be true or false.')
+OZON_ACCOUNT_CONNECTION_ENABLED = (
+    _OZON_ACCOUNT_CONNECTION_ENABLED_RAW == 'true'
+)
+OZON_API_RESPONSE_MAX_BYTES = min(
+    5 * 1024 * 1024,
+    max(1, int(os.environ.get('OZON_API_RESPONSE_MAX_BYTES', str(1024 * 1024)))),
+)
+OZON_API_MAX_PAGES = min(
+    20, max(1, int(os.environ.get('OZON_API_MAX_PAGES', '10'))),
+)
+OZON_API_TIMEOUT_SECONDS = min(
+    30.0, max(1.0, float(os.environ.get('OZON_API_TIMEOUT_SECONDS', '10'))),
+)
 AVITO_TREE_MAX_DEPTH = min(
     32, max(1, int(os.environ.get('AVITO_TREE_MAX_DEPTH', '12'))),
 )

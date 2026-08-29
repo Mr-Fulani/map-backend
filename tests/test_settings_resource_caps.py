@@ -77,6 +77,9 @@ def test_hostile_environment_cannot_raise_resource_hard_ceilings():
         'DATASOURCE_FETCH_PAGE_MAX_ITEMS': oversized,
         'PART_PAGE_MAX_BYTES': oversized,
         'AVITO_API_RESPONSE_MAX_BYTES': oversized,
+        'OZON_API_RESPONSE_MAX_BYTES': oversized,
+        'OZON_API_MAX_PAGES': oversized,
+        'OZON_API_TIMEOUT_SECONDS': oversized,
         'TRUSTED_API_RESPONSE_MAX_BYTES': oversized,
         'IMAGE_SEARCH_BULK_MAX_PRODUCTS': oversized,
         'PRODUCT_PARSE_TENANT_DAILY_JOBS': oversized,
@@ -130,6 +133,9 @@ assert s.DATASOURCE_XML_MAX_ITEMS == 5000
 assert s.DATASOURCE_FETCH_PAGE_MAX_ITEMS == 500
 assert s.PART_PAGE_MAX_BYTES == 2 * 1024 * 1024
 assert s.AVITO_API_RESPONSE_MAX_BYTES == 5 * 1024 * 1024
+assert s.OZON_API_RESPONSE_MAX_BYTES == 5 * 1024 * 1024
+assert s.OZON_API_MAX_PAGES == 20
+assert s.OZON_API_TIMEOUT_SECONDS == 30.0
 assert s.TRUSTED_API_RESPONSE_MAX_BYTES == 5 * 1024 * 1024
 assert s.IMAGE_SEARCH_BULK_MAX_PRODUCTS == 25
 assert s.PRODUCT_PARSE_TENANT_DAILY_JOBS == 1000
@@ -169,3 +175,23 @@ assert s.RETENTION_PURGE_BATCH_SIZE == 10000
     )
 
     assert result.returncode == 0, result.stderr
+
+
+def test_ozon_connection_flag_rejects_ambiguous_values():
+    env = {
+        **os.environ,
+        'OZON_ACCOUNT_CONNECTION_ENABLED': 'yes',
+    }
+
+    result = subprocess.run(
+        [sys.executable, '-c', 'from config.settings import base'],
+        cwd=ROOT,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'OZON_ACCOUNT_CONNECTION_ENABLED must be true or false' in result.stderr

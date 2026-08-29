@@ -20,6 +20,7 @@ from apps.marketplaces.models import (
     Listing,
     MarketplaceAccount,
     MarketplacePlacementAddress,
+    OzonAccountProfile,
 )
 from apps.marketplaces.provider_registry import provider_capabilities
 from apps.products.media import (
@@ -179,6 +180,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
     avito_status = serializers.SerializerMethodField()
     feed_endpoint_managed = serializers.SerializerMethodField()
     autoload_onboarding = serializers.SerializerMethodField()
+    ozon_profile = serializers.SerializerMethodField()
 
     class Meta:
         model = MarketplaceAccount
@@ -192,6 +194,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
             'feed_endpoint_managed',
             'autoload_onboarding',
             'avito_status',
+            'ozon_profile',
             'created_at',
         ]
         read_only_fields = ['created_at', 'autoload_active', 'autoload_checked_at']
@@ -228,6 +231,53 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
             return None
         presentation = autoload_onboarding_presentation(obj)
         return AutoloadOnboardingSerializer(presentation).data
+
+    @extend_schema_field(
+        inline_serializer(
+            name='OzonAccountProfile',
+            allow_null=True,
+            fields={
+                'connection_status': serializers.CharField(read_only=True),
+                'company_name': serializers.CharField(read_only=True),
+                'seller_name': serializers.CharField(read_only=True),
+                'currency': serializers.CharField(read_only=True),
+                'roles': serializers.ListField(
+                    child=serializers.CharField(), read_only=True,
+                ),
+                'api_methods': serializers.ListField(
+                    child=serializers.CharField(), read_only=True,
+                ),
+                'api_key_expires_at': serializers.DateTimeField(
+                    read_only=True, allow_null=True,
+                ),
+                'warehouse_count': serializers.IntegerField(read_only=True),
+                'selected_warehouse_id': serializers.CharField(read_only=True),
+                'selected_warehouse_name': serializers.CharField(read_only=True),
+                'last_checked_at': serializers.DateTimeField(read_only=True),
+            },
+        ),
+    )
+    def get_ozon_profile(self, obj):
+        """Возвращает только безопасный снимок; credentials здесь отсутствуют."""
+        if obj.marketplace != MarketplaceAccount.MARKETPLACE_OZON:
+            return None
+        try:
+            profile = obj.ozon_profile
+        except OzonAccountProfile.DoesNotExist:
+            return None
+        return {
+            'connection_status': profile.connection_status,
+            'company_name': profile.company_name,
+            'seller_name': profile.seller_name,
+            'currency': profile.currency,
+            'roles': profile.roles,
+            'api_methods': profile.api_methods,
+            'api_key_expires_at': profile.api_key_expires_at,
+            'warehouse_count': profile.warehouse_count,
+            'selected_warehouse_id': profile.selected_warehouse_id,
+            'selected_warehouse_name': profile.selected_warehouse_name,
+            'last_checked_at': profile.last_checked_at,
+        }
 
 
 class MarketplacePlacementAddressSerializer(serializers.ModelSerializer):
@@ -654,16 +704,51 @@ class ListingDetailSerializer(ListingSerializer):
 
 
 class MarketplaceAccountWriteSerializer(serializers.Serializer):
-    """Запись: принимает client_id/client_secret, шифрует через Fernet."""
+    """Provider-aware запись; секреты никогда не входят в read serializer."""
 
     name = serializers.CharField(max_length=200)
     marketplace = serializers.ChoiceField(
         choices=MarketplaceAccount.MARKETPLACE_CHOICES,
         default=MarketplaceAccount.MARKETPLACE_AVITO,
     )
-    external_id = serializers.CharField(max_length=100)
-    client_id = serializers.CharField(write_only=True)
-    client_secret = serializers.CharField(write_only=True)
+    external_id = serializers.CharField(
+        max_length=100,
+        required=False,
+        allow_blank=True,
+        help_text='Совместимость с Avito-клиентами; verified ID определяет backend.',
+    )
+    client_id = serializers.CharField(write_only=True, max_length=1000)
+    client_secret = serializers.CharField(
+        write_only=True, required=False, max_length=1000,
+    )
+    api_key = serializers.CharField(
+        write_only=True, required=False, max_length=1000,
+    )
+
+    def validate(self, attrs):
+        marketplace = attrs['marketplace']
+        if (
+            marketplace == MarketplaceAccount.MARKETPLACE_AVITO
+            and not str(attrs.get('client_secret') or '').strip()
+        ):
+            raise serializers.ValidationError({
+                'client_secret': 'Укажите Client Secret Avito.',
+            })
+        if (
+            marketplace == MarketplaceAccount.MARKETPLACE_OZON
+            and not str(attrs.get('api_key') or '').strip()
+        ):
+            raise serializers.ValidationError({
+                'api_key': 'Укажите API-ключ Ozon.',
+            })
+        if (
+            marketplace == MarketplaceAccount.MARKETPLACE_OZON
+            and len(str(attrs['client_id']).strip()) > 100
+        ):
+            raise serializers.ValidationError({
+                'client_id': 'Client-Id Ozon не должен превышать 100 символов.',
+            })
+        return attrs
 
 
 class MarketplaceAccountPlacementSerializer(serializers.Serializer):
