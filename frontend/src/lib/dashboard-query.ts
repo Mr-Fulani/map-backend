@@ -18,3 +18,16 @@ export function dashboardPageParam(value: string | null): number {
   const parsed = Number(value);
   return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 1;
 }
+
+export function dashboardMarketplaceParam(
+  value: string | null,
+  supported: readonly string[] = ['avito'],
+): string {
+  return value && supported.includes(value) ? value : '';
+}
+
+export function dashboardPositiveIdParam(value: string | null): number | null {
+  if (!value || !/^\d+$/.test(value)) return null;
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
+}

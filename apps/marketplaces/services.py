@@ -1162,7 +1162,12 @@ class ListingService:
                     'bulk_placement_address',
                 )
                 .prefetch_related('product__images')
-                .get(pk=listing_id, tenant=tenant)
+                .get(
+                    pk=listing_id,
+                    tenant=tenant,
+                    product__tenant=tenant,
+                    account__tenant=tenant,
+                )
             )
         except Listing.DoesNotExist:
             raise ListingNotFound(f'Листинг {listing_id} не найден')

@@ -372,10 +372,10 @@ function FunnelWidget({
     { label: 'Всего объявлений', value: funnel.listings, href: '/dashboard/listings', icon: ListOrdered },
     { label: 'Активные в MAP', value: funnel.active_listings, href: '/dashboard/listings?status=active', icon: ListOrdered },
     { label: 'В очереди', value: funnel.queued_listings, href: '/dashboard/listings?status=queued', icon: Clock3 },
-    { label: 'Отправка в Avito', value: funnel.pending_listings, href: '/dashboard/listings?status=pending', icon: Clock3 },
+    { label: 'Отправка на площадку', value: funnel.pending_listings, href: '/dashboard/listings?status=pending', icon: Clock3 },
     { label: 'Требуют проверки', value: funnel.requires_review_listings, href: '/dashboard/listings?status=requires_review', icon: ListChecks },
     { label: 'Отклонены', value: funnel.rejected_listings, href: '/dashboard/listings?status=rejected', icon: XCircle },
-    { label: 'Достигнут лимит Avito', value: funnel.limit_reached_listings, href: '/dashboard/listings?status=limit_reached', icon: AlertTriangle },
+    { label: 'Достигнут лимит площадки', value: funnel.limit_reached_listings, href: '/dashboard/listings?status=limit_reached', icon: AlertTriangle },
   ] : [];
   return (
     <Card>
@@ -385,8 +385,8 @@ function FunnelWidget({
           Каталог и публикация
         </CardTitle>
         <CardDescription>
-          Счётчики MAP по всем аккаунтам. В списке активных объявлений показано,
-          когда каждый статус проверен через Avito.
+          Счётчики MAP по всем аккаунтам. В списке активных объявлений показаны
+          маркетплейс, аккаунт и время последней provider-проверки.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -440,7 +440,7 @@ function SourcesWidget({
               <Database className="h-5 w-5" />
               Источники и подключения
             </CardTitle>
-            <CardDescription className="mt-1">Свежесть каталога и состояние Avito.</CardDescription>
+            <CardDescription className="mt-1">Свежесть каталога и состояние подключений.</CardDescription>
           </div>
           <Button asChild size="sm" variant="ghost">
             <Link href="/dashboard/settings#datasources">Настроить <Settings2 className="h-4 w-4" /></Link>
@@ -724,7 +724,7 @@ function QuickActions() {
   const actions = [
     { title: 'Подключить источник', description: '1С, XML или CSV', href: '/dashboard/settings#datasources', icon: Database },
     { title: 'Загрузить CSV', description: 'Импортировать каталог', href: '/dashboard/settings#datasources', icon: Upload },
-    { title: 'Настроить Avito', description: 'Аккаунт и Автозагрузка', href: '/dashboard/settings#marketplaces', icon: Store },
+    { title: 'Маркетплейсы', description: 'Аккаунты Avito и Ozon', href: '/dashboard/settings#marketplaces', icon: Store },
     { title: 'Открыть проверку', description: 'Разобрать спорные данные', href: '/dashboard/review', icon: ListChecks },
   ];
   return (

@@ -1,5 +1,6 @@
 import datetime
 import logging
+import re
 from decimal import Decimal
 
 from django.conf import settings
@@ -72,6 +73,25 @@ from apps.tenants.permissions import TenantAdminPermission, TenantAdminWritePerm
 
 
 logger = logging.getLogger(__name__)
+
+
+def _marketplace_query_value(request) -> str:
+    """Validate a provider discriminator without enabling account mutations."""
+    value = request.query_params.get('marketplace', '').strip().lower()
+    if value and (len(value) > 50 or re.fullmatch(r'[a-z0-9_-]+', value) is None):
+        raise serializers.ValidationError({
+            'marketplace': 'Некорректный идентификатор маркетплейса.',
+        })
+    return value
+
+
+def _positive_id_query_value(request, name: str) -> int | None:
+    value = request.query_params.get(name, '').strip()
+    if not value:
+        return None
+    if not value.isascii() or not value.isdecimal() or int(value) < 1:
+        raise serializers.ValidationError({name: 'Ожидается положительный ID.'})
+    return int(value)
 
 
 def _ok_response(name, data):
@@ -178,6 +198,12 @@ class MarketplaceAccountListView(APIView):
 
     @extend_schema(
         operation_id='marketplace_account_list',
+        parameters=[
+            OpenApiParameter(
+                'marketplace', OpenApiTypes.STR, OpenApiParameter.QUERY,
+                description='Фильтр по идентификатору маркетплейса.',
+            ),
+        ],
         responses=MarketplaceAccountSerializer(many=True),
     )
     def get(self, request):
@@ -185,6 +211,9 @@ class MarketplaceAccountListView(APIView):
         qs = MarketplaceAccount.objects.filter(
             tenant=request.tenant,
         ).select_related('avito_status', 'feed_endpoint')
+        marketplace = _marketplace_query_value(request)
+        if marketplace:
+            qs = qs.filter(marketplace=marketplace)
         return Response(MarketplaceAccountSerializer(qs, many=True).data)
 
     @extend_schema(
@@ -560,8 +589,8 @@ class MarketplacePlacementAddressListView(APIView):
         qs = MarketplacePlacementAddress.objects.filter(
             tenant=request.tenant, is_active=True
         ).select_related('account')
-        account_id = request.query_params.get('account', '').strip()
-        if account_id:
+        account_id = _positive_id_query_value(request, 'account')
+        if account_id is not None:
             qs = qs.filter(account_id=account_id)
         return Response(MarketplacePlacementAddressSerializer(qs, many=True).data)
 
@@ -734,6 +763,7 @@ class ListingListView(APIView):
     Query params:
         status   — draft | pending | active | rejected | archived | requires_review
         account  — id аккаунта MarketplaceAccount
+        marketplace — идентификатор маркетплейса
     """
 
     api_key_enabled = True
@@ -748,6 +778,10 @@ class ListingListView(APIView):
             OpenApiParameter(
                 'account', OpenApiTypes.INT, OpenApiParameter.QUERY,
                 description='Фильтр по ID аккаунта маркетплейса.',
+            ),
+            OpenApiParameter(
+                'marketplace', OpenApiTypes.STR, OpenApiParameter.QUERY,
+                description='Фильтр по идентификатору маркетплейса.',
             ),
             OpenApiParameter(
                 'page', OpenApiTypes.INT, OpenApiParameter.QUERY,
@@ -783,7 +817,12 @@ class ListingListView(APIView):
     def get(self, request):
         """Возвращает страницу листингов текущего тенанта."""
         qs = (
-            Listing.objects.filter(tenant=request.tenant, account__is_active=True)
+            Listing.objects.filter(
+                tenant=request.tenant,
+                product__tenant=request.tenant,
+                account__tenant=request.tenant,
+                account__is_active=True,
+            )
             .exclude(status=Listing.STATUS_DELETED)
             .select_related('product', 'account', 'feed_run')
             .order_by('-created_at')
@@ -793,9 +832,13 @@ class ListingListView(APIView):
         if listing_status:
             qs = qs.filter(status=listing_status)
 
-        account_id = request.query_params.get('account', '').strip()
-        if account_id:
+        account_id = _positive_id_query_value(request, 'account')
+        if account_id is not None:
             qs = qs.filter(account_id=account_id)
+
+        marketplace = _marketplace_query_value(request)
+        if marketplace:
+            qs = qs.filter(account__marketplace=marketplace)
 
         paginator = MapPagination()
         page = paginator.paginate_queryset(qs, request)
@@ -1318,6 +1361,8 @@ class AnalyticsView(APIView):
     Query params:
         date_from — YYYY-MM-DD (по умолчанию 30 дней назад)
         date_to   — YYYY-MM-DD (по умолчанию сегодня)
+        marketplace — идентификатор маркетплейса
+        account — ID аккаунта текущего tenant
     """
 
     api_key_enabled = True
@@ -1332,6 +1377,14 @@ class AnalyticsView(APIView):
             OpenApiParameter(
                 'date_to', OpenApiTypes.DATE, OpenApiParameter.QUERY,
                 description='Конец периода; по умолчанию сегодня.',
+            ),
+            OpenApiParameter(
+                'marketplace', OpenApiTypes.STR, OpenApiParameter.QUERY,
+                description='Фильтр по идентификатору маркетплейса.',
+            ),
+            OpenApiParameter(
+                'account', OpenApiTypes.INT, OpenApiParameter.QUERY,
+                description='Фильтр по ID аккаунта текущего тенанта.',
             ),
         ],
         responses=_ok_response(
@@ -1401,11 +1454,32 @@ class AnalyticsView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        marketplace = _marketplace_query_value(request)
+        account_id = _positive_id_query_value(request, 'account')
+
         qs = ListingStats.objects.filter(
             tenant=request.tenant,
+            listing__tenant=request.tenant,
+            listing__product__tenant=request.tenant,
+            listing__account__tenant=request.tenant,
             date__gte=date_from,
             date__lte=date_to,
         )
+        active_qs = Listing.objects.filter(
+            tenant=request.tenant,
+            product__tenant=request.tenant,
+            account__tenant=request.tenant,
+            status=Listing.STATUS_ACTIVE,
+        )
+        if marketplace:
+            qs = qs.filter(listing__account__marketplace=marketplace)
+            active_qs = active_qs.filter(account__marketplace=marketplace)
+        if account_id is not None:
+            qs = qs.filter(
+                listing__account_id=account_id,
+                listing__account__tenant=request.tenant,
+            )
+            active_qs = active_qs.filter(account_id=account_id)
 
         totals = qs.aggregate(
             total_views=Sum('views'),
@@ -1418,9 +1492,7 @@ class AnalyticsView(APIView):
         avg_ctr = round(total_views / total_impressions * 100, 2) if total_impressions else 0.0
 
         # Активные листинги тенанта
-        active_listings = Listing.objects.filter(
-            tenant=request.tenant, status=Listing.STATUS_ACTIVE,
-        ).count()
+        active_listings = active_qs.count()
 
         # Дневные точки для графика
         daily = list(

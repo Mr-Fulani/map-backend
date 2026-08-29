@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  dashboardMarketplaceParam,
   dashboardPageParam,
+  dashboardPositiveIdParam,
   dashboardQueryHref,
 } from '../src/lib/dashboard-query';
 
@@ -29,4 +31,25 @@ test('dashboard query deletes empty filters and validates pages', () => {
   assert.equal(dashboardPageParam('0'), 1);
   assert.equal(dashboardPageParam('1.5'), 1);
   assert.equal(dashboardPageParam('nope'), 1);
+});
+
+test('marketplace and account filters are normalized and preserved in URLs', () => {
+  assert.equal(dashboardMarketplaceParam('avito'), 'avito');
+  assert.equal(dashboardMarketplaceParam('ozon'), '');
+  assert.equal(dashboardMarketplaceParam('ozon', ['avito', 'ozon']), 'ozon');
+  assert.equal(dashboardMarketplaceParam('ozon!'), '');
+
+  assert.equal(dashboardPositiveIdParam('42'), 42);
+  assert.equal(dashboardPositiveIdParam('0'), null);
+  assert.equal(dashboardPositiveIdParam('-1'), null);
+  assert.equal(dashboardPositiveIdParam('other'), null);
+
+  assert.equal(
+    dashboardQueryHref('/dashboard/listings', 'status=active&listing=7', {
+      marketplace: 'avito',
+      account: 42,
+      page: null,
+    }),
+    '/dashboard/listings?status=active&listing=7&marketplace=avito&account=42',
+  );
 });

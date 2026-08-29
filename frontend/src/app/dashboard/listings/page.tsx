@@ -3,7 +3,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { accountApi, listingApi } from '@/lib/api';
-import { dashboardPageParam, dashboardQueryHref } from '@/lib/dashboard-query';
+import {
+  dashboardMarketplaceParam,
+  dashboardPageParam,
+  dashboardPositiveIdParam,
+  dashboardQueryHref,
+} from '@/lib/dashboard-query';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -20,6 +25,9 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import ListingDrawer from '@/components/listings/ListingDrawer';
+import MarketplaceAccountFilter, {
+  marketplaceDisplayName,
+} from '@/components/marketplaces/MarketplaceAccountFilter';
 import { toast } from 'sonner';
 
 interface Listing {
@@ -33,11 +41,14 @@ interface Listing {
   provider_submission_started: boolean;
   lifecycle_actions_blocked: boolean;
   can_check_avito_status: boolean;
+  can_check_provider_status: boolean;
   can_publish: boolean;
   rejection_ready_to_retry: boolean;
   product_article: string;
   product_name: string;
   account_name: string;
+  marketplace: string;
+  marketplace_label: string;
   title: string;
   price_on_listing: string;
   external_url: string;
@@ -86,6 +97,7 @@ interface Meta {
 interface Account {
   id: number;
   name: string;
+  marketplace: string;
 }
 
 interface PlacementAddress {
@@ -104,7 +116,7 @@ const STATUS_FILTERS = [
   { value: '', label: 'Все' },
   { value: 'active', label: 'Активные' },
   { value: 'queued', label: 'В очереди' },
-  { value: 'pending', label: 'Отправка в Avito' },
+  { value: 'pending', label: 'Отправка на площадку' },
   { value: 'draft', label: 'Черновики' },
   { value: 'rejected', label: 'Отклонены' },
   { value: 'requires_review', label: 'Требуют проверки' },
@@ -134,6 +146,8 @@ export default function ListingsPage() {
     ? requestedStatus
     : '';
   const urlPage = dashboardPageParam(searchParams.get('page'));
+  const marketplace = dashboardMarketplaceParam(searchParams.get('marketplace'));
+  const accountId = dashboardPositiveIdParam(searchParams.get('account'));
   const statusFilter = urlStatus;
   const page = urlPage;
   const [listings, setListings] = useState<Listing[]>([]);
@@ -172,6 +186,8 @@ export default function ListingsPage() {
     try {
       const params: Record<string, unknown> = { page };
       if (statusFilter) params.status = statusFilter;
+      if (marketplace) params.marketplace = marketplace;
+      if (accountId) params.account = accountId;
       const res = await listingApi.list(params);
       setListings(res.data.data);
       setMeta(res.data.meta);
@@ -180,12 +196,14 @@ export default function ListingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [page, statusFilter]);
+  }, [accountId, marketplace, page, statusFilter]);
 
   useEffect(() => {
     let active = true;
     const params: Record<string, unknown> = { page };
     if (statusFilter) params.status = statusFilter;
+    if (marketplace) params.marketplace = marketplace;
+    if (accountId) params.account = accountId;
 
     listingApi.list(params)
       .then((response) => {
@@ -201,7 +219,7 @@ export default function ListingsPage() {
       });
 
     return () => { active = false; };
-  }, [page, statusFilter]);
+  }, [accountId, marketplace, page, statusFilter]);
 
   useEffect(() => {
     accountApi.list().then((res) => setAccounts(res.data.data ?? res.data)).catch(() => setAccounts([]));
@@ -214,7 +232,7 @@ export default function ListingsPage() {
     ['queued', 'pending', 'archiving'].includes(listing.status)
   ));
   const hasProviderTrackedListings = listings.some((listing) => (
-    listing.can_check_avito_status
+    listing.can_check_provider_status
   ));
 
   useEffect(() => {
@@ -222,6 +240,8 @@ export default function ListingsPage() {
     let active = true;
     const params: Record<string, unknown> = { page };
     if (statusFilter) params.status = statusFilter;
+    if (marketplace) params.marketplace = marketplace;
+    if (accountId) params.account = accountId;
 
     const timer = window.setInterval(() => {
       listingApi.list(params)
@@ -237,7 +257,14 @@ export default function ListingsPage() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [hasLiveDelivery, hasProviderTrackedListings, page, statusFilter]);
+  }, [
+    accountId,
+    hasLiveDelivery,
+    hasProviderTrackedListings,
+    marketplace,
+    page,
+    statusFilter,
+  ]);
 
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     !bulkAccountId || address.account === Number(bulkAccountId)
@@ -314,7 +341,7 @@ export default function ListingsPage() {
       } else {
         await listingApi.checkStatus(listing.id);
         toast.success(
-          'Запросили актуальный статус у Avito. '
+          `Запросили актуальный статус у ${marketplaceDisplayName(listing.marketplace)}. `
           + 'Результат обновится автоматически.',
         );
       }
@@ -362,6 +389,21 @@ export default function ListingsPage() {
           </Button>
         ))}
       </div>
+
+      <MarketplaceAccountFilter
+        marketplace={marketplace}
+        accountId={accountId}
+        accounts={accounts}
+        onChange={(next) => {
+          setLoading(true);
+          router.replace(dashboardQueryHref(pathname, searchParams.toString(), {
+            marketplace: next.marketplace,
+            account: next.accountId,
+            page: null,
+          }), { scroll: false });
+        }}
+        className="max-w-2xl"
+      />
 
       <div className="rounded-lg border p-3">
         <div className="mb-3 flex items-center gap-2">
@@ -489,6 +531,9 @@ export default function ListingsPage() {
                     <Badge variant={l.rejection_ready_to_retry ? 'secondary' : (l.delivery_stage === 'delivery_failed' ? 'destructive' : (STATUS_VARIANT[l.status] ?? 'outline'))}>
                       {l.status_display}
                     </Badge>
+                    <Badge variant="outline" className="ml-2">
+                      {l.marketplace_label}
+                    </Badge>
                     {l.status_explanation && (
                       <p className="mt-1 text-xs leading-4 text-muted-foreground">
                         {l.status_explanation}
@@ -515,10 +560,10 @@ export default function ListingsPage() {
                     </p>
                     {providerCheckedAt(l) && (
                       <p className="mt-1 text-xs text-green-700 dark:text-green-400">
-                        Avito проверен: {avitoCheckedLabel(providerCheckedAt(l)!)}
+                        {l.marketplace_label} проверен: {avitoCheckedLabel(providerCheckedAt(l)!)}
                       </p>
                     )}
-                    {l.next_status_check_at && l.can_check_avito_status && (
+                    {l.next_status_check_at && l.can_check_provider_status && (
                       <p className="mt-1 text-xs text-muted-foreground">
                         Следующая проверка: {avitoCheckedLabel(l.next_status_check_at)}
                       </p>
@@ -537,7 +582,7 @@ export default function ListingsPage() {
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                        title="Открыть на Avito"
+                        title={`Открыть на ${l.marketplace_label}`}
                       >
                         <ExternalLink className="h-4 w-4" />
                       </a>
@@ -562,7 +607,7 @@ export default function ListingsPage() {
                         variant="ghost"
                         className="h-8 w-8 p-0"
                         title={l.lifecycle_actions_blocked
-                          ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
+                          ? `Сначала нужно подтвердить результат предыдущей отправки ${l.marketplace_label}`
                           : 'В архив'}
                         onClick={() => runListingAction(l, 'archive')}
                         disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
@@ -572,12 +617,12 @@ export default function ListingsPage() {
                           : <Archive className="h-4 w-4" />}
                       </Button>
                     )}
-                    {l.can_check_avito_status && (
+                    {l.can_check_provider_status && (
                       <Button
                         size="sm"
                         variant="ghost"
                         className="h-8 w-8 p-0"
-                        title="Проверить статус Avito"
+                        title={`Проверить статус ${l.marketplace_label}`}
                         onClick={() => runListingAction(l, 'checkStatus')}
                         disabled={rowActionId === l.id}
                       >
@@ -592,7 +637,7 @@ export default function ListingsPage() {
                         variant="ghost"
                         className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                         title={l.lifecycle_actions_blocked
-                          ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
+                          ? `Сначала нужно подтвердить результат предыдущей отправки ${l.marketplace_label}`
                           : 'Удалить'}
                         onClick={() => runListingAction(l, 'delete')}
                         disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
@@ -651,12 +696,15 @@ export default function ListingsPage() {
                       <Badge variant={l.rejection_ready_to_retry ? 'secondary' : (l.delivery_stage === 'delivery_failed' ? 'destructive' : (STATUS_VARIANT[l.status] ?? 'outline'))}>
                         {l.status_display}
                       </Badge>
+                      <Badge variant="outline" className="ml-2">
+                        {l.marketplace_label}
+                      </Badge>
                       {providerCheckedAt(l) && (
                         <p className="mt-1 max-w-40 text-[11px] leading-4 text-green-700 dark:text-green-400">
-                          Avito проверен: {avitoCheckedLabel(providerCheckedAt(l)!)}
+                          {l.marketplace_label} проверен: {avitoCheckedLabel(providerCheckedAt(l)!)}
                         </p>
                       )}
-                      {l.next_status_check_at && l.can_check_avito_status && (
+                      {l.next_status_check_at && l.can_check_provider_status && (
                         <p className="mt-1 max-w-44 text-[11px] leading-4 text-muted-foreground">
                           Следующая проверка: {avitoCheckedLabel(l.next_status_check_at)}
                         </p>
@@ -684,7 +732,8 @@ export default function ListingsPage() {
                       )}
                     </td>
                     <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">
-                      {l.account_name}
+                      <span className="block">{l.account_name}</span>
+                      <span className="text-xs">{l.marketplace_label}</span>
                     </td>
                     <td className="px-4 py-3 text-right font-medium">
                       {Number(l.price_on_listing).toLocaleString('ru-RU')} ₽
@@ -702,7 +751,7 @@ export default function ListingsPage() {
                             target="_blank"
                             rel="noopener noreferrer"
                             className="inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
-                            title="Открыть на Avito"
+                            title={`Открыть на ${l.marketplace_label}`}
                           >
                             <ExternalLink className="h-4 w-4" />
                           </a>
@@ -727,7 +776,7 @@ export default function ListingsPage() {
                             variant="ghost"
                             className="h-8 w-8 p-0"
                             title={l.lifecycle_actions_blocked
-                              ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
+                              ? `Сначала нужно подтвердить результат предыдущей отправки ${l.marketplace_label}`
                               : 'В архив'}
                             onClick={() => runListingAction(l, 'archive')}
                             disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
@@ -737,12 +786,12 @@ export default function ListingsPage() {
                               : <Archive className="h-4 w-4" />}
                           </Button>
                         )}
-                        {l.can_check_avito_status && (
+                        {l.can_check_provider_status && (
                           <Button
                             size="sm"
                             variant="ghost"
                             className="h-8 w-8 p-0"
-                            title="Проверить статус Avito"
+                            title={`Проверить статус ${l.marketplace_label}`}
                             onClick={() => runListingAction(l, 'checkStatus')}
                             disabled={rowActionId === l.id}
                           >
@@ -757,7 +806,7 @@ export default function ListingsPage() {
                             variant="ghost"
                             className="h-8 w-8 p-0 text-destructive hover:text-destructive"
                             title={l.lifecycle_actions_blocked
-                              ? 'Сначала нужно подтвердить результат предыдущей отправки Avito'
+                              ? `Сначала нужно подтвердить результат предыдущей отправки ${l.marketplace_label}`
                               : 'Удалить'}
                             onClick={() => runListingAction(l, 'delete')}
                             disabled={rowActionId === l.id || l.lifecycle_actions_blocked}

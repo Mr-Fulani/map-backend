@@ -67,6 +67,7 @@ interface ListingDetail {
   provider_submission_started: boolean;
   lifecycle_actions_blocked: boolean;
   can_check_avito_status: boolean;
+  can_check_provider_status: boolean;
   can_publish: boolean;
   rejection_ready_to_retry: boolean;
   product_id: number;
@@ -77,6 +78,8 @@ interface ListingDetail {
   product_avito_oem: string;
   account_id: number;
   account_name: string;
+  marketplace: string;
+  marketplace_label: string;
   title: string;
   description_ai: string;
   ai_confidence: number | null;
@@ -118,6 +121,7 @@ interface Account {
   id: number;
   name: string;
   is_active: boolean;
+  marketplace: string;
 }
 
 interface PlacementAddress {
@@ -414,7 +418,7 @@ function ListingDrawerContent({
 
   const liveDeliveryListingId = listing?.id ?? null;
   const liveDeliveryStatus = listing?.status ?? '';
-  const providerStatusCanChange = Boolean(listing?.can_check_avito_status);
+  const providerStatusCanChange = Boolean(listing?.can_check_provider_status);
 
   useEffect(() => {
     if (
@@ -918,6 +922,24 @@ function ListingDrawerContent({
             <div className="flex items-center justify-center h-full text-muted-foreground">
               Загрузка...
             </div>
+          ) : listing.marketplace !== 'avito' ? (
+            <div className="flex h-full flex-col overflow-y-auto p-5">
+              <SheetHeader>
+                <div className="flex flex-wrap items-center gap-2">
+                  <SheetTitle>{listing.product_name}</SheetTitle>
+                  <Badge variant="outline">{listing.marketplace_label}</Badge>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  {listing.account_name} · {listing.product_article}
+                </p>
+              </SheetHeader>
+              <div className="mt-6 rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
+                Provider-specific карточка {listing.marketplace_label} ещё не
+                подключена. Поля Avito, Автозагрузка и адреса для этого листинга
+                скрыты; редактирование станет доступно в отдельном пакете этого
+                маркетплейса.
+              </div>
+            </div>
           ) : (
             <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
               <div className="min-w-0 shrink-0 overflow-hidden border-b bg-background/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur xl:hidden">
@@ -967,6 +989,9 @@ function ListingDrawerContent({
                   >
                     {listing.status_display}
                   </Badge>
+                  <Badge variant="outline" className="shrink-0">
+                    {listing.marketplace_label}
+                  </Badge>
                 </div>
                 {listing.status_explanation && (
                   <p className="text-xs leading-5 text-muted-foreground">
@@ -975,14 +1000,14 @@ function ListingDrawerContent({
                 )}
                 {listing.remote_status_checked_at && (
                   <p className="text-xs text-green-700 dark:text-green-400">
-                    Avito проверен:{' '}
+                    {listing.marketplace_label} проверен:{' '}
                     {new Date(listing.remote_status_checked_at).toLocaleString('ru-RU', {
                       day: '2-digit', month: '2-digit', year: 'numeric',
                       hour: '2-digit', minute: '2-digit',
                     })}
                   </p>
                 )}
-                {listing.next_status_check_at && listing.can_check_avito_status && (
+                {listing.next_status_check_at && listing.can_check_provider_status && (
                   <p className="text-xs text-muted-foreground">
                     Следующая автоматическая проверка:{' '}
                     {new Date(listing.next_status_check_at).toLocaleString('ru-RU', {
@@ -1347,7 +1372,9 @@ function ListingDrawerContent({
                     disabled={listing.status === 'active' || listing.status === 'deleted' || listing.lifecycle_actions_blocked || busy}
                     className="h-9 w-full min-w-0 rounded-md border bg-background px-3 text-sm"
                   >
-                    {accounts.map((account) => (
+                    {accounts.filter((account) => (
+                      account.marketplace === listing.marketplace
+                    )).map((account) => (
                       <option key={account.id} value={account.id}>
                         {account.name}
                       </option>
@@ -1765,7 +1792,7 @@ function ListingDrawerContent({
                         }
                       </Button>
                     )}
-                    {listing.can_check_avito_status && (
+                    {listing.can_check_provider_status && (
                       <Button
                         variant="secondary"
                         onClick={handleCheckStatus}

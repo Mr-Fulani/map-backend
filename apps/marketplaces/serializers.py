@@ -146,9 +146,40 @@ class AutoloadOnboardingSerializer(serializers.Serializer):
     message = serializers.CharField(read_only=True)
 
 
+class MarketplaceCapabilitiesSerializer(serializers.Serializer):
+    """Provider capabilities used to render only applicable UI controls."""
+
+    account_health = serializers.BooleanField(read_only=True)
+    publication = serializers.BooleanField(read_only=True)
+    status_check = serializers.BooleanField(read_only=True)
+    analytics = serializers.BooleanField(read_only=True)
+    feed_delivery = serializers.BooleanField(read_only=True)
+    placement_addresses = serializers.BooleanField(read_only=True)
+
+
+def marketplace_capabilities(marketplace: str) -> dict[str, bool]:
+    """Return a fail-closed presentation contract for one provider."""
+    is_avito = marketplace == MarketplaceAccount.MARKETPLACE_AVITO
+    return {
+        'account_health': is_avito,
+        'publication': is_avito,
+        'status_check': is_avito,
+        'analytics': is_avito,
+        'feed_delivery': is_avito,
+        'placement_addresses': is_avito,
+    }
+
+
+def marketplace_label(marketplace: str) -> str:
+    labels = dict(MarketplaceAccount.MARKETPLACE_CHOICES)
+    return labels.get(marketplace, marketplace.capitalize())
+
+
 class MarketplaceAccountSerializer(serializers.ModelSerializer):
     """Чтение: credentials не возвращаются никогда."""
 
+    marketplace_label = serializers.SerializerMethodField()
+    provider_capabilities = serializers.SerializerMethodField()
     avito_status = serializers.SerializerMethodField()
     feed_endpoint_managed = serializers.SerializerMethodField()
     autoload_onboarding = serializers.SerializerMethodField()
@@ -156,7 +187,8 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = MarketplaceAccount
         fields = [
-            'id', 'name', 'marketplace', 'external_id', 'is_active',
+            'id', 'name', 'marketplace', 'marketplace_label',
+            'provider_capabilities', 'external_id', 'is_active',
             'default_address', 'default_seller_address_id',
             'default_manager_name', 'default_contact_phone',
             'autoload_active', 'autoload_checked_at',
@@ -168,9 +200,18 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_at', 'autoload_active', 'autoload_checked_at']
 
-    @extend_schema_field(AvitoAccountStatusSerializer)
+    def get_marketplace_label(self, obj) -> str:
+        return marketplace_label(obj.marketplace)
+
+    @extend_schema_field(MarketplaceCapabilitiesSerializer)
+    def get_provider_capabilities(self, obj) -> dict[str, bool]:
+        return marketplace_capabilities(obj.marketplace)
+
+    @extend_schema_field(AvitoAccountStatusSerializer(allow_null=True))
     def get_avito_status(self, obj):
         """Возвращает последний снимок Avito без внешнего запроса."""
+        if obj.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return None
         try:
             status_obj = obj.avito_status
         except AvitoAccountStatus.DoesNotExist:
@@ -179,11 +220,16 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
 
     def get_feed_endpoint_managed(self, obj) -> bool:
         """Сообщает UI, что URL защищён и полностью управляется MAP."""
-        return hasattr(obj, 'feed_endpoint')
+        return (
+            obj.marketplace == MarketplaceAccount.MARKETPLACE_AVITO
+            and hasattr(obj, 'feed_endpoint')
+        )
 
-    @extend_schema_field(AutoloadOnboardingSerializer)
+    @extend_schema_field(AutoloadOnboardingSerializer(allow_null=True))
     def get_autoload_onboarding(self, obj):
         """Отделяет готовность endpoint MAP от тарифа Avito."""
+        if obj.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return None
         presentation = autoload_onboarding_presentation(obj)
         return AutoloadOnboardingSerializer(presentation).data
 
@@ -210,12 +256,16 @@ class ListingSerializer(serializers.ModelSerializer):
     product_brand = serializers.CharField(source='product.brand', read_only=True)
     account_id = serializers.IntegerField(source='account.pk', read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
+    marketplace = serializers.CharField(source='account.marketplace', read_only=True)
+    marketplace_label = serializers.SerializerMethodField()
+    provider_capabilities = serializers.SerializerMethodField()
     status_display = serializers.SerializerMethodField()
     status_explanation = serializers.SerializerMethodField()
     delivery_stage = serializers.SerializerMethodField()
     provider_submission_started = serializers.SerializerMethodField()
     lifecycle_actions_blocked = serializers.SerializerMethodField()
     can_check_avito_status = serializers.SerializerMethodField()
+    can_check_provider_status = serializers.SerializerMethodField()
     can_publish = serializers.SerializerMethodField()
     rejection_ready_to_retry = serializers.SerializerMethodField()
     delivery_retry_at = serializers.SerializerMethodField()
@@ -227,10 +277,13 @@ class ListingSerializer(serializers.ModelSerializer):
             'id', 'status', 'status_display', 'status_explanation',
             'delivery_stage',
             'provider_submission_started', 'lifecycle_actions_blocked',
-            'can_check_avito_status', 'delivery_retry_at',
+            'can_check_avito_status', 'can_check_provider_status',
+            'delivery_retry_at',
             'delivery_retry_reason', 'can_publish',
             'rejection_ready_to_retry',
-            'product_id', 'product_article', 'product_name', 'product_brand', 'account_id', 'account_name',
+            'product_id', 'product_article', 'product_name', 'product_brand',
+            'account_id', 'account_name', 'marketplace', 'marketplace_label',
+            'provider_capabilities',
             'title', 'price_on_listing', 'external_id', 'external_url',
             'ad_type',
             'placement_address',
@@ -247,11 +300,26 @@ class ListingSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_status_display(self, obj) -> str:
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return {
+                Listing.STATUS_DRAFT: 'Черновик',
+                Listing.STATUS_QUEUED: 'В очереди',
+                Listing.STATUS_PENDING: 'Обрабатывается площадкой',
+                Listing.STATUS_ACTIVE: 'Активно',
+                Listing.STATUS_REJECTED: 'Отклонено',
+                Listing.STATUS_ARCHIVING: 'Снимается с публикации',
+                Listing.STATUS_ARCHIVED: 'В архиве',
+                Listing.STATUS_DELETED: 'Удалено',
+                Listing.STATUS_REQUIRES_REVIEW: 'Требует проверки',
+                Listing.STATUS_LIMIT_REACHED: 'Лимит достигнут',
+            }.get(obj.status, obj.status)
         if self._rejection_ready_to_retry(obj):
             return 'Исправлено — отправьте снова'
         return listing_delivery_presentation(obj).label
 
     def get_status_explanation(self, obj) -> str:
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return ''
         if obj.status == Listing.STATUS_ACTIVE:
             return (
                 'Avito подтверждает, что объявление активно. MAP продолжает '
@@ -295,18 +363,31 @@ class ListingSerializer(serializers.ModelSerializer):
         return ''
 
     def get_delivery_stage(self, obj) -> str:
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return 'unavailable'
         return listing_delivery_presentation(obj).stage
 
     def get_provider_submission_started(self, obj) -> bool:
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return False
         return listing_delivery_presentation(obj).provider_submission_started
 
     def get_lifecycle_actions_blocked(self, obj) -> bool:
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return True
         return listing_delivery_presentation(obj).lifecycle_actions_blocked
 
     def get_can_check_avito_status(self, obj) -> bool:
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return False
         return listing_delivery_presentation(obj).can_check_avito_status
 
+    def get_can_check_provider_status(self, obj) -> bool:
+        return self.get_can_check_avito_status(obj)
+
     def get_can_publish(self, obj) -> bool:
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return False
         return listing_publication_available(obj)
 
     def get_rejection_ready_to_retry(self, obj) -> bool:
@@ -315,7 +396,8 @@ class ListingSerializer(serializers.ModelSerializer):
 
     def _rejection_ready_to_retry(self, obj) -> bool:
         if (
-            obj.status != Listing.STATUS_REJECTED
+            obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO
+            or obj.status != Listing.STATUS_REJECTED
             or not listing_publication_available(obj)
         ):
             return False
@@ -340,13 +422,24 @@ class ListingSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(serializers.DateTimeField(allow_null=True, read_only=True))
     def get_delivery_retry_at(self, obj) -> str | None:
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return None
         retry_at = listing_delivery_presentation(obj).retry_at
         if retry_at is None:
             return None
         return serializers.DateTimeField().to_representation(retry_at)
 
     def get_delivery_retry_reason(self, obj) -> str:
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return ''
         return listing_delivery_presentation(obj).retry_reason
+
+    def get_marketplace_label(self, obj) -> str:
+        return marketplace_label(obj.account.marketplace)
+
+    @extend_schema_field(MarketplaceCapabilitiesSerializer)
+    def get_provider_capabilities(self, obj) -> dict[str, bool]:
+        return marketplace_capabilities(obj.account.marketplace)
 
 
 def _image_url(s3_key: str, fallback: str, request=None) -> str:
@@ -403,6 +496,8 @@ class ListingDetailSerializer(ListingSerializer):
 
     def get_product_avito_oem(self, obj) -> str:
         """Exact single OEM value the current feed builder will emit."""
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return ''
         from apps.marketplaces.adapters.avito.feed_builder import _get_oem
         return _get_oem(obj)
 
@@ -411,6 +506,8 @@ class ListingDetailSerializer(ListingSerializer):
     ))
     def get_avito_field_warnings(self, obj) -> list:
         """Неблокирующие рекомендации Avito, видимые тенанту до публикации."""
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return []
         try:
             _errors, warnings = self._get_avito_preflight(obj)
             return [
@@ -426,6 +523,8 @@ class ListingDetailSerializer(ListingSerializer):
     ))
     def get_avito_field_errors(self, obj) -> dict:
         """Blocking publication errors keyed by the editable drawer field."""
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return {}
         try:
             errors, _warnings = self._get_avito_preflight(obj)
             return errors
@@ -437,6 +536,8 @@ class ListingDetailSerializer(ListingSerializer):
     ))
     def get_avito_field_warnings_by_field(self, obj) -> dict:
         """Non-blocking publication warnings keyed by drawer field."""
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return {}
         try:
             _errors, warnings = self._get_avito_preflight(obj)
             return warnings
@@ -444,6 +545,8 @@ class ListingDetailSerializer(ListingSerializer):
             return {}
 
     def get_avito_brand_valid(self, obj) -> bool:
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return False
         from apps.marketplaces.adapters.avito.feed_builder import (
             product_brand_is_missing,
             unknown_brand_details,
@@ -455,6 +558,8 @@ class ListingDetailSerializer(ListingSerializer):
 
     @extend_schema_field(serializers.DateTimeField(allow_null=True, read_only=True))
     def get_avito_brand_catalog_synced_at(self, obj) -> str | None:
+        if obj.account.marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
+            return None
         from apps.marketplaces.adapters.avito.brand_catalog import catalog_status
         synced_at = catalog_status()['synced_at']
         return synced_at.isoformat() if synced_at else None
