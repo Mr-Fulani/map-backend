@@ -752,3 +752,111 @@ production, но rollout endpoint возвращает disabled при productio
 вызывает Ozon. API key не создавался, credentials AlfaPro не сохранялись,
 кабинет продавца не изменялся. Следующий пакет — O1c read-only AlfaPro canary;
 перед созданием/использованием ключа требуется отдельное подтверждение.
+
+## O1c safety gate
+
+Локально выполнено 2026-08-30:
+
+```text
+docker compose exec django pytest -q \
+  apps/marketplaces/tests/test_ozon_account_api.py \
+  tests/test_settings_resource_caps.py
+результат: exit 0, 24 passed in 34.73s
+
+docker compose exec django pytest -q \
+  apps/marketplaces/tests/test_ozon_account_api.py \
+  apps/marketplaces/tests/test_ozon_client.py \
+  apps/marketplaces/tests/test_provider_neutral_contract.py \
+  apps/marketplaces/tests/test_listing_review.py \
+  apps/marketplaces/tests/test_avito.py \
+  apps/marketplaces/tests/test_status_fencing.py \
+  apps/marketplaces/tests/test_feed_intent_local_writers.py \
+  apps/marketplaces/tests/test_listing_patch_api.py \
+  apps/tenants/tests/test_api_key_authorization.py \
+  tests/test_settings_resource_caps.py
+результат: exit 0, 310 passed in 120.71s; один teardown warning локальной
+test DB из-за оставшихся параллельных sessions, полный GitHub gate чистый
+
+docker compose exec django pytest -q \
+  apps/marketplaces/tests/test_account_api.py
+результат: exit 0, 14 passed in 42.53s
+
+docker compose exec django flake8 \
+  config/settings/base.py \
+  apps/marketplaces/ozon_rollout.py \
+  apps/marketplaces/ozon_account_connection.py \
+  apps/marketplaces/serializers.py \
+  apps/marketplaces/views.py \
+  apps/marketplaces/tests/test_ozon_account_api.py \
+  tests/test_settings_resource_caps.py
+результат: exit 0
+
+docker compose exec django mypy
+результат: exit 0, no issues found in 707 source files
+
+docker compose exec django mypy --check-untyped-defs \
+  --exclude '(^|/)(tests?|migrations)/' apps config backup
+результат: exit 0, no issues found in 356 source files
+
+docker compose exec django python manage.py spectacular \
+  --file /tmp/openapi-schema.yml --validate --fail-on-warn
+результат: exit 0
+
+docker compose exec django python manage.py makemigrations --check --dry-run
+результат: exit 0, No changes detected
+
+cd frontend && npm run typecheck
+результат: exit 0
+
+cd frontend && npm run lint
+результат: exit 0
+
+cd frontend && npm run test:unit
+результат: exit 0, 43 passed
+
+docker compose run --rm frontend npm run build
+результат: exit 0, compile/TypeScript/static generation 21/21 successful
+
+git diff --cached --check
+результат: exit 0
+```
+
+Scope evidence:
+
+```text
+code commit: eb30b0353e09693de62db87191740ccf7c02dbd3
+files: 9 (7 production/config, 2 tests)
+diff: 332 additions, 8 deletions
+migrations: 0
+repository limits: соблюдены
+```
+
+Production evidence:
+
+```text
+PR: #282
+release SHA: 90324efe4ac79c65d3cff79d584cfd8583ba1e1d
+PR full CI run: 33277471000 — success
+backend shards: 10m32s, 7m21s, 8m19s — success
+contracts/schema/supply-chain: 3m12s — success
+production images/runtime security: 2m30s — success
+frontend checks/build: 1m26s — success
+combined backend coverage: 48s — success
+main exact-tree CI run: 33278008805 — success
+Deploy run: 33278019318 — success, 3m6s
+encrypted pre-migration backup: uploaded
+migrations: No migrations to apply
+services: db, Redis, broker, proxy, Django, workers, Beat, frontend, Nginx healthy
+topology: production topology is healthy and exact
+public readiness: HTTP 200 x4 (0.310s, 0.370s, 0.219s, 0.249s)
+frontend /dashboard/settings: HTTP 200 (0.354s)
+PROD_DEPLOY_ENABLED: восстановлен в false после старта exact-SHA release
+```
+
+O1c safety gate имеет статус `DEPLOYED_OFF`: exact tenant slug и Ozon Client ID
+требуются одновременно с глобальным флагом, а каждый запрос с ключом требует
+явного read-only подтверждения. Production rollout остаётся выключенным;
+реальный API key не создавался и не использовался, credentials AlfaPro не
+сохранялись, MAP не обращался к Ozon и кабинет продавца не изменялся. Live
+AlfaPro canary требует отдельного подтверждения непосредственно перед внешним
+действием и отдельной production-конфигурации точных allowlists.
