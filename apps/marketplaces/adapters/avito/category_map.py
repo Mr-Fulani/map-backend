@@ -151,4 +151,5 @@ def avito_spec_for(category_name: str, parent_name: str = '') -> dict:
         'fixed': spec.get('fixed', {}),
         'required': spec.get('required', []),
         'field_rules': spec.get('field_rules', {}),
+        'schema_http': spec.get('http'),
     }

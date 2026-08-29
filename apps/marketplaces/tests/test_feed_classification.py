@@ -150,19 +150,20 @@ def test_no_blocking_fields_when_subtype_selected():
     assert blocking_missing_avito_fields(listing) == []
 
 
-def test_brand_is_conditionally_required_for_new_avtosvet():
+def test_brand_is_conditionally_required_for_new_avtosvet_and_battery():
     from apps.marketplaces.adapters.avito.feed_builder import (
         product_brand_is_missing,
     )
-    category = _cat('Автосвет', external_id='avtosvet')
-    product = types.SimpleNamespace(
-        catalog_category=category, category_1c='', brand='', condition='new',
-    )
-    listing = types.SimpleNamespace(product=product)
+    for slug in ('avtosvet', 'akkumuliatory_5530'):
+        product = types.SimpleNamespace(
+            catalog_category=_cat('Категория', external_id=slug),
+            category_1c='', brand='', condition='new',
+        )
+        listing = types.SimpleNamespace(product=product)
 
-    assert product_brand_is_missing(listing) is True
-    product.condition = 'used'
-    assert product_brand_is_missing(listing) is False
+        assert product_brand_is_missing(listing) is True
+        product.condition = 'used'
+        assert product_brand_is_missing(listing) is False
 
 
 def test_required_brand_is_a_blocker_for_battery_category():
@@ -325,6 +326,49 @@ def test_sync_normalizes_current_avito_dependency_shape():
         'clause': 'and',
         'pairs': [{'tag': 'Condition', 'clause': 'value', 'values': ['Новое']}],
     }]
+
+
+def test_sync_does_not_make_dependency_required_field_unconditional():
+    from apps.marketplaces.management.commands.sync_avito_categories import Command
+
+    class Adapter:
+        @staticmethod
+        def get_node_fields(_slug):
+            return {'fields': [{'tag': 'Brand', 'content': [{
+                'required': True,
+                'required_by_dependency': True,
+                'dependencies': [{
+                    'action': 'required', 'clause': 'and',
+                    'pairs': [{
+                        'source_field_tag': 'Condition',
+                        'clause': 'value', 'values': ['Новое'],
+                    }],
+                }],
+            }]}]}
+
+    required, _fixed, rules, status = Command()._leaf_fields(Adapter(), 'leaf')
+
+    assert status == 200
+    assert required == []
+    assert rules['Brand'][0]['required'] is False
+
+
+def test_unavailable_category_schema_warns_instead_of_blocking():
+    from apps.marketplaces.adapters.avito.feed_builder import avito_publication_preflight
+
+    listing = _preflight_listing(_cat(
+        'Грузовая подвеска',
+        external_id='podveska_i_rulevoe_upravlenie',
+    ))
+    with patch(
+        'apps.marketplaces.adapters.avito.feed_builder.get_feed_image_urls',
+        return_value=([], False),
+    ):
+        errors, warnings = avito_publication_preflight(listing)
+
+    assert 'catalog_category' not in errors
+    assert 'catalog_category' in warnings
+    assert 'актуальную схему' in warnings['catalog_category'][0]
 
 
 def test_publication_errors_are_grouped_by_editable_drawer_field():

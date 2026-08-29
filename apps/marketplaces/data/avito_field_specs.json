@@ -23,7 +23,6 @@
         "Brand",
         "SAE",
         "Volume",
-        "ACEA",
         "API",
         "OEMOil",
         "Condition"
@@ -56,7 +55,6 @@
         "Brand",
         "SAE",
         "Volume",
-        "ATF",
         "API",
         "OEMOil",
         "Condition"
@@ -89,7 +87,6 @@
         "Brand",
         "Color",
         "Volume",
-        "ASTM",
         "OEMOil",
         "Condition"
       ],
@@ -120,7 +117,6 @@
         "ProductType",
         "Brand",
         "Volume",
-        "DOT",
         "OEMOil",
         "Condition"
       ],
@@ -3257,8 +3253,7 @@
         "TechnicLength",
         "TechnicWidth",
         "TechnicHeight",
-        "Condition",
-        "Brand"
+        "Condition"
       ],
       "fixed": {
         "Category": "Запчасти и аксессуары",

@@ -188,15 +188,16 @@ class Command(BaseCommand):
                 variants = []
                 for content in (field.get('content') or []):
                     is_required = bool(content.get('required'))
+                    required_by_dependency = bool(content.get('required_by_dependency'))
                     rules = _dependency_rules(content)
-                    if is_required and tag not in required:
+                    if is_required and not required_by_dependency and tag not in required:
                         required.append(tag)
-                    if is_required:
+                    if is_required and not required_by_dependency:
                         values = [v.get('value') for v in (content.get('values') or [])]
                         if len(values) == 1:
                             fixed[tag] = values[0]
                     variants.append({
-                        'required': is_required,
+                        'required': is_required and not required_by_dependency,
                         'dependencies': rules,
                     })
                 if any(variant['dependencies'] for variant in variants):

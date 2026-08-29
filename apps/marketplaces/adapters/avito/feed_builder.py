@@ -649,7 +649,8 @@ def _resolve_avito_spec(category, parent_of) -> dict:
         if leaf:
             return {'slug': leaf.get('slug'), 'fixed': leaf.get('fixed', {}),
                     'required': leaf.get('required', []),
-                    'field_rules': leaf.get('field_rules', {})}
+                    'field_rules': leaf.get('field_rules', {}),
+                    'schema_http': leaf.get('http')}
         node = parent_of(node)
     # 3) Легаси-фолбэк для записей без external_id — по имени (с предпочтением
     # легковой ветки при коллизии имён).
@@ -660,7 +661,8 @@ def _resolve_avito_spec(category, parent_of) -> dict:
         if leaf:
             return {'slug': leaf.get('slug'), 'fixed': leaf.get('fixed', {}),
                     'required': leaf.get('required', []),
-                    'field_rules': leaf.get('field_rules', {})}
+                    'field_rules': leaf.get('field_rules', {}),
+                    'schema_http': leaf.get('http')}
         node = parent_of(node)
     return {}
 
@@ -1210,6 +1212,9 @@ def avito_publication_preflight(
     product = listing.product
     errors: dict[str, list[str]] = {}
     warnings: dict[str, list[str]] = {}
+    spec = _avito_spec(listing)
+    schema_verified = spec.get('schema_http') == 200
+    required_severity = errors if schema_verified else warnings
 
     def add(target: dict[str, list[str]], field: str, message: str) -> None:
         target.setdefault(field, []).append(message)
@@ -1276,18 +1281,18 @@ def avito_publication_preflight(
         )
 
     brand = str(getattr(product, 'brand', '') or '').strip()
-    brand_required = _brand_is_required(listing)
+    brand_required = _brand_is_required(listing, spec=spec)
     brand_lookup = _brand_lookup(brand) if brand else None
     if brand_required and not brand:
         add(
-            errors,
+            required_severity,
             'product_brand',
             'Для выбранной категории Avito производитель обязателен. Укажите бренд из справочника.',
         )
     elif brand_lookup is not None and not brand_lookup['known']:
         details = (brand, brand_lookup['suggestions'])
         if brand_required:
-            add(errors, 'product_brand', _unknown_brand_warning(*details))
+            add(required_severity, 'product_brand', _unknown_brand_warning(*details))
         else:
             add(
                 warnings,
@@ -1295,40 +1300,45 @@ def avito_publication_preflight(
                 _optional_unknown_brand_warning(*details),
             )
 
-    oem_required = _field_is_required(listing, 'OEM')
+    oem_required = _field_is_required(listing, 'OEM', spec=spec)
     oem = _get_oem(listing)
     oem_warning = _oem_warning(listing)
     if oem_required and not oem:
         add(
-            errors,
+            required_severity,
             'product_oem',
             'Для нового товара в выбранной категории Avito требуется номер детали OEM. '
             'Укажите одно значение до 50 символов — латинские буквы, цифры или дефис.',
         )
     if oem_warning:
-        add(errors if oem_required and not oem else warnings, 'product_oem', oem_warning)
+        add(required_severity if oem_required and not oem else warnings, 'product_oem', oem_warning)
 
-    blocking = blocking_missing_avito_fields(listing)
+    missing_required = missing_required_avito_fields(listing)
+    blocking = [tag for tag in missing_required if tag in AVITO_SUBTYPE_LABELS]
     if blocking:
         labels = ', '.join(AVITO_SUBTYPE_LABELS[tag] for tag in blocking)
+        message = (f'Выберите конечную категорию Avito, чтобы заполнить: {labels}.'
+                   if schema_verified else f'Avito не отдал актуальную схему категории. Проверьте: {labels}.')
         add(
-            errors,
+            required_severity,
             'catalog_category',
-            f'Выберите конечную категорию Avito, чтобы заполнить: {labels}.',
+            message,
         )
 
     other_required = [
-        tag for tag in missing_required_avito_fields(listing)
+        tag for tag in missing_required
         if tag not in AVITO_SUBTYPE_LABELS and tag not in {'Brand', 'OEM'}
     ]
     if other_required:
         requirements = format_avito_field_requirements(other_required)
+        message = (
+            f'Для выбранной категории Avito не заполнены обязательные характеристики: {requirements}.'
+            if schema_verified else f'Avito не отдал актуальную схему категории. Проверьте: {requirements}.'
+        )
         add(
-            errors,
+            required_severity,
             'catalog_category',
-            'Для выбранной категории Avito не заполнены обязательные '
-            f'характеристики: {requirements}. Выберите точную категорию или '
-            'добавьте эти характеристики перед публикацией.',
+            f'{message} Выберите точную категорию или добавьте эти характеристики перед публикацией.',
         )
 
     image_urls, uses_category_fallback = get_feed_image_urls(product)
