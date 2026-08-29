@@ -1177,22 +1177,19 @@ def _optional_unknown_brand_warning(brand: str, suggestions: list[str]) -> str:
 
 
 def _oem_warning(listing) -> str:
-    """Explain exactly which single OEM MAP will send and what it omits."""
+    """Warn only when no stored OEM can be emitted safely.
+
+    Multiple source codes are not a publication problem: ``_get_oem`` emits
+    exactly one deterministic value and the drawer shows the remaining codes
+    as neutral reference data.  Treating that situation as a yellow Avito
+    warning made a successfully corrected field look unresolved.
+    """
     values = _oem_values(listing)
     selected = _get_oem(listing)
     if not values:
         return ''
-    if selected and len(values) == 1:
-        return ''
     if selected:
-        preview = ', '.join(f'«{value}»' for value in values[:3])
-        if len(values) > 3:
-            preview += f' и ещё {len(values) - 3}'
-        return (
-            f'В товаре несколько OEM-номеров: {preview}. Avito принимает одно '
-            f'значение, поэтому MAP отправит «{selected}». При необходимости '
-            'выберите другой номер в этом поле; остальные останутся в товаре для поиска.'
-        )
+        return ''
     return (
         'Ни один OEM-номер нельзя отправить в Avito: допустимо одно значение до '
         '50 символов: латинские буквы, цифры и дефис.'

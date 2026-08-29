@@ -217,6 +217,7 @@ class ListingSerializer(serializers.ModelSerializer):
     lifecycle_actions_blocked = serializers.SerializerMethodField()
     can_check_avito_status = serializers.SerializerMethodField()
     can_publish = serializers.SerializerMethodField()
+    rejection_ready_to_retry = serializers.SerializerMethodField()
     delivery_retry_at = serializers.SerializerMethodField()
     delivery_retry_reason = serializers.SerializerMethodField()
 
@@ -228,6 +229,7 @@ class ListingSerializer(serializers.ModelSerializer):
             'provider_submission_started', 'lifecycle_actions_blocked',
             'can_check_avito_status', 'delivery_retry_at',
             'delivery_retry_reason', 'can_publish',
+            'rejection_ready_to_retry',
             'product_id', 'product_article', 'product_name', 'product_brand', 'account_id', 'account_name',
             'title', 'price_on_listing', 'external_id', 'external_url',
             'ad_type',
@@ -245,6 +247,8 @@ class ListingSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_status_display(self, obj) -> str:
+        if self._rejection_ready_to_retry(obj):
+            return 'Исправлено — отправьте снова'
         return listing_delivery_presentation(obj).label
 
     def get_status_explanation(self, obj) -> str:
@@ -276,7 +280,13 @@ class ListingSerializer(serializers.ModelSerializer):
                     'Оно исключено из актуального XML-фида.'
                 )
             return 'Объявление не входит в актуальный XML-фид Avito.'
-        if obj.status == Listing.STATUS_REJECTED and obj.external_id:
+        if self._rejection_ready_to_retry(obj):
+            return (
+                'Предыдущая версия была отклонена Avito. Текущие поля '
+                'прошли проверку MAP. Нажмите «Опубликовать», чтобы '
+                'отправить исправленную версию.'
+            )
+        if obj.status == Listing.STATUS_REJECTED:
             return (
                 'Avito отклонил или заблокировал объявление. Исправьте '
                 'подсвеченные поля и нажмите «Опубликовать». Кнопка проверки '
@@ -298,6 +308,35 @@ class ListingSerializer(serializers.ModelSerializer):
 
     def get_can_publish(self, obj) -> bool:
         return listing_publication_available(obj)
+
+    def get_rejection_ready_to_retry(self, obj) -> bool:
+        """Whether Publish would accept the corrected rejected listing now."""
+        return self._rejection_ready_to_retry(obj)
+
+    def _rejection_ready_to_retry(self, obj) -> bool:
+        if (
+            obj.status != Listing.STATUS_REJECTED
+            or not listing_publication_available(obj)
+        ):
+            return False
+        try:
+            errors, _warnings = self._get_avito_preflight(obj)
+        except Exception:
+            return False
+        return not errors
+
+    def _get_avito_preflight(self, obj) -> tuple[dict, dict]:
+        from apps.marketplaces.adapters.avito.feed_builder import (
+            avito_publication_preflight,
+        )
+        cache = getattr(self, '_avito_preflight_cache', None)
+        if cache is None:
+            cache = {}
+            self._avito_preflight_cache = cache
+        key = getattr(obj, 'pk', id(obj))
+        if key not in cache:
+            cache[key] = avito_publication_preflight(obj)
+        return cache[key]
 
     @extend_schema_field(serializers.DateTimeField(allow_null=True, read_only=True))
     def get_delivery_retry_at(self, obj) -> str | None:
@@ -403,19 +442,6 @@ class ListingDetailSerializer(ListingSerializer):
             return warnings
         except Exception:
             return {}
-
-    def _get_avito_preflight(self, obj) -> tuple[dict, dict]:
-        from apps.marketplaces.adapters.avito.feed_builder import (
-            avito_publication_preflight,
-        )
-        cache = getattr(self, '_avito_preflight_cache', None)
-        if cache is None:
-            cache = {}
-            self._avito_preflight_cache = cache
-        key = getattr(obj, 'pk', id(obj))
-        if key not in cache:
-            cache[key] = avito_publication_preflight(obj)
-        return cache[key]
 
     def get_avito_brand_valid(self, obj) -> bool:
         from apps.marketplaces.adapters.avito.feed_builder import (

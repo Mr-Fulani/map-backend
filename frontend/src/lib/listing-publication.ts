@@ -56,7 +56,11 @@ export function publicationFieldErrorsFromApi(payload: unknown): PublicationFiel
   return errors;
 }
 
-export function publicationActionLabel(deliveryStage: string): string {
+export function publicationActionLabel(
+  deliveryStage: string,
+  rejectionReadyToRetry = false,
+): string {
+  if (rejectionReadyToRetry) return 'Отправить исправленную версию';
   return deliveryStage === 'delivery_failed'
     ? 'Исправить и отправить снова'
     : 'Опубликовать';

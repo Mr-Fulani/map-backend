@@ -68,6 +68,7 @@ interface ListingDetail {
   lifecycle_actions_blocked: boolean;
   can_check_avito_status: boolean;
   can_publish: boolean;
+  rejection_ready_to_retry: boolean;
   product_id: number;
   product_article: string;
   product_name: string;
@@ -567,7 +568,11 @@ function ListingDrawerContent({
       const refreshed = await listingApi.get(listing.id);
       applyListingState(refreshed.data.data);
       onActionDone();
-      toast.success('OEM для Avito сохранён и проверен');
+      toast.success(
+        refreshed.data.data.rejection_ready_to_retry
+          ? 'OEM прошёл проверку. Теперь отправьте исправленную версию в Avito.'
+          : 'OEM для Avito сохранён и проверен',
+      );
     } catch (err: unknown) {
       const errorData = (err as { response?: { data?: {
         message?: string;
@@ -795,7 +800,9 @@ function ListingDrawerContent({
           toast.warning('Сохранено. Жёлтые поля не блокируют публикацию, но их желательно проверить.');
         } else {
           toast.success(
-            listing.delivery_stage === 'delivery_failed'
+            savedListing.rejection_ready_to_retry
+              ? 'Сохранено и проверено. Теперь нажмите «Отправить исправленную версию».'
+              : listing.delivery_stage === 'delivery_failed'
               ? 'Сохранено и проверено. Теперь объявление можно отправить снова.'
               : 'Сохранено. Сравнение цен пересчитано.',
           );
@@ -1602,18 +1609,24 @@ function ListingDrawerContent({
 
               {/* Причина отклонения/проверки — только для этих статусов, иначе висит старый текст */}
               {listing.status === 'rejected' && listing.rejection_reason && (
-                <div className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive whitespace-pre-line">
-                  <p>
-                    <span className="font-medium">Результат предыдущей отправки: </span>
-                    {listing.rejection_reason}
-                  </p>
-                  {!hasPublicationFieldErrors(publicationFieldErrors) && (
-                    <p className="text-xs">
-                      Текущие обязательные поля прошли предварительную проверку. Старый текст
-                      сохранён как история и снимется после постановки новой попытки в очередь.
+                listing.rejection_ready_to_retry ? (
+                  <div className="space-y-2 rounded-md border border-green-500/40 bg-green-500/10 p-3 text-sm text-green-800 dark:text-green-300">
+                    <p className="font-medium">Исправление сохранено и прошло проверку MAP.</p>
+                    <p>
+                      Avito ещё не видел исправленную версию. Нажмите «Отправить
+                      исправленную версию» ниже.
                     </p>
-                  )}
-                </div>
+                    <details className="text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">Показать причину прошлого отклонения</summary>
+                      <p className="mt-2 whitespace-pre-line">{listing.rejection_reason}</p>
+                    </details>
+                  </div>
+                ) : (
+                  <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive whitespace-pre-line">
+                    <span className="font-medium">Что нужно исправить: </span>
+                    {listing.rejection_reason}
+                  </div>
+                )
               )}
               {listing.status === 'requires_review' && listing.rejection_reason && (
                 <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-700 dark:text-yellow-400 whitespace-pre-line">
@@ -1748,7 +1761,7 @@ function ListingDrawerContent({
                           ? <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Публикуется...</>
                           : actionLoading === 'publish'
                             ? <><RefreshCw className="mr-2 h-4 w-4 animate-spin" />Отправка...</>
-                            : <><Send className="mr-2 h-4 w-4" />{publicationActionLabel(listing.delivery_stage)}</>
+                            : <><Send className="mr-2 h-4 w-4" />{publicationActionLabel(listing.delivery_stage, listing.rejection_ready_to_retry)}</>
                         }
                       </Button>
                     )}

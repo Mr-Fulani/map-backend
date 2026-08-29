@@ -695,7 +695,7 @@ class TestListingDetailSerializer:
 
         assert data['product_brand'] == 'Hyundai-KIA'
 
-    def test_detail_shows_exact_selected_oem_and_multiple_value_warning(self):
+    def test_detail_shows_exact_selected_oem_without_false_warning(self):
         """Drawer exposes both source OEMs and the exact single outgoing value."""
         from apps.marketplaces.serializers import ListingDetailSerializer
 
@@ -709,7 +709,53 @@ class TestListingDetailSerializer:
         assert data['product_oem_numbers'] == ['92402D5000', '92402D4000']
         assert data['product_avito_oem'] == '92402D5000'
         assert 'product_oem' not in data['avito_field_errors']
-        assert 'product_oem' in data['avito_field_warnings_by_field']
+        assert 'product_oem' not in data['avito_field_warnings_by_field']
+
+    def test_corrected_rejected_oem_is_ready_to_retry_and_old_reason_is_history(self):
+        """A valid corrected OEM must not keep looking like a current error."""
+        from apps.marketplaces.serializers import ListingDetailSerializer
+
+        tenant = make_tenant('detail-corrected-oem-co')
+        listing = make_listing(tenant, status=Listing.STATUS_REJECTED)
+        category = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Автосвет',
+            normalized_name='автосвет',
+            domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+            external_source='avito',
+            external_id='avtosvet',
+        )
+        listing.product.condition = 'new'
+        listing.product.catalog_category = category
+        listing.product.oem_numbers = ['92402D5000', '92402D4000']
+        listing.product.save(update_fields=[
+            'condition', 'catalog_category', 'oem_numbers',
+        ])
+        listing.rejection_reason = 'Прошлая ошибка: неверный OEM'
+        listing.save(update_fields=['rejection_reason'])
+
+        data = ListingDetailSerializer(listing).data
+
+        assert data['avito_field_errors'] == {}
+        assert data['rejection_ready_to_retry'] is True
+        assert data['status_display'] == 'Исправлено — отправьте снова'
+        assert 'Текущие поля прошли проверку MAP' in data['status_explanation']
+        assert data['rejection_reason'] == 'Прошлая ошибка: неверный OEM'
+
+    def test_rejected_listing_with_current_errors_is_not_ready_to_retry(self):
+        from apps.marketplaces.serializers import ListingDetailSerializer
+
+        tenant = make_tenant('detail-current-oem-error-co')
+        listing = make_listing(tenant, status=Listing.STATUS_REJECTED)
+        listing.title = ''
+        listing.rejection_reason = 'Заполните заголовок'
+        listing.save(update_fields=['title', 'rejection_reason'])
+
+        data = ListingDetailSerializer(listing).data
+
+        assert 'title' in data['avito_field_errors']
+        assert data['rejection_ready_to_retry'] is False
+        assert data['status_display'] == 'Отклонено'
 
     def test_detail_includes_last_avito_sync_time(self):
         """Tenant UI can explain when the provider last confirmed the status."""
