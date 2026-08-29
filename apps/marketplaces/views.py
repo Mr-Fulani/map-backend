@@ -228,7 +228,7 @@ class MarketplaceAccountListView(APIView):
         responses={201: MarketplaceAccountSerializer},
     )
     def post(self, request):
-        """Создаёт аккаунт Avito, делегируя логику MarketplaceAccountService.create."""
+        """Создаёт provider account через MarketplaceAccountService."""
         serializer = MarketplaceAccountWriteSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         try:
@@ -282,6 +282,41 @@ class MarketplaceAccountListView(APIView):
                 'message': str(exc),
             }, status=status.HTTP_400_BAD_REQUEST)
         return Response(MarketplaceAccountSerializer(account).data, status=status.HTTP_201_CREATED)
+
+
+@extend_schema(tags=['Accounts'])
+class MarketplaceProviderRolloutView(APIView):
+    """Expose only tenant-safe UI rollout state; never contact a provider."""
+
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
+    @extend_schema(
+        operation_id='marketplace_provider_rollout_retrieve',
+        responses=inline_serializer(
+            name='MarketplaceProviderRolloutResponse',
+            fields={
+                'ozon': inline_serializer(
+                    name='OzonAccountRolloutState',
+                    fields={
+                        'account_connection_enabled': serializers.BooleanField(
+                            read_only=True,
+                        ),
+                        'credential_update_enabled': serializers.BooleanField(
+                            read_only=True,
+                        ),
+                    },
+                ),
+            },
+        ),
+    )
+    def get(self, request):
+        enabled = bool(settings.OZON_ACCOUNT_CONNECTION_ENABLED)
+        return Response({
+            'ozon': {
+                'account_connection_enabled': enabled,
+                'credential_update_enabled': enabled,
+            },
+        })
 
 
 @extend_schema(tags=['Accounts'])

@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Store, Search } from 'lucide-react';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Search } from 'lucide-react';
 import {
   datasourceApi,
   profileApi,
@@ -32,6 +32,16 @@ import {
   type CatalogCategoryOption,
 } from '@/components/products/catalog-category-picker';
 import { WebResearchSettingsCard } from '@/components/settings/web-research-settings';
+import { OzonAccountSettings } from '@/components/marketplaces/OzonAccountSettings';
+import type {
+  AutoloadOnboarding,
+  AvitoAccountHealth,
+  MarketplaceAccount as Account,
+} from '@/lib/marketplace-account-types';
+import {
+  ozonAccountConnectionEnabled,
+  ozonCredentialUpdateEnabled,
+} from '@/lib/ozon-account-presentation';
 import {
   claimSettingsLoadGroups,
   type SettingsLoadGroup,
@@ -46,64 +56,13 @@ interface ApiKey {
   last_used_at: string | null;
 }
 
-interface Account {
-  id: number;
-  name: string;
-  marketplace: string;
-  external_id: string;
-  is_active: boolean;
-  default_address: string;
-  default_seller_address_id: string;
-  default_manager_name: string;
-  default_contact_phone: string;
-  autoload_active: boolean | null;
-  autoload_checked_at: string | null;
-  autoload_subscription_ends_at: string | null;
-  feed_endpoint_managed: boolean;
-  autoload_onboarding: AutoloadOnboarding;
-  avito_status: AvitoAccountHealth | null;
-  created_at: string;
-}
-
-interface AutoloadOnboarding {
-  state: 'legacy' | 'pending' | 'retrying' | 'reconciling' | 'ready' | 'exhausted' | 'manual_review';
-  profile_state: string;
-  ready: boolean;
-  retryable: boolean;
-  message: string;
-}
-
-interface AvitoAccountHealth {
-  connection_status: 'unknown' | 'connected' | 'auth_error' | 'unavailable';
-  autoload_status: 'unknown' | 'enabled' | 'disabled' | 'missing' | 'forbidden';
-  feed_configured: boolean | null;
-  profile_checked_at: string | null;
-  profile_stale: boolean;
-  tariff_status: 'unknown' | 'active' | 'inactive' | 'not_found' | 'unavailable';
-  tariff_name: string;
-  tariff_started_at: string | null;
-  tariff_ends_at: string | null;
-  subscription_ends_at: string | null;
-  subscription_source: 'avito_tariff' | 'manual' | 'unavailable';
-  days_left: number | null;
-  tariff_price: string | null;
-  placements_remaining: number | null;
-  placements_total: number | null;
-  scheduled_tariff: { name?: string; starts_at?: string | null; price?: string | null };
-  tariff_checked_at: string | null;
-  tariff_stale: boolean;
-  last_attempted_at: string | null;
-  last_error_code: string;
-  last_error_message: string;
-}
-
 interface AutoloadCheck {
   activated: boolean;
   feed_url: string | null;
   feed_endpoint_managed?: boolean;
   stale?: boolean;
   status?: AvitoAccountHealth;
-  autoload_onboarding?: AutoloadOnboarding;
+  autoload_onboarding?: AutoloadOnboarding | null;
 }
 
 interface PlacementAddress {
@@ -358,6 +317,8 @@ export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [isOzonConnectionEnabled, setOzonConnectionEnabled] = useState(false);
+  const [isOzonCredentialUpdateEnabled, setOzonCredentialUpdateEnabled] = useState(false);
   const [datasources, setDatasources] = useState<DataSource[]>([]);
   const [catalogCategories, setCatalogCategories] = useState<CatalogCategory[]>([]);
   const [catalogDomains, setCatalogDomains] = useState<CatalogDomain[]>([]);
@@ -540,7 +501,8 @@ export default function SettingsPage() {
         Promise.allSettled([
           accountApi.list(),
           accountApi.listPlacementAddresses(),
-        ]).then(([accountsResult, addressesResult]) => {
+          accountApi.providerRollout(),
+        ]).then(([accountsResult, addressesResult, rolloutResult]) => {
           if (!mounted()) return;
           if (accountsResult.status === 'fulfilled') {
             const list: Account[] = accountsResult.value.data.data ?? accountsResult.value.data;
@@ -573,6 +535,11 @@ export default function SettingsPage() {
               ? addressesResult.value.data.data ?? addressesResult.value.data
               : [],
           );
+          const rollout = rolloutResult.status === 'fulfilled'
+            ? rolloutResult.value.data.data ?? rolloutResult.value.data
+            : null;
+          setOzonConnectionEnabled(ozonAccountConnectionEnabled(rollout));
+          setOzonCredentialUpdateEnabled(ozonCredentialUpdateEnabled(rollout));
           setLoadingAccounts(false);
         });
       } else if (group === 'datasources') {
@@ -1500,7 +1467,18 @@ export default function SettingsPage() {
     setTimeout(() => setCopied(false), 2000);
   }
 
+  function upsertMarketplaceAccount(account: Account) {
+    setAccounts((current) => {
+      const exists = current.some((item) => item.id === account.id);
+      return exists
+        ? current.map((item) => item.id === account.id ? account : item)
+        : [...current, account];
+    });
+  }
+
   const avitoAccounts = accounts.filter((account) => account.marketplace === 'avito');
+  const ozonAccounts = accounts.filter((account) => account.marketplace === 'ozon');
+  const canManageMarketplaceAccounts = ['owner', 'admin'].includes(role ?? '');
 
   return (
     <div className="space-y-6">
@@ -2393,30 +2371,14 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <CardTitle>Ozon</CardTitle>
-                  <Badge variant="secondary">Следующий этап</Badge>
-                </div>
-                <CardDescription>
-                  Отдельные кабинеты, API-права и FBS-склад без смешения с настройками Avito
-                </CardDescription>
-              </div>
-              <Button size="sm" variant="outline" disabled className="w-full sm:w-auto">
-                <Store className="mr-2 h-4 w-4" />
-                Недоступно
-              </Button>
-            </CardHeader>
-            <CardContent>
-              <div className="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">
-                Подключение Ozon появится после provider-neutral этапа. API-ключи,
-                роли и склад здесь пока не принимаются — реальный кабинет AlfaPro
-                не изменяется.
-              </div>
-            </CardContent>
-          </Card>
+          <OzonAccountSettings
+            accounts={ozonAccounts}
+            loading={loadingAccounts}
+            canManage={canManageMarketplaceAccounts}
+            connectionEnabled={isOzonConnectionEnabled}
+            credentialUpdateEnabled={isOzonCredentialUpdateEnabled}
+            onAccountUpsert={upsertMarketplaceAccount}
+          />
         </TabsContent>
 
         {/* Источники данных */}

@@ -33,6 +33,7 @@ export default function MarketplaceAccountFilter({
   const selectedAccount = visibleAccounts.some((account) => account.id === accountId)
     ? accountId
     : null;
+  const hasOzonAccounts = accounts.some((account) => account.marketplace === 'ozon');
 
   return (
     <div className={`grid gap-2 sm:grid-cols-2 ${className}`.trim()}>
@@ -48,7 +49,9 @@ export default function MarketplaceAccountFilter({
         >
           <option value="">Все маркетплейсы</option>
           <option value="avito">Avito</option>
-          <option value="ozon" disabled>Ozon — подключение следующим этапом</option>
+          <option value="ozon" disabled={!hasOzonAccounts}>
+            {hasOzonAccounts ? 'Ozon' : 'Ozon — нет подключённых аккаунтов'}
+          </option>
         </select>
       </label>
       <label className="space-y-1 text-xs text-muted-foreground">

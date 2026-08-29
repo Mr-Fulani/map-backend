@@ -1232,7 +1232,10 @@ export const webResearchApi = {
 // Marketplace Accounts
 export const accountApi = {
   list: () => api.get('/accounts/'),
+  providerRollout: () => api.get('/accounts/provider-rollout/'),
   create: (data: Record<string, unknown>) => api.post('/accounts/', data),
+  replaceCredentials: (id: number, data: Record<string, unknown>) =>
+    api.put(`/accounts/${id}/`, data),
   patch: (id: number, data: Record<string, unknown>) => api.patch(`/accounts/${id}/`, data),
   delete: (id: number) => api.delete(`/accounts/${id}/`),
   checkAutoload: (id: number) => api.get(`/accounts/${id}/autoload-status/`),

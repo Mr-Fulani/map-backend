@@ -17,6 +17,8 @@
     "src/lib/billing-page-loader.ts",
     "src/lib/browser-session-lock.ts",
     "src/lib/dashboard-summary.ts",
+    "src/lib/marketplace-account-types.ts",
+    "src/lib/ozon-account-presentation.ts",
     "tests/**/*.ts"
   ],
   "exclude": [".next", ".test-dist", "node_modules"]
