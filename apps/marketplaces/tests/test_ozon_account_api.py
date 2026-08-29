@@ -47,6 +47,29 @@ def ozon_payload(client_id: str = 'ozon-client-1', api_key: str = 'ozon-secret')
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize('enabled', [False, True])
+def test_provider_rollout_state_is_read_only_and_fail_closed_for_ui(settings, enabled):
+    settings.OZON_ACCOUNT_CONNECTION_ENABLED = enabled
+    _, token = make_tenant(f'ozon-rollout-{enabled}')
+    with patch(
+        'apps.marketplaces.adapters.ozon.client.OzonSellerClient.verify_connection',
+    ) as provider_call:
+        response = Client().get(
+            '/api/v1/accounts/provider-rollout/',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        'ozon': {
+            'account_connection_enabled': enabled,
+            'credential_update_enabled': enabled,
+        },
+    }
+    provider_call.assert_not_called()
+
+
+@pytest.mark.django_db
 @override_settings(OZON_ACCOUNT_CONNECTION_ENABLED=False)
 def test_ozon_connection_is_dark_by_default_and_makes_no_provider_call():
     tenant, token = make_tenant('ozon-dark')
