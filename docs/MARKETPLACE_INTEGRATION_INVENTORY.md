@@ -2,7 +2,7 @@
 
 Обновлено: 2026-08-29.
 
-Статус: M0 `VERIFIED`, M1a `ENABLED`, M1b `TESTED` (release pending).
+Статус: M0 `VERIFIED`, M1a `ENABLED`, M1b `ENABLED`.
 Документ описывает состояние репозитория от commit
 `fde9564f7ed183c30d852a4024a7957a667fee42` до реализации M1b 2026-08-29.
 
@@ -304,7 +304,7 @@ credentials, health и fake-provider acceptance. Product publish fan-out в M1a
 
 ## Пакеты расширения
 
-### M1b — безопасный target selection для mutations (`TESTED`)
+### M1b — безопасный target selection для mutations (`ENABLED`)
 
 - product publish принимает явный список account IDs;
 - archive/bulk actions подтверждают точный marketplace/account scope;
@@ -497,5 +497,31 @@ git diff --check -- . ':!.claude/settings.local.json'
 ```
 
 M1b не добавляет model choices, credentials или внешний Ozon I/O. Avito feed
-runtime, P7 и production flags не меняются. Production evidence заполняется
-после полного PR CI и exact-SHA deployment.
+runtime, P7 и production flags не меняются.
+
+Production evidence:
+
+```text
+PR: #276
+code commit: 6f0e344d2a38b7588937f300c515949c74d7e780
+release SHA: 58d152ccc6975bb97615f5b6f14d5a2a6b6e046b
+PR full CI run: 33271688562 — success
+backend shards: 8m43s, 6m41s, 8m23s — success
+contracts/schema/supply-chain: 2m32s — success
+production images/runtime security: 2m36s — success
+frontend checks/build: 1m9s — success
+combined backend coverage: 50s — success
+main exact-tree CI run: 33272146435 — success
+Deploy run: 33272159684 — success, 3m2s
+encrypted pre-migration backup: uploaded
+migrations: No migrations to apply
+services: db, Redis, broker, proxy, Django, workers, Beat, frontend, Nginx healthy
+topology: production topology is healthy and exact
+public readiness: четыре последовательных HTTP 200 за 45 секунд
+frontend /dashboard/settings: HTTP 200
+PROD_DEPLOY_ENABLED: восстановлен в false после старта exact-SHA release
+```
+
+M1b включён без feature flag и имеет статус `ENABLED`. Ozon model choice,
+credentials, API I/O и кабинет AlfaPro не изменялись; они остаются выключены
+до отдельного пакета O1.
