@@ -59,6 +59,7 @@ from apps.products.api_schema import (
     ProductDetailResponseSerializer,
     ProductExcludeRequestSerializer,
     ProductListResponseSerializer,
+    ProductMarketplaceTargetsRequestSerializer,
     ProductParseJobResponseSerializer,
     ProductParseRequestSerializer,
     ProductParseResponseSerializer,
@@ -2404,15 +2405,22 @@ class ProductCrossCodesView(APIView):
 
 @extend_schema(tags=['Products'])
 class ProductPublishView(APIView):
-    """POST /api/v1/products/{pk}/publish/ — создать/обновить листинги для всех аккаунтов тенанта."""
+    """POST /api/v1/products/{pk}/publish/ — подготовить листинги для выбранных аккаунтов."""
 
     api_key_enabled = True
     api_key_scopes = {'POST': {'catalog:write', 'listings:write'}}
 
-    @extend_schema(request=None, responses=ProductPublishResponseSerializer)
+    @extend_schema(
+        request=ProductMarketplaceTargetsRequestSerializer,
+        responses=ProductPublishResponseSerializer,
+    )
     def post(self, request, pk):
         """Делегирует публикацию ListingService.publish_product."""
-        from apps.marketplaces.services import ListingService, NoActiveAccounts
+        from apps.marketplaces.provider_registry import ProviderCapabilityUnavailable
+        from apps.marketplaces.services import InvalidMarketplaceTargets, ListingService
+
+        serializer = ProductMarketplaceTargetsRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
         try:
             product = Product.objects.get(pk=pk, tenant=request.tenant)
@@ -2423,11 +2431,19 @@ class ProductPublishView(APIView):
             )
 
         try:
-            listing_ids = ListingService.publish_product(product, request.tenant)
-        except NoActiveAccounts:
+            listing_ids = ListingService.publish_product(
+                product,
+                request.tenant,
+                serializer.validated_data['account_ids'],
+            )
+        except InvalidMarketplaceTargets as exc:
             return Response(
-                {'status': 'error', 'code': 'no_accounts',
-                 'message': 'Нет подключённых аккаунтов. Добавьте аккаунт в настройках.'},
+                {'status': 'error', 'code': 'invalid_account_targets', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ProviderCapabilityUnavailable as exc:
+            return Response(
+                {'status': 'error', 'code': 'provider_capability_unavailable', 'message': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -2436,15 +2452,22 @@ class ProductPublishView(APIView):
 
 @extend_schema(tags=['Products'])
 class ProductArchiveView(APIView):
-    """POST /api/v1/products/{pk}/archive/ — снять все активные листинги товара с публикации."""
+    """POST /api/v1/products/{pk}/archive/ — снять листинги выбранных аккаунтов."""
 
     api_key_enabled = True
     api_key_scopes = {'POST': {'catalog:write', 'listings:write'}}
 
-    @extend_schema(request=None, responses=ProductArchiveResponseSerializer)
+    @extend_schema(
+        request=ProductMarketplaceTargetsRequestSerializer,
+        responses=ProductArchiveResponseSerializer,
+    )
     def post(self, request, pk):
         """Делегирует архивацию ListingService.archive_product."""
-        from apps.marketplaces.services import ListingService
+        from apps.marketplaces.provider_registry import ProviderCapabilityUnavailable
+        from apps.marketplaces.services import InvalidMarketplaceTargets, ListingService
+
+        serializer = ProductMarketplaceTargetsRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
 
         try:
             product = Product.objects.get(pk=pk, tenant=request.tenant)
@@ -2454,7 +2477,22 @@ class ProductArchiveView(APIView):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        count = ListingService.archive_product(product, request.tenant)
+        try:
+            count = ListingService.archive_product(
+                product,
+                request.tenant,
+                serializer.validated_data['account_ids'],
+            )
+        except InvalidMarketplaceTargets as exc:
+            return Response(
+                {'status': 'error', 'code': 'invalid_account_targets', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except ProviderCapabilityUnavailable as exc:
+            return Response(
+                {'status': 'error', 'code': 'provider_capability_unavailable', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         if count == 0:
             return Response(
                 {'status': 'error', 'code': 'no_active_listings',

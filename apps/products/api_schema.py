@@ -339,6 +339,19 @@ class ListingIdsDataSerializer(serializers.Serializer):
     listing_ids = serializers.ListField(child=serializers.IntegerField(min_value=1))
 
 
+class ProductMarketplaceTargetsRequestSerializer(serializers.Serializer):
+    account_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+        max_length=100,
+    )
+
+    def validate_account_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError('ID аккаунтов не должны повторяться.')
+        return value
+
+
 class ProductPublishResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
     data = ListingIdsDataSerializer()  # type: ignore[assignment]

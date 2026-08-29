@@ -98,6 +98,13 @@ interface Account {
   id: number;
   name: string;
   marketplace: string;
+  marketplace_label: string;
+  is_active: boolean;
+  provider_capabilities: {
+    publication: boolean;
+    archive: boolean;
+    placement_addresses: boolean;
+  };
 }
 
 interface PlacementAddress {
@@ -222,7 +229,11 @@ export default function ListingsPage() {
   }, [accountId, marketplace, page, statusFilter]);
 
   useEffect(() => {
-    accountApi.list().then((res) => setAccounts(res.data.data ?? res.data)).catch(() => setAccounts([]));
+    accountApi.list()
+      .then((res) => setAccounts(
+        (res.data.data ?? res.data).filter((account: Account) => account.is_active),
+      ))
+      .catch(() => setAccounts([]));
     accountApi.listPlacementAddresses()
       .then((res) => setPlacementAddresses(res.data.data ?? res.data))
       .catch(() => setPlacementAddresses([]));
@@ -267,11 +278,22 @@ export default function ListingsPage() {
   ]);
 
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
-    !bulkAccountId || address.account === Number(bulkAccountId)
+    bulkAccountId && address.account === Number(bulkAccountId)
+  ));
+  const selectedBulkAccount = accounts.find((account) => account.id === Number(bulkAccountId));
+  const bulkCapabilitySupported = Boolean(selectedBulkAccount && (
+    bulkAction === 'publish'
+      ? selectedBulkAccount.provider_capabilities.publication
+      : bulkAction === 'update_placement'
+        ? selectedBulkAccount.provider_capabilities.placement_addresses
+        : selectedBulkAccount.provider_capabilities.archive
   ));
   const validBulkPlacementAddressId = visiblePlacementAddresses.some(
     (address) => address.id === Number(bulkPlacementAddressId),
   ) ? bulkPlacementAddressId : '';
+  const hasPlacementChange = Boolean(
+    validBulkPlacementAddressId || bulkManagerName || bulkContactPhone,
+  );
   // Контакты из сохранённых адресов (Настройки → Маркетплейсы) для выпадающих списков.
   const bulkManagerOptions = Array.from(new Set(
     visiblePlacementAddresses.map((a) => a.manager_name).filter(Boolean),
@@ -281,24 +303,27 @@ export default function ListingsPage() {
   ));
 
   async function applyBulkAction() {
-    if (!bulkAccountId && !bulkStatus) return;
+    if (!selectedBulkAccount || !bulkCapabilitySupported) return;
     const actionLabel: Record<string, string> = {
       publish: 'опубликовать',
       archive: 'снять с публикации',
       delete: 'удалить',
       update_placement: 'обновить локацию',
     };
-    if (
-      bulkAction !== 'update_placement'
-      && !window.confirm(`Массово ${actionLabel[bulkAction]} объявления по выбранным фильтрам?`)
-    ) {
+    const statusScope = bulkStatus
+      ? ` со статусом «${STATUS_FILTERS.find((item) => item.value === bulkStatus)?.label ?? bulkStatus}»`
+      : ' с любым статусом';
+    if (!window.confirm(
+      `Массово ${actionLabel[bulkAction]} объявления только в аккаунте `
+      + `${selectedBulkAccount.marketplace_label} · ${selectedBulkAccount.name}${statusScope}?`,
+    )) {
       return;
     }
     setBulkSaving(true);
     try {
       const payload: Record<string, unknown> = {
         action: bulkAction,
-        account_id: bulkAccountId ? Number(bulkAccountId) : undefined,
+        account_id: selectedBulkAccount.id,
         status: bulkStatus || undefined,
       };
       if (bulkAction === 'update_placement') {
@@ -413,7 +438,13 @@ export default function ListingsPage() {
         <div className="grid gap-2 lg:grid-cols-3">
           <select
             value={bulkAction}
-            onChange={(e) => setBulkAction(e.target.value)}
+            onChange={(e) => {
+              setBulkAction(e.target.value);
+              setBulkAccountId('');
+              setBulkPlacementAddressId('');
+              setBulkManagerName('');
+              setBulkContactPhone('');
+            }}
             className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm"
           >
             <option value="update_placement">Назначить локацию</option>
@@ -426,13 +457,25 @@ export default function ListingsPage() {
             onChange={(e) => {
               setBulkAccountId(e.target.value);
               setBulkPlacementAddressId('');
+              setBulkManagerName('');
+              setBulkContactPhone('');
             }}
             className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm"
           >
-            <option value="">Любой аккаунт</option>
-            {accounts.map((account) => (
-              <option key={account.id} value={account.id}>{account.name}</option>
-            ))}
+            <option value="">Выберите конкретный аккаунт</option>
+            {accounts.map((account) => {
+              const supported = bulkAction === 'publish'
+                ? account.provider_capabilities.publication
+                : bulkAction === 'update_placement'
+                  ? account.provider_capabilities.placement_addresses
+                  : account.provider_capabilities.archive;
+              return (
+                <option key={account.id} value={account.id} disabled={!supported}>
+                  {account.marketplace_label} · {account.name}
+                  {!supported ? ' — операция недоступна' : ''}
+                </option>
+              );
+            })}
           </select>
           <select
             value={bulkStatus}
@@ -488,9 +531,22 @@ export default function ListingsPage() {
               </select>
             </>
           )}
+          {selectedBulkAccount && (
+            <p className="text-xs text-muted-foreground lg:col-span-3">
+              Точная область: {selectedBulkAccount.marketplace_label} · {selectedBulkAccount.name}
+              {bulkStatus
+                ? ` · ${STATUS_FILTERS.find((item) => item.value === bulkStatus)?.label ?? bulkStatus}`
+                : ' · любой статус'}
+            </p>
+          )}
           <Button
             onClick={applyBulkAction}
-            disabled={bulkSaving || (!bulkAccountId && !bulkStatus)}
+            disabled={
+              bulkSaving
+              || !bulkAccountId
+              || !bulkCapabilitySupported
+              || (bulkAction === 'update_placement' && !hasPlacementChange)
+            }
           >
             {bulkSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
             Выполнить

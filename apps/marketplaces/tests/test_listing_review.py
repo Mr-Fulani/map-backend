@@ -642,6 +642,7 @@ class TestListingDetailAPI:
                 '/api/v1/listings/bulk-actions/',
                 {
                     'action': 'publish',
+                    'account_id': listing.account_id,
                     'listing_ids': [listing.pk, other_listing.pk],
                 },
                 content_type='application/json',
@@ -650,10 +651,9 @@ class TestListingDetailAPI:
 
         listing.refresh_from_db()
         other_listing.refresh_from_db()
-        assert resp.status_code == 200
-        assert resp.json()['data']['success'] == 1
-        assert resp.json()['data']['total'] == 1
-        assert listing.status == Listing.STATUS_QUEUED
+        assert resp.status_code == 400
+        assert resp.json()['code'] == 'invalid_account_scope'
+        assert listing.status == Listing.STATUS_DRAFT
         assert other_listing.status == Listing.STATUS_DRAFT
 
 

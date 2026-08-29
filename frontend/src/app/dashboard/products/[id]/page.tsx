@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback, type RefObject } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { productApi, imageApi } from '@/lib/api';
+import { accountApi, productApi, imageApi } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -65,6 +65,18 @@ interface PublicationFeedback {
   state: 'running' | 'success' | 'error';
   message: string;
   listingCount?: number;
+}
+
+interface MarketplaceAccountTarget {
+  id: number;
+  name: string;
+  marketplace: string;
+  marketplace_label: string;
+  is_active: boolean;
+  provider_capabilities: {
+    publication: boolean;
+    archive: boolean;
+  };
 }
 
 interface ProductDetail {
@@ -448,6 +460,9 @@ export default function ProductDetailPage() {
   const [showAllFitments, setShowAllFitments] = useState(false);
   const [showAllEnrichmentFacts, setShowAllEnrichmentFacts] = useState(false);
   const [pricingListingId, setPricingListingId] = useState<number | null>(null);
+  const [marketplaceAccounts, setMarketplaceAccounts] = useState<MarketplaceAccountTarget[]>([]);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<number[]>([]);
+  const [accountsLoading, setAccountsLoading] = useState(true);
 
   const [images, setImages] = useState<ProductImage[]>([]);
   const [imagesLoading, setImagesLoading] = useState(true);
@@ -504,6 +519,23 @@ export default function ProductDetailPage() {
     ));
     setCategoryAssignValue(nextProduct.catalog_category?.id ? String(nextProduct.catalog_category.id) : '');
   }, [id]);
+
+  useEffect(() => {
+    let active = true;
+    accountApi.list()
+      .then((response) => {
+        if (!active) return;
+        const data = (response.data.data ?? response.data) as MarketplaceAccountTarget[];
+        setMarketplaceAccounts(data.filter((account) => account.is_active));
+      })
+      .catch(() => {
+        if (active) setMarketplaceAccounts([]);
+      })
+      .finally(() => {
+        if (active) setAccountsLoading(false);
+      });
+    return () => { active = false; };
+  }, []);
 
   const loadWebResearch = useCallback(async () => {
     const res = await productApi.latestWebResearch(Number(id));
@@ -844,6 +876,29 @@ export default function ProductDetailPage() {
   }
 
   async function runAction(action: 'publish' | 'archive') {
+    const selectedAccounts = marketplaceAccounts.filter((account) => (
+      selectedAccountIds.includes(account.id)
+    ));
+    if (selectedAccounts.length === 0) {
+      toast.warning('Выберите хотя бы один целевой аккаунт маркетплейса.');
+      return;
+    }
+    const unsupported = selectedAccounts.some((account) => (
+      action === 'publish'
+        ? !account.provider_capabilities.publication
+        : !account.provider_capabilities.archive
+    ));
+    if (unsupported) {
+      toast.warning('Выбранный маркетплейс пока не поддерживает эту операцию.');
+      return;
+    }
+    const exactScope = selectedAccounts
+      .map((account) => `${account.marketplace_label} · ${account.name}`)
+      .join(', ');
+    if (action === 'archive' && !window.confirm(
+      `Снять активные объявления товара только в аккаунтах: ${exactScope}?`,
+    )) return;
+
     setActionLoading(action);
     if (action === 'publish') {
       setPublicationFeedback({
@@ -854,7 +909,7 @@ export default function ProductDetailPage() {
     }
     try {
       if (action === 'publish') {
-        const response = await productApi.publish(Number(id));
+        const response = await productApi.publish(Number(id), selectedAccountIds);
         const listingIds = (response.data.data?.listing_ids ?? []) as number[];
         setPublicationFeedback({
           state: 'success',
@@ -864,7 +919,7 @@ export default function ProductDetailPage() {
         toast.success('Листинги подготовлены');
         return;
       }
-      await productApi.archive(Number(id));
+      await productApi.archive(Number(id), selectedAccountIds);
       toast.success('Объявления сняты с публикации и уходят в архив.');
     } catch (err: unknown) {
       const code = (err as { response?: { data?: { code?: string; message?: string } } })?.response?.data?.code;
@@ -874,8 +929,10 @@ export default function ProductDetailPage() {
         userMessage = 'AI-кредиты исчерпаны. Обновите тариф в разделе «Биллинг».';
       } else if (code === 'no_active_listings') {
         userMessage = message ?? 'Нет активных объявлений для архивации.';
-      } else if (code === 'no_accounts') {
-        userMessage = 'Нет подключённых аккаунтов. Добавьте аккаунт в настройках.';
+      } else if (code === 'invalid_account_targets') {
+        userMessage = message ?? 'Проверьте выбранные аккаунты маркетплейса.';
+      } else if (code === 'provider_capability_unavailable') {
+        userMessage = message ?? 'Операция пока недоступна для выбранного маркетплейса.';
       }
       if (action === 'publish') {
         setPublicationFeedback({ state: 'error', message: userMessage });
@@ -1026,6 +1083,16 @@ export default function ProductDetailPage() {
   // с товаром. Конкретные операции ниже отдельно учитывают поиск изображений,
   // обогащение и генерацию описания.
   const busy = actionLoading !== null;
+  const selectedMarketplaceAccounts = marketplaceAccounts.filter((account) => (
+    selectedAccountIds.includes(account.id)
+  ));
+  const hasSelectedAccounts = selectedMarketplaceAccounts.length > 0;
+  const canPublishTargets = hasSelectedAccounts && selectedMarketplaceAccounts.every(
+    (account) => account.provider_capabilities.publication,
+  );
+  const canArchiveTargets = hasSelectedAccounts && selectedMarketplaceAccounts.every(
+    (account) => account.provider_capabilities.archive,
+  );
   const assignedCatalogCategoryValue = product.catalog_category?.id
     ? String(product.catalog_category.id)
     : '';
@@ -1299,7 +1366,7 @@ export default function ProductDetailPage() {
                         size="sm"
                         variant="outline"
                         onClick={() => runAction('publish')}
-                        disabled={actionLoading !== null}
+                        disabled={actionLoading !== null || !canPublishTargets}
                       >
                         Создать объявление
                       </Button>
@@ -1930,18 +1997,71 @@ export default function ProductDetailPage() {
             <CardHeader>
               <CardTitle className="text-sm font-medium">Действия</CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
+            <CardContent className="space-y-3">
+              <div className="rounded-md border p-3">
+                <p className="text-sm font-medium">Целевые аккаунты</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Действие затронет только отмеченные кабинеты.
+                </p>
+                <div className="mt-3 space-y-2">
+                  {accountsLoading && (
+                    <p className="text-xs text-muted-foreground">Загружаем аккаунты...</p>
+                  )}
+                  {!accountsLoading && marketplaceAccounts.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      Нет активных аккаунтов.{' '}
+                      <Link className="text-primary hover:underline" href="/dashboard/settings">
+                        Открыть настройки
+                      </Link>
+                    </p>
+                  )}
+                  {marketplaceAccounts.map((account) => {
+                    const available = account.provider_capabilities.publication
+                      || account.provider_capabilities.archive;
+                    return (
+                      <label
+                        key={account.id}
+                        className={`flex items-start gap-2 rounded border p-2 text-xs ${
+                          available ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          className="mt-0.5 h-4 w-4 rounded border"
+                          checked={selectedAccountIds.includes(account.id)}
+                          disabled={!available || busy}
+                          onChange={(event) => setSelectedAccountIds((current) => (
+                            event.target.checked
+                              ? [...current, account.id]
+                              : current.filter((accountId) => accountId !== account.id)
+                          ))}
+                        />
+                        <span>
+                          <span className="font-medium">
+                            {account.marketplace_label} · {account.name}
+                          </span>
+                          {!available && (
+                            <span className="mt-0.5 block text-muted-foreground">
+                              Операции подключения ещё не включены
+                            </span>
+                          )}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
               <Button
                 className="w-full"
                 onClick={() => runAction('publish')}
-                disabled={busy || searching || enriching || generatingDescription}
+                disabled={busy || searching || enriching || generatingDescription || !canPublishTargets}
               >
                 {actionLoading === 'publish' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <Upload className="mr-2 h-4 w-4" />
                 )}
-                Опубликовать
+                Подготовить листинги
               </Button>
               <Button
                 className="w-full"
@@ -1997,7 +2117,7 @@ export default function ProductDetailPage() {
                 className="w-full"
                 variant="outline"
                 onClick={() => runAction('archive')}
-                disabled={busy || searching || enriching || generatingDescription}
+                disabled={busy || searching || enriching || generatingDescription || !canArchiveTargets}
               >
                 {actionLoading === 'archive' ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />

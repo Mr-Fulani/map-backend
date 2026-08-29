@@ -1106,8 +1106,12 @@ export const productApi = {
     api.patch(`/products/${id}/`, { avito_oem: avitoOem }),
   brandOptions: (productId: number, q = '') =>
     api.get('/products/brand-options/', { params: { product_id: productId, q } }),
-  publish: (id: number) => api.post(`/products/${id}/publish/`),
-  archive: (id: number) => api.post(`/products/${id}/archive/`),
+  publish: (id: number, accountIds: number[]) => (
+    api.post(`/products/${id}/publish/`, { account_ids: accountIds })
+  ),
+  archive: (id: number, accountIds: number[]) => (
+    api.post(`/products/${id}/archive/`, { account_ids: accountIds })
+  ),
   regenerate: (id: number, idempotencyKey?: string) =>
     postIngressAttempt(
       `product-regenerate:${id}`,
