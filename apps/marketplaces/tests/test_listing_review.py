@@ -748,6 +748,8 @@ class TestListingDetailSerializer:
         tenant = make_tenant('detail-current-oem-error-co')
         listing = make_listing(tenant, status=Listing.STATUS_REJECTED)
         listing.title = ''
+        listing.product.name = ''
+        listing.product.save(update_fields=['name'])
         listing.rejection_reason = 'Заполните заголовок'
         listing.save(update_fields=['title', 'rejection_reason'])
 
