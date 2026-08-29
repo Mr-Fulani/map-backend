@@ -9,6 +9,10 @@ from django.db import IntegrityError, transaction
 from django.db.models import Q
 from django.utils import timezone
 
+from apps.marketplaces.account_errors import (
+    AccountAlreadyExists,
+    InvalidMarketplaceCredentials,
+)
 from apps.marketplaces.listing_lifecycle import (
     clear_remote_observation,
     release_status_check,
@@ -988,18 +992,6 @@ def _validate_exact_listing_ids(tenant, account: MarketplaceAccount, listing_ids
         raise InvalidMarketplaceTargets(
             'Все выбранные листинги должны принадлежать указанному аккаунту.',
         )
-
-
-class AccountAlreadyExists(Exception):
-    """Аккаунт с таким external_id уже существует у тенанта."""
-
-    def __init__(self, message: str, *, account_id: int | None = None):
-        super().__init__(message)
-        self.account_id = account_id
-
-
-class InvalidMarketplaceCredentials(Exception):
-    """Credentials маркетплейса не прошли проверку через API."""
 
 
 class MarketplaceAccountFeedConflict(Exception):
@@ -2051,6 +2043,13 @@ class MarketplaceAccountService:
         """
         from apps.marketplaces.models import MarketplaceAccount
 
+        if data.get('marketplace') == MarketplaceAccount.MARKETPLACE_OZON:
+            from apps.marketplaces.ozon_account_connection import (
+                OzonAccountConnectionService,
+            )
+
+            return OzonAccountConnectionService.create(tenant, data)
+
         if (
             data.get('marketplace') == MarketplaceAccount.MARKETPLACE_AVITO
             and getattr(
@@ -2181,6 +2180,16 @@ class MarketplaceAccountService:
     @staticmethod
     def update_credentials(account, data: dict):
         """Полностью обновляет аккаунт: имя, marketplace, external_id и credentials."""
+        if data['marketplace'] != account.marketplace:
+            raise InvalidMarketplaceCredentials(
+                'Маркетплейс аккаунта нельзя изменить. Создайте отдельное подключение.',
+            )
+        if account.marketplace == MarketplaceAccount.MARKETPLACE_OZON:
+            from apps.marketplaces.ozon_account_connection import (
+                OzonAccountConnectionService,
+            )
+
+            return OzonAccountConnectionService.update_credentials(account, data)
         from apps.datasources.encryption import encrypt
         credentials_enc = encrypt({
             'client_id': data['client_id'],
