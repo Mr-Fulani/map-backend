@@ -13,6 +13,7 @@
   },
   "include": [
     "src/lib/api.ts",
+    "src/lib/billing-plan-presentation.ts",
     "src/lib/billing-page-loader.ts",
     "src/lib/browser-session-lock.ts",
     "src/lib/dashboard-summary.ts",
