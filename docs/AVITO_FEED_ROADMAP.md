@@ -38,7 +38,7 @@ PR `#256` завершил fleet-default release на production SHA `0762ab5`: 
 account получает stable endpoint и durable/private delivery автоматически.
 Operational hardening PR `#262`–`#270` исправил реальные узкие места
 onboarding, generation/retry, provider outcomes и tenant-facing preflight.
-Текущий production SHA — `65bdf213c540de15f69f105a2ae3fc4813d59912`.
+Текущий production SHA — `1c0030532f7fa4bd5357d48b39a5e938261931b5`.
 
 Текущий gate — observation без изменения кода P7:
 
