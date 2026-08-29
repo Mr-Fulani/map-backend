@@ -1102,6 +1102,8 @@ export const productApi = {
   list: (params?: Record<string, unknown>) => api.get('/products/', { params }),
   get: (id: number) => api.get(`/products/${id}/`),
   updateBrand: (id: number, brand: string) => api.patch(`/products/${id}/`, { brand }),
+  updateAvitoOem: (id: number, avitoOem: string) =>
+    api.patch(`/products/${id}/`, { avito_oem: avitoOem }),
   brandOptions: (productId: number, q = '') =>
     api.get('/products/brand-options/', { params: { product_id: productId, q } }),
   publish: (id: number) => api.post(`/products/${id}/publish/`),

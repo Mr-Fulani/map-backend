@@ -1,5 +1,5 @@
 {
-  "root": "zapchasti_i_aksessuary",
+  "root": "zapchasti_i_aksessuary_2301126",
   "leaf_count": 192,
   "leaves": [
     {
@@ -784,7 +784,7 @@
         "GoodsType": "Экипировка",
         "ProductSubType": "Шлем"
       },
-      "http": 200
+      "http": 404
     },
     {
       "slug": "odezhda_ekipirovka",
@@ -2621,7 +2621,7 @@
         "GoodsType": "Аксессуары",
         "ProductType": "Отопительное оборудование"
       },
-      "http": 200
+      "http": 404
     },
     {
       "slug": "zapchasti_i_komplektuyushie_otopitelnoe",
@@ -2648,7 +2648,8 @@
       "fixed": {
         "Category": "Запчасти и аксессуары",
         "GoodsType": "Аксессуары",
-        "ProductType": "Отопительное оборудование"
+        "ProductType": "Отопительное оборудование",
+        "HeatingEquipmentType": "Запчасти и комплектующие"
       },
       "http": 200
     },
@@ -2815,7 +2816,7 @@
         "GoodsType": "Инструменты",
         "GoodsSubType": "Оснастка и расходные материалы"
       },
-      "http": 200
+      "http": 400
     },
     {
       "slug": "elektro__i_pnevmoinstrumenty",
@@ -2869,7 +2870,7 @@
         "GoodsType": "Инструменты",
         "GoodsSubType": "Диагностический и измерительный инструмент"
       },
-      "http": 200
+      "http": 400
     },
     {
       "slug": "zapravochnoe_i_smazochnoe_oborudovanie",
@@ -3196,7 +3197,7 @@
         "GoodsType": "Запчасти",
         "ProductType": "Для мототехники"
       },
-      "http": 200
+      "http": 400
     },
     {
       "slug": "avtosvet",
@@ -4427,7 +4428,7 @@
         "ProductType": "Для грузовиков и спецтехники",
         "SparePartType": "Подвеска и рулевое управление"
       },
-      "http": 200
+      "http": 400
     },
     {
       "slug": "detali_salona",
@@ -5407,13 +5408,15 @@
         "ProductType",
         "SparePartType",
         "TechnicSparePartType",
-        "Condition"
+        "Condition",
+        "HydraulicDesignType"
       ],
       "fixed": {
         "Category": "Запчасти и аксессуары",
         "GoodsType": "Запчасти",
         "ProductType": "Для грузовиков и спецтехники",
-        "SparePartType": "Гидравлические и пневмосистемы"
+        "SparePartType": "Гидравлические и пневмосистемы",
+        "TechnicSparePartType": "Гидромоторы и гидронасосы"
       },
       "http": 200
     },

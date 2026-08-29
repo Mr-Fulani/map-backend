@@ -648,7 +648,8 @@ def _resolve_avito_spec(category, parent_of) -> dict:
         leaf = by_slug.get(getattr(node, 'external_id', '') or '')
         if leaf:
             return {'slug': leaf.get('slug'), 'fixed': leaf.get('fixed', {}),
-                    'required': leaf.get('required', [])}
+                    'required': leaf.get('required', []),
+                    'field_rules': leaf.get('field_rules', {})}
         node = parent_of(node)
     # 3) Легаси-фолбэк для записей без external_id — по имени (с предпочтением
     # легковой ветки при коллизии имён).
@@ -658,7 +659,8 @@ def _resolve_avito_spec(category, parent_of) -> dict:
         leaf = by_name.get(node.name)
         if leaf:
             return {'slug': leaf.get('slug'), 'fixed': leaf.get('fixed', {}),
-                    'required': leaf.get('required', [])}
+                    'required': leaf.get('required', []),
+                    'field_rules': leaf.get('field_rules', {})}
         node = parent_of(node)
     return {}
 
@@ -751,7 +753,7 @@ def _brand_is_required(listing, *, spec=_MISSING) -> bool:
     """Требует ли выбранный лист Avito поле Brand."""
     if spec is _MISSING:
         spec = _avito_spec(listing)
-    return 'Brand' in (spec.get('required') or [])
+    return _field_is_required(listing, 'Brand', spec=spec)
 
 
 def _brand_lookup(brand: str) -> dict:
@@ -794,17 +796,20 @@ def _oem_values(listing) -> list[str]:
 
 def _get_oem(listing) -> str:
     """
-    Один однозначный OEM-номер, допустимый для XML Avito.
+    Первый выбранный OEM-номер, допустимый для XML Avito.
 
-    Поле необязательное. Не подставляем артикул и не генерируем фиктивный OEM:
-    у аналогов настоящего OEM может не быть. Несколько найденных номеров также
-    не склеиваем — поле Avito имеет тип ``input`` и отклоняет запятые/пробелы.
+    Не подставляем артикул и не генерируем фиктивный OEM. Несколько найденных
+    номеров не склеиваем: Avito принимает одно input-значение и отклоняет
+    запятые/пробелы. Ручной выбор хранится первым в product.oem_numbers.
     """
-    values = _oem_values(listing)
-    if len(values) != 1:
-        return ''
-    value = values[0]
-    return value if value.isascii() and value.isalnum() else ''
+    for value in _oem_values(listing):
+        if (
+            value.isascii()
+            and value.replace('-', '').isalnum()
+            and len(value) <= 50
+        ):
+            return value
+    return ''
 
 
 def _get_product_type(listing, *, mapping=_MISSING, spec=_MISSING) -> str:
@@ -822,6 +827,99 @@ def _get_product_type(listing, *, mapping=_MISSING, spec=_MISSING) -> str:
         attributes.get('product_type'),
         _avito_fixed(listing, 'ProductType', spec=spec),
     )
+
+
+def _dependency_field_values(listing, *, spec: dict) -> dict[str, Any]:
+    """Values emitted (or resolved) by MAP for Avito dependency predicates."""
+    mapping = _get_category_mapping(listing)
+    attributes = getattr(mapping, 'attributes_map', {}) if mapping else {}
+    product = listing.product
+    values: dict[str, Any] = dict(spec.get('fixed') or {})
+    values.update(attributes)
+    values.update({
+        'AdType': getattr(listing, 'ad_type', '') or 'Товар приобретен на продажу',
+        'Brand': str(getattr(product, 'brand', '') or '').strip(),
+        'Category': _get_avito_category(listing, mapping=mapping, spec=spec),
+        'Condition': _CONDITION_MAP.get(getattr(product, 'condition', ''), 'Новое'),
+        'GoodsType': _get_goods_type(listing, mapping=mapping, spec=spec),
+        'OEM': _get_oem(listing),
+        'ProductType': _get_product_type(listing, mapping=mapping, spec=spec),
+        'SparePartType': _get_spare_part_type(listing, mapping=mapping, spec=spec),
+    })
+    subtype_tag, subtype_value = _get_part_subtype(listing, spec=spec)
+    if subtype_tag:
+        values[subtype_tag] = subtype_value
+    return values
+
+
+def _dependency_pair_matches(pair: dict, values: dict[str, Any]) -> bool:
+    raw = values.get(str(pair.get('tag') or ''))
+    items = raw if isinstance(raw, (list, tuple, set)) else [raw]
+    normalized = [str(item).strip() for item in items if item is not None]
+    filled = any(normalized)
+    clause = pair.get('clause')
+    if clause == 'empty':
+        return not filled
+    if clause == 'filled':
+        return filled
+    if clause == 'value':
+        allowed = {str(value) for value in (pair.get('values') or [])}
+        return any(value in allowed for value in normalized)
+    return False
+
+
+def _dependency_matches(dependency: dict, values: dict[str, Any]) -> bool:
+    matches = [
+        _dependency_pair_matches(pair, values)
+        for pair in (dependency.get('pairs') or [])
+    ]
+    if not matches:
+        return False
+    return any(matches) if dependency.get('clause') == 'or' else all(matches)
+
+
+def _rule_is_visible(rule: dict, values: dict[str, Any]) -> bool:
+    dependencies = rule.get('dependencies') or []
+    visible = [item for item in dependencies if item.get('action') == 'visible']
+    hidden = [item for item in dependencies if item.get('action') == 'hidden']
+    if visible and not any(_dependency_matches(item, values) for item in visible):
+        return False
+    return not any(_dependency_matches(item, values) for item in hidden)
+
+
+def _required_avito_fields(listing, *, spec=_MISSING) -> list[str]:
+    """Evaluate static and conditional required fields from the Avito schema."""
+    if spec is _MISSING:
+        spec = _avito_spec(listing)
+    static = list(spec.get('required') or [])
+    rules_by_tag = spec.get('field_rules') or {}
+    if not rules_by_tag:
+        return static
+    values = _dependency_field_values(listing, spec=spec)
+    ordered = list(static)
+    for tag, rules in rules_by_tag.items():
+        is_required = False
+        for rule in rules or []:
+            if not _rule_is_visible(rule, values):
+                continue
+            required_dependencies = [
+                item for item in (rule.get('dependencies') or [])
+                if item.get('action') == 'required'
+            ]
+            if rule.get('required') or any(
+                _dependency_matches(item, values) for item in required_dependencies
+            ):
+                is_required = True
+                break
+        if is_required and tag not in ordered:
+            ordered.append(tag)
+        if not is_required and tag in ordered:
+            ordered.remove(tag)
+    return ordered
+
+
+def _field_is_required(listing, tag: str, *, spec=_MISSING) -> bool:
+    return tag in _required_avito_fields(listing, spec=spec)
 
 
 # Поля, которые builder формирует независимо от category mapping. Address имеет
@@ -842,13 +940,14 @@ def missing_required_avito_fields(listing) -> list[str]:
     размеров, масла без вязкости) Avito может отклонить объявление. Возвращает
     список тегов; пусто — если категория не сопоставлена или всё заполняется.
     """
-    required = _avito_spec(listing).get('required') or []
+    spec = _avito_spec(listing)
+    required = _required_avito_fields(listing, spec=spec)
     provided = set(_FEED_ALWAYS_OR_PROVIDER_INFERRED_TAGS)
     if _get_product_type(listing):
         provided.add('ProductType')
     if _get_spare_part_type(listing):
         provided.add('SparePartType')
-    if str(getattr(listing.product, 'brand', '') or '').strip():
+    if _get_brand(listing, spec=spec):
         provided.add('Brand')
     if _get_oem(listing):
         provided.add('OEM')
@@ -913,6 +1012,7 @@ AVITO_FIELD_LABELS = {
     'HeatingEquipmentType': 'тип отопительного оборудования',
     'HelmetType': 'тип шлема',
     'HydraulicDistributorType': 'тип гидрораспределителя',
+    'HydraulicDesignType': 'тип гидравлической конструкции',
     'HydraulicStroke': 'ход гидроцилиндра',
     'Impedance': 'сопротивление',
     'InstallationLocation': 'место установки',
@@ -923,6 +1023,7 @@ AVITO_FIELD_LABELS = {
     'Model': 'модель',
     'MountingType': 'тип крепления',
     'NumberOfSections': 'количество секций',
+    'OEM': 'номер детали OEM',
     'OEMOil': 'допуск производителя автомобиля',
     'OtherDefects': 'другие повреждения',
     'PartsHindcarriageType': 'тип детали ходовой части',
@@ -1073,24 +1174,26 @@ def _optional_unknown_brand_warning(brand: str, suggestions: list[str]) -> str:
     )
 
 
-def _optional_oem_warning(listing) -> str:
-    """Жёлтое пояснение, когда сохранённый optional OEM нельзя отправить."""
+def _oem_warning(listing) -> str:
+    """Explain exactly which single OEM MAP will send and what it omits."""
     values = _oem_values(listing)
-    if not values or _get_oem(listing):
+    selected = _get_oem(listing)
+    if not values:
         return ''
-    if len(values) > 1:
+    if selected and len(values) == 1:
+        return ''
+    if selected:
         preview = ', '.join(f'«{value}»' for value in values[:3])
         if len(values) > 3:
             preview += f' и ещё {len(values) - 3}'
         return (
-            f'В источнике несколько OEM-номеров: {preview}. Поле Avito '
-            'необязательное и принимает одно значение, поэтому MAP не добавит '
-            'OEM в XML. Если номер нужно передать, оставьте в источнике один.'
+            f'В товаре несколько OEM-номеров: {preview}. Avito принимает одно '
+            f'значение, поэтому MAP отправит «{selected}». При необходимости '
+            'выберите другой номер в этом поле; остальные останутся в товаре для поиска.'
         )
     return (
-        f'OEM-номер «{values[0]}» содержит символы кроме латинских букв и цифр. '
-        'Поле Avito необязательное, поэтому MAP не добавит его в XML. Исправьте '
-        'номер в источнике, если его нужно передать.'
+        'Ни один OEM-номер нельзя отправить в Avito: допустимо одно значение до '
+        '50 символов: латинские буквы, цифры и дефис.'
     )
 
 
@@ -1192,9 +1295,18 @@ def avito_publication_preflight(
                 _optional_unknown_brand_warning(*details),
             )
 
-    oem_warning = _optional_oem_warning(listing)
+    oem_required = _field_is_required(listing, 'OEM')
+    oem = _get_oem(listing)
+    oem_warning = _oem_warning(listing)
+    if oem_required and not oem:
+        add(
+            errors,
+            'product_oem',
+            'Для нового товара в выбранной категории Avito требуется номер детали OEM. '
+            'Укажите одно значение до 50 символов — латинские буквы, цифры или дефис.',
+        )
     if oem_warning:
-        add(warnings, 'product_oem', oem_warning)
+        add(errors if oem_required and not oem else warnings, 'product_oem', oem_warning)
 
     blocking = blocking_missing_avito_fields(listing)
     if blocking:
@@ -1207,7 +1319,7 @@ def avito_publication_preflight(
 
     other_required = [
         tag for tag in missing_required_avito_fields(listing)
-        if tag not in AVITO_SUBTYPE_LABELS and tag != 'Brand'
+        if tag not in AVITO_SUBTYPE_LABELS and tag not in {'Brand', 'OEM'}
     ]
     if other_required:
         requirements = format_avito_field_requirements(other_required)

@@ -695,8 +695,8 @@ class TestListingDetailSerializer:
 
         assert data['product_brand'] == 'Hyundai-KIA'
 
-    def test_detail_explains_ambiguous_optional_oem_at_its_field(self):
-        """Дровер показывает исходные OEM и жёлто объясняет безопасный пропуск XML-тега."""
+    def test_detail_shows_exact_selected_oem_and_multiple_value_warning(self):
+        """Drawer exposes both source OEMs and the exact single outgoing value."""
         from apps.marketplaces.serializers import ListingDetailSerializer
 
         tenant = make_tenant('detail-oem-co')
@@ -707,6 +707,7 @@ class TestListingDetailSerializer:
         data = ListingDetailSerializer(listing).data
 
         assert data['product_oem_numbers'] == ['92402D5000', '92402D4000']
+        assert data['product_avito_oem'] == '92402D5000'
         assert 'product_oem' not in data['avito_field_errors']
         assert 'product_oem' in data['avito_field_warnings_by_field']
 

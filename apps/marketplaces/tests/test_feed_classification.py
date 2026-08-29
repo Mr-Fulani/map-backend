@@ -150,7 +150,7 @@ def test_no_blocking_fields_when_subtype_selected():
     assert blocking_missing_avito_fields(listing) == []
 
 
-def test_optional_brand_is_not_a_blocker_for_avtosvet():
+def test_brand_is_conditionally_required_for_new_avtosvet():
     from apps.marketplaces.adapters.avito.feed_builder import (
         product_brand_is_missing,
     )
@@ -160,6 +160,8 @@ def test_optional_brand_is_not_a_blocker_for_avtosvet():
     )
     listing = types.SimpleNamespace(product=product)
 
+    assert product_brand_is_missing(listing) is True
+    product.condition = 'used'
     assert product_brand_is_missing(listing) is False
 
 
@@ -187,7 +189,7 @@ def test_unknown_optional_brand_is_yellow_and_does_not_block():
         avito_publication_preflight,
     )
     listing = _preflight_listing(
-        _cat('Автосвет', external_id='avtosvet'),
+        _cat('Несуществующая категория'),
         brand='НесуществующийБрендХYZ',
     )
 
@@ -212,7 +214,7 @@ def test_unknown_optional_brand_is_yellow_and_does_not_block():
     assert 'не добавит его в XML' in warnings['product_brand'][0]
 
 
-def test_ambiguous_optional_oem_is_yellow_and_does_not_block():
+def test_multiple_oems_send_one_value_and_show_yellow_explanation():
     from apps.marketplaces.adapters.avito.feed_builder import (
         avito_publication_preflight,
     )
@@ -228,7 +230,23 @@ def test_ambiguous_optional_oem_is_yellow_and_does_not_block():
     assert 'product_oem' not in errors
     assert 'product_oem' in warnings
     assert 'несколько OEM-номеров' in warnings['product_oem'][0]
-    assert 'не добавит OEM в XML' in warnings['product_oem'][0]
+    assert 'MAP отправит «92402D5000»' in warnings['product_oem'][0]
+
+
+def test_missing_oem_is_red_when_avito_condition_makes_it_required():
+    from apps.marketplaces.adapters.avito.feed_builder import (
+        avito_publication_preflight,
+    )
+    listing = _preflight_listing(_cat('Автосвет', external_id='avtosvet'))
+
+    with patch(
+        'apps.marketplaces.adapters.avito.feed_builder.get_feed_image_urls',
+        return_value=([], False),
+    ):
+        errors, _warnings = avito_publication_preflight(listing)
+
+    assert 'product_oem' in errors
+    assert 'нового товара' in errors['product_oem'][0]
 
 
 def test_one_valid_optional_oem_has_no_warning():
@@ -245,6 +263,68 @@ def test_one_valid_optional_oem_has_no_warning():
         _errors, warnings = avito_publication_preflight(listing)
 
     assert 'product_oem' not in warnings
+
+
+def test_dependency_evaluator_supports_value_empty_filled_and_visibility():
+    from apps.marketplaces.adapters.avito.feed_builder import _required_avito_fields
+
+    listing = _preflight_listing(_cat('Несуществующая категория'))
+    spec = {
+        'required': ['VisibleOnly'],
+        'fixed': {},
+        'field_rules': {
+            'OEM': [{
+                'required': False,
+                'dependencies': [{
+                    'action': 'required', 'clause': 'and',
+                    'pairs': [{'tag': 'Condition', 'clause': 'value', 'values': ['Новое']}],
+                }],
+            }],
+            'NeedsBrand': [{
+                'required': False,
+                'dependencies': [{
+                    'action': 'required', 'clause': 'and',
+                    'pairs': [{'tag': 'Brand', 'clause': 'filled', 'values': []}],
+                }],
+            }],
+            'VisibleOnly': [{
+                'required': True,
+                'dependencies': [{
+                    'action': 'visible', 'clause': 'and',
+                    'pairs': [{'tag': 'OEM', 'clause': 'empty', 'values': []}],
+                }],
+            }],
+        },
+    }
+
+    required = _required_avito_fields(listing, spec=spec)
+    assert required == ['VisibleOnly', 'OEM', 'NeedsBrand']
+    listing.product.oem_numbers = ['92402D4000']
+    assert _required_avito_fields(listing, spec=spec) == ['OEM', 'NeedsBrand']
+
+
+def test_sync_normalizes_current_avito_dependency_shape():
+    from apps.marketplaces.management.commands.sync_avito_categories import (
+        _dependency_rules,
+    )
+
+    rules = _dependency_rules({
+        'dependencies': [{
+            'action': 'required',
+            'clause': 'and',
+            'pairs': [{
+                'source_field_tag': 'Condition',
+                'clause': 'value',
+                'values': ['Новое'],
+            }],
+        }],
+    })
+
+    assert rules == [{
+        'action': 'required',
+        'clause': 'and',
+        'pairs': [{'tag': 'Condition', 'clause': 'value', 'values': ['Новое']}],
+    }]
 
 
 def test_publication_errors_are_grouped_by_editable_drawer_field():

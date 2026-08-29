@@ -6,18 +6,31 @@
 дублировать их здесь не нужно (источник истины — Avito user-docs API,
 обновляется командой sync_avito_categories).
 """
+import gzip
 import json
 from functools import lru_cache
 from pathlib import Path
 
 _SPECS_PATH = Path(__file__).resolve().parents[2] / 'data' / 'avito_field_specs.json'
+_RULES_PATH = _SPECS_PATH.with_name('avito_field_rules.json.gz')
+
+
+@lru_cache(maxsize=1)
+def _field_rules() -> dict:
+    if not _RULES_PATH.exists():
+        return {}
+    return json.loads(gzip.decompress(_RULES_PATH.read_bytes()))
 
 
 @lru_cache(maxsize=1)
 def _specs() -> dict:
     """Загружает справочник листьев Avito: {slug: {name, path, required, fixed}}."""
     data = json.loads(_SPECS_PATH.read_text(encoding='utf-8'))
-    return {leaf['slug']: leaf for leaf in data['leaves']}
+    rules = _field_rules()
+    return {
+        leaf['slug']: {**leaf, 'field_rules': rules.get(leaf['slug'], {})}
+        for leaf in data['leaves']
+    }
 
 
 @lru_cache(maxsize=1)
@@ -133,4 +146,9 @@ def avito_spec_for(category_name: str, parent_name: str = '') -> dict:
     spec = _specs().get(slug)
     if not spec:
         return {}
-    return {'slug': slug, 'fixed': spec.get('fixed', {}), 'required': spec.get('required', [])}
+    return {
+        'slug': slug,
+        'fixed': spec.get('fixed', {}),
+        'required': spec.get('required', []),
+        'field_rules': spec.get('field_rules', {}),
+    }

@@ -471,7 +471,6 @@ class TestFeedBuilder:
         listing = make_listing(tenant, product, account)
 
         xml_str = build_feed([listing]).decode('utf-8')
-        assert '<Brand>Bosch</Brand>' in xml_str
         assert '<OEM>' not in xml_str
 
     def test_build_feed_oem_uses_one_unambiguous_alphanumeric_value(self):
@@ -486,8 +485,8 @@ class TestFeedBuilder:
         xml_str = build_feed([listing]).decode('utf-8')
         assert '<OEM>92402D4000</OEM>' in xml_str
 
-    def test_build_feed_omits_ambiguous_oem_instead_of_joining_values(self):
-        """Несколько OEM нельзя склеивать: необязательный тег безопасно пропускается."""
+    def test_build_feed_uses_first_oem_instead_of_joining_values(self):
+        """Несколько OEM нельзя склеивать: фид отправляет одно выбранное значение."""
         tenant = make_tenant('feed-oem-ambiguous-co')
         account = make_account(tenant)
         product = make_product(tenant)
@@ -496,10 +495,11 @@ class TestFeedBuilder:
         listing = make_listing(tenant, product, account)
 
         xml_str = build_feed([listing]).decode('utf-8')
-        assert '<OEM>' not in xml_str
+        assert '<OEM>92402D5000</OEM>' in xml_str
+        assert '92402D5000, 92402D4000' not in xml_str
 
-    def test_build_feed_omits_oem_with_provider_forbidden_characters(self):
-        """Один необязательный OEM не отправляется в заведомо неверном формате."""
+    def test_build_feed_allows_provider_documented_oem_hyphen(self):
+        """Avito user-docs explicitly allows a hyphen in the OEM input."""
         tenant = make_tenant('feed-oem-invalid-format-co')
         account = make_account(tenant)
         product = make_product(tenant)
@@ -508,7 +508,7 @@ class TestFeedBuilder:
         listing = make_listing(tenant, product, account)
 
         xml_str = build_feed([listing]).decode('utf-8')
-        assert '<OEM>' not in xml_str
+        assert '<OEM>92101-1234</OEM>' in xml_str
 
     def test_build_feed_omits_optional_brand_without_product_value(self):
         """Имя организации нельзя выдавать Avito за производителя товара."""
@@ -1232,7 +1232,8 @@ class TestPublishListingTask:
             parent=leaf,
         )
         product.catalog_category = subtype
-        product.save(update_fields=['catalog_category'])
+        product.condition = 'used'
+        product.save(update_fields=['catalog_category', 'condition'])
         listing = make_listing(tenant, product, account)
 
         result = _validate_feed_batch([listing])

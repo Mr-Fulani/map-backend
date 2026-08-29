@@ -73,6 +73,7 @@ interface ListingDetail {
   product_name: string;
   product_brand: string;
   product_oem_numbers?: string[];
+  product_avito_oem: string;
   account_id: number;
   account_name: string;
   title: string;
@@ -231,6 +232,7 @@ function ListingDrawerContent({
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [editBrand, setEditBrand] = useState('');
+  const [editAvitoOem, setEditAvitoOem] = useState('');
   const [brandOptions, setBrandOptions] = useState<BrandOption[]>([]);
   const [brandOptionsLoading, setBrandOptionsLoading] = useState(false);
   const [brandInputFocused, setBrandInputFocused] = useState(false);
@@ -272,6 +274,7 @@ function ListingDrawerContent({
     setEditTitle(data.title);
     setEditDesc(data.description_ai);
     setEditBrand(data.product_brand || '');
+    setEditAvitoOem(data.product_avito_oem || '');
     setEditAddress(data.address_override || '');
     setEditSellerAddressId(data.seller_address_id_override || '');
     setEditManagerName(data.manager_name_override || '');
@@ -551,6 +554,39 @@ function ListingDrawerContent({
     setEditBrand(brand);
   };
 
+  const saveOemIfChanged = async () => {
+    if (!listing || editAvitoOem.trim().toUpperCase() === (listing.product_avito_oem || '')) return;
+    await productApi.updateAvitoOem(listing.product_id, editAvitoOem.trim());
+  };
+
+  const handleSaveOem = async () => {
+    if (!listing) return;
+    setActionLoading('oem');
+    try {
+      await saveOemIfChanged();
+      const refreshed = await listingApi.get(listing.id);
+      applyListingState(refreshed.data.data);
+      onActionDone();
+      toast.success('OEM для Avito сохранён и проверен');
+    } catch (err: unknown) {
+      const errorData = (err as { response?: { data?: {
+        message?: string;
+        detail?: string;
+        avito_oem?: string[];
+      } } })?.response?.data;
+      const messages = Array.isArray(errorData?.avito_oem) && errorData.avito_oem.length > 0
+        ? errorData.avito_oem
+        : [errorData?.message || errorData?.detail || 'Не удалось сохранить OEM'];
+      showPublicationFieldErrors({
+        ...publicationFieldErrors,
+        product_oem: messages,
+      });
+      toast.error(messages[0]);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleSaveBrand = async () => {
     if (!listing) return;
     setActionLoading('brand');
@@ -602,6 +638,7 @@ function ListingDrawerContent({
     try {
       // «Опубликовать» = сначала сохранить текущие правки, потом публиковать,
       // чтобы изменения цены/описания/контактов не терялись.
+      await saveOemIfChanged();
       await saveCategoryIfChanged();
       const saved = await listingApi.updateContent(listing.id, buildEditPayload());
       const savedListing: ListingDetail = saved.data.data;
@@ -734,6 +771,7 @@ function ListingDrawerContent({
     if (!listing) return;
     setActionLoading('save');
     try {
+      await saveOemIfChanged();
       if (listing.status !== 'active') await saveCategoryIfChanged();
       const payload = marketPriceApplied
         ? listing.status === 'active'
@@ -1244,16 +1282,42 @@ function ListingDrawerContent({
                 ref={(element) => { publicationFieldRefs.current.product_oem = element; }}
                 className={`space-y-1 rounded-md border border-transparent p-2 ${fieldClassName('product_oem')}`}
               >
-                <p className="text-sm text-muted-foreground">OEM-номера для Avito</p>
-                <p className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">
-                  {(listing.product_oem_numbers?.length ?? 0) > 0
-                    ? listing.product_oem_numbers!.join(', ')
-                    : 'Не указаны'}
-                </p>
+                <label className="text-sm text-muted-foreground" htmlFor="avito-oem">
+                  Номер детали OEM для Avito
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    id="avito-oem"
+                    value={editAvitoOem}
+                    onChange={(event) => setEditAvitoOem(event.target.value)}
+                    list="known-avito-oem-values"
+                    maxLength={50}
+                    pattern="[A-Za-z0-9-]*"
+                    placeholder="Например, 92402D4000"
+                    aria-invalid={fieldMessages('product_oem').length > 0}
+                    disabled={busy}
+                  />
+                  <Button type="button" variant="outline" onClick={handleSaveOem} disabled={busy}>
+                    {actionLoading === 'oem' ? 'Сохраняем…' : 'Сохранить'}
+                  </Button>
+                </div>
+                <datalist id="known-avito-oem-values">
+                  {(listing.product_oem_numbers ?? []).map((value) => (
+                    <option key={value} value={value} />
+                  ))}
+                </datalist>
                 <p className="text-xs text-muted-foreground">
-                  Берутся из товара. OEM у Avito необязателен; MAP передаёт только один
-                  номер, состоящий из латинских букв и цифр.
+                  MAP отправит ровно это значение. Для нового товара Avito может сделать
+                  OEM обязательным в зависимости от категории. Допустимы только латинские
+                  буквы, цифры и дефис, максимум 50 символов.
                 </p>
+                {(listing.product_oem_numbers?.length ?? 0) > 1 && (
+                  <p className="text-xs text-muted-foreground">
+                    Найдены также: {listing.product_oem_numbers!
+                      .filter((value) => value !== listing.product_avito_oem)
+                      .join(', ') || '—'}. Они остаются в товаре для поиска и проверки.
+                  </p>
+                )}
                 <PublicationFieldMessages
                   errors={fieldMessages('product_oem')}
                   warnings={fieldWarnings('product_oem')}

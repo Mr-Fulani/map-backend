@@ -53,3 +53,11 @@ test('backend field errors and DRF serializer errors share one drawer contract',
     { price_on_listing: ['Цена должна быть положительной'] },
   );
 });
+
+test('product OEM serializer errors highlight the OEM drawer field', () => {
+  assert.deepEqual(publicationFieldErrorsFromApi({
+    avito_oem: ['OEM содержит недопустимые символы.'],
+  }), {
+    product_oem: ['OEM содержит недопустимые символы.'],
+  });
+});

@@ -50,7 +50,7 @@ from apps.products.api_schema import (
     FitmentResponseSerializer,
     ProductArchiveResponseSerializer,
     ProductBrandOptionsResponseSerializer,
-    ProductBrandUpdateRequestSerializer,
+    ProductFeedFieldUpdateRequestSerializer,
     ProductBulkActionRequestSerializer,
     ProductBulkActionResponseSerializer,
     ProductBulkDeleteRequestSerializer,
@@ -75,7 +75,8 @@ from apps.products.api_schema import (
     UpdatedCountResponseSerializer,
 )
 from apps.products.models import (
-    Product, ProductBulkActionJob, ProductCatalogClassification, ProductEnrichmentFact,
+    Product, ProductBulkActionJob, ProductCatalogClassification, ProductCrossCode,
+    ProductEnrichmentFact,
     ProductBrand, ProductParseIntent, ProductParseJob, ReviewStatus,
     TenantCatalogCategory, TenantCategoryMapping,
     VehicleFitment,
@@ -386,20 +387,26 @@ class ProductDetailView(APIView):
         return Response({'status': 'ok', 'data': ProductDetailSerializer(product, context={'request': request}).data})
 
     @extend_schema(
-        request=ProductBrandUpdateRequestSerializer,
+        request=ProductFeedFieldUpdateRequestSerializer,
         responses=ProductDetailResponseSerializer,
     )
     def patch(self, request, pk):
-        """Точечное редактирование товара тенантом. Пока поддерживается только brand.
+        """Точечное редактирование полей товара, которые попадают в Avito XML.
 
         Бренд нужен для публикации на Avito (обязателен для новых запчастей),
         а из 1С/CSV часто приходит пустым — тенант дозаполняет его вручную.
         Ручное значение не затирается последующими импортами (см.
         ProductService.upsert_from_source).
         """
-        if 'brand' not in request.data:
+        request_serializer = ProductFeedFieldUpdateRequestSerializer(data=request.data)
+        if not request_serializer.is_valid():
             return Response(
-                {'status': 'error', 'code': 'validation_error', 'message': 'Передайте поле brand'},
+                {
+                    'status': 'error',
+                    'code': 'validation_error',
+                    'message': 'Проверьте поля товара.',
+                    **request_serializer.errors,
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
         from apps.products.feed_writers import (
@@ -408,10 +415,14 @@ class ProductDetailView(APIView):
             locked_product_feed_write,
         )
 
-        brand = str(request.data.get('brand') or '').strip()[:200]
+        has_brand = 'brand' in request_serializer.validated_data
+        has_oem = 'avito_oem' in request_serializer.validated_data
+        brand = str(request_serializer.validated_data.get('brand') or '').strip()
+        avito_oem = str(request_serializer.validated_data.get('avito_oem') or '').strip().upper()
         is_machine = getattr(request.user, 'is_api_key', False)
-        brand_ref = ProductBrandService.resolve_existing_brand(brand)
+        brand_ref = ProductBrandService.resolve_existing_brand(brand) if has_brand else None
         brand_changed = False
+        oem_changed = False
         product = None
         for _attempt in range(3):
             generations = capture_product_feed_generations((pk,))
@@ -427,39 +438,69 @@ class ProductDetailView(APIView):
                     {'status': 'error', 'code': 'not_found', 'message': 'Товар не найден'},
                     status=status.HTTP_404_NOT_FOUND,
                 )
-            brand_changed = current_row.brand != brand
+            brand_changed = has_brand and current_row.brand != brand
+            current_oem = ProductCrossCode.objects.filter(
+                tenant=request.tenant,
+                product_id=pk,
+                source_id='avito_manual',
+                code_type=ProductCrossCode.CodeType.OEM,
+            ).values_list('code', flat=True).first() or ''
+            oem_changed = has_oem and current_oem != avito_oem
             try:
                 with locked_product_feed_write(
                     (generation,),
-                    bump_product_ids=(pk,) if brand_changed else (),
+                    bump_product_ids=(pk,) if brand_changed or oem_changed else (),
                 ) as locked:
                     product = locked[pk]
-                    product.brand = brand
-                    product.brand_ref = brand_ref
-                    if not brand:
-                        product.brand_resolution_status = Product.BrandResolutionStatus.UNKNOWN
-                        product.brand_confidence = 0.0
-                        product.brand_source_id = ''
-                        product.brand_needs_review = False
-                    elif product.brand_ref is not None:
-                        product.brand_resolution_status = Product.BrandResolutionStatus.CATALOG
-                        product.brand_confidence = product.brand_ref.confidence
-                        product.brand_source_id = 'catalog'
-                        product.brand_needs_review = product.brand_ref.needs_review
-                    elif is_machine:
-                        product.brand_resolution_status = Product.BrandResolutionStatus.SOURCE
-                        product.brand_confidence = 0.5
-                        product.brand_source_id = 'api_key'
-                        product.brand_needs_review = True
-                    else:
-                        product.brand_resolution_status = Product.BrandResolutionStatus.MANUAL
-                        product.brand_confidence = 1.0
-                        product.brand_source_id = 'manual'
-                        product.brand_needs_review = False
-                    product.save(update_fields=[
-                        'brand', 'brand_ref', 'brand_resolution_status', 'brand_confidence',
-                        'brand_source_id', 'brand_needs_review', 'updated_at',
-                    ])
+                    update_fields = []
+                    if has_brand:
+                        product.brand = brand
+                        product.brand_ref = brand_ref
+                        if not brand:
+                            product.brand_resolution_status = Product.BrandResolutionStatus.UNKNOWN
+                            product.brand_confidence = 0.0
+                            product.brand_source_id = ''
+                            product.brand_needs_review = False
+                        elif product.brand_ref is not None:
+                            product.brand_resolution_status = Product.BrandResolutionStatus.CATALOG
+                            product.brand_confidence = product.brand_ref.confidence
+                            product.brand_source_id = 'catalog'
+                            product.brand_needs_review = product.brand_ref.needs_review
+                        elif is_machine:
+                            product.brand_resolution_status = Product.BrandResolutionStatus.SOURCE
+                            product.brand_confidence = 0.5
+                            product.brand_source_id = 'api_key'
+                            product.brand_needs_review = True
+                        else:
+                            product.brand_resolution_status = Product.BrandResolutionStatus.MANUAL
+                            product.brand_confidence = 1.0
+                            product.brand_source_id = 'manual'
+                            product.brand_needs_review = False
+                        update_fields.extend([
+                            'brand', 'brand_ref', 'brand_resolution_status', 'brand_confidence',
+                            'brand_source_id', 'brand_needs_review',
+                        ])
+                    if has_oem:
+                        ProductCrossCode.objects.filter(
+                            tenant=request.tenant,
+                            product=product,
+                            source_id='avito_manual',
+                            code_type=ProductCrossCode.CodeType.OEM,
+                        ).delete()
+                        if avito_oem:
+                            ProductCrossCode.objects.create(
+                                tenant=request.tenant,
+                                product=product,
+                                source_id='avito_manual',
+                                manufacturer='',
+                                code=avito_oem,
+                                normalized_code=normalize_part_code(avito_oem),
+                                code_type=ProductCrossCode.CodeType.OEM,
+                            )
+                        ProductEnrichmentService.refresh_product_denormalized_enrichment(product)
+                        update_fields.extend(['oem_numbers', 'cross_numbers', 'applicability'])
+                    if update_fields:
+                        product.save(update_fields=[*update_fields, 'updated_at'])
                 break
             except StaleProductFeedWrite:
                 product = None
@@ -473,9 +514,8 @@ class ProductDetailView(APIView):
                 },
                 status=status.HTTP_409_CONFLICT,
             )
-        # Для активных листингов Brand — часть XML-фида, поэтому ручную правку
-        # нужно распространить так же, как контентное изменение из импорта.
-        if brand_changed:
+        # Ручные Brand/OEM меняют XML и должны обновить активные листинги.
+        if brand_changed or oem_changed:
             transaction.on_commit(lambda: sync_product_listings_task.delay(product.pk, 'content'))
         return Response({'status': 'ok', 'data': ProductDetailSerializer(product, context={'request': request}).data})
 

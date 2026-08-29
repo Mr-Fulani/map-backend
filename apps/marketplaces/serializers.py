@@ -344,6 +344,7 @@ class ListingDetailSerializer(ListingSerializer):
         child=serializers.CharField(),
         read_only=True,
     )
+    product_avito_oem = serializers.SerializerMethodField()
     avito_field_warnings = serializers.SerializerMethodField()
     avito_field_errors = serializers.SerializerMethodField()
     avito_field_warnings_by_field = serializers.SerializerMethodField()
@@ -354,11 +355,17 @@ class ListingDetailSerializer(ListingSerializer):
         fields = ListingSerializer.Meta.fields + [
             'description_ai', 'ai_confidence', 'ai_confidence_display', 'images',
             'catalog_category', 'margin_pct', 'base_price', 'product_oem_numbers',
+            'product_avito_oem',
             'avito_field_warnings',
             'avito_field_errors', 'avito_field_warnings_by_field',
             'avito_brand_valid', 'avito_brand_catalog_synced_at',
         ]
         read_only_fields = fields
+
+    def get_product_avito_oem(self, obj) -> str:
+        """Exact single OEM value the current feed builder will emit."""
+        from apps.marketplaces.adapters.avito.feed_builder import _get_oem
+        return _get_oem(obj)
 
     @extend_schema_field(serializers.ListField(
         child=serializers.CharField(), read_only=True,

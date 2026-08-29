@@ -45,7 +45,8 @@ export function publicationFieldErrorsFromApi(payload: unknown): PublicationFiel
     : response;
   const errors: PublicationFieldErrors = {};
   for (const field of PUBLICATION_FIELD_ORDER) {
-    const raw = source[field];
+    const apiField = field === 'product_oem' ? 'avito_oem' : field;
+    const raw = source[field] ?? source[apiField];
     if (typeof raw === 'string' && raw.trim()) errors[field] = [raw];
     if (Array.isArray(raw)) {
       const messages = raw.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);

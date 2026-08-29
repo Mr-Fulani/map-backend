@@ -7,6 +7,7 @@ from typing import Any, NotRequired, SupportsInt, TypeAlias, TypedDict, cast
 
 from django.conf import settings
 from django.db import IntegrityError, transaction
+from django.db.models import Case, IntegerField, Value, When
 from django.utils.timezone import now
 
 from apps.core.idempotency import raise_on_fingerprint_conflict
@@ -1578,10 +1579,18 @@ class ProductEnrichmentService:
     def refresh_product_denormalized_enrichment(product: Product) -> None:
         oem_numbers: list[str] = []
         cross_numbers: list[str] = []
-        for cross in product.cross_codes.order_by('source_id', 'manufacturer', 'code'):
+        cross_codes = product.cross_codes.annotate(
+            avito_priority=Case(
+                When(source_id='avito_manual', then=Value(0)),
+                default=Value(1),
+                output_field=IntegerField(),
+            ),
+        ).order_by('avito_priority', 'source_id', 'manufacturer', 'code')
+        for cross in cross_codes:
             target = oem_numbers if cross.code_type == ProductCrossCode.CodeType.OEM else cross_numbers
-            if cross.normalized_code and cross.normalized_code not in target:
-                target.append(cross.normalized_code)
+            value = cross.code if cross.source_id == 'avito_manual' else cross.normalized_code
+            if value and value not in target:
+                target.append(value)
 
         applicability = []
         seen_fitments = set()
