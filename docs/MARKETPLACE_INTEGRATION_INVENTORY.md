@@ -1,11 +1,12 @@
 # Инвентаризация контрактов маркетплейсов: Avito и Ozon
 
-Обновлено: 2026-08-29.
+Обновлено: 2026-08-30.
 
-Статус: M0 `VERIFIED`, M1a `ENABLED`, M1b `ENABLED`, O1a `DEPLOYED_OFF`.
+Статус: M0 `VERIFIED`, M1a `ENABLED`, M1b `ENABLED`,
+O1a/O1b `DEPLOYED_OFF`.
 Документ описывает развитие репозитория от commit
-`fde9564f7ed183c30d852a4024a7957a667fee42` до production release O1a
-`e5ccef76e8e93677e196f9d10c1b63f763f239bc` 2026-08-29.
+`fde9564f7ed183c30d852a4024a7957a667fee42` до production release O1b
+`3ad929ee7b5a6acabc06b8c70070c66cadf20786` 2026-08-30.
 
 Главный roadmap: [MARKETPLACE_EXPANSION_ROADMAP.md](MARKETPLACE_EXPANSION_ROADMAP.md).
 Рабочее состояние Avito: [AVITO_FEED_STATUS.md](AVITO_FEED_STATUS.md).
@@ -338,13 +339,18 @@ polling и реального API I/O. Ozon-specific логика находит
 `adapters/ozon/client.py` и `ozon_account_connection.py`; Avito feed runtime,
 P7 и production feed flags не менялись.
 
-#### O1b — безопасный UI/onboarding (`NEXT`)
+#### O1b — безопасный UI/onboarding (`DEPLOYED_OFF`)
 
 - отдельная Ozon account card/list, не смешанная с Autoload/Avito panels;
-- Client ID/API key принимаются write-only и не возвращаются из API/browser
-  state;
+- Client ID/API key принимаются write-only, не сохраняются в persistent browser
+  storage и не возвращаются из read API;
 - tenant видит connection state, роли, expiry и выбранный warehouse;
-- UI release сначала остаётся выключенным.
+- отдельный read-only rollout endpoint не вызывает provider и fail-closed
+  управляет доступностью форм;
+- provider-specific error allowlist не отражает неизвестный response text;
+- Ozon появляется в общем marketplace filter только при наличии Ozon account;
+- production release выключен через
+  `OZON_ACCOUNT_CONNECTION_ENABLED=false`.
 
 #### O1c — read-only AlfaPro canary (`REQUIRES APPROVAL`)
 
@@ -642,5 +648,107 @@ O1a имеет статус `DEPLOYED_OFF`: migration и backend-контрак�
 production, но `OZON_ACCOUNT_CONNECTION_ENABLED=false` по умолчанию блокирует
 Ozon connection/API I/O. Реальный API key не создавался, credentials AlfaPro не
 сохранялись, запросов к Ozon от MAP не было, кабинет продавца не изменялся.
-Следующий пакет — O1b UI/onboarding; read-only AlfaPro canary остаётся отдельным
-O1c и требует непосредственного подтверждения перед внешним действием.
+Следующий отдельный пакет O1b добавил UI/onboarding, сохранив этот dark launch.
+
+## O1b gate
+
+Локально выполнено 2026-08-30:
+
+```text
+docker compose exec django pytest -q \
+  apps/marketplaces/tests/test_ozon_account_api.py
+результат: exit 0, 10 passed in 18.35s
+
+docker compose exec django pytest -q \
+  apps/marketplaces/tests/test_ozon_account_api.py \
+  apps/marketplaces/tests/test_ozon_client.py \
+  apps/marketplaces/tests/test_provider_neutral_contract.py \
+  apps/marketplaces/tests/test_listing_review.py \
+  apps/marketplaces/tests/test_avito.py \
+  apps/marketplaces/tests/test_status_fencing.py \
+  apps/marketplaces/tests/test_feed_intent_local_writers.py \
+  apps/marketplaces/tests/test_listing_patch_api.py \
+  apps/tenants/tests/test_api_key_authorization.py \
+  tests/test_settings_resource_caps.py
+результат: exit 0, 301 passed in 71.92s
+
+docker compose exec django pytest -q \
+  apps/marketplaces/tests/test_account_api.py
+результат: exit 0, 14 passed in 19.54s
+
+docker compose exec django flake8 \
+  apps/marketplaces/views.py apps/marketplaces/account_urls.py \
+  apps/marketplaces/tests/test_ozon_account_api.py
+результат: exit 0
+
+docker compose exec django mypy
+результат: exit 0, no issues found in 706 source files
+
+docker compose exec django mypy --check-untyped-defs \
+  --exclude '(^|/)(tests?|migrations)/' apps config backup
+результат: exit 0, no issues found in 355 source files
+
+docker compose exec django python manage.py spectacular \
+  --file /tmp/openapi-schema.yml --validate --fail-on-warn
+результат: exit 0
+
+docker compose exec django python manage.py makemigrations --check --dry-run
+результат: exit 0, No changes detected
+
+cd frontend && npm run typecheck
+результат: exit 0
+
+cd frontend && npm run lint
+результат: exit 0
+
+cd frontend && npm run test:unit
+результат: exit 0, 43 passed
+
+git diff --cached --check
+результат: exit 0
+```
+
+Локальный `docker compose run --rm frontend npm run build` успешно прошёл
+compile, TypeScript и static generation `21/21`, но после завершения Next.js
+Docker Desktop вернул infrastructure exit `125`: metadata DB не смогла
+записаться при заполненном диске. Это не засчитано как локальный clean build;
+GitHub CI повторил production build в чистой среде и завершил его успешно.
+
+Scope evidence:
+
+```text
+code commit: 197d81de170526af13d67d82f9c166c927887803
+files: 11 (8 production, 2 tests, 1 test config)
+diff: 796 additions, 80 deletions
+migrations: 0
+repository limits: соблюдены
+```
+
+Production evidence:
+
+```text
+PR: #280
+release SHA: 3ad929ee7b5a6acabc06b8c70070c66cadf20786
+PR full CI run: 33275309364 — success
+backend shards: 8m7s, 8m39s, 8m15s — success
+contracts/schema/supply-chain: 3m2s — success
+production images/runtime security: 2m43s — success
+frontend checks/build: 56s — success
+combined backend coverage: 53s — success
+main exact-tree CI run: 33275765742 — success
+Deploy run: 33275780372 — success, 3m7s
+encrypted pre-migration backup: uploaded
+migrations: No migrations to apply
+services: db, Redis, broker, proxy, Django, workers, Beat, frontend, Nginx healthy
+topology: production topology is healthy and exact
+public readiness: HTTP 200 x4 (0.493s, 0.440s, 0.241s, 0.337s)
+frontend /dashboard/settings: HTTP 200 (0.418s)
+PROD_DEPLOY_ENABLED: восстановлен в false после старта exact-SHA release
+```
+
+O1b имеет статус `DEPLOYED_OFF`: отдельная Ozon-карточка и безопасный UI уже на
+production, но rollout endpoint возвращает disabled при production default
+`OZON_ACCOUNT_CONNECTION_ENABLED=false`; форма не принимает API key и MAP не
+вызывает Ozon. API key не создавался, credentials AlfaPro не сохранялись,
+кабинет продавца не изменялся. Следующий пакет — O1c read-only AlfaPro canary;
+перед созданием/использованием ключа требуется отдельное подтверждение.

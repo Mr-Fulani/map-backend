@@ -1,6 +1,6 @@
 # Roadmap разделения маркетплейсов и подключения Ozon
 
-Обновлено: 2026-08-29.
+Обновлено: 2026-08-30.
 
 ## Решение
 
@@ -81,7 +81,7 @@ SHA `0b84c9a1d209e82fb730fc0abd85c31ff9cd6178`: encrypted backup создан,
 public readiness стабильно отвечает HTTP 200. На момент релиза M1a Ozon
 account connection, API I/O и credentials оставались выключены до M1b/O1.
 
-## O1 — безопасное подключение Ozon Seller API — O1a `DEPLOYED_OFF` 2026-08-29
+## O1 — безопасное подключение Ozon Seller API — O1a/O1b `DEPLOYED_OFF`
 
 Результат: тенант может добавить Ozon-кабинет, проверить credentials и увидеть
 понятное состояние подключения.
@@ -103,10 +103,9 @@ O1 выполняется тремя последовательными част
   `OzonAccountProfile`, безопасный read-only adapter для `/v1/roles`,
   `/v1/seller/info` и `/v2/warehouse/list`, fake-provider acceptance и
   feature flag `OZON_ACCOUNT_CONNECTION_ENABLED=false`;
-- **O1b — безопасный UI/onboarding**: отдельная Ozon-карточка и список
-  аккаунтов, ввод Client ID/API key без возврата секрета в browser state,
-  роли/expiry/warehouse и понятные provider-specific ошибки; release сначала
-  остаётся выключенным;
+- **O1b — безопасный UI/onboarding (`DEPLOYED_OFF`)**: отдельная Ozon-карточка
+  и список аккаунтов, write-only ввод Client ID/API key без persistent browser
+  storage, роли/expiry/warehouse и понятные provider-specific ошибки;
 - **O1c — read-only AlfaPro canary**: отдельное подтверждение перед созданием
   или использованием ключа, account allowlist, проверка ролей/срока/продавца и
   одного FBS-склада без product mutations. Health polling активируется только
@@ -133,10 +132,37 @@ production services и topology healthy, четыре внешних readiness-�
 страница `/dashboard/settings` ответили HTTP 200. Deploy gate возвращён в
 `false`.
 
-O1a не создавал API key, не сохранял credentials AlfaPro, не обращался к
-реальному Ozon API и не изменял кабинет продавца. Ozon account connection на
-production остаётся выключенным; пользовательский UI и canary относятся к
-O1b/O1c.
+O1b добавил отдельный, видимый в Dashboard Ozon account UI: список нескольких
+кабинетов, безопасный профиль seller/company, роли, точный expiry, состояние и
+единственный FBS-склад, а также формы подключения и ротации ключа. UI получает
+rollout-state из отдельного tenant-authenticated GET, который никогда не
+обращается к provider. Неизвестный или некорректный rollout-ответ трактуется
+как `disabled`; неизвестный текст provider error не отражается пользователю.
+Секрет не хранится в React/local/session storage: после submit форма сразу
+очищается и unmount-ится, а read API credentials не возвращает.
+
+Локальный gate O1b: Ozon account/rollout — 10 тестов, широкий
+Ozon/Avito/provider-neutral regression — 301 тест, общий account API — 14
+тестов; frontend typecheck, ESLint и 43 unit-теста прошли. Baseline/strict
+`mypy`, OpenAPI validation, `makemigrations --check --dry-run` и
+`git diff --check` также успешны. Изменено 11 файлов, 796 добавлений, migrations
+нет — внутри repository limits. Локальный container build скомпилировал и
+сгенерировал 21/21 страниц, после чего переполненный Docker Desktop завершил
+ожидание контейнера infrastructure exit 125; чистый GitHub frontend build
+полностью прошёл за 56 секунд.
+
+Полный CI PR `#280` прошёл все backend shards, coverage, contracts,
+schema/supply-chain, frontend и production image/security gates. O1b выложен на
+production SHA `3ad929ee7b5a6acabc06b8c70070c66cadf20786`: encrypted backup создан,
+новых migrations нет, все services и topology healthy, четыре внешних
+readiness-запроса и `/dashboard/settings` ответили HTTP 200. Deploy gate
+возвращён в `false`.
+
+O1a/O1b не создавали API key, не сохраняли credentials AlfaPro, не обращались
+к реальному Ozon API и не изменяли кабинет продавца. На production
+`OZON_ACCOUNT_CONNECTION_ENABLED=false`, поэтому кнопка подключения и формы
+credentials fail-closed. Следующий пакет — O1c read-only AlfaPro canary с
+tenant/account allowlist и отдельным подтверждением перед внешним действием.
 
 ## O2 — каталог, категории и обязательные атрибуты
 
