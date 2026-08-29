@@ -10,10 +10,9 @@
 
 | Приоритет | Состояние | Долг | Почему не закрывается сейчас | Критерий закрытия |
 |---|---|---|---|---|
-| P1 | `RELEASE_CANDIDATE` | Ограничить время остановки `celery_beat` при deploy | PR `#261` обновлён на актуальный `main`; до production-проверки долг нельзя считать закрытым | Получить свежий полный зелёный CI, выложить одним release вместе с текущим `main` и подтвердить bounded Beat stop и production health checks |
 | P2 | `IN_PROGRESS` | Получить observation первого реального подключения второго Avito-аккаунта или нового тенанта | Реальный account `4` доказал цепочку с Avito; многoаккаунтный и межтенантный путь проверяется без внешних запросов, но второй реальный клиент пока не подключался | Первый новый аккаунт получает `verified` endpoint, выполняет private generation, terminal upload и status/statistics polling без ручного allowlist |
 | P2 | `NOT_STARTED` | Удалить аварийный legacy Avito onboarding/upload | Legacy-путь пока полезен для контролируемого rollback; преждевременное удаление повышает риск | Согласованный период наблюдения завершён, второй реальный onboarding успешен, rollback rehearsal выполнен, штатный fleet route не вызывает legacy upload |
-| P3 | `DEFERRED` | P7: retention старых XML, журналов и служебных feed-записей, GC и финальные DB-ограничения | Это необратимое удаление данных; политика хранения и восстановления не утверждена. Текущий объём не мешает работе платформы | Утверждена retention policy; отдельно выпущены backfill/dry-run, cleanup/GC и только затем жёсткие DB-ограничения; restore доказан |
+| P3 | `DEFERRED` | P7: retention старых XML, журналов и служебных feed-записей, GC и финальные DB-ограничения | Это необратимое удаление данных; политика хранения и восстановления не утверждена. Read-only snapshot 2026-08-29: 6 feed runs, 5 artifacts, 6 upload attempts, вся БД около 105 MB — текущий объём не мешает платформе | Утверждена retention policy; отдельно выпущены backfill/dry-run, cleanup/GC и только затем жёсткие DB-ограничения; restore доказан |
 | P3 | `NOT_STARTED` | Разобрать старые dependency/Dependabot PR | Большие обновления Python, Django, PostgreSQL, Redis, Node и TypeScript нельзя объединять в один релиз | Устаревшие PR закрыты, совместимые patch/minor обновления объединены, major upgrades проходят отдельные migration/runtime gates |
 
 ## Не является техническим долгом

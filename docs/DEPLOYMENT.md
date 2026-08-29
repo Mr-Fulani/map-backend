@@ -415,6 +415,19 @@ Nginx подключён одновременно к внутренней `backe
   изменений соответствующего контура; после изменения почтовых credentials или
   backend — доставкой тестового сообщения на контролируемый адрес.
 
+### Evidence отдельного timeout Celery Beat
+
+Release 2026-08-29 подтвердил новый shutdown-контракт:
+
+- PR `#261`, свежий полный CI run `33257204165` и exact production commit
+  `1c0030532f7fa4bd5357d48b39a5e938261931b5`;
+- Deploy run `33257724511` остановил Beat по `SIGTERM` примерно за 10 секунд
+  (`15:51:52.687Z`–`15:52:02.922Z`, UTC) и только затем закрыл ingress;
+- все десять production services получили `healthy`, topology признана exact,
+  внешний `https://dodugir.com/api/v1/ready/` вернул HTTP 200;
+- после завершения release repository variable `PROD_DEPLOY_ENABLED` возвращена
+  в `false`.
+
 ### Автоматическое продление TLS
 
 После первого успешного запуска Nginx установите executable deploy-hook Certbot,

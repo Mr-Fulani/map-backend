@@ -32,8 +32,11 @@ gate. Settings-gate для парного P5 `dual_write` observation merged ч�
 follow-up/recovery — через PR `#250`–`#254`, account-scoped cutover — через PR
 `#255`. PR `#256` завершил fleet-default rollout. PR `#257`–`#270` закрыли
 ускорение CI, защиту удаления marketplace account и обнаруженные при реальной
-эксплуатации ошибки публикации/статусов. Текущий production работает на exact
-commit `65bdf213c540de15f69f105a2ae3fc4813d59912`.
+эксплуатации ошибки публикации/статусов. PR `#271` добавил multi-account и
+cross-tenant acceptance, PR `#272` уточнил общий и account-scoped лимиты в
+Billing, PR `#261` ограничил остановку Beat отдельным timeout. Текущий
+production работает на exact commit
+`1c0030532f7fa4bd5357d48b39a5e938261931b5`.
 
 Этот файл — единственный источник правды о текущей стадии работ. Roadmap
 находится в [`AVITO_FEED_ROADMAP.md`](AVITO_FEED_ROADMAP.md), а обязательные
@@ -66,6 +69,11 @@ retention, cleanup и удалению старых служебных данн�
 остаётся `DEFERRED`. Актуальный остаточный долг ведётся в
 [`../TECH_DEBT.md`](../TECH_DEBT.md), а следующий продуктовый этап — в
 [`MARKETPLACE_EXPANSION_ROADMAP.md`](MARKETPLACE_EXPANSION_ROADMAP.md).
+
+Read-only production snapshot 2026-08-29 подтвердил отсутствие срочности P7:
+6 feed runs, 5 artifact-записей, 6 upload attempts, oldest record от
+2026-08-26, размер всей базы PostgreSQL `105126935` bytes. Удаление данных при
+таком объёме не даёт эксплуатационной выгоды, сопоставимой с риском.
 
 До отдельного нового решения запрещено:
 
