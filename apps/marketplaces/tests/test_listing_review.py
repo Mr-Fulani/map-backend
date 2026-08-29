@@ -5,6 +5,7 @@
 а также API-эндпоинты detail / approve / regenerate / patch.
 """
 from concurrent.futures import ThreadPoolExecutor
+import datetime
 from decimal import Decimal
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -25,7 +26,7 @@ from apps.marketplaces.services import (
     ListingPublicationValidationError,
     ListingService,
 )
-from apps.products.models import Product, ProductImage
+from apps.products.models import Product, ProductImage, TenantCatalogCategory
 from apps.tenants.services import TenantService
 from apps.tenants.tests.auth import create_operator_key
 
@@ -46,6 +47,7 @@ def make_account(tenant):
         marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
         external_id='ext-123',
         credentials_enc=encrypt({'client_id': 'cid', 'client_secret': 'csecret'}),
+        default_address='Москва, Тверская улица, 1',
         default_manager_name='Менеджер',
         default_contact_phone='+79990000000',
     )
@@ -149,7 +151,15 @@ class TestListingServiceApprove:
         listing = make_listing(tenant)
         listing.product.brand = 'НесуществующийБрендXYZ'
         listing.product.condition = 'new'
-        listing.product.save(update_fields=['brand', 'condition'])
+        listing.product.catalog_category = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Поперечные дуги и комплектующие',
+            normalized_name='поперечныедугиикомплектующие',
+            domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+            external_source='avito',
+            external_id='poperechnye_dugi_i_komplektuyushie',
+        )
+        listing.product.save(update_fields=['brand', 'condition', 'catalog_category'])
 
         with pytest.raises(ListingPublicationValidationError) as error:
             ListingService.approve(listing.pk, tenant)
@@ -685,6 +695,22 @@ class TestListingDetailSerializer:
 
         assert data['product_brand'] == 'Hyundai-KIA'
 
+    def test_detail_shows_exact_selected_oem_and_multiple_value_warning(self):
+        """Drawer exposes both source OEMs and the exact single outgoing value."""
+        from apps.marketplaces.serializers import ListingDetailSerializer
+
+        tenant = make_tenant('detail-oem-co')
+        listing = make_listing(tenant)
+        listing.product.oem_numbers = ['92402D5000', '92402D4000']
+        listing.product.save(update_fields=['oem_numbers'])
+
+        data = ListingDetailSerializer(listing).data
+
+        assert data['product_oem_numbers'] == ['92402D5000', '92402D4000']
+        assert data['product_avito_oem'] == '92402D5000'
+        assert 'product_oem' not in data['avito_field_errors']
+        assert 'product_oem' in data['avito_field_warnings_by_field']
+
     def test_detail_includes_last_avito_sync_time(self):
         """Tenant UI can explain when the provider last confirmed the status."""
         from apps.marketplaces.serializers import ListingDetailSerializer
@@ -693,11 +719,22 @@ class TestListingDetailSerializer:
         listing = make_listing(tenant)
         checked_at = timezone.now().replace(microsecond=0)
         listing.last_sync_at = checked_at
-        listing.save(update_fields=['last_sync_at'])
+        listing.remote_status = Listing.REMOTE_STATUS_ACTIVE
+        listing.remote_status_checked_at = checked_at
+        listing.next_status_check_at = checked_at + datetime.timedelta(minutes=30)
+        listing.save(update_fields=[
+            'last_sync_at', 'remote_status', 'remote_status_checked_at',
+            'next_status_check_at',
+        ])
 
         data = ListingDetailSerializer(listing).data
 
         assert parse_datetime(data['last_sync_at']) == checked_at
+        assert data['remote_status'] == Listing.REMOTE_STATUS_ACTIVE
+        assert parse_datetime(data['remote_status_checked_at']) == checked_at
+        assert parse_datetime(data['next_status_check_at']) == (
+            checked_at + datetime.timedelta(minutes=30)
+        )
 
     def test_detail_includes_images(self):
         """ListingDetailSerializer возвращает список изображений товара."""

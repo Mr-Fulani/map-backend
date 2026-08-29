@@ -113,12 +113,20 @@ def listing_delivery_presentation(
             can_check_avito_status=False,
         )
     if listing.status != Listing.STATUS_PENDING:
+        can_check_provider = (
+            bool(listing.external_id)
+            and listing.status in {
+                Listing.STATUS_ACTIVE,
+                Listing.STATUS_REJECTED,
+                Listing.STATUS_ARCHIVING,
+            }
+        )
         return ListingDeliveryPresentation(
             stage=listing.status,
             label=listing.get_status_display(),
             provider_submission_started=bool(listing.external_id),
             lifecycle_actions_blocked=False,
-            can_check_avito_status=False,
+            can_check_avito_status=can_check_provider,
         )
 
     if run is None:

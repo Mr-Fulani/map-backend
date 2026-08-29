@@ -176,6 +176,50 @@ def _local_status_due_at(listing: Listing):
     return None
 
 
+def _make_provider_status_check_due_now(listing: Listing) -> Listing:
+    """Nudge one exact live provider identity without revoking an owner lease."""
+
+    due_at = timezone.now()
+    with transaction.atomic():
+        account = (
+            MarketplaceAccount.objects.select_for_update(of=('self',))
+            .filter(
+                pk=listing.account_id,
+                tenant_id=listing.tenant_id,
+                deleted_at__isnull=True,
+                is_active=True,
+            )
+            .first()
+        )
+        if account is None:
+            raise InvalidListingStatus('Аккаунт Avito недоступен для проверки.')
+        current = (
+            Listing.objects.select_for_update(of=('self',))
+            .select_related('product', 'account', 'feed_run')
+            .filter(
+                pk=listing.pk,
+                tenant_id=listing.tenant_id,
+                account_id=account.pk,
+                status__in={
+                    Listing.STATUS_ACTIVE,
+                    Listing.STATUS_REJECTED,
+                    Listing.STATUS_ARCHIVING,
+                },
+            )
+            .exclude(external_id__isnull=True)
+            .exclude(external_id='')
+            .first()
+        )
+        if current is None:
+            raise InvalidListingStatus(
+                'У объявления нет действующего Avito ID для проверки.',
+            )
+        current.next_status_check_at = due_at
+        current.save(update_fields=['next_status_check_at'])
+        _min_nudge_account_status_due(account.pk, due_at)
+        return current
+
+
 def _min_nudge_account_status_due(account_id: int, due_at) -> int:
     if due_at is None:
         return 0
@@ -1247,19 +1291,28 @@ class ListingService:
 
     @staticmethod
     def check_avito_status(listing_id: int, tenant) -> Listing:
-        """Ставит ручную проверку статуса feed/модерации Avito для аккаунта листинга."""
+        """Ставит ручную проверку доставки или живого статуса объявления."""
         listing = ListingService.get_for_tenant(listing_id, tenant)
-        if listing.status != Listing.STATUS_PENDING:
-            raise InvalidListingStatus(
-                'Проверка Avito доступна только после начала отправки объявления.',
-            )
         delivery = listing_delivery_presentation(listing)
         if not delivery.can_check_avito_status:
             raise InvalidListingStatus(
                 f'Проверка Avito сейчас недоступна: {delivery.label.lower()}.',
             )
-        account_id = listing.account_id
-        transaction.on_commit(lambda: _enqueue_poll_feed_results(account_id))
+        if listing.status == Listing.STATUS_PENDING:
+            account_id = listing.account_id
+            transaction.on_commit(lambda: _enqueue_poll_feed_results(account_id))
+            return listing
+
+        if _status_lifecycle_dual_write_enabled():
+            listing = _make_provider_status_check_due_now(listing)
+        listing_id = listing.pk
+        is_archiving = listing.status == Listing.STATUS_ARCHIVING
+        transaction.on_commit(
+            lambda: _enqueue_provider_listing_status_check(
+                listing_id,
+                is_archiving=is_archiving,
+            ),
+        )
         return listing
 
     @staticmethod
@@ -2797,3 +2850,19 @@ def _enqueue_poll_feed_results(account_id: int) -> None:
     """Ставит ручную проверку результатов Avito feed в Celery."""
     from apps.marketplaces.tasks import poll_feed_results_task
     poll_feed_results_task.delay(account_id)
+
+
+def _enqueue_provider_listing_status_check(
+    listing_id: int,
+    *,
+    is_archiving: bool,
+) -> None:
+    """Ставит точечную проверку уже известного объявления Avito."""
+
+    from apps.marketplaces.tasks import (
+        check_moderation_task,
+        confirm_removal_task,
+    )
+
+    task = confirm_removal_task if is_archiving else check_moderation_task
+    task.delay(listing_id)

@@ -30,6 +30,7 @@ def make_account(tenant):
         name='Test Account',
         external_id='12345',
         credentials_enc=encrypt({'client_id': 'cid', 'client_secret': 'csec'}),
+        default_address='Москва, Тверская улица, 1',
         default_manager_name='Менеджер',
         default_contact_phone='+79990000000',
     )
@@ -135,15 +136,48 @@ class TestListingPatchAPI:
             'manager_name_override',
             'contact_phone_override',
         }
+        assert set(body['avito_field_warnings_by_field']) >= {
+            'catalog_category',
+            'images',
+        }
         listing.refresh_from_db()
         assert listing.title == 'Сохранённый заголовок'
+
+    def test_save_marks_missing_required_placement_as_field_error(self):
+        tenant, key = make_tenant('listing-save-placement-validation-co')
+        account = make_account(tenant)
+        account.default_address = ''
+        account.save(update_fields=['default_address'])
+        listing = make_listing(tenant, make_product(tenant), account)
+
+        c = Client()
+        resp = c.patch(
+            f'/api/v1/listings/{listing.pk}/',
+            data={'title': 'Проверка размещения'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {key}',
+        )
+
+        assert resp.status_code == 200
+        errors = resp.json()['data']['avito_field_errors']
+        assert 'placement_address' in errors
+        assert 'адрес' in errors['placement_address'][0].lower()
 
     def test_publish_validation_preserves_terminal_state_and_previous_reason(self):
         tenant, key = make_tenant('listing-publish-validation-co')
         account = make_account(tenant)
         product = make_product(tenant)
+        category = TenantCatalogCategory.objects.create(
+            tenant=tenant,
+            name='Поперечные дуги и комплектующие',
+            normalized_name='поперечныедугиикомплектующие',
+            domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+            external_source='avito',
+            external_id='poperechnye_dugi_i_komplektuyushie',
+        )
+        product.catalog_category = category
         product.brand = ''
-        product.save(update_fields=['brand'])
+        product.save(update_fields=['brand', 'catalog_category'])
         listing = make_listing(
             tenant,
             product,

@@ -193,8 +193,8 @@ def test_build_feed_keeps_category_ancestry_with_select_related_leaf():
 
 
 @pytest.mark.django_db
-def test_missing_oem_fallback_rebuild_is_byte_deterministic():
-    """A lost temp file must be reproducible for the same durable listing."""
+def test_missing_optional_oem_rebuild_is_byte_deterministic():
+    """Omitting an optional OEM remains reproducible after a worker restart."""
 
     tenant = make_tenant('feed-builder-deterministic-oem')
     account = make_account(tenant)
@@ -215,13 +215,9 @@ def test_missing_oem_fallback_rebuild_is_byte_deterministic():
     # objects or relation caches retained by the first build.
     first = feed_builder.build_feed(reload_projection())
     second = feed_builder.build_feed(reload_projection())
-    expected_suffix = hashlib.sha256(
-        f'avito-oem-fallback:v1:{listing.pk}'.encode('ascii'),
-    ).hexdigest()[:10].upper()
-
     assert first == second
     assert hashlib.sha256(first).digest() == hashlib.sha256(second).digest()
-    assert f'<OEM>NA{expected_suffix}</OEM>'.encode() in first
+    assert b'<OEM>' not in first
 
 
 @pytest.mark.django_db

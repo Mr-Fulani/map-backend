@@ -211,6 +211,7 @@ class ListingSerializer(serializers.ModelSerializer):
     account_id = serializers.IntegerField(source='account.pk', read_only=True)
     account_name = serializers.CharField(source='account.name', read_only=True)
     status_display = serializers.SerializerMethodField()
+    status_explanation = serializers.SerializerMethodField()
     delivery_stage = serializers.SerializerMethodField()
     provider_submission_started = serializers.SerializerMethodField()
     lifecycle_actions_blocked = serializers.SerializerMethodField()
@@ -222,7 +223,8 @@ class ListingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Listing
         fields = [
-            'id', 'status', 'status_display', 'delivery_stage',
+            'id', 'status', 'status_display', 'status_explanation',
+            'delivery_stage',
             'provider_submission_started', 'lifecycle_actions_blocked',
             'can_check_avito_status', 'delivery_retry_at',
             'delivery_retry_reason', 'can_publish',
@@ -236,12 +238,51 @@ class ListingSerializer(serializers.ModelSerializer):
             'bulk_address', 'bulk_seller_address_id',
             'bulk_manager_name', 'bulk_contact_phone',
             'rejection_reason', 'retry_count', 'published_at', 'last_sync_at',
+            'remote_status', 'remote_status_checked_at',
+            'next_status_check_at',
             'created_at',
         ]
         read_only_fields = fields
 
     def get_status_display(self, obj) -> str:
         return listing_delivery_presentation(obj).label
+
+    def get_status_explanation(self, obj) -> str:
+        if obj.status == Listing.STATUS_ACTIVE:
+            return (
+                'Avito подтверждает, что объявление активно. MAP продолжает '
+                'автоматически сверять его статус.'
+            )
+        if obj.status == Listing.STATUS_ARCHIVING:
+            return (
+                'MAP уже исключил объявление из актуального XML-фида. '
+                'Ожидаем, когда Avito подтвердит снятие с публикации.'
+            )
+        if obj.status == Listing.STATUS_ARCHIVED:
+            if (
+                obj.remote_status == Listing.REMOTE_STATUS_REMOVED
+                and not obj.external_id
+            ):
+                return (
+                    'Avito больше не находит это объявление. Оно исключено '
+                    'из фида; повторная публикация создаст новое объявление.'
+                )
+            if obj.remote_status in {
+                Listing.REMOTE_STATUS_REMOVED,
+                Listing.REMOTE_STATUS_ARCHIVED,
+            }:
+                return (
+                    'Avito подтвердил, что объявление больше не активно. '
+                    'Оно исключено из актуального XML-фида.'
+                )
+            return 'Объявление не входит в актуальный XML-фид Avito.'
+        if obj.status == Listing.STATUS_REJECTED and obj.external_id:
+            return (
+                'Avito отклонил или заблокировал объявление. Исправьте '
+                'подсвеченные поля и нажмите «Опубликовать». Кнопка проверки '
+                'только запрашивает текущий статус и не отправляет изменения.'
+            )
+        return ''
 
     def get_delivery_stage(self, obj) -> str:
         return listing_delivery_presentation(obj).stage
@@ -298,28 +339,46 @@ class ListingDetailSerializer(ListingSerializer):
     images = serializers.SerializerMethodField()
     catalog_category = serializers.SerializerMethodField()
     base_price = serializers.DecimalField(source='product.price', max_digits=12, decimal_places=2, read_only=True)
+    product_oem_numbers = serializers.ListField(
+        source='product.oem_numbers',
+        child=serializers.CharField(),
+        read_only=True,
+    )
+    product_avito_oem = serializers.SerializerMethodField()
     avito_field_warnings = serializers.SerializerMethodField()
     avito_field_errors = serializers.SerializerMethodField()
+    avito_field_warnings_by_field = serializers.SerializerMethodField()
     avito_brand_valid = serializers.SerializerMethodField()
     avito_brand_catalog_synced_at = serializers.SerializerMethodField()
 
     class Meta(ListingSerializer.Meta):
         fields = ListingSerializer.Meta.fields + [
             'description_ai', 'ai_confidence', 'ai_confidence_display', 'images',
-            'catalog_category', 'margin_pct', 'base_price', 'avito_field_warnings',
-            'avito_field_errors',
+            'catalog_category', 'margin_pct', 'base_price', 'product_oem_numbers',
+            'product_avito_oem',
+            'avito_field_warnings',
+            'avito_field_errors', 'avito_field_warnings_by_field',
             'avito_brand_valid', 'avito_brand_catalog_synced_at',
         ]
         read_only_fields = fields
+
+    def get_product_avito_oem(self, obj) -> str:
+        """Exact single OEM value the current feed builder will emit."""
+        from apps.marketplaces.adapters.avito.feed_builder import _get_oem
+        return _get_oem(obj)
 
     @extend_schema_field(serializers.ListField(
         child=serializers.CharField(), read_only=True,
     ))
     def get_avito_field_warnings(self, obj) -> list:
-        """Предупреждения о незаполненных обязательных полях Avito — видны тенанту до публикации."""
-        from apps.marketplaces.adapters.avito.feed_builder import avito_field_warnings
+        """Неблокирующие рекомендации Avito, видимые тенанту до публикации."""
         try:
-            return avito_field_warnings(obj)
+            _errors, warnings = self._get_avito_preflight(obj)
+            return [
+                message
+                for messages in warnings.values()
+                for message in messages
+            ]
         except Exception:
             return []
 
@@ -328,13 +387,35 @@ class ListingDetailSerializer(ListingSerializer):
     ))
     def get_avito_field_errors(self, obj) -> dict:
         """Blocking publication errors keyed by the editable drawer field."""
-        from apps.marketplaces.adapters.avito.feed_builder import (
-            avito_publication_field_errors,
-        )
         try:
-            return avito_publication_field_errors(obj)
+            errors, _warnings = self._get_avito_preflight(obj)
+            return errors
         except Exception:
             return {}
+
+    @extend_schema_field(serializers.DictField(
+        child=serializers.ListField(child=serializers.CharField()), read_only=True,
+    ))
+    def get_avito_field_warnings_by_field(self, obj) -> dict:
+        """Non-blocking publication warnings keyed by drawer field."""
+        try:
+            _errors, warnings = self._get_avito_preflight(obj)
+            return warnings
+        except Exception:
+            return {}
+
+    def _get_avito_preflight(self, obj) -> tuple[dict, dict]:
+        from apps.marketplaces.adapters.avito.feed_builder import (
+            avito_publication_preflight,
+        )
+        cache = getattr(self, '_avito_preflight_cache', None)
+        if cache is None:
+            cache = {}
+            self._avito_preflight_cache = cache
+        key = getattr(obj, 'pk', id(obj))
+        if key not in cache:
+            cache[key] = avito_publication_preflight(obj)
+        return cache[key]
 
     def get_avito_brand_valid(self, obj) -> bool:
         from apps.marketplaces.adapters.avito.feed_builder import (

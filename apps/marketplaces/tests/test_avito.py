@@ -45,6 +45,7 @@ def make_account(tenant):
         name='Test Account',
         external_id='12345',
         credentials_enc=encrypt({'client_id': 'cid', 'client_secret': 'csec'}),
+        default_address='Москва, Тверская улица, 1',
         default_manager_name='Менеджер',
         default_contact_phone='+79990000000',
     )
@@ -87,6 +88,20 @@ def make_listing(tenant, product, account, **kwargs):
         description_ai='Описание тестовое',
         **kwargs,
     )
+
+
+def assign_avito_category(product, *, name, slug):
+    category = TenantCatalogCategory.objects.create(
+        tenant=product.tenant,
+        name=name,
+        normalized_name=name.lower().replace(' ', ''),
+        domain=TenantCatalogCategory.Domain.AUTO_PARTS,
+        external_source='avito',
+        external_id=slug,
+    )
+    product.catalog_category = category
+    product.save(update_fields=['catalog_category'])
+    return category
 
 
 def assert_exact_feed_flush_scheduled(mock_flush, account):
@@ -448,32 +463,55 @@ class TestFeedBuilder:
         xml_str = build_feed([listing]).decode('utf-8')
         assert '<ProductType>' not in xml_str
 
-    def test_build_feed_includes_brand_and_oem_fallback_to_article(self):
-        """Brand берётся из товара; без OEM в <OEM> подставляется артикул."""
+    def test_build_feed_omits_optional_oem_without_real_value(self):
+        """Артикул аналога нельзя выдавать Avito за необязательный OEM."""
         tenant = make_tenant('feed-brand-oem-co')
         account = make_account(tenant)
         product = make_product(tenant)  # brand=Bosch, article=ART-001, без oem
         listing = make_listing(tenant, product, account)
 
         xml_str = build_feed([listing]).decode('utf-8')
-        assert '<Brand>Bosch</Brand>' in xml_str
-        assert '<OEM>ART-001</OEM>' in xml_str
+        assert '<OEM>' not in xml_str
 
-    def test_build_feed_oem_uses_oem_numbers_when_present(self):
-        """При наличии oem_numbers в <OEM> идут они, а не артикул."""
+    def test_build_feed_oem_uses_one_unambiguous_alphanumeric_value(self):
+        """Один допустимый настоящий OEM передаётся без fallback на артикул."""
         tenant = make_tenant('feed-oem-real-co')
         account = make_account(tenant)
         product = make_product(tenant)
-        product.oem_numbers = ['92101-1234', '92102-5678']
+        product.oem_numbers = ['92402D4000']
         product.save(update_fields=['oem_numbers'])
         listing = make_listing(tenant, product, account)
 
         xml_str = build_feed([listing]).decode('utf-8')
-        assert '92101-1234' in xml_str and '92102-5678' in xml_str
-        assert 'ART-001' not in xml_str.split('<OEM>')[1].split('</OEM>')[0]
+        assert '<OEM>92402D4000</OEM>' in xml_str
 
-    def test_build_feed_brand_falls_back_to_tenant_name(self):
-        """Без бренда у товара Brand = название организации тенанта."""
+    def test_build_feed_uses_first_oem_instead_of_joining_values(self):
+        """Несколько OEM нельзя склеивать: фид отправляет одно выбранное значение."""
+        tenant = make_tenant('feed-oem-ambiguous-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        product.oem_numbers = ['92402D5000', '92402D4000']
+        product.save(update_fields=['oem_numbers'])
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+        assert '<OEM>92402D5000</OEM>' in xml_str
+        assert '92402D5000, 92402D4000' not in xml_str
+
+    def test_build_feed_allows_provider_documented_oem_hyphen(self):
+        """Avito user-docs explicitly allows a hyphen in the OEM input."""
+        tenant = make_tenant('feed-oem-invalid-format-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        product.oem_numbers = ['92101-1234']
+        product.save(update_fields=['oem_numbers'])
+        listing = make_listing(tenant, product, account)
+
+        xml_str = build_feed([listing]).decode('utf-8')
+        assert '<OEM>92101-1234</OEM>' in xml_str
+
+    def test_build_feed_omits_optional_brand_without_product_value(self):
+        """Имя организации нельзя выдавать Avito за производителя товара."""
         tenant = make_tenant('feed-brand-fallback-co')
         account = make_account(tenant)
         product = make_product(tenant)
@@ -482,7 +520,24 @@ class TestFeedBuilder:
         listing = make_listing(tenant, product, account)
 
         xml_str = build_feed([listing]).decode('utf-8')
-        assert '<Brand>feed-brand-fallback-co</Brand>' in xml_str
+        assert '<Brand>' not in xml_str
+
+    def test_build_feed_omits_unknown_optional_brand(self):
+        """Unknown optional Brand не должен сам вызвать provider rejection."""
+        tenant = make_tenant('feed-brand-optional-unknown-co')
+        account = make_account(tenant)
+        product = make_product(tenant)
+        product.brand = 'НесуществующийБрендХYZ'
+        product.save(update_fields=['brand'])
+        listing = make_listing(tenant, product, account)
+
+        with patch(
+            'apps.marketplaces.adapters.avito.brand_catalog.lookup_brand',
+            return_value={'known': False, 'canonical': None, 'suggestions': []},
+        ):
+            xml_str = build_feed([listing]).decode('utf-8')
+
+        assert '<Brand>' not in xml_str
 
     def test_build_feed_ignores_account_id_used_as_seller_address(self):
         """external_id аккаунта в SellerAddressID игнорируется — шлём текстовый адрес."""
@@ -1011,6 +1066,11 @@ class TestPublishListingTask:
         tenant = make_tenant('brand-block-co')
         account = make_account(tenant)
         product = make_product(tenant)
+        assign_avito_category(
+            product,
+            name='Поперечные дуги и комплектующие',
+            slug='poperechnye_dugi_i_komplektuyushie',
+        )
         product.brand = ''
         product.save(update_fields=['brand'])
         listing = make_listing(tenant, product, account)
@@ -1022,7 +1082,7 @@ class TestPublishListingTask:
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_REJECTED
         assert 'производитель' in listing.rejection_reason.lower()
-        assert 'карточке товара' in listing.rejection_reason
+        assert 'бренд из справочника' in listing.rejection_reason
 
     def test_publish_allows_used_product_without_brand(self):
         """Для б/у запчастей пустой бренд не блокирует публикацию."""
@@ -1030,6 +1090,7 @@ class TestPublishListingTask:
         tenant = make_tenant('brand-used-co')
         account = make_account(tenant)
         product = make_product(tenant)
+        assign_avito_category(product, name='Автосвет', slug='avtosvet')
         product.brand = ''
         product.condition = 'used'
         product.save(update_fields=['brand', 'condition'])
@@ -1039,29 +1100,32 @@ class TestPublishListingTask:
 
         assert result == [listing]
 
-    def test_unknown_brand_goes_to_review_rest_of_batch_passes(self):
-        """Бренд не из каталога Avito → листинг на проверку с понятной причиной,
+    def test_unknown_required_brand_is_rejected_rest_of_batch_passes(self):
+        """Required Brand не из каталога → локальный отказ с понятной причиной,
         остальная партия массового постинга публикуется без задержки."""
         from apps.marketplaces.tasks import _validate_feed_batch
         tenant = make_tenant('brand-review-co')
         account = make_account(tenant)
         bad_product = make_product(tenant)
+        assign_avito_category(
+            bad_product,
+            name='Поперечные дуги и комплектующие',
+            slug='poperechnye_dugi_i_komplektuyushie',
+        )
         bad_product.brand = 'НесуществующийБрендХYZ'
         bad_product.save(update_fields=['brand'])
         good_product = make_product_with_article(tenant, 'ART-GOOD')  # brand=Bosch
         bad = make_listing(tenant, bad_product, account)
         good = make_listing(tenant, good_product, account)
 
-        with patch('apps.marketplaces.tasks._notify_error') as mock_notify, \
-             patch('apps.marketplaces.adapters.avito.brand_catalog.catalog_status',
-                   return_value={'stale': False}):
+        with patch('apps.marketplaces.tasks._notify_error') as mock_notify:
             result = _validate_feed_batch([bad, good])
 
         assert result == [good]
         bad.refresh_from_db()
-        assert bad.status == Listing.STATUS_REQUIRES_REVIEW
+        assert bad.status == Listing.STATUS_REJECTED
         assert 'Avito не распознал производителя' in bad.rejection_reason
-        assert 'Проверьте написание производителя' in bad.rejection_reason
+        assert 'Проверьте написание' in bad.rejection_reason
         mock_notify.assert_called_once()
 
     def test_acknowledged_unknown_brand_remains_blocked(self):
@@ -1070,6 +1134,11 @@ class TestPublishListingTask:
         tenant = make_tenant('brand-ack-co')
         account = make_account(tenant)
         product = make_product(tenant)
+        assign_avito_category(
+            product,
+            name='Поперечные дуги и комплектующие',
+            slug='poperechnye_dugi_i_komplektuyushie',
+        )
         product.brand = 'НесуществующийБрендХYZ'
         product.save(update_fields=['brand'])
         listing = make_listing(tenant, product, account)
@@ -1078,14 +1147,12 @@ class TestPublishListingTask:
         )
         listing.save(update_fields=['rejection_reason'])
 
-        with patch('apps.marketplaces.adapters.avito.brand_catalog.catalog_status',
-                   return_value={'stale': False}), \
-             patch('apps.marketplaces.tasks._notify_error'):
+        with patch('apps.marketplaces.tasks._notify_error'):
             result = _validate_feed_batch([listing])
 
         assert result == []
         listing.refresh_from_db()
-        assert listing.status == Listing.STATUS_REQUIRES_REVIEW
+        assert listing.status == Listing.STATUS_REJECTED
 
     def test_changed_brand_is_rechecked_after_review(self):
         """Тенант исправил бренд на другой, тоже неизвестный → новая проверка
@@ -1094,20 +1161,23 @@ class TestPublishListingTask:
         tenant = make_tenant('brand-recheck-co')
         account = make_account(tenant)
         product = make_product(tenant)
+        assign_avito_category(
+            product,
+            name='Поперечные дуги и комплектующие',
+            slug='poperechnye_dugi_i_komplektuyushie',
+        )
         product.brand = 'ДругойНеизвестныйБренд'
         product.save(update_fields=['brand'])
         listing = make_listing(tenant, product, account)
         listing.rejection_reason = 'Производителя «НесуществующийБрендХYZ» нет в каталоге Avito — старое.'
         listing.save(update_fields=['rejection_reason'])
 
-        with patch('apps.marketplaces.tasks._notify_error'), \
-             patch('apps.marketplaces.adapters.avito.brand_catalog.catalog_status',
-                   return_value={'stale': False}):
+        with patch('apps.marketplaces.tasks._notify_error'):
             result = _validate_feed_batch([listing])
 
         assert result == []
         listing.refresh_from_db()
-        assert listing.status == Listing.STATUS_REQUIRES_REVIEW
+        assert listing.status == Listing.STATUS_REJECTED
         assert 'ДругойНеизвестныйБренд' in listing.rejection_reason
 
     def test_publish_rejects_when_required_subtype_missing(self):
@@ -1136,7 +1206,7 @@ class TestPublishListingTask:
         listing.refresh_from_db()
         assert listing.status == Listing.STATUS_REJECTED
         assert 'Тип детали трансмиссии' in listing.rejection_reason
-        assert 'Категория Avito' in listing.rejection_reason
+        assert 'категорию Avito' in listing.rejection_reason
         assert 'Подкатегорию 3' not in listing.rejection_reason
 
     def test_publish_passes_when_subtype_selected(self):
@@ -1162,7 +1232,8 @@ class TestPublishListingTask:
             parent=leaf,
         )
         product.catalog_category = subtype
-        product.save(update_fields=['catalog_category'])
+        product.condition = 'used'
+        product.save(update_fields=['catalog_category', 'condition'])
         listing = make_listing(tenant, product, account)
 
         result = _validate_feed_batch([listing])

@@ -275,7 +275,8 @@ def test_private_cutover_streams_current_nonempty_feed(settings):
     run = MarketplaceFeedRun.objects.get(account=account)
     assert result == {'status': 'submitted', 'run_id': str(run.pk)}
     assert b'<Ad>' in client.body
-    assert b'CUTOVER-NONEMPTY-1' in client.body
+    assert b'Cutover nonempty product' in client.body
+    assert b'<OEM>' not in client.body
     assert endpoint.current_artifact_id == run.feed_artifact_id
 
 

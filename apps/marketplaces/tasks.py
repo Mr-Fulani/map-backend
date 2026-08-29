@@ -32,6 +32,7 @@ from apps.marketplaces.adapters.avito.adapter import (
 )
 from apps.marketplaces.adapters.avito.error_handler import (
     AvitoError,
+    NotFoundError,
     ServerError,
     backoff,
 )
@@ -94,7 +95,8 @@ logger = logging.getLogger(__name__)
 
 
 _STATUS_CHECK_CLAIM_LEASE = datetime.timedelta(minutes=5)
-_ACTIVE_STATUS_RECHECK_DELAY = datetime.timedelta(hours=24)
+_ACTIVE_STATUS_RECHECK_DELAY = datetime.timedelta(minutes=30)
+_ACTIVE_STATUS_RECHECK_JITTER_SECONDS = 10 * 60
 _TRANSIENT_STATUS_RECHECK_DELAY = datetime.timedelta(minutes=10)
 _POLL_RETRY_DELAY = datetime.timedelta(minutes=30)
 _FEED_POLL_BATCH_SIZE = 100
@@ -229,6 +231,39 @@ def _provider_finish_time(value: object) -> datetime.datetime | None:
     if timezone.is_naive(parsed):
         parsed = timezone.make_aware(parsed, timezone.get_default_timezone())
     return parsed
+
+
+def _active_status_recheck_at(
+    listing: Listing,
+    response: dict,
+    *,
+    checked_at: datetime.datetime,
+) -> datetime.datetime:
+    """Spread routine reads while checking promptly around Avito expiry.
+
+    The bounded deterministic jitter avoids sending every listing of one
+    account back to the Item API in the same second.  ``finish_time`` is
+    provider evidence, not proof that the item is already inactive, so it
+    only advances the next read; the canonical archive transition still
+    requires ``old``/``removed`` or an exact 404.
+    """
+
+    jitter_seconds = (
+        int(listing.pk) * 2_654_435_761
+    ) % (_ACTIVE_STATUS_RECHECK_JITTER_SECONDS + 1)
+    routine_due = (
+        checked_at
+        + _ACTIVE_STATUS_RECHECK_DELAY
+        + datetime.timedelta(seconds=jitter_seconds)
+    )
+    finish_time = _provider_finish_time(response.get('finish_time'))
+    if finish_time is None:
+        return routine_due
+    expiry_due = max(
+        checked_at + _TRANSIENT_STATUS_RECHECK_DELAY,
+        finish_time + datetime.timedelta(minutes=5),
+    )
+    return min(routine_due, expiry_due)
 
 
 def _listing_expiry_days_left(
@@ -695,6 +730,56 @@ def _apply_claimed_status_result(
         next_status_check_at=next_status_check_at,
         nudge_status_due=True,
     )
+
+
+def _archive_claimed_missing_provider_listing(
+    claim: _ListingStatusClaim,
+    listing: Listing,
+    *,
+    event_type: str,
+) -> dict[str, object]:
+    """Close an exact provider identity after Avito confirms it is absent.
+
+    A deleted Avito item cannot safely be reused with the same Autoload ``Id``.
+    Rotate that publication identity while atomically leaving the active feed
+    projection, so a future explicit republish starts as a genuinely new ad.
+    """
+
+    checked_at = now()
+    affected = _apply_claimed_status_result(
+        claim,
+        raw_remote_status=Listing.REMOTE_STATUS_REMOVED,
+        checked_at=checked_at,
+        next_status_check_at=None,
+        canonical_updates={
+            'status': Listing.STATUS_ARCHIVED,
+            'external_id': None,
+            'external_url': '',
+            'publish_idempotency_key': uuid.uuid4(),
+            'rejection_reason': '',
+            'last_sync_at': checked_at,
+        },
+    )
+    if affected != 1:
+        return {'status': 'stale', 'changed': False}
+    _write_log(
+        listing.tenant,
+        event_type,
+        'warn',
+        (
+            f'Avito больше не находит объявление '
+            f'«{listing.title or listing.product.name}». MAP исключил его '
+            'из фида и перенёс в архив; повторная публикация будет создана '
+            'как новое объявление.'
+        ),
+        listing=listing,
+    )
+    return {
+        'status': 'archived',
+        'changed': True,
+        'provider_status': Listing.REMOTE_STATUS_REMOVED,
+        'reason': 'not_found',
+    }
 
 
 def _release_status_claim(
@@ -1587,118 +1672,38 @@ def request_feed_flush(account) -> None:
 
 def _validate_feed_batch(listings: list) -> list:
     """
-    Отсеивает из партии объявления, которые Avito точно не примет, с понятным
-    пояснением тенанту; по «мягким» проблемам (нет OEM, незаполненные поля) только
-    предупреждает. Возвращает валидную часть партии.
+    Defensive worker-side preflight using the same field contract as the API.
+
+    API publish normally blocks red errors before enqueue. This second check
+    protects direct/replayed tasks and keeps yellow optional warnings visible
+    without stopping the rest of a batch.
     """
     from apps.marketplaces.adapters.avito.feed_builder import (
-        AVITO_SUBTYPE_LABELS, blocking_missing_avito_fields, get_contact_fields,
-        format_avito_field_requirements, has_resolved_category,
-        missing_required_avito_fields, product_brand_is_missing, product_has_oem,
-        unknown_brand_details,
+        avito_publication_preflight,
     )
     valid = []
-    catalog_refresh_attempted = False
     for item in listings:
-        manager_name, contact_phone = get_contact_fields(item)
-        if not manager_name or not contact_phone:
-            _reject_listing(
-                item,
-                'Не указано контактное лицо и/или телефон. Заполните их в профиле '
-                'аккаунта Avito (Настройки → Маркетплейсы) или в самом листинге — '
-                'Avito не публикует объявления без контактов.',
+        field_errors, field_warnings = avito_publication_preflight(item)
+        if field_errors:
+            reason = ' '.join(
+                message
+                for messages in field_errors.values()
+                for message in messages
             )
+            _reject_listing(item, reason)
             continue
-        # Производитель обязателен для новых запчастей и валидируется по каталогу
-        # Avito: пустой бренд уходил фолбэком «имя тенанта» и отклонялся с
-        # непонятным «Значение не найдено». Отсекаем сразу с понятной причиной.
-        if product_brand_is_missing(item):
-            _reject_listing(
-                item,
-                'У товара не указан производитель. Для новой запчасти это обязательное '
-                'поле: без него Avito отклонит объявление. Укажите производителя '
-                'в карточке товара, проверьте написание по справочнику Avito и '
-                'опубликуйте объявление снова.',
+
+        if field_warnings:
+            warning = ' '.join(
+                message
+                for messages in field_warnings.values()
+                for message in messages
             )
-            continue
-        # Бренд, которого нет в каталоге Avito → на проверку тенанту, остальная
-        # партия публикуется без задержки. Устаревший справочник один раз за партию
-        # обновляем вне расписания и затем проверяем бренд повторно.
-        unknown_brand = unknown_brand_details(item)
-        if unknown_brand is not None and not catalog_refresh_attempted:
-            from apps.marketplaces.adapters.avito.brand_catalog import catalog_status
-            if catalog_status()['stale']:
-                catalog_refresh_attempted = True
-                try:
-                    from apps.marketplaces.adapters.avito.brand_sync import sync_brand_catalog
-                    sync_brand_catalog(item.account)
-                except Exception as exc:
-                    _write_log(
-                        item.tenant, 'listing_publish', 'warn',
-                        f'Не удалось обновить справочник брендов Avito: {exc}. '
-                        'Используется последняя рабочая версия.',
-                        listing=item,
-                    )
-                unknown_brand = unknown_brand_details(item)
-        if unknown_brand is not None:
-            brand, suggestions = unknown_brand
-            hint = ''
-            if suggestions:
-                variants = ', '.join(f'«{suggestion}»' for suggestion in suggestions)
-                hint = (
-                    f' В справочнике есть похожее название: {variants}. Выбирайте его '
-                    'только в том случае, если это действительно тот же производитель.'
-                )
-            _send_listing_to_review(
-                item,
-                f'Avito не распознал производителя «{brand}». Для новой запчасти '
-                f'объявление с таким значением будет отклонено. Проверьте написание '
-                f'производителя в карточке товара.{hint} Если название указано верно, '
-                f'обратитесь в поддержку Avito с просьбой добавить производителя '
-                f'в справочник. Остальные объявления продолжают публиковаться.',
-            )
-            continue
-        # Под-вид детали (Подкатегория 3) обязателен для листьев Двигатель/Кузов/
-        # Трансмиссия — без него Avito отклоняет объявление. Отсекаем сразу
-        # с понятной причиной, а не постфактум из отчёта автозагрузки.
-        blocking = blocking_missing_avito_fields(item)
-        if blocking:
-            labels = ', '.join(f'«{AVITO_SUBTYPE_LABELS[tag]}»' for tag in blocking)
-            category = getattr(item.product, 'catalog_category', None)
-            category_name = getattr(category, 'name', '') or 'категории товара'
-            _reject_listing(
-                item,
-                f'Для категории «{category_name}» нужно точнее указать вид детали: '
-                f'{labels}. Без этого Avito отклонит объявление. Откройте листинг, '
-                f'в поле «Категория Avito» выберите конечную подкатегорию и '
-                f'опубликуйте объявление снова.',
-            )
-            continue
-        # Категория не определена → фид уйдёт с дефолтной Avito-категорией и часто
-        # отклоняется («ошибка описания»). Раньше тут была тишина — предупреждаем.
-        if not has_resolved_category(item):
             _write_log(
-                item.tenant, 'listing_publish', 'warn',
-                f'У «{item.title or item.product.name}» не определена категория — '
-                f'Avito может отклонить объявление («ошибка описания»). Укажите категорию у товара.',
-                listing=item,
-            )
-        if not product_has_oem(item):
-            _write_log(
-                item.tenant, 'listing_publish', 'warn',
-                f'У «{item.title or item.product.name}» нет OEM-номера — в объявление '
-                f'подставлен артикул {item.product.article}. Укажите OEM вручную при необходимости.',
-                listing=item,
-            )
-        missing_fields = missing_required_avito_fields(item)
-        if missing_fields:
-            readable_fields = format_avito_field_requirements(missing_fields)
-            _write_log(
-                item.tenant, 'listing_publish', 'warn',
-                f'Для товара «{item.title or item.product.name}» Avito требует '
-                f'дополнительные характеристики: {readable_fields}. Без них объявление '
-                f'может быть отклонено. Передайте значения администратору или в '
-                f'поддержку MAP для настройки выгрузки.',
+                item.tenant,
+                'listing_publish',
+                'warn',
+                f'Перед отправкой «{item.title or item.product.name}»: {warning}',
                 listing=item,
             )
         valid.append(item)
@@ -1934,6 +1939,12 @@ def _confirm_removal_dual_write(task, listing_id: int):
     _owned_claim, listing = owned[0]
     try:
         data = AvitoAdapter(listing.account).get_status(listing)
+    except NotFoundError:
+        return _archive_claimed_missing_provider_listing(
+            claim,
+            listing,
+            event_type='listing_unpublish',
+        )
     except RateLimitError as exc:
         countdown = max(exc.retry_after, backoff(task.request.retries))
         _release_status_claim(
@@ -2017,10 +2028,40 @@ def confirm_removal_task(self, listing_id: int):
         return
     try:
         data = AvitoAdapter(listing.account).get_status(listing)
+    except NotFoundError:
+        listing.status = Listing.STATUS_ARCHIVED
+        listing.external_id = None
+        listing.external_url = ''
+        listing.publish_idempotency_key = uuid.uuid4()
+        listing.last_sync_at = now()
+        listing.save(update_fields=[
+            'status', 'external_id', 'external_url',
+            'publish_idempotency_key', 'last_sync_at',
+        ])
+        _write_log(
+            listing.tenant,
+            'listing_unpublish',
+            'ok',
+            (
+                f'«{listing.title or listing.product.name}» больше не найдено '
+                'на Avito и перенесено в архив MAP.'
+            ),
+            listing=listing,
+        )
+        return {'status': 'archived', 'changed': True, 'reason': 'not_found'}
     except (ServerError, RateLimitError) as exc:
         raise self.retry(exc=exc, countdown=backoff(self.request.retries))
     avito_status = (data or {}).get('status', '')
-    if avito_status and avito_status != 'active':
+    normalized = normalize_remote_status(
+        avito_status,
+        aliases=_AVITO_REMOTE_STATUS_ALIASES,
+    )
+    if normalized in {
+        Listing.REMOTE_STATUS_REJECTED,
+        Listing.REMOTE_STATUS_BLOCKED,
+        Listing.REMOTE_STATUS_REMOVED,
+        Listing.REMOTE_STATUS_ARCHIVED,
+    }:
         listing.status = Listing.STATUS_ARCHIVED
         listing.last_sync_at = now()
         listing.save(update_fields=['status', 'last_sync_at'])
@@ -2029,7 +2070,17 @@ def confirm_removal_task(self, listing_id: int):
             f'«{listing.title or listing.product.name}» снято с публикации (в архиве)',
             listing=listing,
         )
+        return {'status': 'archived', 'changed': True}
     # Ещё active — оставляем «Снимается»; периодическая сверка дожмёт.
+    return {
+        'status': (
+            'active'
+            if normalized == Listing.REMOTE_STATUS_ACTIVE
+            else 'ignored'
+        ),
+        'changed': False,
+        'provider_status': normalized,
+    }
 
 
 @shared_task(bind=True, max_retries=6, queue='avito_delete')
@@ -5145,6 +5196,12 @@ def _check_moderation_dual_write(task, listing_id: int):
     _owned_claim, listing = owned[0]
     try:
         data = AvitoAdapter(listing.account).get_status(listing)
+    except NotFoundError:
+        return _archive_claimed_missing_provider_listing(
+            claim,
+            listing,
+            event_type='moderation',
+        )
     except RateLimitError as exc:
         countdown = max(exc.retry_after, backoff(task.request.retries))
         _release_status_claim(
@@ -5172,8 +5229,10 @@ def _check_moderation_dual_write(task, listing_id: int):
 
     if normalized == Listing.REMOTE_STATUS_ACTIVE:
         result_status = 'active'
-        next_check_at: datetime.datetime | None = (
-            checked_at + _ACTIVE_STATUS_RECHECK_DELAY
+        next_check_at: datetime.datetime | None = _active_status_recheck_at(
+            listing,
+            response,
+            checked_at=checked_at,
         )
         changed = (
             listing.status != Listing.STATUS_ACTIVE
@@ -5292,9 +5351,13 @@ def check_moderation_task(self, listing_id: int):
     try:
         data = AvitoAdapter(listing.account).get_status(listing)
         avito_status = data.get('status', '')
+        normalized = normalize_remote_status(
+            avito_status,
+            aliases=_AVITO_REMOTE_STATUS_ALIASES,
+        )
         checked_at = now()
         changed = False
-        if avito_status == 'active':
+        if normalized == Listing.REMOTE_STATUS_ACTIVE:
             changed = listing.status != Listing.STATUS_ACTIVE
             listing.status = Listing.STATUS_ACTIVE
             if changed:
@@ -5306,7 +5369,10 @@ def check_moderation_task(self, listing_id: int):
                     ),
                     listing=listing,
                 )
-        elif avito_status in ('rejected', 'blocked'):
+        elif normalized in {
+            Listing.REMOTE_STATUS_REJECTED,
+            Listing.REMOTE_STATUS_BLOCKED,
+        }:
             rejection_reason = data.get('rejection_reason', '')
             changed = (
                 listing.status != Listing.STATUS_REJECTED
@@ -5333,18 +5399,80 @@ def check_moderation_task(self, listing_id: int):
                     f'Отклонено модерацией{reason_txt}',
                     listing=listing,
                 )
+        elif normalized in {
+            Listing.REMOTE_STATUS_REMOVED,
+            Listing.REMOTE_STATUS_ARCHIVED,
+        }:
+            changed = listing.status != Listing.STATUS_ARCHIVED
+            listing.status = Listing.STATUS_ARCHIVED
         listing.last_sync_at = checked_at
         listing.save(update_fields=['status', 'rejection_reason', 'last_sync_at'])
-        if avito_status in ('rejected', 'blocked'):
+        if normalized in {
+            Listing.REMOTE_STATUS_REMOVED,
+            Listing.REMOTE_STATUS_ARCHIVED,
+        } and changed:
+            # Persist the provider-confirmed state before scheduling the feed
+            # that removes this item from the next provider snapshot.
+            request_feed_flush(listing.account)
+            _write_log(
+                listing.tenant,
+                'moderation',
+                'warn',
+                (
+                    f'Объявление «{listing.title or listing.product.name}» '
+                    'больше не активно на Avito и перенесено в архив MAP.'
+                ),
+                listing=listing,
+            )
+        if normalized in {
+            Listing.REMOTE_STATUS_REJECTED,
+            Listing.REMOTE_STATUS_BLOCKED,
+        }:
             return {'status': 'rejected', 'changed': changed}
-        if avito_status == 'active':
+        if normalized == Listing.REMOTE_STATUS_ACTIVE:
             _queue_listing_expiry_notification(
                 listing,
                 data,
                 checked_at=checked_at,
             )
             return {'status': 'active', 'changed': changed}
-        return {'status': 'ignored', 'provider_status': avito_status}
+        if normalized in {
+            Listing.REMOTE_STATUS_REMOVED,
+            Listing.REMOTE_STATUS_ARCHIVED,
+        }:
+            return {'status': 'archived', 'changed': changed}
+        return {'status': 'ignored', 'provider_status': normalized}
+    except NotFoundError:
+        checked_at = now()
+        listing.status = Listing.STATUS_ARCHIVED
+        listing.external_id = None
+        listing.external_url = ''
+        listing.publish_idempotency_key = uuid.uuid4()
+        listing.rejection_reason = ''
+        listing.last_sync_at = checked_at
+        listing.save(update_fields=[
+            'status', 'external_id', 'external_url',
+            'publish_idempotency_key', 'rejection_reason', 'last_sync_at',
+        ])
+        request_feed_flush(listing.account)
+        _write_log(
+            listing.tenant,
+            'moderation',
+            'warn',
+            (
+                f'Avito больше не находит объявление '
+                f'«{listing.title or listing.product.name}». MAP исключил его '
+                'из фида и перенёс в архив; повторная публикация будет создана '
+                'как новое объявление.'
+            ),
+            listing=listing,
+        )
+        return {
+            'status': 'archived',
+            'changed': True,
+            'provider_status': Listing.REMOTE_STATUS_REMOVED,
+            'reason': 'not_found',
+        }
     except RateLimitError as exc:
         raise self.retry(
             exc=exc,

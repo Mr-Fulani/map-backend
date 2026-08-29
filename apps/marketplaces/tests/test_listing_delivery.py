@@ -93,6 +93,21 @@ def test_pending_without_run_is_truthfully_shown_as_local_preparation():
     assert data['can_check_avito_status'] is False
 
 
+def test_active_listing_exposes_manual_provider_status_check():
+    listing = _listing('active-check')
+    listing.status = Listing.STATUS_ACTIVE
+    listing.external_id = 'avito-active-check'
+    listing.save(update_fields=['status', 'external_id'])
+
+    data = ListingSerializer(listing).data
+
+    assert data['can_check_avito_status'] is True
+    assert data['status_explanation'] == (
+        'Avito подтверждает, что объявление активно. MAP продолжает '
+        'автоматически сверять его статус.'
+    )
+
+
 def test_product_listing_option_uses_the_same_truthful_delivery_label():
     listing = _listing('product-option')
 
@@ -222,7 +237,12 @@ def test_failed_pre_submission_run_can_be_retried_with_fresh_generation(
     listing.product.save(update_fields=['brand', 'condition'])
     listing.account.default_manager_name = 'Менеджер'
     listing.account.default_contact_phone = '+79990000000'
-    listing.account.save(update_fields=['default_manager_name', 'default_contact_phone'])
+    listing.account.default_address = 'Москва, Загородное шоссе, 1'
+    listing.account.save(update_fields=[
+        'default_manager_name',
+        'default_contact_phone',
+        'default_address',
+    ])
     failed_run = _feed_run(listing, MarketplaceFeedRun.State.FAILED)
 
     with patch('apps.marketplaces.services._enqueue_publish_or_update') as enqueue:

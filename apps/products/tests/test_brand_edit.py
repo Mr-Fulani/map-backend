@@ -7,8 +7,8 @@ from unittest.mock import patch
 
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
-from apps.products.models import Product, ProductBrand, ProductBrandAlias
-from apps.products.services import ProductService
+from apps.products.models import Product, ProductBrand, ProductBrandAlias, ProductCrossCode
+from apps.products.services import ProductEnrichmentService, ProductService
 from apps.tenants.tests.auth import create_tenant_with_operator_key
 
 
@@ -148,6 +148,70 @@ class TestProductBrandPatch:
         )
 
         assert response.status_code == 404
+
+    def test_tenant_can_choose_one_avito_oem_without_deleting_source_codes(
+        self,
+        django_capture_on_commit_callbacks,
+    ):
+        tenant, api_key = _tenant('avito-oem-edit-co')
+        product = Product.objects.create(
+            tenant=tenant, article='A-OEM', name='Фонарь', brand='OEM',
+            price=Decimal('100'), stock_qty=1,
+        )
+        for code in ('92402D5000', '92402D4000'):
+            ProductCrossCode.objects.create(
+                tenant=tenant,
+                product=product,
+                source_id='human_review',
+                manufacturer='Kia',
+                code=code,
+                normalized_code=code,
+                code_type=ProductCrossCode.CodeType.OEM,
+            )
+        ProductEnrichmentService.refresh_product_denormalized_enrichment(product)
+        product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability'])
+
+        with patch('apps.products.views.sync_product_listings_task.delay') as sync_delay:
+            with django_capture_on_commit_callbacks(execute=True):
+                response = Client().patch(
+                    f'/api/v1/products/{product.pk}/',
+                    {'avito_oem': '92402D4000'},
+                    content_type='application/json',
+                    HTTP_AUTHORIZATION=f'Bearer {api_key}',
+                )
+
+        assert response.status_code == 200
+        product.refresh_from_db()
+        assert product.oem_numbers == ['92402D4000', '92402D5000']
+        assert ProductCrossCode.objects.filter(
+            product=product, source_id='human_review',
+        ).count() == 2
+        assert ProductCrossCode.objects.filter(
+            product=product, source_id='avito_manual', normalized_code='92402D4000',
+        ).exists()
+        ProductEnrichmentService.refresh_product_denormalized_enrichment(product)
+        assert product.oem_numbers == ['92402D4000', '92402D5000']
+        sync_delay.assert_called_once_with(product.pk, 'content')
+
+    def test_avito_oem_patch_rejects_forbidden_characters(self):
+        tenant, api_key = _tenant('avito-oem-invalid-co')
+        product = Product.objects.create(
+            tenant=tenant, article='A-OEM-2', name='Фонарь', brand='OEM',
+            price=Decimal('100'), stock_qty=1,
+        )
+
+        response = Client().patch(
+            f'/api/v1/products/{product.pk}/',
+            {'avito_oem': '92402D5000, 92402D4000'},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {api_key}',
+        )
+
+        assert response.status_code == 400
+        assert 'avito_oem' in response.json()
+        assert not ProductCrossCode.objects.filter(
+            product=product, source_id='avito_manual',
+        ).exists()
 
     def test_brand_options_include_current_brand(self):
         tenant, api_key = _tenant('brand-options-co')

@@ -14,6 +14,14 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
   CheckCircle, RefreshCw, Pencil, Crown, Trash2, Plus,
   ChevronLeft, ChevronRight, Send, BarChart3, FileText,
 } from 'lucide-react';
@@ -25,11 +33,14 @@ import {
 import MarketPricingPanel from '@/components/listings/MarketPricingPanel';
 import {
   firstPublicationErrorField,
+  firstPublicationWarningField,
   hasPublicationFieldErrors,
+  hasPublicationFieldWarnings,
   publicationActionLabel,
   publicationFieldErrorsFromApi,
   PublicationField,
   PublicationFieldErrors,
+  PublicationFieldWarnings,
 } from '@/lib/listing-publication';
 
 interface ListingImage {
@@ -49,6 +60,7 @@ interface ListingDetail {
   id: number;
   status: string;
   status_display: string;
+  status_explanation: string;
   delivery_stage: string;
   delivery_retry_at: string | null;
   delivery_retry_reason: string;
@@ -60,6 +72,8 @@ interface ListingDetail {
   product_article: string;
   product_name: string;
   product_brand: string;
+  product_oem_numbers?: string[];
+  product_avito_oem: string;
   account_id: number;
   account_name: string;
   title: string;
@@ -81,8 +95,12 @@ interface ListingDetail {
   bulk_contact_phone: string;
   rejection_reason: string;
   last_sync_at: string | null;
+  remote_status: string | null;
+  remote_status_checked_at: string | null;
+  next_status_check_at: string | null;
   avito_field_warnings?: string[];
   avito_field_errors?: PublicationFieldErrors;
+  avito_field_warnings_by_field?: PublicationFieldWarnings;
   avito_brand_valid: boolean;
   avito_brand_catalog_synced_at: string | null;
   images: ListingImage[];
@@ -168,12 +186,27 @@ function ConfidenceBar({ value, label }: { value: number | null; label: string }
   );
 }
 
-function PublicationFieldMessages({ messages }: { messages: string[] }) {
-  if (messages.length === 0) return null;
+function PublicationFieldMessages({
+  errors,
+  warnings,
+}: {
+  errors: string[];
+  warnings: string[];
+}) {
+  if (errors.length === 0 && warnings.length === 0) return null;
   return (
-    <ul className="space-y-1 text-xs text-destructive" role="alert">
-      {messages.map((message) => <li key={message}>{message}</li>)}
-    </ul>
+    <div className="space-y-1">
+      {errors.length > 0 && (
+        <ul className="space-y-1 text-xs text-destructive" role="alert">
+          {errors.map((message) => <li key={message}>{message}</li>)}
+        </ul>
+      )}
+      {warnings.length > 0 && (
+        <ul className="space-y-1 text-xs text-amber-700 dark:text-amber-400" role="status">
+          {warnings.map((message) => <li key={message}>{message}</li>)}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -199,6 +232,7 @@ function ListingDrawerContent({
   const [editTitle, setEditTitle] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [editBrand, setEditBrand] = useState('');
+  const [editAvitoOem, setEditAvitoOem] = useState('');
   const [brandOptions, setBrandOptions] = useState<BrandOption[]>([]);
   const [brandOptionsLoading, setBrandOptionsLoading] = useState(false);
   const [brandInputFocused, setBrandInputFocused] = useState(false);
@@ -222,11 +256,13 @@ function ListingDrawerContent({
   const [previewImg, setPreviewImg] = useState<string | null>(null);
   const [activeIdx, setActiveIdx] = useState(0);
   const [photoLoading, setPhotoLoading] = useState<number | 'upload' | null>(null);
+  const [photoPendingDelete, setPhotoPendingDelete] = useState<ListingImage | null>(null);
   const [publishing, setPublishing] = useState(false);
   const [activePanel, setActivePanel] = useState<'listing' | 'pricing'>(initialPanel);
   const [marketPriceApplied, setMarketPriceApplied] = useState(false);
   const [pricingRefreshKey, setPricingRefreshKey] = useState(0);
   const [publicationFieldErrors, setPublicationFieldErrors] = useState<PublicationFieldErrors>({});
+  const [publicationFieldWarnings, setPublicationFieldWarnings] = useState<PublicationFieldWarnings>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const publishPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const publicationFieldRefs = useRef<Partial<Record<PublicationField, HTMLDivElement | null>>>({});
@@ -238,6 +274,7 @@ function ListingDrawerContent({
     setEditTitle(data.title);
     setEditDesc(data.description_ai);
     setEditBrand(data.product_brand || '');
+    setEditAvitoOem(data.product_avito_oem || '');
     setEditAddress(data.address_override || '');
     setEditSellerAddressId(data.seller_address_id_override || '');
     setEditManagerName(data.manager_name_override || '');
@@ -253,6 +290,7 @@ function ListingDrawerContent({
     // Храним выбранную категорию одним id; путь до корня строится по дереву.
     setEditCategoryId(data.catalog_category ? String(data.catalog_category.id) : '');
     setPublicationFieldErrors(data.avito_field_errors ?? {});
+    setPublicationFieldWarnings(data.avito_field_warnings_by_field ?? {});
   }, []);
 
   const showPublicationFieldErrors = useCallback((errors: PublicationFieldErrors) => {
@@ -269,11 +307,26 @@ function ListingDrawerContent({
     });
   }, []);
 
+  const showPublicationFieldWarnings = useCallback((warnings: PublicationFieldWarnings) => {
+    setPublicationFieldWarnings(warnings);
+    const firstField = firstPublicationWarningField(warnings);
+    if (!firstField) return;
+    window.requestAnimationFrame(() => {
+      publicationFieldRefs.current[firstField]?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'center',
+      });
+    });
+  }, []);
+
   const fieldMessages = (field: PublicationField) => publicationFieldErrors[field] ?? [];
+  const fieldWarnings = (field: PublicationField) => publicationFieldWarnings[field] ?? [];
   const fieldClassName = (field: PublicationField) => (
     fieldMessages(field).length > 0
       ? 'border-destructive bg-destructive/5 ring-1 ring-destructive/20'
-      : ''
+      : fieldWarnings(field).length > 0
+        ? 'border-amber-500/60 bg-amber-500/5 ring-1 ring-amber-500/20'
+        : ''
   );
 
   useEffect(() => {
@@ -292,6 +345,7 @@ function ListingDrawerContent({
         if (cancelled) return;
 
         data = listingResponse.data.data;
+        setPhotoPendingDelete(null);
         applyListingState(data);
 
         const primaryIdx = data.images.findIndex((image) => image.is_primary);
@@ -359,12 +413,16 @@ function ListingDrawerContent({
 
   const liveDeliveryListingId = listing?.id ?? null;
   const liveDeliveryStatus = listing?.status ?? '';
+  const providerStatusCanChange = Boolean(listing?.can_check_avito_status);
 
   useEffect(() => {
     if (
       liveDeliveryListingId === null
       || publishing
-      || !['queued', 'pending', 'archiving'].includes(liveDeliveryStatus)
+      || (
+        !['queued', 'pending', 'archiving'].includes(liveDeliveryStatus)
+        && !providerStatusCanChange
+      )
     ) {
       return undefined;
     }
@@ -375,13 +433,13 @@ function ListingDrawerContent({
           if (active) setListing(response.data.data);
         })
         .catch(() => undefined);
-    }, 15_000);
+    }, ['queued', 'pending', 'archiving'].includes(liveDeliveryStatus) ? 15_000 : 60_000);
 
     return () => {
       active = false;
       window.clearInterval(timer);
     };
-  }, [liveDeliveryListingId, liveDeliveryStatus, publishing]);
+  }, [liveDeliveryListingId, liveDeliveryStatus, providerStatusCanChange, publishing]);
 
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     !editAccountId || address.account === Number(editAccountId)
@@ -406,7 +464,10 @@ function ListingDrawerContent({
   };
 
   const handleOpenChange = (isOpen: boolean) => {
-    if (!isOpen) onClose();
+    if (!isOpen) {
+      setPhotoPendingDelete(null);
+      onClose();
+    }
   };
 
   // --- Действия с листингом ---
@@ -493,6 +554,39 @@ function ListingDrawerContent({
     setEditBrand(brand);
   };
 
+  const saveOemIfChanged = async () => {
+    if (!listing || editAvitoOem.trim().toUpperCase() === (listing.product_avito_oem || '')) return;
+    await productApi.updateAvitoOem(listing.product_id, editAvitoOem.trim());
+  };
+
+  const handleSaveOem = async () => {
+    if (!listing) return;
+    setActionLoading('oem');
+    try {
+      await saveOemIfChanged();
+      const refreshed = await listingApi.get(listing.id);
+      applyListingState(refreshed.data.data);
+      onActionDone();
+      toast.success('OEM для Avito сохранён и проверен');
+    } catch (err: unknown) {
+      const errorData = (err as { response?: { data?: {
+        message?: string;
+        detail?: string;
+        avito_oem?: string[];
+      } } })?.response?.data;
+      const messages = Array.isArray(errorData?.avito_oem) && errorData.avito_oem.length > 0
+        ? errorData.avito_oem
+        : [errorData?.message || errorData?.detail || 'Не удалось сохранить OEM'];
+      showPublicationFieldErrors({
+        ...publicationFieldErrors,
+        product_oem: messages,
+      });
+      toast.error(messages[0]);
+    } finally {
+      setActionLoading(null);
+    }
+  };
+
   const handleSaveBrand = async () => {
     if (!listing) return;
     setActionLoading('brand');
@@ -544,6 +638,7 @@ function ListingDrawerContent({
     try {
       // «Опубликовать» = сначала сохранить текущие правки, потом публиковать,
       // чтобы изменения цены/описания/контактов не терялись.
+      await saveOemIfChanged();
       await saveCategoryIfChanged();
       const saved = await listingApi.updateContent(listing.id, buildEditPayload());
       const savedListing: ListingDetail = saved.data.data;
@@ -631,13 +726,52 @@ function ListingDrawerContent({
   const handleRegenerate = () =>
     callAction('regenerate', () => listingApi.regenerate(listing!.id), 'Задача генерации поставлена в очередь');
 
-  const handleCheckStatus = () =>
-    callAction('checkStatus', () => listingApi.checkStatus(listing!.id), 'Проверка статуса Avito поставлена в очередь', false);
+  const handleCheckStatus = async () => {
+    if (!listing) return;
+    const listingId = listing.id;
+    const initialStatus = listing.status;
+    const initialCheckedAt = listing.remote_status_checked_at;
+    setActionLoading('checkStatus');
+    try {
+      await listingApi.checkStatus(listingId);
+      toast.info('Запросили актуальный статус у Avito…');
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1500));
+        const response = await listingApi.get(listingId);
+        const updated: ListingDetail = response.data.data;
+        applyListingState(updated);
+        if (
+          updated.status !== initialStatus
+          || (
+            updated.remote_status_checked_at
+            && updated.remote_status_checked_at !== initialCheckedAt
+          )
+        ) {
+          onActionDone();
+          toast.success(`Avito ответил: ${updated.status_display}`);
+          return;
+        }
+      }
+      toast.info('Avito ещё не ответил. MAP продолжит проверку в фоне.');
+    } catch (err: unknown) {
+      const errorData = (err as {
+        response?: { data?: { message?: string; detail?: string } };
+      })?.response?.data;
+      toast.error(
+        errorData?.message
+        || errorData?.detail
+        || 'Не удалось запросить статус Avito.',
+      );
+    } finally {
+      setActionLoading(null);
+    }
+  };
 
   const handleSaveEdit = async () => {
     if (!listing) return;
     setActionLoading('save');
     try {
+      await saveOemIfChanged();
       if (listing.status !== 'active') await saveCategoryIfChanged();
       const payload = marketPriceApplied
         ? listing.status === 'active'
@@ -655,11 +789,17 @@ function ListingDrawerContent({
         toast.warning('Сохранено. Исправьте подсвеченные поля перед отправкой в Avito.');
       } else {
         setEditing(false);
-        toast.success(
-          listing.delivery_stage === 'delivery_failed'
-            ? 'Сохранено и проверено. Теперь объявление можно отправить снова.'
-            : 'Сохранено. Сравнение цен пересчитано.',
-        );
+        const warnings = savedListing.avito_field_warnings_by_field ?? {};
+        if (hasPublicationFieldWarnings(warnings)) {
+          showPublicationFieldWarnings(warnings);
+          toast.warning('Сохранено. Жёлтые поля не блокируют публикацию, но их желательно проверить.');
+        } else {
+          toast.success(
+            listing.delivery_stage === 'delivery_failed'
+              ? 'Сохранено и проверено. Теперь объявление можно отправить снова.'
+              : 'Сохранено. Сравнение цен пересчитано.',
+          );
+        }
       }
     } catch (err: unknown) {
       const message = (err as { response?: { data?: {
@@ -696,8 +836,9 @@ function ListingDrawerContent({
     }
   };
 
-  const handleDeletePhoto = async (imageId: number) => {
-    if (!listing) return;
+  const handleDeletePhoto = async () => {
+    const imageId = photoPendingDelete?.id;
+    if (!listing || imageId === null || imageId === undefined) return;
     setPhotoLoading(imageId);
     try {
       await imageApi.delete(listing.product_id, imageId);
@@ -707,6 +848,8 @@ function ListingDrawerContent({
         setActiveIdx((idx) => Math.min(idx, Math.max(0, imgs.length - 1)));
         return { ...prev, images: imgs };
       });
+      setPhotoPendingDelete(null);
+      toast.success('Фото удалено');
     } catch {
       toast.error('Не удалось удалить фото');
     } finally {
@@ -750,7 +893,6 @@ function ListingDrawerContent({
   const isDraft = listing?.status === 'draft';
   const isRejected = listing?.status === 'rejected';
   const isArchived = listing?.status === 'archived';
-  const isPending = listing?.status === 'pending';
   const isLimitReached = listing?.status === 'limit_reached';
   const canPublish = listing?.can_publish ?? (
     isDraft || isRejected || isArchived || isLimitReached
@@ -819,10 +961,24 @@ function ListingDrawerContent({
                     {listing.status_display}
                   </Badge>
                 </div>
-                {listing.status === 'active' && listing.last_sync_at && (
+                {listing.status_explanation && (
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    {listing.status_explanation}
+                  </p>
+                )}
+                {listing.remote_status_checked_at && (
                   <p className="text-xs text-green-700 dark:text-green-400">
-                    Статус проверен через Avito:{' '}
-                    {new Date(listing.last_sync_at).toLocaleString('ru-RU', {
+                    Avito проверен:{' '}
+                    {new Date(listing.remote_status_checked_at).toLocaleString('ru-RU', {
+                      day: '2-digit', month: '2-digit', year: 'numeric',
+                      hour: '2-digit', minute: '2-digit',
+                    })}
+                  </p>
+                )}
+                {listing.next_status_check_at && listing.can_check_avito_status && (
+                  <p className="text-xs text-muted-foreground">
+                    Следующая автоматическая проверка:{' '}
+                    {new Date(listing.next_status_check_at).toLocaleString('ru-RU', {
                       day: '2-digit', month: '2-digit', year: 'numeric',
                       hour: '2-digit', minute: '2-digit',
                     })}
@@ -838,7 +994,10 @@ function ListingDrawerContent({
               </SheetHeader>
 
               {/* Фотографии — Avito-стиль */}
-              <div className="space-y-2">
+              <div
+                ref={(element) => { publicationFieldRefs.current.images = element; }}
+                className={`space-y-2 rounded-md border border-transparent p-2 ${fieldClassName('images')}`}
+              >
                 {/* Главное фото */}
                 <div
                   className="relative w-full rounded-lg overflow-hidden bg-muted border"
@@ -924,10 +1083,11 @@ function ListingDrawerContent({
                         {img.id !== null && (
                           <button
                             type="button"
-                            onClick={() => handleDeletePhoto(img.id!)}
+                            onClick={() => setPhotoPendingDelete(img)}
                             disabled={photoLoading === img.id}
                             className="p-1 bg-white/20 rounded hover:bg-red-500/70 disabled:opacity-50"
-                            title="Удалить"
+                            title="Удалить фото"
+                            aria-label="Удалить фото"
                           >
                             <Trash2 className="h-3 w-3 text-white" />
                           </button>
@@ -951,6 +1111,10 @@ function ListingDrawerContent({
                   accept="image/*"
                   className="hidden"
                   onChange={handleUploadPhoto}
+                />
+                <PublicationFieldMessages
+                  errors={fieldMessages('images')}
+                  warnings={fieldWarnings('images')}
                 />
               </div>
 
@@ -984,7 +1148,10 @@ function ListingDrawerContent({
                 ) : (
                   <p className="min-w-0 break-words font-medium [overflow-wrap:anywhere]">{listing.title || '—'}</p>
                 )}
-                <PublicationFieldMessages messages={fieldMessages('title')} />
+                <PublicationFieldMessages
+                  errors={fieldMessages('title')}
+                  warnings={fieldWarnings('title')}
+                />
               </div>
 
               {/* AI-описание */}
@@ -1005,7 +1172,10 @@ function ListingDrawerContent({
                     {listing.description_ai || '—'}
                   </pre>
                 )}
-                <PublicationFieldMessages messages={fieldMessages('description_ai')} />
+                <PublicationFieldMessages
+                  errors={fieldMessages('description_ai')}
+                  warnings={fieldWarnings('description_ai')}
+                />
               </div>
 
               {/* Бренд хранится у товара и используется в выгрузке Avito. */}
@@ -1102,7 +1272,56 @@ function ListingDrawerContent({
                     {avitoBrandCatalogStale ? ' — требуется обновление' : ''}.
                   </p>
                 )}
-                <PublicationFieldMessages messages={fieldMessages('product_brand')} />
+                <PublicationFieldMessages
+                  errors={fieldMessages('product_brand')}
+                  warnings={fieldWarnings('product_brand')}
+                />
+              </div>
+
+              <div
+                ref={(element) => { publicationFieldRefs.current.product_oem = element; }}
+                className={`space-y-1 rounded-md border border-transparent p-2 ${fieldClassName('product_oem')}`}
+              >
+                <label className="text-sm text-muted-foreground" htmlFor="avito-oem">
+                  Номер детали OEM для Avito
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    id="avito-oem"
+                    value={editAvitoOem}
+                    onChange={(event) => setEditAvitoOem(event.target.value)}
+                    list="known-avito-oem-values"
+                    maxLength={50}
+                    pattern="[A-Za-z0-9-]*"
+                    placeholder="Например, 92402D4000"
+                    aria-invalid={fieldMessages('product_oem').length > 0}
+                    disabled={busy}
+                  />
+                  <Button type="button" variant="outline" onClick={handleSaveOem} disabled={busy}>
+                    {actionLoading === 'oem' ? 'Сохраняем…' : 'Сохранить'}
+                  </Button>
+                </div>
+                <datalist id="known-avito-oem-values">
+                  {(listing.product_oem_numbers ?? []).map((value) => (
+                    <option key={value} value={value} />
+                  ))}
+                </datalist>
+                <p className="text-xs text-muted-foreground">
+                  MAP отправит ровно это значение. Для нового товара Avito может сделать
+                  OEM обязательным в зависимости от категории. Допустимы только латинские
+                  буквы, цифры и дефис, максимум 50 символов.
+                </p>
+                {(listing.product_oem_numbers?.length ?? 0) > 1 && (
+                  <p className="text-xs text-muted-foreground">
+                    Найдены также: {listing.product_oem_numbers!
+                      .filter((value) => value !== listing.product_avito_oem)
+                      .join(', ') || '—'}. Они остаются в товаре для поиска и проверки.
+                  </p>
+                )}
+                <PublicationFieldMessages
+                  errors={fieldMessages('product_oem')}
+                  warnings={fieldWarnings('product_oem')}
+                />
               </div>
 
               {/* Цена и аккаунт */}
@@ -1127,7 +1346,10 @@ function ListingDrawerContent({
                       </option>
                     ))}
                   </select>
-                  <PublicationFieldMessages messages={fieldMessages('account_id')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('account_id')}
+                    warnings={fieldWarnings('account_id')}
+                  />
                 </div>
                 <div className="space-y-1">
                   <p className="text-sm text-muted-foreground">
@@ -1182,7 +1404,10 @@ function ListingDrawerContent({
                       Рыночная цена подготовлена. Она применится только после сохранения.
                     </p>
                   )}
-                  <PublicationFieldMessages messages={fieldMessages('price_on_listing')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('price_on_listing')}
+                    warnings={fieldWarnings('price_on_listing')}
+                  />
                 </div>
               </div>
 
@@ -1217,7 +1442,10 @@ function ListingDrawerContent({
                     placeholder="Выберите категорию автозапчасти"
                     dropdownClassName="min-w-0 sm:min-w-0"
                   />
-                  <PublicationFieldMessages messages={fieldMessages('catalog_category')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('catalog_category')}
+                    warnings={fieldWarnings('catalog_category')}
+                  />
                 </div>
               ) : listing.catalog_category ? (
                 // Дерево категорий недоступно (домен каталога выключен), но категория
@@ -1235,11 +1463,17 @@ function ListingDrawerContent({
                   <p className="text-xs text-muted-foreground">
                     Чтобы изменить категорию, включите домен каталога в Настройках.
                   </p>
-                  <PublicationFieldMessages messages={fieldMessages('catalog_category')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('catalog_category')}
+                    warnings={fieldWarnings('catalog_category')}
+                  />
                 </div>
               ) : null}
 
-              <div className="space-y-2 rounded-md border p-3">
+              <div
+                ref={(element) => { publicationFieldRefs.current.placement_address = element; }}
+                className={`space-y-2 rounded-md border p-3 ${fieldClassName('placement_address')}`}
+              >
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="text-sm font-medium">Размещение</p>
@@ -1303,6 +1537,10 @@ function ListingDrawerContent({
                       </p>
                     )}
                 </div>
+                <PublicationFieldMessages
+                  errors={fieldMessages('placement_address')}
+                  warnings={fieldWarnings('placement_address')}
+                />
               </div>
 
               {/* Контакты объявления — из сохранённых адресов аккаунта (Настройки → Маркетплейсы) */}
@@ -1326,7 +1564,10 @@ function ListingDrawerContent({
                       <option key={name} value={name}>{name}</option>
                     ))}
                   </select>
-                  <PublicationFieldMessages messages={fieldMessages('manager_name_override')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('manager_name_override')}
+                    warnings={fieldWarnings('manager_name_override')}
+                  />
                 </div>
                 <div
                   ref={(element) => { publicationFieldRefs.current.contact_phone_override = element; }}
@@ -1347,7 +1588,10 @@ function ListingDrawerContent({
                       <option key={phone} value={phone}>{phone}</option>
                     ))}
                   </select>
-                  <PublicationFieldMessages messages={fieldMessages('contact_phone_override')} />
+                  <PublicationFieldMessages
+                    errors={fieldMessages('contact_phone_override')}
+                    warnings={fieldWarnings('contact_phone_override')}
+                  />
                 </div>
                 {managerOptions.length === 0 && phoneOptions.length === 0 && (
                   <p className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground sm:col-span-2">
@@ -1358,9 +1602,17 @@ function ListingDrawerContent({
 
               {/* Причина отклонения/проверки — только для этих статусов, иначе висит старый текст */}
               {listing.status === 'rejected' && listing.rejection_reason && (
-                <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive whitespace-pre-line">
-                  <span className="font-medium">Причина отклонения: </span>
-                  {listing.rejection_reason}
+                <div className="space-y-1 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive whitespace-pre-line">
+                  <p>
+                    <span className="font-medium">Результат предыдущей отправки: </span>
+                    {listing.rejection_reason}
+                  </p>
+                  {!hasPublicationFieldErrors(publicationFieldErrors) && (
+                    <p className="text-xs">
+                      Текущие обязательные поля прошли предварительную проверку. Старый текст
+                      сохранён как история и снимется после постановки новой попытки в очередь.
+                    </p>
+                  )}
                 </div>
               )}
               {listing.status === 'requires_review' && listing.rejection_reason && (
@@ -1415,14 +1667,10 @@ function ListingDrawerContent({
 
               {/* После блокирующих ошибок показываем оставшиеся мягкие предупреждения. */}
               {!hasPublicationFieldErrors(publicationFieldErrors)
-                && (listing.avito_field_warnings?.length ?? 0) > 0 && (
+                && hasPublicationFieldWarnings(publicationFieldWarnings) && (
                 <div className="rounded-md border border-yellow-500/40 bg-yellow-500/10 p-3 text-sm text-yellow-700 dark:text-yellow-400">
-                  <p className="font-medium">Перед публикацией проверьте данные:</p>
-                  <ul className="mt-1 list-disc space-y-1 pl-4">
-                    {listing.avito_field_warnings!.map((warning, i) => (
-                      <li key={i}>{warning}</li>
-                    ))}
-                  </ul>
+                  <p className="font-medium">Есть рекомендации, но публикация доступна.</p>
+                  <p className="mt-1">Необязательные, безопасно пропущенные или заменённые поля подсвечены жёлтым.</p>
                 </div>
               )}
 
@@ -1504,7 +1752,7 @@ function ListingDrawerContent({
                         }
                       </Button>
                     )}
-                    {isPending && listing.can_check_avito_status && (
+                    {listing.can_check_avito_status && (
                       <Button
                         variant="secondary"
                         onClick={handleCheckStatus}
@@ -1512,7 +1760,9 @@ function ListingDrawerContent({
                         className="w-full"
                       >
                         <RefreshCw className="mr-2 h-4 w-4" />
-                        {actionLoading === 'checkStatus' ? 'Проверяем...' : 'Проверить статус Avito'}
+                        {actionLoading === 'checkStatus'
+                          ? 'Ждём ответ Avito…'
+                          : 'Проверить статус в Avito сейчас'}
                       </Button>
                     )}
                     {canRegenerate && (
@@ -1545,6 +1795,58 @@ function ListingDrawerContent({
           )}
         </SheetContent>
       </Sheet>
+
+      <Dialog
+        open={photoPendingDelete !== null}
+        onOpenChange={(nextOpen) => {
+          const deleting = photoPendingDelete?.id !== null
+            && photoPendingDelete?.id !== undefined
+            && photoLoading === photoPendingDelete.id;
+          if (!nextOpen && !deleting) setPhotoPendingDelete(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Удалить это фото?</DialogTitle>
+            <DialogDescription>
+              Фото исчезнет из карточки товара и больше не попадёт в следующие
+              фиды Avito. Проверьте изображение и подтвердите удаление.
+            </DialogDescription>
+          </DialogHeader>
+          {photoPendingDelete && (
+            <div className="mx-auto h-36 w-36 overflow-hidden rounded-lg border bg-muted">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={photoPendingDelete.thumb_url || photoPendingDelete.url}
+                alt="Фото, выбранное для удаления"
+                className="h-full w-full object-contain"
+              />
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setPhotoPendingDelete(null)}
+              disabled={photoLoading === photoPendingDelete?.id}
+            >
+              Отмена
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              onClick={handleDeletePhoto}
+              disabled={
+                photoPendingDelete?.id === null
+                || photoPendingDelete?.id === undefined
+                || photoLoading === photoPendingDelete?.id
+              }
+            >
+              {photoLoading === photoPendingDelete?.id ? 'Удаляем...' : 'Удалить фото'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Fullscreen предпросмотр */}
       {previewImg && (
