@@ -686,7 +686,7 @@ def test_bulk_placement_update_revokes_claims_and_nudges_due():
 
     updated = ListingService.bulk_update_placement(
         listing.tenant,
-        {'listing_ids': [listing.pk]},
+        {'account_id': listing.account_id, 'listing_ids': [listing.pk]},
         {'address_override': 'Москва'},
     )
 
@@ -708,7 +708,11 @@ def test_product_archive_persists_local_intent_before_dispatch():
     listing.status_check_claimed_until = timezone.now() + datetime.timedelta(minutes=4)
     listing.save(update_fields=['status_check_claim_token', 'status_check_claimed_until'])
 
-    count = ListingService.archive_product(listing.product, listing.tenant)
+    count = ListingService.archive_product(
+        listing.product,
+        listing.tenant,
+        [listing.account_id],
+    )
 
     listing.refresh_from_db()
     assert count == 1

@@ -36,6 +36,10 @@ from apps.marketplaces.price_utils import (
     effective_category_margin,
     effective_margin,
 )
+from apps.marketplaces.provider_registry import (
+    ProviderCapabilityUnavailable,
+    require_provider_capability,
+)
 
 
 _LOCAL_STATUS_RECHECK_DELAY = datetime.timedelta(minutes=10)
@@ -928,8 +932,62 @@ class ListingBulkLimitExceeded(ValueError):
     """A direct bulk listing operation selected more rows than the API cap."""
 
 
-class NoActiveAccounts(Exception):
-    """У тенанта нет ни одного активного аккаунта маркетплейса."""
+class InvalidMarketplaceTargets(ValueError):
+    """Explicit marketplace targets are missing or outside the tenant fence."""
+
+
+def _explicit_target_accounts(tenant, account_ids, capability: str) -> list[MarketplaceAccount]:
+    """Resolve an exact active account set without leaking foreign identities."""
+    try:
+        normalized_ids = [int(account_id) for account_id in account_ids]
+    except (TypeError, ValueError):
+        normalized_ids = []
+    if not normalized_ids or len(normalized_ids) != len(set(normalized_ids)):
+        raise InvalidMarketplaceTargets(
+            'Выберите один или несколько уникальных активных аккаунтов маркетплейса.',
+        )
+
+    accounts = list(
+        MarketplaceAccount.objects.filter(
+            tenant=tenant,
+            is_active=True,
+            pk__in=normalized_ids,
+        ).order_by('pk')
+    )
+    by_id = {account.pk: account for account in accounts}
+    if set(by_id) != set(normalized_ids):
+        raise InvalidMarketplaceTargets(
+            'Один или несколько выбранных аккаунтов недоступны.',
+        )
+    ordered_accounts = [by_id[account_id] for account_id in normalized_ids]
+    for account in ordered_accounts:
+        require_provider_capability(account.marketplace, capability)
+    return ordered_accounts
+
+
+def _validate_exact_listing_ids(tenant, account: MarketplaceAccount, listing_ids) -> None:
+    """Reject partial/cross-account bulk selections instead of silently narrowing them."""
+    if not listing_ids:
+        return
+    try:
+        normalized_ids = {int(listing_id) for listing_id in listing_ids}
+    except (TypeError, ValueError):
+        normalized_ids = set()
+    if not normalized_ids or len(normalized_ids) != len(listing_ids):
+        raise InvalidMarketplaceTargets('Список листингов содержит недопустимые значения.')
+    matched_ids = set(
+        Listing.objects.filter(
+            tenant=tenant,
+            product__tenant=tenant,
+            account=account,
+            account__tenant=tenant,
+            pk__in=normalized_ids,
+        ).values_list('pk', flat=True)
+    )
+    if matched_ids != normalized_ids:
+        raise InvalidMarketplaceTargets(
+            'Все выбранные листинги должны принадлежать указанному аккаунту.',
+        )
 
 
 class AccountAlreadyExists(Exception):
@@ -1182,6 +1240,10 @@ class ListingService:
             InvalidListingStatus: листинг не в статусе requires_review.
         """
         listing = ListingService.get_for_tenant(listing_id, tenant)
+        try:
+            require_provider_capability(listing.account.marketplace, 'publish_or_update')
+        except ProviderCapabilityUnavailable as exc:
+            raise InvalidListingStatus(str(exc)) from exc
         if listing.status != Listing.STATUS_REQUIRES_REVIEW:
             raise InvalidListingStatus(
                 f'Одобрить можно только листинг в статусе requires_review, '
@@ -1217,6 +1279,10 @@ class ListingService:
             InvalidListingStatus: листинг не в подходящем статусе для публикации.
         """
         listing = ListingService.get_for_tenant(listing_id, tenant)
+        try:
+            require_provider_capability(listing.account.marketplace, 'publish_or_update')
+        except ProviderCapabilityUnavailable as exc:
+            raise InvalidListingStatus(str(exc)) from exc
         if not listing_publication_available(listing):
             raise InvalidListingStatus(
                 'Публикация доступна для черновика, отклонённого, архивного, '
@@ -1258,6 +1324,10 @@ class ListingService:
     def archive(listing_id: int, tenant) -> Listing:
         """Снимает листинг с публикации через удаление из фида Avito."""
         listing = ListingService.get_for_tenant(listing_id, tenant)
+        try:
+            require_provider_capability(listing.account.marketplace, 'archive')
+        except ProviderCapabilityUnavailable as exc:
+            raise InvalidListingStatus(str(exc)) from exc
         if listing.status in (Listing.STATUS_ARCHIVING, Listing.STATUS_ARCHIVED, Listing.STATUS_DELETED):
             raise InvalidListingStatus(f'Листинг уже в статусе {listing.status}')
         # Честный статус: «Снимается» — переключим в «В архиве» только после
@@ -1279,6 +1349,10 @@ class ListingService:
     def delete(listing_id: int, tenant) -> Listing:
         """Удаляет листинг локально и отправляет Remove в feed, если есть external_id."""
         listing = ListingService.get_for_tenant(listing_id, tenant)
+        try:
+            require_provider_capability(listing.account.marketplace, 'archive')
+        except ProviderCapabilityUnavailable as exc:
+            raise InvalidListingStatus(str(exc)) from exc
         if listing.status == Listing.STATUS_DELETED:
             raise InvalidListingStatus('Листинг уже удалён')
         expected = _listing_expected_state(listing)
@@ -1298,6 +1372,10 @@ class ListingService:
     def check_avito_status(listing_id: int, tenant) -> Listing:
         """Ставит ручную проверку доставки или живого статуса объявления."""
         listing = ListingService.get_for_tenant(listing_id, tenant)
+        try:
+            require_provider_capability(listing.account.marketplace, 'status_reconcile')
+        except ProviderCapabilityUnavailable as exc:
+            raise InvalidListingStatus(str(exc)) from exc
         delivery = listing_delivery_presentation(listing)
         if not delivery.can_check_avito_status:
             raise InvalidListingStatus(
@@ -1471,6 +1549,11 @@ class ListingService:
     def update_placement(listing_id: int, tenant, data: dict) -> Listing:
         """Обновляет адресные override-поля листинга."""
         listing = ListingService.get_for_tenant(listing_id, tenant)
+        if data:
+            try:
+                require_provider_capability(listing.account.marketplace, 'placement_addresses')
+            except ProviderCapabilityUnavailable as exc:
+                raise InvalidListingStatus(str(exc)) from exc
         # Частая ошибка: в поле «ID адреса Avito» вводят external_id аккаунта
         # (он же виден в UI как «ID аккаунта»). Avito такой адрес не находит —
         # отклоняем сразу с понятным пояснением, а не после провала публикации.
@@ -1509,12 +1592,21 @@ class ListingService:
     @staticmethod
     def bulk_update_placement(tenant, filters: dict, data: dict) -> int:
         """Массово обновляет адресные поля листингов тенанта ниже ручных override."""
-        qs = Listing.objects.filter(tenant=tenant)
+        account = _explicit_target_accounts(
+            tenant,
+            [filters.get('account_id')],
+            'placement_addresses',
+        )[0]
+        _validate_exact_listing_ids(tenant, account, filters.get('listing_ids'))
+        qs = Listing.objects.filter(
+            tenant=tenant,
+            product__tenant=tenant,
+            account=account,
+            account__tenant=tenant,
+        )
         listing_ids = filters.get('listing_ids')
         if listing_ids:
             qs = qs.filter(pk__in=listing_ids)
-        if filters.get('account_id'):
-            qs = qs.filter(account_id=filters['account_id'])
         if filters.get('status'):
             qs = qs.filter(status=filters['status'])
         if filters.get('category_source'):
@@ -1665,6 +1757,18 @@ class ListingService:
     def bulk_action(tenant, data: dict) -> BulkActionResult:
         """Выполняет массовое действие над tenant-scoped листингами."""
         action = data['action']
+        capability = {
+            'publish': 'publish_or_update',
+            'archive': 'archive',
+            'delete': 'archive',
+            'update_placement': 'placement_addresses',
+        }[action]
+        account = _explicit_target_accounts(
+            tenant,
+            [data.get('account_id')],
+            capability,
+        )[0]
+        _validate_exact_listing_ids(tenant, account, data.get('listing_ids'))
         listings = list(
             ListingService._bulk_queryset(tenant, data)
             .select_related('tenant', 'product', 'account')
@@ -1729,12 +1833,15 @@ class ListingService:
     @staticmethod
     def _bulk_queryset(tenant, filters: dict):
         """Возвращает queryset листингов для массового действия с tenant isolation."""
-        qs = Listing.objects.filter(tenant=tenant)
+        qs = Listing.objects.filter(
+            tenant=tenant,
+            product__tenant=tenant,
+            account__tenant=tenant,
+            account_id=filters['account_id'],
+        )
         listing_ids = filters.get('listing_ids')
         if listing_ids:
             qs = qs.filter(pk__in=listing_ids)
-        if filters.get('account_id'):
-            qs = qs.filter(account_id=filters['account_id'])
         if filters.get('status'):
             qs = qs.filter(status=filters['status'])
         return qs
@@ -1792,15 +1899,21 @@ class ListingService:
             pass
 
     @staticmethod
-    def archive_product(product, tenant) -> int:
+    def archive_product(product, tenant, account_ids) -> int:
         """
-        Ставит задачу снятия с публикации для всех активных листингов товара тенанта.
+        Ставит снятие с публикации только для явно выбранных аккаунтов.
 
         Возвращает количество затронутых листингов.
         """
+        if product.tenant_id != tenant.pk:
+            raise InvalidMarketplaceTargets('Товар недоступен для выбранного тенанта.')
+        accounts = _explicit_target_accounts(tenant, account_ids, 'archive')
         listings = Listing.objects.filter(
             tenant=tenant,
+            product__tenant=tenant,
             product=product,
+            account__in=accounts,
+            account__tenant=tenant,
             status=Listing.STATUS_ACTIVE,
         )
         count = 0
@@ -1822,17 +1935,13 @@ class ListingService:
         return count
 
     @staticmethod
-    def publish_product(product, tenant) -> list[int]:
+    def publish_product(product, tenant, account_ids) -> list[int]:
         """
-        Создаёт или обновляет листинги товара для всех активных аккаунтов тенанта.
-
-        Raises:
-            NoActiveAccounts: у тенанта нет активных аккаунтов маркетплейсов.
+        Создаёт или обновляет черновики только для явно выбранных аккаунтов.
         """
-        from apps.marketplaces.models import MarketplaceAccount
-        accounts = MarketplaceAccount.objects.filter(tenant=tenant, is_active=True)
-        if not accounts.exists():
-            raise NoActiveAccounts('Нет подключённых активных аккаунтов')
+        if product.tenant_id != tenant.pk:
+            raise InvalidMarketplaceTargets('Товар недоступен для выбранного тенанта.')
+        accounts = _explicit_target_accounts(tenant, account_ids, 'publish_or_update')
         listing_ids = []
         for account in accounts:
             # Со страницы товаров создаём ЧЕРНОВИК, а не публикуем сразу —

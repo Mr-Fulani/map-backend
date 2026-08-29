@@ -966,11 +966,11 @@ class TestPublishListingTask:
         """Со страницы товаров создаётся ЧЕРНОВИК — без авто-отправки в Avito."""
         from apps.marketplaces.services import ListingService
         tenant = make_tenant('prod-draft-co')
-        make_account(tenant)
+        account = make_account(tenant)
         product = make_product(tenant)
 
         with patch('apps.marketplaces.services.transaction') as mock_tx:
-            ids = ListingService.publish_product(product, tenant)
+            ids = ListingService.publish_product(product, tenant, [account.pk])
 
         listing = Listing.objects.get(pk=ids[0])
         assert listing.status == Listing.STATUS_DRAFT
@@ -1630,6 +1630,7 @@ class TestListingBulkActions:
 
         result = ListingService.bulk_action(tenant, {
             'action': 'update_placement',
+            'account_id': account.pk,
             'listing_ids': [first.pk, second.pk],
             'address_override': 'Москва, Тверская, 1',
             'seller_address_id_override': 'seller-1',
@@ -1664,7 +1665,9 @@ class TestListingBulkActions:
         listing.refresh_from_db()
         assert listing.seller_address_id_override == ''
 
-    def test_bulk_publish_sets_queued_and_respects_tenant(self):
+    def test_bulk_publish_rejects_cross_tenant_listing_selection(self):
+        from apps.marketplaces.services import InvalidMarketplaceTargets
+
         tenant = make_tenant('bulk-publish-action-co')
         other_tenant = make_tenant('bulk-publish-other-co')
         account = make_account(tenant)
@@ -1674,16 +1677,16 @@ class TestListingBulkActions:
 
         with patch('apps.marketplaces.services.transaction') as mock_tx:
             mock_tx.on_commit.side_effect = lambda fn: None
-            result = ListingService.bulk_action(tenant, {
-                'action': 'publish',
-                'listing_ids': [listing.pk, other_listing.pk],
-            })
+            with pytest.raises(InvalidMarketplaceTargets):
+                ListingService.bulk_action(tenant, {
+                    'action': 'publish',
+                    'account_id': account.pk,
+                    'listing_ids': [listing.pk, other_listing.pk],
+                })
 
         listing.refresh_from_db()
         other_listing.refresh_from_db()
-        assert result['total'] == 1
-        assert result['success'] == 1
-        assert listing.status == Listing.STATUS_QUEUED
+        assert listing.status == Listing.STATUS_DRAFT
         assert other_listing.status == Listing.STATUS_DRAFT
 
     def test_bulk_archive_and_delete_update_statuses(self):
@@ -1703,10 +1706,12 @@ class TestListingBulkActions:
             mock_tx.on_commit.side_effect = lambda fn: None
             archive_result = ListingService.bulk_action(tenant, {
                 'action': 'archive',
+                'account_id': account.pk,
                 'listing_ids': [active.pk],
             })
             delete_result = ListingService.bulk_action(tenant, {
                 'action': 'delete',
+                'account_id': account.pk,
                 'listing_ids': [draft.pk],
             })
 
@@ -1724,6 +1729,7 @@ class TestListingBulkActions:
 
         result = ListingService.bulk_action(tenant, {
             'action': 'publish',
+            'account_id': account.pk,
             'listing_ids': [listing.pk],
         })
 

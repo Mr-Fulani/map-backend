@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.test import Client
@@ -67,11 +68,19 @@ def test_account_read_contract_is_provider_neutral_and_fail_closed():
     assert account['marketplace_label'] == 'Ozon'
     assert account['provider_capabilities'] == {
         'account_health': False,
+        'catalog_schema': False,
+        'publication_preflight': False,
+        'publish_or_update': False,
+        'price_update': False,
+        'stock_update': False,
+        'archive': False,
+        'status_reconcile': False,
+        'statistics': False,
+        'feed_delivery': False,
+        'placement_addresses': False,
         'publication': False,
         'status_check': False,
         'analytics': False,
-        'feed_delivery': False,
-        'placement_addresses': False,
     }
     assert account['avito_status'] is None
     assert account['autoload_onboarding'] is None
@@ -99,6 +108,121 @@ def test_account_filter_rejects_malformed_marketplace():
     )
     assert account_response.status_code == 400
     assert 'account' in account_response.json()['errors']
+
+
+@pytest.mark.django_db
+def test_product_publish_requires_and_respects_explicit_multi_account_targets():
+    tenant, token = _tenant('mutation-publish-targets')
+    first = _account(tenant, MarketplaceAccount.MARKETPLACE_AVITO, 'first')
+    second = _account(tenant, MarketplaceAccount.MARKETPLACE_AVITO, 'second')
+    unselected = _account(tenant, MarketplaceAccount.MARKETPLACE_AVITO, 'unselected')
+    product = Product.objects.create(
+        tenant=tenant,
+        article='ART-TARGETS',
+        name='Targeted product',
+        price=Decimal('100.00'),
+        stock_qty=1,
+    )
+    client = Client()
+
+    missing = client.post(
+        f'/api/v1/products/{product.pk}/publish/',
+        {},
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {token}',
+    )
+    response = client.post(
+        f'/api/v1/products/{product.pk}/publish/',
+        {'account_ids': [second.pk, first.pk]},
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {token}',
+    )
+
+    assert missing.status_code == 400
+    assert response.status_code == 200
+    listings = list(Listing.objects.filter(product=product).order_by('account_id'))
+    assert [listing.account_id for listing in listings] == [first.pk, second.pk]
+    assert all(listing.status == Listing.STATUS_DRAFT for listing in listings)
+    assert not Listing.objects.filter(product=product, account=unselected).exists()
+    assert set(response.json()['data']['listing_ids']) == {listing.pk for listing in listings}
+
+
+@pytest.mark.django_db
+def test_product_publish_rejects_foreign_or_unsupported_target_atomically():
+    tenant, token = _tenant('mutation-publish-fence')
+    own = _account(tenant, MarketplaceAccount.MARKETPLACE_AVITO, 'own')
+    unsupported = _account(tenant, 'ozon', 'unsupported')
+    other, _ = _tenant('mutation-publish-fence-other')
+    foreign = _account(other, MarketplaceAccount.MARKETPLACE_AVITO, 'foreign')
+    product = Product.objects.create(
+        tenant=tenant,
+        article='ART-FENCE',
+        name='Fenced product',
+        price=Decimal('100.00'),
+        stock_qty=1,
+    )
+    client = Client()
+
+    foreign_response = client.post(
+        f'/api/v1/products/{product.pk}/publish/',
+        {'account_ids': [own.pk, foreign.pk]},
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {token}',
+    )
+    unsupported_response = client.post(
+        f'/api/v1/products/{product.pk}/publish/',
+        {'account_ids': [unsupported.pk]},
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {token}',
+    )
+
+    assert foreign_response.status_code == 400
+    assert foreign_response.json()['code'] == 'invalid_account_targets'
+    assert unsupported_response.status_code == 400
+    assert unsupported_response.json()['code'] == 'provider_capability_unavailable'
+    assert not Listing.objects.filter(product=product).exists()
+
+
+@pytest.mark.django_db
+def test_product_archive_only_mutates_selected_account_scope(
+    settings,
+    django_capture_on_commit_callbacks,
+):
+    settings.AVITO_STATUS_LIFECYCLE_MODE = 'dual_write'
+    tenant, token = _tenant('mutation-archive-target')
+    selected = _account(tenant, MarketplaceAccount.MARKETPLACE_AVITO, 'selected')
+    untouched = _account(tenant, MarketplaceAccount.MARKETPLACE_AVITO, 'untouched')
+    selected_listing = _listing(
+        tenant,
+        selected,
+        'selected',
+        status=Listing.STATUS_ACTIVE,
+    )
+    untouched_listing = Listing.objects.create(
+        tenant=tenant,
+        product=selected_listing.product,
+        account=untouched,
+        title='Untouched listing',
+        price_on_listing=Decimal('100.00'),
+        status=Listing.STATUS_ACTIVE,
+    )
+
+    with patch('apps.marketplaces.services._enqueue_unpublish') as enqueue, \
+         django_capture_on_commit_callbacks(execute=True):
+        response = Client().post(
+            f'/api/v1/products/{selected_listing.product_id}/archive/',
+            {'account_ids': [selected.pk]},
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+
+    selected_listing.refresh_from_db()
+    untouched_listing.refresh_from_db()
+    assert response.status_code == 200
+    assert response.json()['data']['archived_count'] == 1
+    assert selected_listing.status == Listing.STATUS_ARCHIVING
+    assert untouched_listing.status == Listing.STATUS_ACTIVE
+    enqueue.assert_called_once_with(selected_listing.pk)
 
 
 @pytest.mark.django_db

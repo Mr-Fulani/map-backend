@@ -21,6 +21,7 @@ from apps.marketplaces.models import (
     MarketplaceAccount,
     MarketplacePlacementAddress,
 )
+from apps.marketplaces.provider_registry import provider_capabilities
 from apps.products.media import (
     get_product_image_delivery_key, get_publishable_product_images,
 )
@@ -155,19 +156,14 @@ class MarketplaceCapabilitiesSerializer(serializers.Serializer):
     analytics = serializers.BooleanField(read_only=True)
     feed_delivery = serializers.BooleanField(read_only=True)
     placement_addresses = serializers.BooleanField(read_only=True)
-
-
-def marketplace_capabilities(marketplace: str) -> dict[str, bool]:
-    """Return a fail-closed presentation contract for one provider."""
-    is_avito = marketplace == MarketplaceAccount.MARKETPLACE_AVITO
-    return {
-        'account_health': is_avito,
-        'publication': is_avito,
-        'status_check': is_avito,
-        'analytics': is_avito,
-        'feed_delivery': is_avito,
-        'placement_addresses': is_avito,
-    }
+    catalog_schema = serializers.BooleanField(read_only=True)
+    publication_preflight = serializers.BooleanField(read_only=True)
+    publish_or_update = serializers.BooleanField(read_only=True)
+    price_update = serializers.BooleanField(read_only=True)
+    stock_update = serializers.BooleanField(read_only=True)
+    archive = serializers.BooleanField(read_only=True)
+    status_reconcile = serializers.BooleanField(read_only=True)
+    statistics = serializers.BooleanField(read_only=True)
 
 
 def marketplace_label(marketplace: str) -> str:
@@ -205,7 +201,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(MarketplaceCapabilitiesSerializer)
     def get_provider_capabilities(self, obj) -> dict[str, bool]:
-        return marketplace_capabilities(obj.marketplace)
+        return provider_capabilities(obj.marketplace).public_contract()
 
     @extend_schema_field(AvitoAccountStatusSerializer(allow_null=True))
     def get_avito_status(self, obj):
@@ -439,7 +435,7 @@ class ListingSerializer(serializers.ModelSerializer):
 
     @extend_schema_field(MarketplaceCapabilitiesSerializer)
     def get_provider_capabilities(self, obj) -> dict[str, bool]:
-        return marketplace_capabilities(obj.account.marketplace)
+        return provider_capabilities(obj.account.marketplace).public_contract()
 
 
 def _image_url(s3_key: str, fallback: str, request=None) -> str:
@@ -711,18 +707,12 @@ class ListingBulkPlacementSerializer(ListingPlacementSerializer):
         allow_empty=False,
         max_length=settings.API_BULK_MAX_ITEMS,
     )
-    account_id = serializers.IntegerField(required=False)
+    account_id = serializers.IntegerField(required=True, min_value=1)
     status = serializers.CharField(max_length=20, required=False, allow_blank=True)
     category_source = serializers.CharField(max_length=300, required=False, allow_blank=True)
     catalog_category_id = serializers.IntegerField(required=False)
 
     def validate(self, attrs):
-        has_filter = any(
-            attrs.get(field)
-            for field in ('listing_ids', 'account_id', 'status', 'category_source', 'catalog_category_id')
-        )
-        if not has_filter:
-            raise serializers.ValidationError('Укажите хотя бы один фильтр для массового обновления.')
         return attrs
 
 
@@ -745,14 +735,10 @@ class ListingBulkActionSerializer(ListingPlacementSerializer):
         allow_empty=False,
         max_length=settings.API_BULK_MAX_ITEMS,
     )
-    account_id = serializers.IntegerField(required=False)
+    account_id = serializers.IntegerField(required=True, min_value=1)
     status = serializers.CharField(max_length=20, required=False, allow_blank=True)
 
     def validate(self, attrs):
-        has_filter = any(attrs.get(field) for field in ('listing_ids', 'account_id', 'status'))
-        if not has_filter:
-            raise serializers.ValidationError('Укажите хотя бы один фильтр для массового действия.')
-
         placement_fields = (
             'placement_address',
             'address_override',

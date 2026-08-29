@@ -59,6 +59,7 @@ from apps.marketplaces.services import (
     AvitoAccountStatusService,
     CategoryMappingService,
     InvalidMarketplaceCredentials,
+    InvalidMarketplaceTargets,
     ListingBulkLimitExceeded,
     ListingAccountConflict,
     InvalidListingStatus,
@@ -69,6 +70,7 @@ from apps.marketplaces.services import (
     MarketplaceAccountService,
     MarketplacePlacementAddressService,
 )
+from apps.marketplaces.provider_registry import ProviderCapabilityUnavailable
 from apps.tenants.permissions import TenantAdminPermission, TenantAdminWritePermission
 
 
@@ -957,6 +959,11 @@ class ListingBulkPlacementView(APIView):
                 {'status': 'error', 'code': 'bulk_limit_exceeded', 'message': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        except (InvalidMarketplaceTargets, ProviderCapabilityUnavailable) as exc:
+            return Response(
+                {'status': 'error', 'code': 'invalid_account_scope', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         return Response({'status': 'ok', 'data': {'updated': updated}})
 
 
@@ -999,6 +1006,11 @@ class ListingBulkActionView(APIView):
         except ListingBulkLimitExceeded as exc:
             return Response(
                 {'status': 'error', 'code': 'bulk_limit_exceeded', 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except (InvalidMarketplaceTargets, ProviderCapabilityUnavailable) as exc:
+            return Response(
+                {'status': 'error', 'code': 'invalid_account_scope', 'message': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response({'status': 'ok', 'data': result})

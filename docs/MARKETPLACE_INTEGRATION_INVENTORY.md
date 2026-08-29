@@ -2,9 +2,9 @@
 
 Обновлено: 2026-08-29.
 
-Статус: M0 `VERIFIED`, M1a `ENABLED`. Документ описывает состояние
-репозитория от commit `fde9564f7ed183c30d852a4024a7957a667fee42` до
-реализации M1a 2026-08-29.
+Статус: M0 `VERIFIED`, M1a `ENABLED`, M1b `TESTED` (release pending).
+Документ описывает состояние репозитория от commit
+`fde9564f7ed183c30d852a4024a7957a667fee42` до реализации M1b 2026-08-29.
 
 Главный roadmap: [MARKETPLACE_EXPANSION_ROADMAP.md](MARKETPLACE_EXPANSION_ROADMAP.md).
 Рабочее состояние Avito: [AVITO_FEED_STATUS.md](AVITO_FEED_STATUS.md).
@@ -302,9 +302,9 @@ M1a обязательно исправляет presentation/read paths, но **
 credentials, health и fake-provider acceptance. Product publish fan-out в M1a
 не расширяется; его mutation contract меняется отдельным bounded M1b до O1.
 
-## Backlog следующих пакетов
+## Пакеты расширения
 
-### M1b — безопасный target selection для mutations
+### M1b — безопасный target selection для mutations (`TESTED`)
 
 - product publish принимает явный список account IDs;
 - archive/bulk actions подтверждают точный marketplace/account scope;
@@ -443,4 +443,59 @@ PROD_DEPLOY_ENABLED: восстановлен в false после запуска
 ```
 
 M1a включён без feature flag и имеет статус `ENABLED`. Подключение Ozon,
-credentials и внешний API I/O не входят в M1a и остаются выключены до M1b/O1.
+credentials и внешний API I/O не входят в M1a/M1b и остаются выключены до O1.
+
+## M1b gate
+
+Локально выполнено 2026-08-29:
+
+```text
+python3 -m compileall -q <изменённые backend production-файлы>
+результат: exit 0
+
+docker compose exec django flake8 <изменённые backend-файлы>
+результат: exit 0
+
+docker compose exec django mypy
+результат: exit 0, no issues found in 699 source files
+
+docker compose exec django mypy --check-untyped-defs \
+  --exclude '(^|/)(tests?|migrations)/' apps config backup
+результат: exit 0, no issues found in 351 source files
+
+docker compose exec django pytest -q \
+  apps/marketplaces/tests/test_provider_neutral_contract.py \
+  apps/marketplaces/tests/test_listing_review.py \
+  apps/marketplaces/tests/test_avito.py \
+  apps/marketplaces/tests/test_status_fencing.py \
+  apps/marketplaces/tests/test_feed_intent_local_writers.py \
+  apps/marketplaces/tests/test_listing_patch_api.py \
+  apps/tenants/tests/test_api_key_authorization.py
+результат: exit 0, 276 passed in 68.28s; одно teardown warning тестовой БД
+
+docker compose exec django python manage.py spectacular \
+  --file /tmp/openapi-schema.yml --validate --fail-on-warn
+результат: exit 0
+
+docker compose exec django python manage.py makemigrations --check --dry-run
+результат: exit 0, No changes detected
+
+cd frontend && npm run typecheck
+результат: exit 0
+
+cd frontend && npm run lint
+результат: exit 0
+
+cd frontend && npm run test:unit
+результат: exit 0, 39 passed
+
+docker compose run --rm frontend npm run build
+результат: exit 0, production build и 21 page generated
+
+git diff --check -- . ':!.claude/settings.local.json'
+результат: exit 0
+```
+
+M1b не добавляет model choices, credentials или внешний Ozon I/O. Avito feed
+runtime, P7 и production flags не меняются. Production evidence заполняется
+после полного PR CI и exact-SHA deployment.

@@ -345,15 +345,20 @@ def test_bulk_placement_advances_once_per_affected_account():
         account=second_account,
     )
 
-    updated = ListingService.bulk_update_placement(
+    first_updated = ListingService.bulk_update_placement(
         tenant,
-        {'listing_ids': [first.pk, second.pk, third.pk]},
+        {'account_id': first_account.pk, 'listing_ids': [first.pk, second.pk]},
+        {'address_override': 'Bulk desired address'},
+    )
+    second_updated = ListingService.bulk_update_placement(
+        tenant,
+        {'account_id': second_account.pk, 'listing_ids': [third.pk]},
         {'address_override': 'Bulk desired address'},
     )
 
     first_account.refresh_from_db()
     second_account.refresh_from_db()
-    assert updated == 3
+    assert first_updated + second_updated == 3
     assert first_account.feed_intent_revision == 1
     assert second_account.feed_intent_revision == 1
 
