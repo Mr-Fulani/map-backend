@@ -81,7 +81,7 @@ SHA `0b84c9a1d209e82fb730fc0abd85c31ff9cd6178`: encrypted backup создан,
 public readiness стабильно отвечает HTTP 200. На момент релиза M1a Ozon
 account connection, API I/O и credentials оставались выключены до M1b/O1.
 
-## O1 — безопасное подключение Ozon Seller API — O1a/O1b `DEPLOYED_OFF`
+## O1 — безопасное подключение Ozon Seller API — O1a/O1b/O1c gate `DEPLOYED_OFF`
 
 Результат: тенант может добавить Ozon-кабинет, проверить credentials и увидеть
 понятное состояние подключения.
@@ -106,10 +106,11 @@ O1 выполняется тремя последовательными част
 - **O1b — безопасный UI/onboarding (`DEPLOYED_OFF`)**: отдельная Ozon-карточка
   и список аккаунтов, write-only ввод Client ID/API key без persistent browser
   storage, роли/expiry/warehouse и понятные provider-specific ошибки;
-- **O1c — read-only AlfaPro canary**: отдельное подтверждение перед созданием
-  или использованием ключа, account allowlist, проверка ролей/срока/продавца и
-  одного FBS-склада без product mutations. Health polling активируется только
-  после успешного canary и отдельного review.
+- **O1c — read-only AlfaPro canary (`GATE DEPLOYED_OFF`, live canary pending)**:
+  отдельное подтверждение перед созданием или использованием ключа, точные
+  tenant/Client-ID allowlists, проверка ролей/срока/продавца и одного FBS-склада
+  без product mutations. Health polling активируется только после успешного
+  canary и отдельного review.
 
 O1a реализован отдельным Ozon adapter/service и не встроен в Avito feed path.
 Один tenant может иметь несколько разных Ozon accounts, но одинаковый Ozon
@@ -163,6 +164,34 @@ O1a/O1b не создавали API key, не сохраняли credentials Alf
 `OZON_ACCOUNT_CONNECTION_ENABLED=false`, поэтому кнопка подключения и формы
 credentials fail-closed. Следующий пакет — O1c read-only AlfaPro canary с
 tenant/account allowlist и отдельным подтверждением перед внешним действием.
+
+O1c safety gate добавляет два независимых точных allowlist — tenant slug и
+Ozon Client ID — поверх глобального флага, а backend и UI требуют явное
+подтверждение read-only проверки в каждом запросе с ключом. Пустой, повреждённый
+или несортированный allowlist закрывает доступ; rollout endpoint возвращает
+`false` всем неразрешённым tenant. Проверка остаётся ограниченной `/v1/roles`,
+`/v1/seller/info` и `/v2/warehouse/list`; endpoints товаров, цен, остатков и
+архивации в пакет не добавлялись.
+
+Локальный gate O1c: 24 focused теста, 310 Ozon/Avito/provider-neutral regression
+тестов и 14 тестов общего account API прошли; frontend typecheck, ESLint, 43
+unit-теста и чистый Docker build с генерацией 21/21 страниц успешны. Flake8,
+baseline mypy для 707 файлов, strict mypy для 356 файлов, OpenAPI validation,
+`makemigrations --check --dry-run` и `git diff --cached --check` также успешны.
+Изменено 9 файлов, 332 добавления, migrations нет — внутри repository limits.
+
+Полный CI PR `#282` прошёл все backend shards, coverage, contracts,
+schema/supply-chain, frontend и production image/security gates. O1c safety gate
+выложен на production SHA `90324efe4ac79c65d3cff79d584cfd8583ba1e1d`:
+encrypted backup создан, новых migrations нет, все services и topology healthy,
+четыре внешних readiness-запроса и `/dashboard/settings` ответили HTTP 200.
+Deploy gate возвращён в `false`.
+
+Live canary ещё не выполнялся: API key не создавался и не использовался,
+credentials AlfaPro не сохранялись, запросов от MAP к Ozon не было и кабинет
+продавца не изменялся. Следующая контрольная точка — отдельное подтверждение
+непосредственно перед настройкой точных production allowlists и read-only
+проверкой одного кабинета AlfaPro.
 
 ## O2 — каталог, категории и обязательные атрибуты
 
