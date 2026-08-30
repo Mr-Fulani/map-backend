@@ -338,7 +338,7 @@ topology и внешний readiness прошли. Read-only проверка к
 черновик или категория во время canary не создавались. Deploy gate возвращён
 в `false`.
 
-**O2c2 — `CODE_READY` 2026-08-30**: финальная подготовка характеристик остаётся
+**O2c2 — `ENABLED` 2026-08-30**: финальная подготовка характеристик остаётся
 локальной и account/category-scoped:
 
 - схема характеристик загружается только вручную для выбранного кабинета и
@@ -364,9 +364,43 @@ Django check, OpenAPI validation, migration drift и чистое примене
 цепочки до `marketplaces.0035_ozon_offer_attributes` прошли. Production npm
 audit нашёл 0 уязвимостей. Пакет содержит одну migration Marketplaces.
 
+O2c2 выложен на production SHA
+`a68ad3f83ccf565b3296144a13ddca0ebbdd25a9`: migration
+`marketplaces.0035_ozon_offer_attributes` применена, все 10 production
+services, topology и внешний readiness прошли. Read-only AlfaPro
+canary подтвердил account-scoped подготовку без provider mutations;
+deploy gate возвращён в `false`.
+
 ## O3 — публикация и reconciliation
 
-Результат: create/update/archive Ozon offer с устойчивым локальным статусом.
+O3 выполняется двумя последовательными пакетами:
+
+- **O3a — provider-aware listing workspace (`CODE_READY` 2026-08-30)**:
+  общие данные и медиа остаются у товара, а готовность и действия
+  разделены по точному Avito/Ozon-аккаунту; Ozon остаётся
+  локальной подготовкой без кнопки provider publication;
+- **O3b — durable Ozon publication/reconciliation**: create/update/archive,
+  idempotency, очередь, unknown-result handling и provider-status polling.
+
+O3a добавляет понятный tenant-facing drawer «Каналы публикации»:
+
+- цель выбирается и сохраняется в URL по точному marketplace account;
+- у каждого Avito-кабинета показана готовность и открывается
+  прежний Avito drawer; создание черновика идёт через текущий
+  stable path и не публикует его автоматически;
+- у каждого Ozon-кабинета показан его локальный `OzonOfferDraft`, ошибки
+  и характеристики; данные Ozon не смешиваются с деревом,
+  наценками и фидом Avito;
+- в пакете нет backend-изменений, migrations, background tasks или
+  новых Ozon provider methods.
+
+Локальный gate O3a: frontend unit — 56/56, TypeScript, ESLint,
+production webpack build 21/21 и production dependency audit с 0 уязвимостей;
+Products + Marketplaces regression — 1325 passed, 2 skipped; runtime/deploy
+contracts — 67/67. `git diff --check` чистый.
+
+Результат O3b: create/update/archive Ozon offer с устойчивым
+локальным статусом.
 
 - durable intent и idempotency для provider mutations;
 - account-scoped очередь и rate limiting;

@@ -33,9 +33,11 @@ function envelopeData<T>(body: unknown): T {
 export function OzonOfferPreparationCard({
   productId,
   accounts,
+  onPreparationChange,
 }: {
   productId: number;
   accounts: AccountOption[];
+  onPreparationChange?: (preparation: OzonOfferPreparation | null) => void;
 }) {
   const ozonAccounts = useMemo(
     () => accounts.filter((account) => account.marketplace === 'ozon' && account.is_active),
@@ -56,20 +58,24 @@ export function OzonOfferPreparationCard({
     : ozonAccounts.length === 1 ? ozonAccounts[0].id : null;
   const loading = Boolean(accountId && loadedAccountId !== accountId);
 
+  const applyPreparation = useCallback((next: OzonOfferPreparation | null) => {
+    setPreparation(next);
+    setAttributes(next?.attributes ?? []);
+    onPreparationChange?.(next);
+  }, [onPreparationChange]);
+
   const loadPreparation = useCallback(async (selectedAccountId: number) => {
     try {
       const response = await productApi.getOzonOffer(productId, selectedAccountId);
       const next = envelopeData<OzonOfferPreparation>(response.data);
-      setPreparation(next);
-      setAttributes(next.attributes);
+      applyPreparation(next);
     } catch {
-      setPreparation(null);
-      setAttributes([]);
+      applyPreparation(null);
       toast.error('Не удалось прочитать подготовку товара для Ozon.');
     } finally {
       setLoadedAccountId(selectedAccountId);
     }
-  }, [productId]);
+  }, [applyPreparation, productId]);
 
   function chooseAccount(nextAccountId: number) {
     setAccountChoiceId(nextAccountId);
@@ -90,20 +96,18 @@ export function OzonOfferPreparationCard({
       .then((response) => {
         if (!active) return;
         const next = envelopeData<OzonOfferPreparation>(response.data);
-        setPreparation(next);
-        setAttributes(next.attributes);
+        applyPreparation(next);
       })
       .catch(() => {
         if (!active) return;
-        setPreparation(null);
-        setAttributes([]);
+        applyPreparation(null);
         toast.error('Не удалось прочитать подготовку товара для Ozon.');
       })
       .finally(() => {
         if (active) setLoadedAccountId(accountId);
       });
     return () => { active = false; };
-  }, [accountId, productId]);
+  }, [accountId, applyPreparation, productId]);
 
   async function updateOffer(payload: Record<string, unknown>, actionName: string) {
     if (!accountId) return;
@@ -114,8 +118,7 @@ export function OzonOfferPreparationCard({
         ...payload,
       });
       const next = envelopeData<OzonOfferPreparation>(response.data);
-      setPreparation(next);
-      setAttributes(next.attributes);
+      applyPreparation(next);
       return next;
     } catch {
       toast.error('Не удалось сохранить подготовку Ozon. Проверьте выбранные данные.');

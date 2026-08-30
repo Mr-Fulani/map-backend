@@ -26,6 +26,7 @@ import {
   X,
   Trash2,
   ExternalLink,
+  Store,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import {
@@ -2148,10 +2149,24 @@ export default function ProductDetailPage() {
               <CardTitle className="text-sm font-medium">Действия</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
+              <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
+                <p className="text-sm font-medium">Каналы публикации</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Проверьте готовность отдельно для каждого кабинета Avito и Ozon.
+                  Общие данные и медиа останутся у товара.
+                </p>
+                <Button asChild className="mt-3 w-full" variant="outline">
+                  <Link href={`/dashboard/listings?product=${product.id}`}>
+                    <Store className="mr-2 h-4 w-4" />
+                    Открыть каналы
+                  </Link>
+                </Button>
+              </div>
               <div className="rounded-md border p-3">
                 <p className="text-sm font-medium">Целевые аккаунты</p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Действие затронет только отмеченные кабинеты.
+                  Прежний быстрый сценарий Avito. Действие затронет только
+                  отмеченные кабинеты и не изменился.
                 </p>
                 <div className="mt-3 space-y-2">
                   {accountsLoading && (

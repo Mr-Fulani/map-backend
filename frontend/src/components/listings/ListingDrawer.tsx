@@ -24,6 +24,7 @@ import {
 import {
   CheckCircle, RefreshCw, Pencil, Crown, Trash2, Plus,
   ChevronLeft, ChevronRight, Send, BarChart3, FileText,
+  Store,
 } from 'lucide-react';
 import { getCategoryPlaceholder } from '@/lib/category-placeholder';
 import {
@@ -141,6 +142,7 @@ interface Props {
   initialPanel?: 'listing' | 'pricing';
   onClose: () => void;
   onActionDone: () => void;
+  onOpenProductWorkspace: (productId: number, targetAccountId?: number) => void;
 }
 
 // Вид объявления Avito (AdType). value — точная строка, которую принимает Avito.
@@ -228,6 +230,7 @@ export default function ListingDrawer({
 
 function ListingDrawerContent({
   listingId, initialPanel = 'listing', onClose, onActionDone,
+  onOpenProductWorkspace,
 }: Props) {
   const [listing, setListing] = useState<ListingDetail | null>(null);
   const [loading, setLoading] = useState(listingId !== null);
@@ -993,6 +996,16 @@ function ListingDrawerContent({
                     {listing.marketplace_label}
                   </Badge>
                 </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="w-fit"
+                  onClick={() => onOpenProductWorkspace(listing.product_id, listing.account_id)}
+                >
+                  <Store className="mr-2 h-4 w-4" />
+                  Все каналы публикации
+                </Button>
                 {listing.status_explanation && (
                   <p className="text-xs leading-5 text-muted-foreground">
                     {listing.status_explanation}
