@@ -5,6 +5,7 @@ import {
   avitoTargetState,
   ozonTargetState,
   publicationTargetBadgeVariant,
+  publicationWorkspaceView,
 } from '../src/lib/publication-workspace';
 import type { OzonOfferPreparation } from '../src/lib/ozon-offer-preparation';
 
@@ -44,6 +45,40 @@ test('published Avito target is independent from another marketplace', () => {
   });
   assert.equal(state.label, 'Опубликован');
   assert.equal(state.tone, 'published');
+});
+
+test('an existing Avito draft opens the full Avito view without an intermediate summary', () => {
+  const listing = {
+    id: 21,
+    account_id: 4,
+    status: 'draft',
+    status_display: 'Черновик',
+    can_publish: true,
+  };
+
+  assert.deepEqual(
+    publicationWorkspaceView({ marketplace: 'avito' }, listing),
+    { kind: 'avito_listing', listingId: 21 },
+  );
+  assert.deepEqual(
+    publicationWorkspaceView({ marketplace: 'avito' }, null),
+    { kind: 'avito_setup' },
+  );
+});
+
+test('Ozon stays in the provider workspace even when Avito has a draft', () => {
+  const listing = {
+    id: 22,
+    account_id: 4,
+    status: 'active',
+    status_display: 'Активно',
+    can_publish: false,
+  };
+
+  assert.deepEqual(
+    publicationWorkspaceView({ marketplace: 'ozon' }, listing),
+    { kind: 'ozon' },
+  );
 });
 
 test('Ozon target reports exact account draft readiness', () => {
