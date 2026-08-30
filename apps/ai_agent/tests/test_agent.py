@@ -22,7 +22,7 @@ from apps.billing.ai_wallet import AIWalletService
 from apps.core.dispatch import SafeRetryableDispatchError
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
-from apps.products.models import ProductCrossCode, ProductEnrichmentFact
+from apps.products.models import ProductCrossCode, ProductEnrichmentFact, ReviewStatus
 from apps.products.part_parsers import ParsedFitment
 from apps.products.services import ProductService
 from apps.products.services import ProductEnrichmentService
@@ -519,7 +519,7 @@ class TestDescriptionAgent:
         ProductEnrichmentService.create_fitment(
             tenant=tenant, product=product, make='MERCEDES-BENZ',
             model='E-CLASS', generation='W213', modification='E 220 d',
-            power_hp=194,
+            power_hp=194, review_status=ReviewStatus.APPROVED,
         )
 
         message = DescriptionAgent()._build_message(product)
@@ -580,6 +580,7 @@ class TestDescriptionAgent:
         ProductEnrichmentService.create_fitment(
             tenant=tenant, product=product, make='MERCEDES-BENZ',
             model='E-CLASS', generation='W213', confidence=0.95,
+            review_status=ReviewStatus.APPROVED,
         )
         weak = {
             'title': 'Тормозной диск Bosch ART-001 для Mercedes-Benz E-Class W213',
@@ -694,6 +695,7 @@ class TestDescriptionAgent:
         ProductEnrichmentService.create_fitment(
             tenant=tenant, product=product, make='MERCEDES-BENZ',
             model='E-CLASS', generation='W213', confidence=0.95,
+            review_status=ReviewStatus.APPROVED,
         )
         ProductEnrichmentService.create_fitment(
             tenant=tenant, product=product, make='BMW',
@@ -721,6 +723,7 @@ class TestDescriptionAgent:
                 model=models[index],
                 generation=f'GEN-{index}',
                 confidence=0.95,
+                review_status=ReviewStatus.APPROVED,
             )
 
         agent = DescriptionAgent()
@@ -764,10 +767,12 @@ class TestDescriptionAgent:
         ProductEnrichmentService.create_fitment(
             tenant=tenant, product=product, make='MERCEDES-BENZ',
             model='E-CLASS', generation='W213', confidence=0.95,
+            review_status=ReviewStatus.APPROVED,
         )
         ProductEnrichmentService.create_fitment(
             tenant=tenant, product=product, make='BMW',
             model='5 SERIES', generation='G30', confidence=0.95,
+            review_status=ReviewStatus.APPROVED,
         )
         result = {
             'title': 'Тормозной диск Bosch ART-001 для Mercedes-Benz E-Class W213',
@@ -891,7 +896,7 @@ class TestDescriptionAgent:
         part = ProductKnowledgeGraphService.upsert_part(
             brand=product.brand,
             article=product.article,
-            source_id='tachka',
+            source_id='human_review',
         )
         ProductKnowledgeGraphService.upsert_fitment(
             part=part,
@@ -901,7 +906,7 @@ class TestDescriptionAgent:
                 generation='W213',
                 confidence=0.95,
             ),
-            source_id='tachka',
+            source_id='human_review',
         )
 
         with patch(

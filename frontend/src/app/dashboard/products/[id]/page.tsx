@@ -185,11 +185,18 @@ function buyerFacingCatalogCodes(codes: ProductCrossCode[]): ProductCrossCode[] 
 
 interface VehicleFitment {
   id: number;
+  source_id: string;
+  source_url: string;
   make: string;
   model: string;
   generation: string;
+  date_from: string;
+  date_to: string;
   modification: string;
+  engine_code: string;
   power_hp: number | null;
+  raw_text: string;
+  confidence: number;
   needs_review: boolean;
   review_status: ReviewStatus;
 }
@@ -1651,30 +1658,60 @@ export default function ProductDetailPage() {
                         Совместимость с автомобилями
                       </p>
                       <p className="mb-2 text-xs text-muted-foreground">
-                        Точный список хранится для поиска и проверки. В объявлении большой список
-                        автоматически сворачивается до марок и классов автомобилей.
+                        MAP берёт варианты только из блока применяемости конкретного товара.
+                        Проверьте исходную строку и при необходимости откройте источник. Длинный
+                        список допустим: название товара не используется как жёсткий фильтр.
                       </p>
                       <div className="space-y-2">
-                        {(showAllFitments ? product.fitments : product.fitments.slice(0, 5)).map((fitment) => (
-                          <div key={fitment.id} className="flex flex-col gap-2 rounded-md border p-2 text-sm sm:flex-row sm:items-center sm:justify-between">
-                            <div className="min-w-0">
-                              <span className="break-words">
-                                {[
-                                  fitment.make,
-                                  fitment.model,
-                                  fitment.generation,
-                                  fitment.modification,
-                                  fitment.power_hp ? `${fitment.power_hp} л.с.` : '',
-                                ].filter(Boolean).join(' ')}
-                              </span>
-                              <Badge
-                                variant={fitment.review_status === 'rejected' ? 'destructive' : 'secondary'}
-                                className="ml-2"
-                              >
-                                {reviewStatusLabel(fitment.review_status, fitment.needs_review)}
-                              </Badge>
+                        {(showAllFitments ? product.fitments : product.fitments.slice(0, 5)).map((fitment) => {
+                          const canReview = fitment.review_status === 'pending';
+                          const sourceLabel = ENRICHMENT_SOURCE_LABELS[fitment.source_id]
+                            || fitment.source_id
+                            || 'Источник';
+                          const period = [fitment.date_from, fitment.date_to].filter(Boolean).join('–');
+                          return (
+                          <div key={fitment.id} className="flex flex-col gap-2 rounded-md border p-3 text-sm sm:flex-row sm:items-start sm:justify-between">
+                            <div className="min-w-0 space-y-1">
+                              <div>
+                                <span className="break-words font-medium">
+                                  {[
+                                    fitment.make,
+                                    fitment.model,
+                                    fitment.generation,
+                                    period,
+                                    fitment.modification,
+                                    fitment.engine_code ? `(${fitment.engine_code})` : '',
+                                    fitment.power_hp ? `${fitment.power_hp} л.с.` : '',
+                                  ].filter(Boolean).join(' ')}
+                                </span>
+                                <Badge
+                                  variant={fitment.review_status === 'rejected' ? 'destructive' : 'secondary'}
+                                  className="ml-2"
+                                >
+                                  {reviewStatusLabel(fitment.review_status, canReview || fitment.needs_review)}
+                                </Badge>
+                              </div>
+                              <p className="break-words text-xs text-muted-foreground">
+                                Источник:{' '}
+                                {fitment.source_url ? (
+                                  <a
+                                    href={fitment.source_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center gap-1 underline underline-offset-2"
+                                  >
+                                    {sourceLabel}
+                                    <ExternalLink className="h-3 w-3" />
+                                  </a>
+                                ) : sourceLabel}
+                              </p>
+                              {fitment.raw_text && (
+                                <p className="break-words text-xs text-muted-foreground">
+                                  Фрагмент: {fitment.raw_text}
+                                </p>
+                              )}
                             </div>
-                            {fitment.needs_review && (
+                            {canReview && (
                               <div className="flex gap-2">
                                 <Button
                                   size="sm"
@@ -1705,7 +1742,8 @@ export default function ProductDetailPage() {
                               </div>
                             )}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                       {product.fitments.length > 5 && (
                         <Button

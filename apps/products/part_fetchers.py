@@ -596,26 +596,27 @@ def _normalized_code(value: str) -> str:
 
 
 def euroauto_result_rank(result: dict, article: str) -> tuple | None:
-    """Prefer exact pages, then indexed evidence that contains applicability.
+    """Prefer exact pages, then exact result blocks with applicability.
 
     Euroauto often exposes both a sparse ``/firms/<brand>/<article>`` result
     and a richer catalogue result for the same part. Search relevance alone
-    can put the sparse page first, dropping fitments from enrichment.
+    can put the sparse page first, dropping fitments from enrichment. Full-page
+    ``raw_content`` is deliberately excluded: it can contain neighbouring
+    products and recommendation blocks unrelated to the requested article.
     """
     url = str(result.get('url') or '').strip()
-    haystack = ' '.join([
+    profile_text = ' '.join([
         str(result.get('title') or ''),
         str(result.get('content') or ''),
-        str(result.get('raw_content') or ''),
     ])
     target = _normalized_code(article)
-    normalized_haystack = _normalized_code(haystack)
+    normalized_haystack = _normalized_code(profile_text)
     if not url or not target or target not in normalized_haystack:
         return None
     direct = int(bool(re.search(r'/part/new/\d+', url)))
     has_fitment = int(bool(re.search(
         r'\(\s*\d{4}(?:\s*[-–]\s*\d{4}|\s*>)\s*\)',
-        haystack,
+        profile_text,
     )))
     firm = int('/firms/' in url)
     catalog = int('/catalog/' in url)
@@ -630,7 +631,7 @@ def euroauto_result_rank(result: dict, article: str) -> tuple | None:
         firm,
         catalog,
         article_mentions,
-        min(len(haystack), 20000),
+        min(len(profile_text), 20000),
         relevance,
     )
 

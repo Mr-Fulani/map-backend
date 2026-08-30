@@ -5,8 +5,13 @@ import pytest
 from django.utils.timezone import now
 
 from apps.core.models import BackgroundJobDispatch
-from apps.products.models import Product, ProductBulkActionJob, ProductCatalogClassification
-from apps.products.services import AutoPartsEnrichmentDisabled, ProductBulkActionService
+from apps.products.models import (
+    Product, ProductBulkActionJob, ProductCatalogClassification, TenantCatalogCategory,
+)
+from apps.products.services import (
+    AutoPartsEnrichmentDisabled, ProductBulkActionService, ProductCategorySeedService,
+)
+from apps.tenants.models import CatalogDomain
 from apps.tenants.services import TenantService
 
 
@@ -269,6 +274,41 @@ def test_bulk_enrichment_skips_non_auto_parts_products_for_mixed_tenant():
     classification = auto_part.catalog_classification
     assert classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
     assert classification.reason
+
+
+@pytest.mark.django_db
+def test_bulk_enrichment_skips_apparel_for_legacy_auto_tenant_with_two_domains():
+    tenant = make_tenant('bulk-auto-plus-apparel')
+    ProductCategorySeedService.enable_tenant_catalog_domain(
+        tenant,
+        'apparel',
+        seed_templates=False,
+    )
+    apparel_category = TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Куртки',
+        root_domain=CatalogDomain.objects.get(slug='apparel'),
+        domain=ProductCatalogClassification.Domain.APPAREL,
+    )
+    auto_part = make_product(tenant, 'P1', name='Колодки тормозные BREMBO P1')
+    apparel = make_product(
+        tenant,
+        'JACKET1',
+        brand='NO_BRAND',
+        name='Мужская куртка',
+        category_1c='Одежда',
+    )
+    apparel.catalog_category = apparel_category
+    apparel.save(update_fields=['catalog_category', 'updated_at'])
+
+    job = ProductBulkActionService.create_job(
+        tenant=tenant,
+        action=ProductBulkActionJob.Action.ENRICH_THEN_GENERATE,
+        product_ids=[auto_part.pk, apparel.pk],
+    )
+
+    assert job.product_ids == [auto_part.pk]
+    assert job.skipped_count == 1
 
 
 @pytest.mark.django_db

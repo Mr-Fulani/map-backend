@@ -32,6 +32,11 @@ FITMENT_RECORD_RE = re.compile(
     r'(?P<power>\d{2,4})\s*(?:л\.?\s*с\.?|hp)\b',
     re.IGNORECASE,
 )
+APPLICABILITY_MARKER_RE = re.compile(
+    r'(?:подходит\s+для\s+следующих\s+модификаций|'
+    r'применим(?:ость|о)|подходит\s+(?:к|для)\s+автомоб)',
+    re.IGNORECASE,
+)
 
 
 @dataclass
@@ -235,7 +240,6 @@ class TachkaPartParser:
             cross_codes=cross_codes,
             fitments=self._parse_fitments(
                 tree,
-                raw_text,
                 structured.get('description', ''),
                 known_makes=[cross.manufacturer for cross in cross_codes],
             ),
@@ -312,7 +316,6 @@ class TachkaPartParser:
     def _parse_fitments(
         self,
         tree: HTMLParser,
-        raw_text: str,
         structured_description: str = '',
         *,
         known_makes: list[str] | None = None,
@@ -326,23 +329,34 @@ class TachkaPartParser:
         """
         fitments: list[ParsedFitment] = []
 
-        for heading in tree.css('h3'):
-            group = heading.parent
-            if group is None:
-                continue
-            group_text = _normalize_spaces(group.text(separator=' '))
-            if not POWER_RE.search(group_text) or not DATE_RE.search(group_text):
-                continue
-            make = _normalize_spaces(heading.text(separator=' ')).strip(' :-')
-            if not _looks_like_vehicle_make(make):
-                continue
-            for item in group.css('li'):
-                line = _normalize_spaces(item.text(separator=' '))
-                if not POWER_RE.search(line) or not DATE_RE.search(line):
+        scopes = list(tree.css(
+            '[data-tab-id="applicability"], [data-role*="applicability"], '
+            '.part-applicability, .product-applicability, .car-applicability'
+        ))
+        for label in tree.css('h2, h3, h4, strong'):
+            label_text = _normalize_spaces(label.text(separator=' '))
+            if APPLICABILITY_MARKER_RE.search(label_text) and label.parent is not None:
+                scopes.append(label.parent)
+
+        for scope in scopes:
+            for heading in scope.css('h3'):
+                group = heading.parent
+                if group is None:
                     continue
-                fitment = parse_fitment_line(line)
-                fitment.make = make
-                fitments.append(fitment)
+                group_text = _normalize_spaces(group.text(separator=' '))
+                if not POWER_RE.search(group_text) or not DATE_RE.search(group_text):
+                    continue
+                make = _normalize_spaces(heading.text(separator=' ')).strip(' :-')
+                if not _looks_like_vehicle_make(make):
+                    continue
+                for item in group.css('li'):
+                    line = _normalize_spaces(item.text(separator=' '))
+                    if not POWER_RE.search(line) or not DATE_RE.search(line):
+                        continue
+                    fitment = parse_fitment_line(line)
+                    fitment.make = make
+                    fitment.needs_review = True
+                    fitments.append(fitment)
 
         if structured_description:
             fitments.extend(_parse_flat_fitments(
@@ -350,11 +364,6 @@ class TachkaPartParser:
                 known_makes=known_makes or [],
             ))
 
-        for line in raw_text.splitlines():
-            line = _normalize_spaces(line)
-            if not line or not POWER_RE.search(line) or not DATE_RE.search(line):
-                continue
-            fitments.append(parse_fitment_line(line))
         return _dedupe_fitments(fitments)
 
     def _parse_image_urls(
@@ -490,9 +499,10 @@ def _parse_flat_fitments(
         normalized,
         re.IGNORECASE,
     )
-    if marker:
-        description_prefix = normalized[:marker.start()].strip()
-        normalized = normalized[marker.end():].strip()
+    if not marker:
+        return []
+    description_prefix = normalized[:marker.start()].strip()
+    normalized = normalized[marker.end():].strip()
 
     description_makes = re.findall(
         r'(?:^|\s)([A-ZА-ЯЁ][A-ZА-ЯЁ0-9 /().-]{1,70}?)\s+-\s*(?=[A-ZА-ЯЁ0-9])',
@@ -531,7 +541,7 @@ def _parse_flat_fitments(
             power_hp=int(match.group('power')),
             raw_text=raw_text,
             confidence=0.9,
-            needs_review=False,
+            needs_review=True,
         ))
     return fitments
 
@@ -1139,6 +1149,7 @@ class RosskoPartParser:
                     if not fitment.model:
                         fitment.model = model
                         fitment.generation = generation
+                    fitment.needs_review = True
                     fitments.append(fitment)
                     continue
                 engine_match = re.search(r'\(([^)]+)\)\s*$', modification)
@@ -1151,7 +1162,7 @@ class RosskoPartParser:
                     engine_code=engine_code,
                     raw_text=f'{make} {model} {modification}',
                     confidence=0.85,
-                    needs_review=False,
+                    needs_review=True,
                 ))
 
         # Fallback for Rossko responses that group full fitment lines under a
@@ -1169,6 +1180,7 @@ class RosskoPartParser:
                     continue
                 fitment = parse_fitment_line(line)
                 fitment.make = make
+                fitment.needs_review = True
                 fitments.append(fitment)
 
         return _dedupe_fitments(fitments)
@@ -1392,7 +1404,7 @@ class EuroautoPartParser:
                 date_to=(year_match.group('date_to') or '') if year_match else '',
                 raw_text=text,
                 confidence=0.95,
-                needs_review=False,
+                needs_review=True,
             ))
         return _dedupe_fitments(fitments)
 
@@ -1467,6 +1479,7 @@ class EuroautoPartParser:
             str(result.get('content') or ''),
             str(result.get('raw_content') or ''),
         ])))
+        profile_text = _euroauto_profile_text(result, article)
         request_data = payload.get('_map_request') or {}
         hint = _normalize_spaces(str(request_data.get('hint') or ''))
         title = _euroauto_catalog_title(raw_text, article, hint)
@@ -1481,7 +1494,7 @@ class EuroautoPartParser:
             article=normalize_part_code(article),
             title=title or hint or f'{resolved_brand} {article}'.strip(),
             related_parts=related_parts,
-            fitments=_euroauto_fitments_from_text(raw_text),
+            fitments=_euroauto_fitments_from_text(profile_text),
             image_urls=images[:10],
             description_facts=(
                 {'catalog_description': description} if description else {}
@@ -1551,6 +1564,17 @@ def _infer_euroauto_brand(raw_text: str, article: str) -> str:
     return ''
 
 
+def _euroauto_profile_text(result: dict, article: str) -> str:
+    """Return only the exact indexed result block, never full-page raw content."""
+    profile_text = _normalize_lines('\n'.join(filter(None, [
+        str(result.get('title') or ''),
+        str(result.get('content') or ''),
+    ])))
+    if normalize_part_code(article) not in normalize_part_code(profile_text):
+        return ''
+    return profile_text
+
+
 def _euroauto_fitments_from_text(text: str) -> list[ParsedFitment]:
     fitments = []
     year_pattern = re.compile(
@@ -1578,7 +1602,7 @@ def _euroauto_fitments_from_text(text: str) -> list[ParsedFitment]:
             date_to=match.group('date_to') or '',
             raw_text=_normalize_spaces(match.group(0)),
             confidence=0.9,
-            needs_review=False,
+            needs_review=True,
         ))
     return _dedupe_fitments(fitments)
 

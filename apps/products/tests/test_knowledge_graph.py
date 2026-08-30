@@ -164,7 +164,7 @@ def test_save_parsed_part_learns_global_fitments():
     )
     assert fitment.generation == 'W213'
     assert fitment.power_hp == 194
-    assert fitment.needs_review is False
+    assert fitment.needs_review is True
     assert fitment.vehicle_make.normalized_name == 'MERCEDESBENZ'
     assert fitment.vehicle_model.normalized_name == 'ECLASS'
     assert fitment.vehicle_generation.normalized_name == 'W213'
@@ -196,7 +196,7 @@ def test_brandless_part_keeps_local_fitment_but_does_not_train_global_graph():
         make='MERCEDES-BENZ', model='E-CLASS', generation='W213',
     ).exists()
     product.refresh_from_db()
-    assert product.applicability[0]['model'] == 'E-CLASS'
+    assert product.applicability == []
     assert not GlobalPart.objects.filter(normalized_article='P50136').exists()
 
 
@@ -326,7 +326,7 @@ def test_tenant_category_seed_merges_new_aliases_for_existing_categories():
 
 
 @pytest.mark.django_db
-def test_known_global_fitments_apply_to_other_tenant_product():
+def test_unreviewed_parser_fitments_do_not_cross_tenant_boundaries():
     tenant_a = make_tenant('kg-fitment-owner')
     tenant_b = make_tenant('kg-fitment-consumer')
     product_a = make_product(tenant_a)
@@ -350,16 +350,15 @@ def test_known_global_fitments_apply_to_other_tenant_product():
 
     created = ProductKnowledgeGraphService.apply_known_fitments_to_product(product_b)
 
-    assert created == 1
-    assert product_b.fitments.filter(
+    assert created == 0
+    assert not product_b.fitments.filter(
         tenant=tenant_b,
         make='MERCEDES-BENZ',
         model='E-CLASS',
         generation='W213',
     ).exists()
     product_b.refresh_from_db()
-    assert product_b.applicability[0]['make'] == 'MERCEDES-BENZ'
-    assert product_b.applicability[0]['model'] == 'E-CLASS'
+    assert product_b.applicability == []
 
 
 @pytest.mark.django_db

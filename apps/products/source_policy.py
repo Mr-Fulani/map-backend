@@ -177,6 +177,16 @@ def should_auto_apply_relation(relation) -> bool:
 def should_auto_apply_fitment(fitment) -> bool:
     if not getattr(fitment, 'model', ''):
         return False
+    review_status = getattr(fitment, 'review_status', None)
+    if review_status is not None:
+        # Tenant fitments are evidence until a person confirms them. This also
+        # fences legacy parser rows stored as pending without needs_review.
+        if review_status != REVIEW_STATUS_APPROVED:
+            return False
+    elif getattr(fitment, 'source_id', '') != 'human_review':
+        # Global parser knowledge must never cross tenant boundaries before a
+        # human-approved copy has been learned under human_review provenance.
+        return False
     return should_auto_apply_record(fitment)
 
 
