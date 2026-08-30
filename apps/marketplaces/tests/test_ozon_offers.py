@@ -287,6 +287,46 @@ def test_preflight_is_ready_only_after_current_required_dictionary_value():
 
 
 @pytest.mark.django_db
+def test_missing_vat_is_a_recommendation_and_does_not_block_ozon_readiness():
+    tenant, key = _tenant('ozon-vat-optional')
+    account = _account(tenant, 'client-vat-optional')
+    product = _product(tenant)
+    _catalog(account)
+    schema = _attribute_catalog(account)
+    _value_snapshot(account, schema)
+    _complete_product(product)
+    profile = product.physical_profile
+    profile.source_vat_rate = None
+    profile.save(update_fields=['source_vat_rate', 'updated_at'])
+    client = Client()
+
+    _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'description_category_id': 101,
+        'type_id': 202,
+    })
+    response = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'attributes': [{
+            'id': 85,
+            'complex_id': 0,
+            'values': [{
+                'value': 'Ignored browser text',
+                'dictionary_value_id': 501,
+            }],
+        }],
+    })
+
+    preflight = response.json()['data']['preflight']
+    assert response.status_code == 200
+    assert preflight['ready'] is True
+    assert preflight['errors'] == []
+    assert [item['code'] for item in preflight['recommendations']] == [
+        'vat_recommended',
+    ]
+
+
+@pytest.mark.django_db
 def test_offer_rejects_arbitrary_or_stale_dictionary_value_ids():
     tenant, key = _tenant('ozon-dictionary-fence')
     account = _account(tenant, 'client-dictionary-fence')

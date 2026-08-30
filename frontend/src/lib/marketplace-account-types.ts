@@ -94,6 +94,25 @@ export interface OzonCatalogTypesPage {
   };
 }
 
+export interface OzonCatalogTreePathItem {
+  description_category_id: number;
+  name: string;
+}
+
+export interface OzonCatalogTreeOption {
+  kind: 'category' | 'type';
+  description_category_id: number;
+  type_id: number | null;
+  name: string;
+  category_path: string;
+}
+
+export interface OzonCatalogTreeLevel {
+  path: OzonCatalogTreePathItem[];
+  options: OzonCatalogTreeOption[];
+  tree_revision: string | null;
+}
+
 export interface MarketplaceProviderCapabilities {
   account_health: boolean;
   catalog_schema: boolean;

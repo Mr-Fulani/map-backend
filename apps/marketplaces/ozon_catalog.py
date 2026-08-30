@@ -441,6 +441,79 @@ def catalog_types_from_tree(
     return result
 
 
+def catalog_tree_level_from_tree(
+    tree: list[dict[str, Any]],
+    *,
+    parent_ids: tuple[int, ...] = (),
+) -> dict[str, list[dict[str, Any]]]:
+    """Return one active local tree level for a tenant-facing category picker."""
+
+    nodes = tree
+    path: list[dict[str, Any]] = []
+    for parent_id in parent_ids:
+        matches = [
+            node for node in nodes
+            if (
+                node.get('type_id') is None
+                and node.get('description_category_id') == parent_id
+                and node.get('disabled') is False
+            )
+        ]
+        if len(matches) != 1:
+            raise OzonCatalogError(
+                'invalid_parent_path',
+                'Выбранный раздел отсутствует в актуальном дереве Ozon.',
+            )
+        parent = matches[0]
+        path.append({
+            'description_category_id': parent_id,
+            'name': parent['category_name'],
+        })
+        nodes = parent['children']
+
+    def has_active_type(node: Mapping[str, Any], *, depth: int) -> bool:
+        if depth > settings.OZON_CATALOG_MAX_DEPTH or node.get('disabled') is not False:
+            return False
+        if node.get('type_id') is not None:
+            return True
+        children = node.get('children')
+        return isinstance(children, list) and any(
+            isinstance(child, Mapping) and has_active_type(child, depth=depth + 1)
+            for child in children
+        )
+
+    options: list[dict[str, Any]] = []
+    category_path = ' → '.join(item['name'] for item in path)
+    for node in nodes:
+        if not isinstance(node, Mapping) or not has_active_type(node, depth=1):
+            continue
+        type_id = node.get('type_id')
+        if type_id is None:
+            name = node['category_name']
+            options.append({
+                'kind': 'category',
+                'description_category_id': node['description_category_id'],
+                'type_id': None,
+                'name': name,
+                'category_path': ' → '.join(filter(None, (category_path, name))),
+            })
+        else:
+            options.append({
+                'kind': 'type',
+                'description_category_id': node['description_category_id'],
+                'type_id': type_id,
+                'name': node['type_name'],
+                'category_path': category_path,
+            })
+    options.sort(key=lambda item: (
+        item['kind'] == 'type',
+        item['name'].casefold(),
+        item['description_category_id'],
+        item['type_id'] or 0,
+    ))
+    return {'path': path, 'options': options}
+
+
 def _touch(snapshot) -> None:
     snapshot.save(update_fields=['updated_at'])
 
@@ -741,10 +814,31 @@ class OzonCatalogService:
             ]
         return snapshot, category_types
 
+    @staticmethod
+    def category_tree_level(
+        account: MarketplaceAccount,
+        *,
+        language: str = 'DEFAULT',
+        parent_ids: tuple[int, ...] = (),
+    ) -> tuple[OzonCategoryTreeSnapshot | None, dict[str, list[dict[str, Any]]]]:
+        """Browse one local tree level without calling the Ozon provider."""
+
+        snapshot = OzonCategoryTreeSnapshot.objects.filter(
+            account=account,
+            language=language,
+        ).order_by('-updated_at', '-pk').first()
+        if snapshot is None:
+            return None, {'path': [], 'options': []}
+        return snapshot, catalog_tree_level_from_tree(
+            snapshot.tree,
+            parent_ids=parent_ids,
+        )
+
 
 __all__ = [
     'OzonCatalogError',
     'OzonCatalogService',
+    'catalog_tree_level_from_tree',
     'catalog_types_from_tree',
     'normalize_attribute_values',
     'normalize_category_attributes',

@@ -169,10 +169,19 @@ def _preflight(
 
     physical = physical_profile_presentation(product)
     for field in physical['missing_fields']:
-        errors.append(_issue(
-            'physical_fact_missing', f'physical:{field}', PHYSICAL_LABELS[field],
-            'Заполните значение из 1С или MAP в блоке «Данные для Ozon».',
-        ))
+        if field == 'vat_rate':
+            recommendations.append(_issue(
+                'vat_recommended',
+                'physical:vat_rate',
+                PHYSICAL_LABELS[field],
+                'Если ставка известна из 1С или от бухгалтера, укажите её в MAP. '
+                'Без ставки подготовка Ozon не блокируется.',
+            ))
+        else:
+            errors.append(_issue(
+                'physical_fact_missing', f'physical:{field}', PHYSICAL_LABELS[field],
+                'Заполните значение из 1С или MAP в блоке «Упаковка и налог».',
+            ))
     if not (product.title_ai or product.name).strip():
         errors.append(_issue('name_missing', 'name', 'Название', 'У товара нет названия.'))
     if not (product.brand or '').strip():

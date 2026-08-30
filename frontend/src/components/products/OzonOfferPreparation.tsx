@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, Search } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertCircle, ArrowLeft, CheckCircle2, FolderTree, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +10,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { accountApi, productApi } from '@/lib/api';
-import type { OzonCatalogTypeItem, OzonCatalogTypesPage } from '@/lib/marketplace-account-types';
+import type {
+  OzonCatalogTreeLevel,
+  OzonCatalogTreeOption,
+  OzonCatalogTypeItem,
+  OzonCatalogTypesPage,
+} from '@/lib/marketplace-account-types';
 import {
   ozonAttributesPayload,
   replaceOzonAttributeValue,
@@ -28,6 +33,10 @@ interface AccountOption {
 
 function envelopeData<T>(body: unknown): T {
   return (body as { data: T }).data;
+}
+
+function treeOptionValue(option: OzonCatalogTreeOption): string {
+  return [option.kind, option.description_category_id, option.type_id ?? 0].join(':');
 }
 
 export function OzonOfferPreparationCard({
@@ -50,6 +59,8 @@ export function OzonOfferPreparationCard({
   const [attributes, setAttributes] = useState<OzonOfferAttribute[]>([]);
   const [loadedAccountId, setLoadedAccountId] = useState<number | null>(null);
   const [action, setAction] = useState('');
+  const [categoryTreeLoading, setCategoryTreeLoading] = useState(false);
+  const [categoryTreeLevel, setCategoryTreeLevel] = useState<OzonCatalogTreeLevel | null>(null);
   const [categoryQuery, setCategoryQuery] = useState('');
   const [categoryResults, setCategoryResults] = useState<OzonCatalogTypeItem[]>([]);
   const [showOptional, setShowOptional] = useState(false);
@@ -58,6 +69,7 @@ export function OzonOfferPreparationCard({
   const accountId = ozonAccounts.some((account) => account.id === accountChoiceId)
     ? accountChoiceId
     : ozonAccounts.length === 1 ? ozonAccounts[0].id : null;
+  const categoryTreeRequestRef = useRef(0);
   const loading = Boolean(accountId && loadedAccountId !== accountId);
 
   const applyPreparation = useCallback((next: OzonOfferPreparation | null) => {
@@ -65,6 +77,26 @@ export function OzonOfferPreparationCard({
     setAttributes(next?.attributes ?? []);
     onPreparationChange?.(next);
   }, [onPreparationChange]);
+
+  const loadCategoryTreeLevel = useCallback(async (
+    selectedAccountId: number,
+    parentIds: number[],
+  ) => {
+    const requestId = categoryTreeRequestRef.current + 1;
+    categoryTreeRequestRef.current = requestId;
+    setCategoryTreeLoading(true);
+    try {
+      const response = await accountApi.getOzonCatalogTreeLevel(selectedAccountId, parentIds);
+      if (requestId !== categoryTreeRequestRef.current) return;
+      setCategoryTreeLevel(envelopeData<OzonCatalogTreeLevel>(response.data));
+    } catch {
+      if (requestId !== categoryTreeRequestRef.current) return;
+      setCategoryTreeLevel(null);
+      toast.error('Не удалось открыть локальное дерево категорий Ozon.');
+    } finally {
+      if (requestId === categoryTreeRequestRef.current) setCategoryTreeLoading(false);
+    }
+  }, []);
 
   const loadPreparation = useCallback(async (selectedAccountId: number) => {
     try {
@@ -80,9 +112,12 @@ export function OzonOfferPreparationCard({
   }, [applyPreparation, productId]);
 
   function chooseAccount(nextAccountId: number) {
+    categoryTreeRequestRef.current += 1;
     setAccountChoiceId(nextAccountId);
     setCategoryQuery('');
     setCategoryResults([]);
+    setCategoryTreeLevel(null);
+    setCategoryTreeLoading(false);
     setShowOptional(false);
     setDictionaryQueries({});
     setDictionaryResults({});
@@ -110,6 +145,25 @@ export function OzonOfferPreparationCard({
       });
     return () => { active = false; };
   }, [accountId, applyPreparation, productId]);
+
+  useEffect(() => {
+    if (!accountId) return;
+    let active = true;
+    categoryTreeRequestRef.current += 1;
+    accountApi.getOzonCatalogTreeLevel(accountId, [])
+      .then((response) => {
+        if (!active) return;
+        setCategoryTreeLevel(envelopeData<OzonCatalogTreeLevel>(response.data));
+        setCategoryTreeLoading(false);
+      })
+      .catch(() => {
+        if (!active) return;
+        setCategoryTreeLevel(null);
+        setCategoryTreeLoading(false);
+        toast.error('Не удалось открыть локальное дерево категорий Ozon.');
+      });
+    return () => { active = false; };
+  }, [accountId]);
 
   async function updateOffer(payload: Record<string, unknown>, actionName: string) {
     if (!accountId) return;
@@ -159,6 +213,33 @@ export function OzonOfferPreparationCard({
       setShowOptional(false);
       toast.success('Категория Ozon сохранена.');
     }
+  }
+
+  async function chooseTreeOption(option: OzonCatalogTreeOption) {
+    if (!accountId) return;
+    if (option.kind === 'category') {
+      const parentIds = [
+        ...(categoryTreeLevel?.path.map((item) => item.description_category_id) ?? []),
+        option.description_category_id,
+      ];
+      await loadCategoryTreeLevel(accountId, parentIds);
+      return;
+    }
+    if (option.type_id === null) return;
+    await selectCategory({
+      description_category_id: option.description_category_id,
+      type_id: option.type_id,
+      category_path: option.category_path,
+      type_name: option.name,
+    });
+  }
+
+  async function openPreviousTreeLevel() {
+    if (!accountId || !categoryTreeLevel) return;
+    const parentIds = categoryTreeLevel.path
+      .slice(0, -1)
+      .map((item) => item.description_category_id);
+    await loadCategoryTreeLevel(accountId, parentIds);
   }
 
   async function refreshAttributes() {
@@ -302,30 +383,113 @@ export function OzonOfferPreparationCard({
                   <p className="font-medium">{preparation.draft.category.type_name}</p>
                 </div>
               )}
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <Input
-                  aria-label="Поиск категории для товара Ozon"
-                  value={categoryQuery}
-                  maxLength={120}
-                  onChange={(event) => setCategoryQuery(event.target.value)}
-                  placeholder="Например: тормозные колодки"
-                />
-                <Button type="button" variant="outline" onClick={findCategories} disabled={action === 'categories'}>
-                  {action === 'categories' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
-                  Найти
-                </Button>
+              <div className="space-y-3 rounded-md border p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="flex items-center gap-2 text-sm font-medium">
+                      <FolderTree className="h-4 w-4" /> Выбор по дереву Ozon
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Открывайте разделы по очереди и выберите конечный тип товара.
+                    </p>
+                  </div>
+                  {(categoryTreeLevel?.path.length ?? 0) > 0 && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      onClick={openPreviousTreeLevel}
+                      disabled={categoryTreeLoading}
+                    >
+                      <ArrowLeft className="mr-1.5 h-4 w-4" /> Назад
+                    </Button>
+                  )}
+                </div>
+                {(categoryTreeLevel?.path.length ?? 0) > 0 && (
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {categoryTreeLevel?.path.map((item) => item.name).join(' → ')}
+                  </p>
+                )}
+                {categoryTreeLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Загружаем раздел…
+                  </div>
+                ) : categoryTreeLevel === null ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => accountId && loadCategoryTreeLevel(accountId, [])}
+                  >
+                    Открыть дерево категорий
+                  </Button>
+                ) : categoryTreeLevel.tree_revision === null ? (
+                  <p className="text-sm text-muted-foreground">
+                    Справочник Ozon ещё не загружен для этого кабинета. Обновите дерево
+                    в разделе «Настройки → Маркетплейсы».
+                  </p>
+                ) : categoryTreeLevel.options.length > 0 ? (
+                  <Select
+                    value=""
+                    disabled={Boolean(action)}
+                    onValueChange={(value) => {
+                      const option = categoryTreeLevel.options.find(
+                        (item) => treeOptionValue(item) === value,
+                      );
+                      if (option) void chooseTreeOption(option);
+                    }}
+                  >
+                    <SelectTrigger aria-label="Раздел или тип товара Ozon">
+                      <SelectValue placeholder={
+                        categoryTreeLevel.path.length
+                          ? 'Выберите следующий раздел или тип товара'
+                          : 'Выберите основной раздел'
+                      } />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {categoryTreeLevel.options.map((option) => (
+                        <SelectItem key={treeOptionValue(option)} value={treeOptionValue(option)}>
+                          {option.kind === 'category' ? `Раздел: ${option.name} ›` : option.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                ) : (
+                  <p className="text-sm text-muted-foreground">
+                    В этом разделе нет доступных типов. Вернитесь на уровень выше.
+                  </p>
+                )}
               </div>
-              {categoryResults.map((category) => (
-                <button
-                  type="button"
-                  key={`${category.description_category_id}:${category.type_id}`}
-                  className="block w-full rounded-md border p-3 text-left text-sm hover:bg-muted/50"
-                  onClick={() => selectCategory(category)}
-                >
-                  <span className="block text-muted-foreground">{category.category_path}</span>
-                  <span className="font-medium">{category.type_name}</span>
-                </button>
-              ))}
+              <details className="rounded-md border p-3">
+                <summary className="cursor-pointer text-sm font-medium">
+                  Быстрый поиск по названию — необязательно
+                </summary>
+                <div className="mt-3 space-y-2">
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      aria-label="Поиск категории для товара Ozon"
+                      value={categoryQuery}
+                      maxLength={120}
+                      onChange={(event) => setCategoryQuery(event.target.value)}
+                      placeholder="Например: тормозной шланг"
+                    />
+                    <Button type="button" variant="outline" onClick={findCategories} disabled={action === 'categories'}>
+                      {action === 'categories' ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Search className="mr-2 h-4 w-4" />}
+                      Найти
+                    </Button>
+                  </div>
+                  {categoryResults.map((category) => (
+                    <button
+                      type="button"
+                      key={`${category.description_category_id}:${category.type_id}`}
+                      className="block w-full rounded-md border p-3 text-left text-sm hover:bg-muted/50"
+                      onClick={() => selectCategory(category)}
+                    >
+                      <span className="block text-muted-foreground">{category.category_path}</span>
+                      <span className="font-medium">{category.type_name}</span>
+                    </button>
+                  ))}
+                </div>
+              </details>
             </div>
 
             {preparation.draft.category && (
