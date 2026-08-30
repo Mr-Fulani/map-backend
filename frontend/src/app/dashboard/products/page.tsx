@@ -716,7 +716,7 @@ export default function ProductsPage() {
           <Button asChild size="sm" variant="outline" className="shrink-0">
             <Link href="/dashboard/settings#catalog-categories">
               <Settings className="h-4 w-4" />
-              Настройки категорий
+              Каталог MAP
             </Link>
           </Button>
         </div>
@@ -724,7 +724,7 @@ export default function ProductsPage() {
 
       <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
         <span className="text-xs font-medium text-muted-foreground">
-          {tenant?.name ? `Категория ${tenant.name}` : 'Категория каталога'}
+          {tenant?.name ? `Категория MAP · ${tenant.name}` : 'Категория MAP'}
         </span>
         <div className="flex w-full min-w-0 gap-1 sm:w-auto">
           <div className="relative min-w-0 flex-1 sm:flex-none" ref={categorySearchRef}>

@@ -14,6 +14,7 @@ from apps.marketplaces.models import (
 )
 from apps.marketplaces.ozon_catalog import (
     OzonCatalogError,
+    catalog_types_from_tree,
     normalize_category_attributes,
     normalize_category_tree,
 )
@@ -84,6 +85,26 @@ def _refresh(client, token, account, payload):
         payload,
         content_type='application/json',
         HTTP_AUTHORIZATION=f'Bearer {token}',
+    )
+
+
+def _browse(client, token, account, params=None):
+    return client.get(
+        f'/api/v1/accounts/{account.pk}/ozon-catalog/types/',
+        params or {},
+        HTTP_AUTHORIZATION=f'Bearer {token}',
+    )
+
+
+def _snapshot(account, raw_tree, *, revision):
+    tree, node_count, active_type_count = normalize_category_tree(raw_tree)
+    return OzonCategoryTreeSnapshot.objects.create(
+        account=account,
+        language=OzonCategoryTreeSnapshot.LANGUAGE_DEFAULT,
+        schema_hash=revision * 64,
+        tree=tree,
+        node_count=node_count,
+        active_type_count=active_type_count,
     )
 
 
@@ -240,6 +261,136 @@ def test_catalog_snapshots_are_isolated_for_multiple_accounts(catalog_setup):
     assert OzonCategoryTreeSnapshot.objects.filter(account=account).count() == 1
     assert OzonCategoryTreeSnapshot.objects.filter(account=other_account).count() == 1
     assert first.json()['tree']['revision'] != second.json()['tree']['revision']
+
+
+@pytest.mark.django_db
+def test_catalog_type_browser_reads_latest_local_account_snapshot_only(catalog_setup):
+    _, token, account, _, _, other_account = catalog_setup
+    _snapshot(account, _tree(202), revision='a')
+    latest = _snapshot(account, _tree(303), revision='b')
+    _snapshot(other_account, _tree(404), revision='c')
+
+    with patch(TREE_READ) as provider_read:
+        response = _browse(Client(), token, account)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body['status'] == 'ok'
+    assert body['meta']['tree_revision'] == latest.schema_hash
+    assert body['meta']['total'] == 1
+    assert body['data'] == [{
+        'description_category_id': 101,
+        'type_id': 303,
+        'category_path': 'Автотовары',
+        'type_name': 'Автозапчасть',
+    }]
+    provider_read.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_catalog_type_browser_search_and_pagination_are_bounded(catalog_setup):
+    _, token, account, *_ = catalog_setup
+    raw_tree = [{
+        'description_category_id': 101,
+        'category_name': 'Автотовары',
+        'disabled': False,
+        'children': [
+            {
+                'type_id': 202,
+                'type_name': 'Амортизатор',
+                'disabled': False,
+                'children': [],
+            },
+            {
+                'type_id': 303,
+                'type_name': 'Фильтр масляный',
+                'disabled': False,
+                'children': [],
+            },
+        ],
+    }]
+    _snapshot(account, raw_tree, revision='d')
+
+    search = _browse(Client(), token, account, {'search': 'фильтр'})
+    page = _browse(Client(), token, account, {'page_size': 1, 'page': 2})
+    oversized = _browse(Client(), token, account, {'page_size': 500})
+    invalid_search = _browse(Client(), token, account, {'search': 'x' * 121})
+
+    assert search.status_code == page.status_code == oversized.status_code == 200
+    assert search.json()['meta']['total'] == 1
+    assert search.json()['data'][0]['type_id'] == 303
+    assert page.json()['meta']['page_size'] == 1
+    assert page.json()['data'][0]['type_id'] == 303
+    assert oversized.json()['meta']['page_size'] == 50
+    assert invalid_search.status_code == 400
+
+
+@pytest.mark.django_db
+def test_catalog_type_browser_fences_tenant_and_provider_without_provider_io(
+    catalog_setup,
+):
+    tenant, token, account, _, other_token, _ = catalog_setup
+    avito = _account(tenant, 'avito-browser', marketplace='avito')
+    _snapshot(account, _tree(), revision='e')
+
+    with patch(TREE_READ) as provider_read:
+        foreign = _browse(Client(), other_token, account)
+        wrong_provider = _browse(Client(), token, avito)
+
+    assert foreign.status_code == wrong_provider.status_code == 404
+    provider_read.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_catalog_type_browser_returns_empty_local_state_before_first_snapshot(
+    catalog_setup,
+):
+    _, token, account, *_ = catalog_setup
+
+    with patch(TREE_READ) as provider_read:
+        response = _browse(Client(), token, account)
+
+    assert response.status_code == 200
+    assert response.json()['data'] == []
+    assert response.json()['meta']['total'] == 0
+    assert response.json()['meta']['tree_revision'] is None
+    provider_read.assert_not_called()
+
+
+def test_catalog_type_flattening_hides_disabled_branches_and_keeps_full_path():
+    tree, _, _ = normalize_category_tree([{
+        'description_category_id': 101,
+        'category_name': 'Автотовары',
+        'disabled': False,
+        'children': [{
+            'description_category_id': 102,
+            'category_name': 'Легковые автомобили',
+            'disabled': False,
+            'children': [{
+                'type_id': 202,
+                'type_name': 'Амортизатор',
+                'disabled': False,
+                'children': [],
+            }],
+        }, {
+            'description_category_id': 103,
+            'category_name': 'Архивная ветка',
+            'disabled': True,
+            'children': [{
+                'type_id': 303,
+                'type_name': 'Скрытый тип',
+                'disabled': False,
+                'children': [],
+            }],
+        }],
+    }])
+
+    assert catalog_types_from_tree(tree) == [{
+        'description_category_id': 102,
+        'type_id': 202,
+        'category_path': 'Автотовары → Легковые автомобили',
+        'type_name': 'Амортизатор',
+    }]
 
 
 def test_schema_drift_and_resource_limits_fail_closed(settings):

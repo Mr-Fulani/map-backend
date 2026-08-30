@@ -1,10 +1,12 @@
-from drf_spectacular.utils import extend_schema, inline_serializer
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers, status
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from apps.marketplaces.models import MarketplaceAccount, OzonCategoryTreeSnapshot
 from apps.marketplaces.ozon_catalog import OzonCatalogError, OzonCatalogService
+from apps.core.pagination import MapPagination
 from apps.tenants.api_views import ListingsAPIView as APIView
 from apps.tenants.permissions import TenantAdminWritePermission
 
@@ -86,6 +88,63 @@ CATALOG_STATE_RESPONSE = inline_serializer(
 )
 
 
+class OzonCatalogTypesQuerySerializer(serializers.Serializer):
+    search = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=120,
+        trim_whitespace=True,
+    )
+    language = serializers.ChoiceField(
+        choices=[choice[0] for choice in OzonCategoryTreeSnapshot.LANGUAGE_CHOICES],
+        default=OzonCategoryTreeSnapshot.LANGUAGE_DEFAULT,
+    )
+
+
+class OzonCatalogTypePagination(MapPagination):
+    page_size = 25
+    max_page_size = 50
+
+
+CATALOG_TYPE_ITEMS = inline_serializer(
+    name='OzonCatalogTypeItem',
+    many=True,
+    fields={
+        'description_category_id': serializers.IntegerField(read_only=True),
+        'type_id': serializers.IntegerField(read_only=True),
+        'category_path': serializers.CharField(read_only=True),
+        'type_name': serializers.CharField(read_only=True),
+    },
+)
+
+CATALOG_TYPES_RESPONSE = inline_serializer(
+    name='OzonCatalogTypesResponse',
+    fields={
+        'status': serializers.CharField(read_only=True),
+        'data': CATALOG_TYPE_ITEMS,
+        'meta': inline_serializer(
+            name='OzonCatalogTypesMeta',
+            fields={
+                'total': serializers.IntegerField(read_only=True),
+                'page': serializers.IntegerField(read_only=True),
+                'page_size': serializers.IntegerField(read_only=True),
+                'next': serializers.URLField(allow_null=True, read_only=True),
+                'prev': serializers.URLField(allow_null=True, read_only=True),
+                'tree_revision': serializers.CharField(
+                    allow_null=True,
+                    read_only=True,
+                ),
+                'tree_checked_at': serializers.DateTimeField(
+                    allow_null=True,
+                    read_only=True,
+                ),
+                'language': serializers.CharField(read_only=True),
+            },
+        ),
+    },
+)
+
+
 @extend_schema(tags=['Accounts'])
 class OzonCatalogView(APIView):
     """Read/sync Ozon catalog metadata without entering Avito workflows."""
@@ -151,3 +210,56 @@ class OzonCatalogView(APIView):
                 payload['retry_after_seconds'] = exc.retry_after_seconds
             return Response(payload, status=response_status)
         return Response(OzonCatalogService.state(account))
+
+
+@extend_schema(tags=['Accounts'])
+class OzonCatalogTypesView(APIView):
+    """Browse one account's latest local Ozon tree without provider I/O."""
+
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
+    @extend_schema(
+        operation_id='ozon_catalog_types_list',
+        parameters=[
+            OpenApiParameter(
+                'search', OpenApiTypes.STR, OpenApiParameter.QUERY,
+                description='Поиск по пути категории, типу товара или Ozon ID.',
+            ),
+            OpenApiParameter(
+                'language', OpenApiTypes.STR, OpenApiParameter.QUERY,
+                description='Язык локального снимка дерева.',
+            ),
+            OpenApiParameter('page', OpenApiTypes.INT, OpenApiParameter.QUERY),
+            OpenApiParameter('page_size', OpenApiTypes.INT, OpenApiParameter.QUERY),
+        ],
+        responses=CATALOG_TYPES_RESPONSE,
+    )
+    def get(self, request, pk):
+        account = OzonCatalogView._account(request, pk)
+        if account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        serializer = OzonCatalogTypesQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            snapshot, category_types = OzonCatalogService.category_types(
+                account,
+                language=data['language'],
+                search=data.get('search', ''),
+            )
+        except OzonCatalogError as exc:
+            return Response({
+                'status': 'error',
+                'code': exc.code,
+                'message': str(exc),
+            }, status=status.HTTP_409_CONFLICT)
+
+        paginator = OzonCatalogTypePagination()
+        page = paginator.paginate_sequence(category_types, request)
+        response = paginator.get_paginated_response(page)
+        response.data['meta'].update({
+            'tree_revision': snapshot.schema_hash if snapshot else None,
+            'tree_checked_at': snapshot.updated_at if snapshot else None,
+            'language': data['language'],
+        })
+        return response
