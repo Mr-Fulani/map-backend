@@ -25,6 +25,7 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import ListingDrawer from '@/components/listings/ListingDrawer';
+import PublicationWorkspaceDrawer from '@/components/listings/PublicationWorkspaceDrawer';
 import MarketplaceAccountFilter, {
   marketplaceDisplayName,
 } from '@/components/marketplaces/MarketplaceAccountFilter';
@@ -173,11 +174,31 @@ export default function ListingsPage() {
   const requestedPanel = searchParams.get('panel') === 'pricing' ? 'pricing' : 'listing';
   const listingParam = Number(searchParams.get('listing'));
   const selectedId = Number.isInteger(listingParam) && listingParam > 0 ? listingParam : null;
+  const workspaceProductId = dashboardPositiveIdParam(searchParams.get('product'));
+  const workspaceTargetId = dashboardPositiveIdParam(searchParams.get('target'));
 
   const openDrawer = useCallback((listingId: number) => {
     const next = new URLSearchParams(searchParams.toString());
     next.set('listing', String(listingId));
     next.delete('panel');
+    next.delete('product');
+    next.delete('target');
+    router.replace(`${pathname}?${next}`, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  const openProductWorkspace = useCallback((productId: number, targetId?: number) => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set('product', String(productId));
+    if (targetId) next.set('target', String(targetId));
+    else next.delete('target');
+    next.delete('listing');
+    next.delete('panel');
+    router.replace(`${pathname}?${next}`, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  const selectWorkspaceTarget = useCallback((targetId: number) => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.set('target', String(targetId));
     router.replace(`${pathname}?${next}`, { scroll: false });
   }, [pathname, router, searchParams]);
 
@@ -185,6 +206,13 @@ export default function ListingsPage() {
     const next = new URLSearchParams(searchParams.toString());
     next.delete('listing');
     next.delete('panel');
+    router.replace(next.size ? `${pathname}?${next}` : pathname, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  const closeProductWorkspace = useCallback(() => {
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete('product');
+    next.delete('target');
     router.replace(next.size ? `${pathname}?${next}` : pathname, { scroll: false });
   }, [pathname, router, searchParams]);
 
@@ -921,6 +949,15 @@ export default function ListingsPage() {
         initialPanel={requestedPanel}
         onClose={closeDrawer}
         onActionDone={load}
+        onOpenProductWorkspace={openProductWorkspace}
+      />
+      <PublicationWorkspaceDrawer
+        key={workspaceProductId ?? 'closed'}
+        productId={workspaceProductId}
+        selectedAccountId={workspaceTargetId}
+        onSelectedAccountChange={selectWorkspaceTarget}
+        onOpenAvitoListing={openDrawer}
+        onClose={closeProductWorkspace}
       />
     </div>
   );
