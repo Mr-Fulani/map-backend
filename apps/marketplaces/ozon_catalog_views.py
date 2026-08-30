@@ -86,7 +86,7 @@ CATALOG_STATE_RESPONSE = inline_serializer(
 )
 
 
-@extend_schema(tags=['Ozon catalog'])
+@extend_schema(tags=['Accounts'])
 class OzonCatalogView(APIView):
     """Read/sync Ozon catalog metadata without entering Avito workflows."""
 
