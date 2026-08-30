@@ -81,6 +81,10 @@ def test_hostile_environment_cannot_raise_resource_hard_ceilings():
         'OZON_API_RESPONSE_MAX_BYTES': oversized,
         'OZON_API_MAX_PAGES': oversized,
         'OZON_API_TIMEOUT_SECONDS': oversized,
+        'OZON_CATALOG_RESPONSE_MAX_BYTES': oversized,
+        'OZON_CATALOG_MAX_NODES': oversized,
+        'OZON_CATALOG_MAX_DEPTH': oversized,
+        'OZON_CATALOG_MAX_ATTRIBUTES': oversized,
         'TRUSTED_API_RESPONSE_MAX_BYTES': oversized,
         'IMAGE_SEARCH_BULK_MAX_PRODUCTS': oversized,
         'PRODUCT_PARSE_TENANT_DAILY_JOBS': oversized,
@@ -137,6 +141,10 @@ assert s.AVITO_API_RESPONSE_MAX_BYTES == 5 * 1024 * 1024
 assert s.OZON_API_RESPONSE_MAX_BYTES == 5 * 1024 * 1024
 assert s.OZON_API_MAX_PAGES == 20
 assert s.OZON_API_TIMEOUT_SECONDS == 30.0
+assert s.OZON_CATALOG_RESPONSE_MAX_BYTES == 10 * 1024 * 1024
+assert s.OZON_CATALOG_MAX_NODES == 100_000
+assert s.OZON_CATALOG_MAX_DEPTH == 64
+assert s.OZON_CATALOG_MAX_ATTRIBUTES == 5000
 assert s.TRUSTED_API_RESPONSE_MAX_BYTES == 5 * 1024 * 1024
 assert s.IMAGE_SEARCH_BULK_MAX_PRODUCTS == 25
 assert s.PRODUCT_PARSE_TENANT_DAILY_JOBS == 1000

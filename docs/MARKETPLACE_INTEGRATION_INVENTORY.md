@@ -371,6 +371,10 @@ Product read-only и Warehouse. Роль Product добавляется толь
 - Ozon offer extension с stable offer ID;
 - field-level UI и fail-closed required field preflight.
 
+Первый bounded пакет O2a ограничен versioned tree/attribute snapshots и
+ручным tenant/account-scoped read-only API. Dictionary values, физические поля,
+offer extension, UI и preflight остаются в O2b/O2c; Avito runtime не меняется.
+
 ### O3 — durable publication и reconciliation
 
 - `MarketplaceOperation`, per-item outcome, task polling и safe retry;

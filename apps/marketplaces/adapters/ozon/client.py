@@ -46,7 +46,7 @@ class OzonConnectionSnapshot:
 
 
 class OzonSellerClient:
-    """Small read-only client used only while connecting an Ozon account."""
+    """Bounded read-only client for Ozon account and catalog metadata."""
 
     def __init__(
         self,
@@ -193,7 +193,55 @@ class OzonSellerClient:
             'Список складов Ozon превысил безопасный лимит страниц.',
         )
 
-    def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+    def get_description_category_tree(
+        self,
+        *,
+        language: str = 'DEFAULT',
+    ) -> list[dict[str, Any]]:
+        payload = self._post(
+            '/v1/description-category/tree',
+            {'language': language},
+            max_bytes=settings.OZON_CATALOG_RESPONSE_MAX_BYTES,
+        )
+        result = payload.get('result')
+        if not isinstance(result, list):
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректное дерево категорий.',
+            )
+        return result
+
+    def get_description_category_attributes(
+        self,
+        *,
+        description_category_id: int,
+        type_id: int,
+        language: str = 'DEFAULT',
+    ) -> list[dict[str, Any]]:
+        payload = self._post(
+            '/v1/description-category/attribute',
+            {
+                'description_category_id': description_category_id,
+                'type_id': type_id,
+                'language': language,
+            },
+            max_bytes=settings.OZON_CATALOG_RESPONSE_MAX_BYTES,
+        )
+        result = payload.get('result')
+        if not isinstance(result, list):
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректную схему характеристик.',
+            )
+        return result
+
+    def _post(
+        self,
+        path: str,
+        payload: dict[str, Any],
+        *,
+        max_bytes: int | None = None,
+    ) -> dict[str, Any]:
         url = f'{OZON_API_BASE_URL}{path}'
         try:
             response = bounded_http_request(
@@ -207,7 +255,7 @@ class OzonSellerClient:
                 },
                 timeout=settings.OZON_API_TIMEOUT_SECONDS,
                 max_elapsed_seconds=settings.OZON_API_TIMEOUT_SECONDS,
-                max_bytes=settings.OZON_API_RESPONSE_MAX_BYTES,
+                max_bytes=max_bytes or settings.OZON_API_RESPONSE_MAX_BYTES,
             )
         except (requests.RequestException, ValueError) as exc:
             raise OzonAPIError(
@@ -235,7 +283,7 @@ class OzonSellerClient:
         if status_code < 200 or status_code >= 300:
             raise OzonAPIError(
                 'request_rejected',
-                'Ozon отклонил запрос проверки подключения.',
+                'Ozon отклонил read-only запрос.',
             )
         try:
             data = response.json()

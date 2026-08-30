@@ -8,6 +8,7 @@ from apps.marketplaces.views import (
     MarketplacePlacementAddressDetailView,
     MarketplacePlacementAddressListView,
 )
+from apps.marketplaces.ozon_catalog_views import OzonCatalogView
 
 urlpatterns = [
     path('', MarketplaceAccountListView.as_view(), name='account-list'),
@@ -23,5 +24,10 @@ urlpatterns = [
         name='placement-address-detail',
     ),
     path('<int:pk>/', MarketplaceAccountDetailView.as_view(), name='account-detail'),
+    path(
+        '<int:pk>/ozon-catalog/',
+        OzonCatalogView.as_view(),
+        name='account-ozon-catalog',
+    ),
     path('<int:pk>/autoload-status/', AutoloadStatusView.as_view(), name='account-autoload-status'),
 ]

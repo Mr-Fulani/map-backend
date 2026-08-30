@@ -134,6 +134,77 @@ def test_warehouse_list_follows_bounded_cursor_pagination():
 
 @override_settings(
     OZON_API_RESPONSE_MAX_BYTES=100_000,
+    OZON_CATALOG_RESPONSE_MAX_BYTES=250_000,
+    OZON_API_MAX_PAGES=3,
+    OZON_API_TIMEOUT_SECONDS=2,
+)
+def test_catalog_methods_use_only_read_only_description_category_endpoints():
+    tree_response = FakeResponse(200, {
+        'result': [{
+            'description_category_id': 10,
+            'category_name': 'Автотовары',
+            'disabled': False,
+            'children': [],
+        }],
+    })
+    attribute_response = FakeResponse(200, {
+        'result': [{
+            'id': 85,
+            'name': 'Бренд',
+            'type': 'String',
+        }],
+    })
+    session = FakeSession([tree_response, attribute_response])
+    client = OzonSellerClient(
+        client_id='5741594',
+        api_key='read-only-key',
+        session=session,
+    )
+
+    tree = client.get_description_category_tree(language='RU')
+    attributes = client.get_description_category_attributes(
+        description_category_id=10,
+        type_id=20,
+        language='RU',
+    )
+
+    assert tree[0]['description_category_id'] == 10
+    assert attributes[0]['id'] == 85
+    assert [call[0] for call in session.calls] == [
+        'https://api-seller.ozon.ru/v1/description-category/tree',
+        'https://api-seller.ozon.ru/v1/description-category/attribute',
+    ]
+    assert session.calls[0][1]['json'] == {'language': 'RU'}
+    assert session.calls[1][1]['json'] == {
+        'description_category_id': 10,
+        'type_id': 20,
+        'language': 'RU',
+    }
+
+
+@override_settings(
+    OZON_API_RESPONSE_MAX_BYTES=100_000,
+    OZON_CATALOG_RESPONSE_MAX_BYTES=250_000,
+    OZON_API_MAX_PAGES=3,
+    OZON_API_TIMEOUT_SECONDS=2,
+)
+def test_catalog_methods_reject_non_list_results():
+    session = FakeSession([
+        FakeResponse(200, {'result': {'unexpected': 'object'}}),
+    ])
+
+    with pytest.raises(OzonAPIError, match='дерево категорий') as raised:
+        OzonSellerClient(
+            client_id='cid',
+            api_key='key',
+            session=session,
+        ).get_description_category_tree()
+
+    assert raised.value.code == 'invalid_response'
+
+
+@override_settings(
+    OZON_API_RESPONSE_MAX_BYTES=100_000,
     OZON_API_MAX_PAGES=3,
     OZON_API_TIMEOUT_SECONDS=2,
 )

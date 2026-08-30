@@ -400,6 +400,128 @@ class OzonAccountProfile(TimestampedModel):
         return f'Ozon / {self.account}'
 
 
+class OzonCategoryTreeSnapshot(TimestampedModel):
+    """Immutable Ozon category/type schema revision for one exact account."""
+
+    LANGUAGE_DEFAULT = 'DEFAULT'
+    LANGUAGE_CHOICES = [
+        (LANGUAGE_DEFAULT, 'По умолчанию'),
+        ('RU', 'Русский'),
+        ('EN', 'Английский'),
+        ('TR', 'Турецкий'),
+        ('ZH_HANS', 'Китайский'),
+    ]
+
+    account = models.ForeignKey(
+        MarketplaceAccount,
+        on_delete=models.CASCADE,
+        related_name='ozon_category_tree_snapshots',
+        verbose_name='Аккаунт Ozon',
+    )
+    language = models.CharField(
+        max_length=10,
+        choices=LANGUAGE_CHOICES,
+        default=LANGUAGE_DEFAULT,
+        verbose_name='Язык схемы',
+    )
+    schema_hash = models.CharField(
+        max_length=64,
+        verbose_name='SHA-256 нормализованной схемы',
+    )
+    tree = models.JSONField(verbose_name='Нормализованное дерево категорий')
+    node_count = models.PositiveIntegerField(verbose_name='Количество узлов')
+    active_type_count = models.PositiveIntegerField(
+        verbose_name='Количество доступных типов товаров',
+    )
+
+    class Meta:
+        verbose_name = 'Снимок дерева категорий Ozon'
+        verbose_name_plural = 'Снимки дерева категорий Ozon'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['account', 'language', 'schema_hash'],
+                name='mkt_oz_tree_revision_uniq',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['account', 'language', '-updated_at'],
+                name='mkt_oz_tree_latest_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Ozon tree {self.account_id} / {self.schema_hash[:12]}'
+
+
+class OzonCategoryAttributeSnapshot(TimestampedModel):
+    """Immutable Ozon attribute schema revision for a category/type pair."""
+
+    account = models.ForeignKey(
+        MarketplaceAccount,
+        on_delete=models.CASCADE,
+        related_name='ozon_category_attribute_snapshots',
+        verbose_name='Аккаунт Ozon',
+    )
+    description_category_id = models.PositiveBigIntegerField(
+        verbose_name='ID категории Ozon',
+    )
+    type_id = models.PositiveBigIntegerField(verbose_name='ID типа товара Ozon')
+    language = models.CharField(
+        max_length=10,
+        choices=OzonCategoryTreeSnapshot.LANGUAGE_CHOICES,
+        default=OzonCategoryTreeSnapshot.LANGUAGE_DEFAULT,
+        verbose_name='Язык схемы',
+    )
+    schema_hash = models.CharField(
+        max_length=64,
+        verbose_name='SHA-256 нормализованной схемы',
+    )
+    attributes = models.JSONField(verbose_name='Нормализованные характеристики')
+    attribute_count = models.PositiveIntegerField(
+        verbose_name='Количество характеристик',
+    )
+    required_attribute_count = models.PositiveIntegerField(
+        verbose_name='Количество обязательных характеристик',
+    )
+
+    class Meta:
+        verbose_name = 'Снимок характеристик категории Ozon'
+        verbose_name_plural = 'Снимки характеристик категорий Ozon'
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'account', 'description_category_id', 'type_id',
+                    'language', 'schema_hash',
+                ],
+                name='mkt_oz_attr_revision_uniq',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(description_category_id__gt=0),
+                name='mkt_oz_attr_category_pos',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(type_id__gt=0),
+                name='mkt_oz_attr_type_pos',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=[
+                    'account', 'description_category_id', 'type_id',
+                    'language', '-updated_at',
+                ],
+                name='mkt_oz_attr_latest_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f'Ozon attributes {self.account_id} / '
+            f'{self.description_category_id}:{self.type_id}'
+        )
+
+
 class MarketplaceFeedRun(TimestampedModel):
     """Durable, provider-neutral ownership record for one feed generation.
 
