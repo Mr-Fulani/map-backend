@@ -34,10 +34,12 @@ export function OzonOfferPreparationCard({
   productId,
   accounts,
   onPreparationChange,
+  showAccountSelector = true,
 }: {
   productId: number;
   accounts: AccountOption[];
   onPreparationChange?: (preparation: OzonOfferPreparation | null) => void;
+  showAccountSelector?: boolean;
 }) {
   const ozonAccounts = useMemo(
     () => accounts.filter((account) => account.marketplace === 'ozon' && account.is_active),
@@ -244,8 +246,9 @@ export function OzonOfferPreparationCard({
           )}
         </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Выберите конкретный кабинет Ozon. Категории и характеристики Ozon хранятся
-          отдельно и не меняют категории, наценки или объявления Avito.
+          {showAccountSelector
+            ? 'Выберите конкретный кабинет Ozon. Категории и характеристики Ozon хранятся отдельно и не меняют категории, наценки или объявления Avito.'
+            : 'Это данные выбранного выше кабинета Ozon. Они не меняют категории, наценки или объявления Avito.'}
         </p>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -253,7 +256,7 @@ export function OzonOfferPreparationCard({
           <p className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
             Сначала подключите аккаунт Ozon в разделе «Настройки → Маркетплейсы».
           </p>
-        ) : (
+        ) : showAccountSelector ? (
           <div className="space-y-2">
             <label className="text-sm font-medium">Кабинет Ozon</label>
             <Select
@@ -268,7 +271,7 @@ export function OzonOfferPreparationCard({
               </SelectContent>
             </Select>
           </div>
-        )}
+        ) : null}
 
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">

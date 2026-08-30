@@ -4,13 +4,11 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
-  ArrowRight,
-  CheckCircle2,
   Loader2,
-  Store,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { MarketplaceChannelSwitcher } from '@/components/listings/MarketplaceChannelSwitcher';
 import { OzonOfferPreparationCard } from '@/components/products/OzonOfferPreparation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -25,7 +23,8 @@ import type { OzonOfferPreparation } from '@/lib/ozon-offer-preparation';
 import {
   avitoTargetState,
   ozonTargetState,
-  publicationTargetBadgeVariant,
+  publicationWorkspaceView,
+  type PublicationTargetState,
   type PublicationWorkspaceListing,
 } from '@/lib/publication-workspace';
 
@@ -183,7 +182,22 @@ export default function PublicationWorkspaceDrawer({
   const selectedAvitoListing = selectedAccount?.marketplace === 'avito'
     ? avitoListings[selectedAccount.id] ?? null
     : null;
-  const selectedAvitoState = avitoTargetState(selectedAvitoListing);
+  const selectedView = useMemo(() => (
+    publicationWorkspaceView(selectedAccount, selectedAvitoListing)
+  ), [selectedAccount, selectedAvitoListing]);
+  const accountStates = useMemo<Record<number, PublicationTargetState>>(() => (
+    Object.fromEntries(accounts.map((account) => [
+      account.id,
+      account.marketplace === 'avito'
+        ? avitoTargetState(avitoListings[account.id] ?? null)
+        : ozonTargetState(ozonPreparations[account.id] ?? null),
+    ]))
+  ), [accounts, avitoListings, ozonPreparations]);
+
+  useEffect(() => {
+    if (selectedView.kind !== 'avito_listing') return;
+    onOpenAvitoListing(selectedView.listingId);
+  }, [onOpenAvitoListing, selectedView]);
 
   const handleOzonPreparationChange = useCallback((next: OzonOfferPreparation | null) => {
     if (!selectedAccount || selectedAccount.marketplace !== 'ozon') return;
@@ -245,20 +259,11 @@ export default function PublicationWorkspaceDrawer({
           <div className="min-h-full bg-muted/15 p-4 pb-10 sm:p-6">
             <SheetHeader className="pr-10 text-left">
               <div className="flex flex-wrap items-center gap-2">
-                <SheetTitle>Каналы публикации</SheetTitle>
+                <SheetTitle>Листинг товара</SheetTitle>
                 <Badge variant="outline">{product.article}</Badge>
               </div>
               <p className="text-sm text-muted-foreground">{product.name}</p>
             </SheetHeader>
-
-            <div className="mt-5 rounded-lg border bg-background p-4 text-sm leading-relaxed">
-              <p className="font-medium">Один подготовленный товар — несколько независимых каналов.</p>
-              <p className="mt-1 text-muted-foreground">
-                Описание, факты и медиа модерируются один раз. Категории,
-                обязательные поля, готовность и статус хранятся отдельно для
-                каждого кабинета Avito и Ozon.
-              </p>
-            </div>
 
             {accounts.length === 0 ? (
               <div className="mt-5 rounded-lg border bg-background p-5 text-sm">
@@ -268,91 +273,30 @@ export default function PublicationWorkspaceDrawer({
                 </Button>
               </div>
             ) : (
-              <div className="mt-5 grid gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
-                <aside className="space-y-3">
-                  <div>
-                    <p className="text-sm font-medium">Кабинеты</p>
-                    <p className="text-xs text-muted-foreground">
-                      Каждый кабинет проверяется и публикуется независимо.
-                    </p>
-                  </div>
-                  {accounts.map((account) => {
-                    const state = account.marketplace === 'avito'
-                      ? avitoTargetState(avitoListings[account.id] ?? null)
-                      : ozonTargetState(ozonPreparations[account.id] ?? null);
-                    const active = selectedAccount?.id === account.id;
-                    return (
-                      <button
-                        type="button"
-                        key={`${account.marketplace}:${account.id}`}
-                        onClick={() => onSelectedAccountChange(account.id)}
-                        className={`w-full rounded-lg border p-3 text-left transition-colors ${
-                          active ? 'border-primary bg-primary/5 ring-1 ring-primary/20' : 'bg-background hover:bg-muted/50'
-                        }`}
-                      >
-                        <span className="flex items-start justify-between gap-2">
-                          <span className="min-w-0">
-                            <span className="block text-xs text-muted-foreground">
-                              {account.marketplace_label}
-                            </span>
-                            <span className="block truncate font-medium">{account.name}</span>
-                          </span>
-                          <Store className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                        </span>
-                        <Badge
-                          className="mt-2 max-w-full whitespace-normal text-left"
-                          variant={publicationTargetBadgeVariant(state.tone)}
-                        >
-                          {state.label}
-                        </Badge>
-                      </button>
-                    );
-                  })}
-                </aside>
+              <div className="mt-5 space-y-5">
+                <div className="rounded-lg border bg-background p-4">
+                  <MarketplaceChannelSwitcher
+                    accounts={accounts}
+                    selectedAccountId={selectedAccount?.id ?? null}
+                    states={accountStates}
+                    onSelect={onSelectedAccountChange}
+                  />
+                </div>
 
                 <main className="min-w-0">
-                  {selectedAccount?.marketplace === 'avito' ? (
+                  {selectedAccount && (
+                    selectedView.kind === 'avito_listing' || selectedView.kind === 'avito_setup'
+                  ) ? (
                     <div className="rounded-lg border bg-background p-4 sm:p-5">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-xs text-muted-foreground">Avito</p>
-                          <h2 className="text-lg font-semibold">{selectedAccount.name}</h2>
+                      {selectedView.kind === 'avito_listing' ? (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Открываем данные Avito без промежуточного экрана…
                         </div>
-                        <Badge variant={publicationTargetBadgeVariant(selectedAvitoState.tone)}>
-                          {selectedAvitoState.label}
-                        </Badge>
-                      </div>
-                      {selectedAvitoListing ? (
-                        <>
-                          <div className="mt-4 rounded-md border bg-muted/20 p-3 text-sm">
-                            <p className="font-medium">Текущий Avito-листинг</p>
-                            <p className="mt-1 text-muted-foreground">
-                              {selectedAvitoListing.status_display}. Все поля, фид,
-                              статусы и публикация Avito остаются в прежней карточке.
-                            </p>
-                          </div>
-                          {selectedAvitoState.issueCount > 0 && (
-                            <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
-                              <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
-                              Откройте Avito-карточку: MAP подсветит каждое поле с ошибкой.
-                            </div>
-                          )}
-                          {selectedAvitoState.tone === 'ready' && (
-                            <div className="mt-3 flex items-start gap-2 rounded-md border border-green-500/30 bg-green-500/5 p-3 text-sm">
-                              <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-600" />
-                              Проверка Avito пройдена. Решение об отправке остаётся за тенантом.
-                            </div>
-                          )}
-                          <Button
-                            className="mt-4"
-                            onClick={() => onOpenAvitoListing(selectedAvitoListing.id)}
-                          >
-                            Открыть Avito-карточку <ArrowRight className="ml-2 h-4 w-4" />
-                          </Button>
-                        </>
                       ) : (
                         <>
-                          <p className="mt-4 text-sm leading-relaxed text-muted-foreground">
+                          <p className="text-sm font-medium">Avito · {selectedAccount.name}</p>
+                          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                             Для этого кабинета ещё нет черновика. MAP создаст его
                             через текущую проверенную логику Avito, без немедленной отправки.
                           </p>
@@ -369,7 +313,7 @@ export default function PublicationWorkspaceDrawer({
                         </>
                       )}
                     </div>
-                  ) : selectedAccount?.marketplace === 'ozon' ? (
+                  ) : selectedView.kind === 'ozon' && selectedAccount ? (
                     <div className="space-y-3">
                       <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-muted-foreground">
                         Это отдельная проекция Ozon для кабинета «{selectedAccount.name}».
@@ -380,6 +324,7 @@ export default function PublicationWorkspaceDrawer({
                         productId={product.id}
                         accounts={[selectedAccount]}
                         onPreparationChange={handleOzonPreparationChange}
+                        showAccountSelector={false}
                       />
                     </div>
                   ) : null}

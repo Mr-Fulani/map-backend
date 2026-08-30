@@ -24,8 +24,8 @@ import {
 import {
   CheckCircle, RefreshCw, Pencil, Crown, Trash2, Plus,
   ChevronLeft, ChevronRight, Send, BarChart3, FileText,
-  Store,
 } from 'lucide-react';
+import { MarketplaceChannelSwitcher } from '@/components/listings/MarketplaceChannelSwitcher';
 import { getCategoryPlaceholder } from '@/lib/category-placeholder';
 import {
   CatalogCategoryPicker,
@@ -43,6 +43,7 @@ import {
   PublicationFieldErrors,
   PublicationFieldWarnings,
 } from '@/lib/listing-publication';
+import { avitoTargetState } from '@/lib/publication-workspace';
 
 interface ListingImage {
   id: number | null;
@@ -123,6 +124,7 @@ interface Account {
   name: string;
   is_active: boolean;
   marketplace: string;
+  marketplace_label?: string;
 }
 
 interface PlacementAddress {
@@ -966,6 +968,19 @@ function ListingDrawerContent({
                 </div>
               </div>
 
+              <div className="min-w-0 shrink-0 border-b bg-background px-4 py-3 sm:px-5">
+                <MarketplaceChannelSwitcher
+                  accounts={accounts}
+                  selectedAccountId={listing.account_id}
+                  states={{ [listing.account_id]: avitoTargetState(listing) }}
+                  onSelect={(accountId) => {
+                    if (accountId !== listing.account_id) {
+                      onOpenProductWorkspace(listing.product_id, accountId);
+                    }
+                  }}
+                />
+              </div>
+
               <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden xl:grid-cols-[minmax(600px,1fr)_minmax(520px,560px)]">
                 <section className={`${activePanel === 'pricing' ? 'block' : 'hidden'} min-h-0 min-w-0 max-w-full overflow-x-hidden overflow-y-auto overscroll-contain border-r xl:block`}>
                   <MarketPricingPanel
@@ -996,16 +1011,6 @@ function ListingDrawerContent({
                     {listing.marketplace_label}
                   </Badge>
                 </div>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="w-fit"
-                  onClick={() => onOpenProductWorkspace(listing.product_id, listing.account_id)}
-                >
-                  <Store className="mr-2 h-4 w-4" />
-                  Все каналы публикации
-                </Button>
                 {listing.status_explanation && (
                   <p className="text-xs leading-5 text-muted-foreground">
                     {listing.status_explanation}

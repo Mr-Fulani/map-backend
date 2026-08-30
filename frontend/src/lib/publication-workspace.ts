@@ -18,6 +18,23 @@ export interface PublicationTargetState {
   prepared: boolean;
 }
 
+export type PublicationWorkspaceView =
+  | { kind: 'none' }
+  | { kind: 'ozon' }
+  | { kind: 'avito_setup' }
+  | { kind: 'avito_listing'; listingId: number };
+
+export function publicationWorkspaceView(
+  account: { marketplace: string } | null,
+  avitoListing: PublicationWorkspaceListing | null,
+): PublicationWorkspaceView {
+  if (!account) return { kind: 'none' };
+  if (account.marketplace === 'ozon') return { kind: 'ozon' };
+  if (account.marketplace !== 'avito') return { kind: 'none' };
+  if (avitoListing) return { kind: 'avito_listing', listingId: avitoListing.id };
+  return { kind: 'avito_setup' };
+}
+
 function messageCount(messages: Record<string, string[]> | undefined): number {
   return Object.values(messages ?? {}).reduce((total, values) => total + values.length, 0);
 }

@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef, useCallback, type RefObject } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { accountApi, productApi, imageApi } from '@/lib/api';
+import { productApi, imageApi } from '@/lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -14,7 +14,6 @@ import { getPreviousDashboardHref } from '@/lib/navigation-history';
 import {
   ArrowLeft,
   RefreshCw,
-  Archive,
   Upload,
   Loader2,
   Package,
@@ -40,7 +39,6 @@ import {
   CatalogCategoryPicker,
   type CatalogCategoryOption,
 } from '@/components/products/catalog-category-picker';
-import { OzonOfferPreparationCard } from '@/components/products/OzonOfferPreparation';
 import {
   PRODUCT_PHYSICAL_FIELDS,
   effectivePhysicalValueForInput,
@@ -77,24 +75,6 @@ interface ImageSearchResult {
   eligible_count?: number;
   download_failed_count?: number;
   sources?: string[];
-}
-
-interface PublicationFeedback {
-  state: 'running' | 'success' | 'error';
-  message: string;
-  listingCount?: number;
-}
-
-interface MarketplaceAccountTarget {
-  id: number;
-  name: string;
-  marketplace: string;
-  marketplace_label: string;
-  is_active: boolean;
-  provider_capabilities: {
-    publication: boolean;
-    archive: boolean;
-  };
 }
 
 interface ProductDetail {
@@ -486,9 +466,6 @@ export default function ProductDetailPage() {
   const [showAllFitments, setShowAllFitments] = useState(false);
   const [showAllEnrichmentFacts, setShowAllEnrichmentFacts] = useState(false);
   const [pricingListingId, setPricingListingId] = useState<number | null>(null);
-  const [marketplaceAccounts, setMarketplaceAccounts] = useState<MarketplaceAccountTarget[]>([]);
-  const [selectedAccountIds, setSelectedAccountIds] = useState<number[]>([]);
-  const [accountsLoading, setAccountsLoading] = useState(true);
 
   const [images, setImages] = useState<ProductImage[]>([]);
   const [imagesLoading, setImagesLoading] = useState(true);
@@ -504,7 +481,6 @@ export default function ProductDetailPage() {
 
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
   const [imageSearchResult, setImageSearchResult] = useState<ImageSearchResult | null>(null);
-  const [publicationFeedback, setPublicationFeedback] = useState<PublicationFeedback | null>(null);
 
   useEffect(() => {
     const previousHref = getPreviousDashboardHref();
@@ -526,7 +502,6 @@ export default function ProductDetailPage() {
   const [webResearchRunId, setWebResearchRunId] = useState<number | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const publicationSectionRef = useRef<HTMLDivElement>(null);
   const enrichmentSectionRef = useRef<HTMLDivElement>(null);
   const imagesSectionRef = useRef<HTMLDivElement>(null);
   const descriptionPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -550,23 +525,6 @@ export default function ProductDetailPage() {
     ));
     setCategoryAssignValue(nextProduct.catalog_category?.id ? String(nextProduct.catalog_category.id) : '');
   }, [id]);
-
-  useEffect(() => {
-    let active = true;
-    accountApi.list()
-      .then((response) => {
-        if (!active) return;
-        const data = (response.data.data ?? response.data) as MarketplaceAccountTarget[];
-        setMarketplaceAccounts(data.filter((account) => account.is_active));
-      })
-      .catch(() => {
-        if (active) setMarketplaceAccounts([]);
-      })
-      .finally(() => {
-        if (active) setAccountsLoading(false);
-      });
-    return () => { active = false; };
-  }, []);
 
   const loadWebResearch = useCallback(async () => {
     const res = await productApi.latestWebResearch(Number(id));
@@ -927,78 +885,6 @@ export default function ProductDetailPage() {
     }
   }
 
-  async function runAction(action: 'publish' | 'archive') {
-    const selectedAccounts = marketplaceAccounts.filter((account) => (
-      selectedAccountIds.includes(account.id)
-    ));
-    if (selectedAccounts.length === 0) {
-      toast.warning('Выберите хотя бы один целевой аккаунт маркетплейса.');
-      return;
-    }
-    const unsupported = selectedAccounts.some((account) => (
-      action === 'publish'
-        ? !account.provider_capabilities.publication
-        : !account.provider_capabilities.archive
-    ));
-    if (unsupported) {
-      toast.warning('Выбранный маркетплейс пока не поддерживает эту операцию.');
-      return;
-    }
-    const exactScope = selectedAccounts
-      .map((account) => `${account.marketplace_label} · ${account.name}`)
-      .join(', ');
-    if (action === 'archive' && !window.confirm(
-      `Снять активные объявления товара только в аккаунтах: ${exactScope}?`,
-    )) return;
-
-    setActionLoading(action);
-    if (action === 'publish') {
-      setPublicationFeedback({
-        state: 'running',
-        message: 'Создаём или обновляем черновики для подключённых аккаунтов...',
-      });
-      scrollToSection(publicationSectionRef);
-    }
-    try {
-      if (action === 'publish') {
-        const response = await productApi.publish(Number(id), selectedAccountIds);
-        const listingIds = (response.data.data?.listing_ids ?? []) as number[];
-        setPublicationFeedback({
-          state: 'success',
-          listingCount: listingIds.length,
-          message: 'Черновики подготовлены. Проверьте цену, контакты и адрес, затем отправьте их на публикацию.',
-        });
-        toast.success('Листинги подготовлены');
-        return;
-      }
-      await productApi.archive(Number(id), selectedAccountIds);
-      toast.success('Объявления сняты с публикации и уходят в архив.');
-    } catch (err: unknown) {
-      const code = (err as { response?: { data?: { code?: string; message?: string } } })?.response?.data?.code;
-      const message = (err as { response?: { data?: { message?: string } } })?.response?.data?.message;
-      let userMessage = 'Не удалось выполнить действие. Попробуйте ещё раз.';
-      if (code === 'quota_exceeded') {
-        userMessage = 'AI-кредиты исчерпаны. Обновите тариф в разделе «Биллинг».';
-      } else if (code === 'no_active_listings') {
-        userMessage = message ?? 'Нет активных объявлений для архивации.';
-      } else if (code === 'invalid_account_targets') {
-        userMessage = message ?? 'Проверьте выбранные аккаунты маркетплейса.';
-      } else if (code === 'provider_capability_unavailable') {
-        userMessage = message ?? 'Операция пока недоступна для выбранного маркетплейса.';
-      }
-      if (action === 'publish') {
-        setPublicationFeedback({ state: 'error', message: userMessage });
-      }
-      if (code === 'no_active_listings') {
-        toast.warning(userMessage);
-      } else {
-        toast.error(userMessage);
-      }
-    } finally {
-      setActionLoading(null);
-    }
-  }
-
   async function assignCatalogCategory(categoryId: number | null) {
     setCategoryAssignLoading(true);
     setCategoryAssignAction(categoryId === null ? 'remove' : 'apply');
@@ -1135,16 +1021,6 @@ export default function ProductDetailPage() {
   // с товаром. Конкретные операции ниже отдельно учитывают поиск изображений,
   // обогащение и генерацию описания.
   const busy = actionLoading !== null;
-  const selectedMarketplaceAccounts = marketplaceAccounts.filter((account) => (
-    selectedAccountIds.includes(account.id)
-  ));
-  const hasSelectedAccounts = selectedMarketplaceAccounts.length > 0;
-  const canPublishTargets = hasSelectedAccounts && selectedMarketplaceAccounts.every(
-    (account) => account.provider_capabilities.publication,
-  );
-  const canArchiveTargets = hasSelectedAccounts && selectedMarketplaceAccounts.every(
-    (account) => account.provider_capabilities.archive,
-  );
   const assignedCatalogCategoryValue = product.catalog_category?.id
     ? String(product.catalog_category.id)
     : '';
@@ -1275,7 +1151,7 @@ export default function ProductDetailPage() {
           <Card>
             <CardHeader className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle className="text-base">Данные для Ozon</CardTitle>
+                <CardTitle className="text-base">Упаковка и налог</CardTitle>
                 <Badge variant={physicalProfile.complete ? 'default' : 'outline'}>
                   {physicalProfile.complete
                     ? 'Все данные заполнены'
@@ -1283,8 +1159,9 @@ export default function ProductDetailPage() {
                 </Badge>
               </div>
               <p className="text-sm leading-relaxed text-muted-foreground">
-                MAP сначала использует корректное значение из 1С. Если его нет или 1С
-                передала ошибку, заполните поле здесь. Эти данные не меняют карточку Avito.
+                Это общие факты о товаре. MAP сначала использует корректное значение из
+                1С. Если его нет или 1С передала ошибку, заполните поле здесь. Значения
+                пригодятся маркетплейсам с требованиями к упаковке и не меняют поля Avito.
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1371,11 +1248,6 @@ export default function ProductDetailPage() {
               </div>
             </CardContent>
           </Card>
-
-          <OzonOfferPreparationCard
-            productId={product.id}
-            accounts={marketplaceAccounts}
-          />
 
           {/* AI-описание */}
           {(product.description_ai || generatingDescription) && (
@@ -1518,15 +1390,12 @@ export default function ProductDetailPage() {
                   {product.listing_options.length === 0 && (
                     <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                       <p className="text-xs text-muted-foreground">
-                        Сравнение станет доступно после создания объявления для товара.
+                        Сначала выберите маркетплейс и кабинет в разделе «Листинги».
                       </p>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => runAction('publish')}
-                        disabled={actionLoading !== null || !canPublishTargets}
-                      >
-                        Создать объявление
+                      <Button asChild size="sm" variant="outline">
+                        <Link href={`/dashboard/listings?product=${product.id}`}>
+                          Перейти в Листинги
+                        </Link>
                       </Button>
                     </div>
                   )}
@@ -1867,50 +1736,6 @@ export default function ProductDetailPage() {
             </CardContent>
           </Card>
 
-          {publicationFeedback && (
-            <Card ref={publicationSectionRef} className="scroll-mt-24" aria-live="polite">
-              <CardHeader>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <CardTitle className="text-sm font-medium">Публикация</CardTitle>
-                  <Badge
-                    variant={publicationFeedback.state === 'error'
-                      ? 'destructive'
-                      : publicationFeedback.state === 'success' ? 'default' : 'secondary'}
-                  >
-                    {publicationFeedback.state === 'running'
-                      ? 'Подготовка...'
-                      : publicationFeedback.state === 'success' ? 'Черновики готовы' : 'Нужна проверка'}
-                  </Badge>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex items-start gap-2 text-sm">
-                  {publicationFeedback.state === 'running' && (
-                    <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-primary" />
-                  )}
-                  <div>
-                    {publicationFeedback.state === 'success' && (
-                      <p className="font-medium">
-                        Подготовлено листингов: {publicationFeedback.listingCount ?? 0}
-                      </p>
-                    )}
-                    <p className={publicationFeedback.state === 'success'
-                      ? 'mt-1 text-muted-foreground'
-                      : publicationFeedback.state === 'error' ? 'text-destructive' : 'text-muted-foreground'}
-                    >
-                      {publicationFeedback.message}
-                    </p>
-                  </div>
-                </div>
-                {publicationFeedback.state === 'success' && (
-                  <Button asChild size="sm">
-                    <Link href="/dashboard/listings">Перейти к листингам</Link>
-                  </Button>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
           {/* Фотографии */}
           <Card ref={imagesSectionRef} className="scroll-mt-24">
             <CardHeader>
@@ -2184,88 +2009,16 @@ export default function ProductDetailPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="text-sm font-medium">Действия</CardTitle>
+              <CardTitle className="text-sm font-medium">Работа с товаром</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3">
-              <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
-                <p className="text-sm font-medium">Каналы публикации</p>
+              <div className="rounded-md border bg-muted/20 p-3">
+                <p className="text-sm font-medium">Общие данные и медиа</p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  Проверьте готовность отдельно для каждого кабинета Avito и Ozon.
-                  Общие данные и медиа останутся у товара.
+                  Обогащайте товар, проверяйте найденные факты и фотографии здесь.
+                  Эти данные можно использовать в нескольких маркетплейсах.
                 </p>
-                <Button asChild className="mt-3 w-full" variant="outline">
-                  <Link href={`/dashboard/listings?product=${product.id}`}>
-                    <Store className="mr-2 h-4 w-4" />
-                    Открыть каналы
-                  </Link>
-                </Button>
               </div>
-              <div className="rounded-md border p-3">
-                <p className="text-sm font-medium">Целевые аккаунты</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Прежний быстрый сценарий Avito. Действие затронет только
-                  отмеченные кабинеты и не изменился.
-                </p>
-                <div className="mt-3 space-y-2">
-                  {accountsLoading && (
-                    <p className="text-xs text-muted-foreground">Загружаем аккаунты...</p>
-                  )}
-                  {!accountsLoading && marketplaceAccounts.length === 0 && (
-                    <p className="text-xs text-muted-foreground">
-                      Нет активных аккаунтов.{' '}
-                      <Link className="text-primary hover:underline" href="/dashboard/settings">
-                        Открыть настройки
-                      </Link>
-                    </p>
-                  )}
-                  {marketplaceAccounts.map((account) => {
-                    const available = account.provider_capabilities.publication
-                      || account.provider_capabilities.archive;
-                    return (
-                      <label
-                        key={account.id}
-                        className={`flex items-start gap-2 rounded border p-2 text-xs ${
-                          available ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          className="mt-0.5 h-4 w-4 rounded border"
-                          checked={selectedAccountIds.includes(account.id)}
-                          disabled={!available || busy}
-                          onChange={(event) => setSelectedAccountIds((current) => (
-                            event.target.checked
-                              ? [...current, account.id]
-                              : current.filter((accountId) => accountId !== account.id)
-                          ))}
-                        />
-                        <span>
-                          <span className="font-medium">
-                            {account.marketplace_label} · {account.name}
-                          </span>
-                          {!available && (
-                            <span className="mt-0.5 block text-muted-foreground">
-                              Операции подключения ещё не включены
-                            </span>
-                          )}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-              <Button
-                className="w-full"
-                onClick={() => runAction('publish')}
-                disabled={busy || searching || enriching || generatingDescription || !canPublishTargets}
-              >
-                {actionLoading === 'publish' ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Upload className="mr-2 h-4 w-4" />
-                )}
-                Подготовить листинги
-              </Button>
               <Button
                 className="w-full"
                 variant="outline"
@@ -2316,19 +2069,19 @@ export default function ProductDetailPage() {
                 className="hidden"
                 onChange={handleUpload}
               />
-              <Button
-                className="w-full"
-                variant="outline"
-                onClick={() => runAction('archive')}
-                disabled={busy || searching || enriching || generatingDescription || !canArchiveTargets}
-              >
-                {actionLoading === 'archive' ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Archive className="mr-2 h-4 w-4" />
-                )}
-                Архивировать
-              </Button>
+              <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
+                <p className="text-sm font-medium">После проверки товара</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Категорию, обязательные поля, кабинет и публикацию Avito или Ozon
+                  настраивайте в одном дровере раздела «Листинги».
+                </p>
+                <Button asChild className="mt-3 w-full">
+                  <Link href={`/dashboard/listings?product=${product.id}`}>
+                    <Store className="mr-2 h-4 w-4" />
+                    Перейти в Листинги
+                  </Link>
+                </Button>
+              </div>
             </CardContent>
           </Card>
 

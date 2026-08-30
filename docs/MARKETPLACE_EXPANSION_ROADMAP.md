@@ -405,6 +405,24 @@ topology и внешний readiness прошли. Read-only AlfaPro canary по
 раздельные Avito/Ozon-кабинеты и отдельную Ozon-проекцию; черновики и provider
 mutations не запускались. Deploy gate возвращён в `false`.
 
+**O3a-UX — 2026-08-30** устраняет промежуточный экран,
+который дублировал выбор целей и смешивал подготовку товара с публикацией:
+
+- карточка товара содержит только общие факты, обогащение, медиа и ручную
+  модерацию; упаковка и налог подписаны provider-neutral;
+- категории, обязательные поля, кабинет и действия конкретного маркетплейса
+  перенесены в раздел `Листинги`;
+- один видимый drawer переключается между точными Avito/Ozon-кабинетами;
+  существующий Avito-листинг открывается сразу в прежней полной Avito-форме,
+  без промежуточной summary-карточки;
+- Avito publication/feed services, backend, migrations и Ozon provider
+  mutations в пакет не входят.
+
+Локальный gate O3a-UX: frontend unit — 58/58, TypeScript, ESLint и production
+webpack build 21/21; Products + Marketplaces — 1333 passed, 2 skipped; полный
+backend — 2841 passed, 3 skipped; Flake8, baseline mypy для 719 файлов, strict
+mypy для 361 production-файла, OpenAPI validation и migration drift прошли.
+
 Результат O3b: create/update/archive Ozon offer с устойчивым
 локальным статусом.
 
