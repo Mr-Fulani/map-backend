@@ -866,6 +866,25 @@ OZON_API_MAX_PAGES = min(
 OZON_API_TIMEOUT_SECONDS = min(
     30.0, max(1.0, float(os.environ.get('OZON_API_TIMEOUT_SECONDS', '10'))),
 )
+OZON_CATALOG_RESPONSE_MAX_BYTES = min(
+    10 * 1024 * 1024,
+    max(
+        1,
+        int(os.environ.get('OZON_CATALOG_RESPONSE_MAX_BYTES', str(5 * 1024 * 1024))),
+    ),
+)
+OZON_CATALOG_MAX_NODES = min(
+    100_000,
+    max(1, int(os.environ.get('OZON_CATALOG_MAX_NODES', '30000'))),
+)
+OZON_CATALOG_MAX_DEPTH = min(
+    64,
+    max(1, int(os.environ.get('OZON_CATALOG_MAX_DEPTH', '20'))),
+)
+OZON_CATALOG_MAX_ATTRIBUTES = min(
+    5000,
+    max(1, int(os.environ.get('OZON_CATALOG_MAX_ATTRIBUTES', '2000'))),
+)
 AVITO_TREE_MAX_DEPTH = min(
     32, max(1, int(os.environ.get('AVITO_TREE_MAX_DEPTH', '12'))),
 )

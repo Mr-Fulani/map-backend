@@ -44,7 +44,10 @@ AVITO_CAPABILITIES = ProviderCapabilities(
     feed_delivery=True,
     placement_addresses=True,
 )
-OZON_CAPABILITIES = ProviderCapabilities(account_health=True)
+OZON_CAPABILITIES = ProviderCapabilities(
+    account_health=True,
+    catalog_schema=True,
+)
 
 _PROVIDERS = {
     'avito': AVITO_CAPABILITIES,
