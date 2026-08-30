@@ -4,6 +4,7 @@ import test from 'node:test';
 import type { OzonAccountProfile } from '../src/lib/marketplace-account-types';
 import {
   ozonAccountConnectionEnabled,
+  ozonCatalogErrorMessage,
   ozonConnectionPresentation,
   ozonCredentialUpdateEnabled,
   ozonKeyExpiryPresentation,
@@ -91,4 +92,22 @@ test('Ozon onboarding errors are allowlisted and never reflect unknown response 
   });
   assert.doesNotMatch(unknown, /api-key-must-not-leak/);
   assert.match(unknown, /API-ключ не сохранён/);
+});
+
+test('Ozon catalog errors are allowlisted and never reflect provider response text', () => {
+  assert.match(ozonCatalogErrorMessage({
+    response: { data: { code: 'rate_limited', retry_after_seconds: 17 } },
+  }), /17 сек/);
+  assert.match(ozonCatalogErrorMessage({
+    response: { data: { code: 'schema_drift' } },
+  }), /Формат справочника/);
+
+  const unknown = ozonCatalogErrorMessage({
+    response: {
+      status: 500,
+      data: { code: 'unknown', message: 'provider-secret-response' },
+    },
+  });
+  assert.doesNotMatch(unknown, /provider-secret-response/);
+  assert.match(unknown, /безопасно обновить/);
 });

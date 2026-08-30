@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
+import { OzonCatalogStatus } from '@/components/marketplaces/OzonCatalogStatus';
 import { accountApi } from '@/lib/api';
 import type { MarketplaceAccount } from '@/lib/marketplace-account-types';
 import {
@@ -344,6 +345,13 @@ export function OzonAccountSettings({
                       </p>
                     </div>
                   )}
+
+                  <OzonCatalogStatus
+                    accountId={account.id}
+                    accountActive={account.is_active}
+                    canManage={canManage}
+                    connectionEnabled={connectionEnabled}
+                  />
 
                   {showRotationFor === account.id && credentialUpdateEnabled && (
                     <form onSubmit={(event) => rotateCredentials(event, account)} className="space-y-3 rounded-md border p-3" autoComplete="off">

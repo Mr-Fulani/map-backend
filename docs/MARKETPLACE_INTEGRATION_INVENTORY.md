@@ -375,6 +375,12 @@ Product read-only и Warehouse. Роль Product добавляется толь
 ручным tenant/account-scoped read-only API. Dictionary values, физические поля,
 offer extension, UI и preflight остаются в O2b/O2c; Avito runtime не меняется.
 
+O2a-UI закрывает только видимость foundation: показывает локальные метаданные
+снимка конкретного Ozon-аккаунта, даёт вручную подтвердить read-only refresh
+дерева и сохраняет Ozon/account в provider-neutral URL-фильтрах. Выбор типов,
+dictionary values, физические поля, offer extension и preflight остаются в
+O2b/O2c; фоновых чтений Ozon и изменений Avito runtime нет.
+
 ### O3 — durable publication и reconciliation
 
 - `MarketplaceOperation`, per-item outcome, task polling и safe retry;
