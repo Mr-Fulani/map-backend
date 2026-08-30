@@ -1249,6 +1249,10 @@ export const accountApi = {
   deletePlacementAddress: (id: number) =>
     api.delete(`/accounts/placement-addresses/${id}/`),
   getOzonCatalog: (id: number) => api.get(`/accounts/${id}/ozon-catalog/`),
+  listOzonCatalogTypes: (
+    id: number,
+    params?: { search?: string; page?: number; page_size?: number; language?: string },
+  ) => api.get(`/accounts/${id}/ozon-catalog/types/`, { params }),
   refreshOzonCatalogTree: (id: number) => api.post(`/accounts/${id}/ozon-catalog/`, {
     scope: 'tree',
     language: 'DEFAULT',

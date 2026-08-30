@@ -72,6 +72,28 @@ export interface OzonCatalogState {
   latest_attribute_schema: OzonCatalogAttributeMetadata | null;
 }
 
+export interface OzonCatalogTypeItem {
+  description_category_id: number;
+  type_id: number;
+  category_path: string;
+  type_name: string;
+}
+
+export interface OzonCatalogTypesPage {
+  status: 'ok';
+  data: OzonCatalogTypeItem[];
+  meta: {
+    total: number;
+    page: number;
+    page_size: number;
+    next: string | null;
+    prev: string | null;
+    tree_revision: string | null;
+    tree_checked_at: string | null;
+    language: string;
+  };
+}
+
 export interface MarketplaceProviderCapabilities {
   account_health: boolean;
   catalog_schema: boolean;

@@ -225,6 +225,33 @@ O2a и O2a-UI не используют Avito feed/services/tasks, не меня
 и не вызывают product/price/stock/archive методы Ozon. Реальный catalog refresh
 остаётся отдельным ручным read-only действием точного tenant/account.
 
+O2a foundation и O2a-UI выложены на production 2026-08-30. Read-only canary
+AlfaPro сохранил отдельный account-scoped снимок: 9 796 узлов, 8 876 активных
+типов, revision `0985c3c51042`; после полной перезагрузки страницы выбранные
+Ozon и аккаунт сохранились. Product/price/stock/archive методы не вызывались.
+
+**O2a-UX — `CODE_READY` 2026-08-30**: текущий ограниченный пакет делает границы
+понятными обычному пользователю tenant-а без изменения модели данных:
+
+- существующее рабочее дерево явно называется «Каталог MAP»;
+- защищённые ветки официального дерева Avito подписаны и не предлагают в UI
+  переименование или удаление, но сохраняют прежние включение/отключение,
+  изображения и наценки;
+- текущая вкладка наценок явно названа «Наценки Avito», а Ozon не использует
+  эти проценты до отдельного этапа публикации/цен;
+- в карточке каждого Ozon-аккаунта доступен поиск по последнему локальному
+  снимку дерева с bounded pagination; маршрут не вызывает provider API;
+- интерфейс объясняет цепочку «1С/CSV → Каталог MAP → категория площадки» и
+  не обещает ещё не реализованную привязку товара к Ozon.
+
+Локальный gate кандидата: 11 focused и 74 широких
+Ozon/provider-neutral/Avito account backend-теста, 46 frontend unit-тестов,
+TypeScript, ESLint, production webpack build 21/21, Flake8, baseline/strict
+mypy, Django system check, OpenAPI validation и migration drift прошли;
+`npm audit --omit=dev` нашёл 0 уязвимостей. Новых migrations нет. Avito
+feed/services/tasks, Product/Listing, provider mutations и фоновые задания не
+изменялись. Полный CI и production deploy остаются release gate этого пакета.
+
 ## O3 — публикация и reconciliation
 
 Результат: create/update/archive Ozon offer с устойчивым локальным статусом.

@@ -6,6 +6,7 @@ import { Check, ChevronDown, FolderTree, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { mapCatalogCategorySourceLabel } from '@/lib/marketplace-category-boundaries';
 
 export interface CatalogCategoryOption {
   id: number;
@@ -166,11 +167,7 @@ export function CatalogCategoryPicker({
             ) : (
               visibleCategories.map((category) => {
                 const domain = category.root_domain_name || category.domain;
-                const source = category.external_source === 'avito'
-                  ? 'Категории Avito'
-                  : category.external_source
-                    ? 'Категории каталога'
-                    : 'Собственные категории';
+                const source = mapCatalogCategorySourceLabel(category.external_source);
                 const showDomain = domain !== previousDomain;
                 const showSource = showDomain || source !== previousSource;
                 previousDomain = domain;

@@ -309,23 +309,98 @@ def _tree_contains_active_type(
     description_category_id: int,
     type_id: int,
 ) -> bool:
-    pending: list[Any] = list(tree)
-    while pending:
-        node = pending.pop()
-        if not isinstance(node, Mapping):
-            return False
-        if (
-            node.get('description_category_id') == description_category_id
-            and node.get('type_id') == type_id
-            and node.get('disabled') is False
-            and node.get('children') == []
-        ):
-            return True
-        children = node.get('children')
-        if not isinstance(children, list):
-            return False
-        pending.extend(children)
-    return False
+    return any(
+        item['description_category_id'] == description_category_id
+        and item['type_id'] == type_id
+        for item in catalog_types_from_tree(tree)
+    )
+
+
+def catalog_types_from_tree(
+    tree: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Flatten active Ozon leaf types while preserving their category path."""
+    node_count = 0
+    result: list[dict[str, Any]] = []
+
+    def walk(
+        nodes: Any,
+        *,
+        path: list[str],
+        ancestor_disabled: bool,
+        depth: int,
+    ) -> None:
+        nonlocal node_count
+        if depth > settings.OZON_CATALOG_MAX_DEPTH or not isinstance(nodes, list):
+            raise OzonCatalogError(
+                'schema_drift',
+                'Локальный снимок дерева категорий Ozon повреждён.',
+            )
+        for node in nodes:
+            node_count += 1
+            if (
+                node_count > settings.OZON_CATALOG_MAX_NODES
+                or not isinstance(node, Mapping)
+            ):
+                raise OzonCatalogError(
+                    'schema_drift',
+                    'Локальный снимок дерева категорий Ozon повреждён.',
+                )
+            category_id = _provider_id(
+                node.get('description_category_id'),
+                'description_category_id',
+            )
+            disabled = _boolean(node.get('disabled'), 'disabled')
+            effective_disabled = ancestor_disabled or disabled
+            children = node.get('children')
+            if not isinstance(children, list):
+                raise OzonCatalogError(
+                    'schema_drift',
+                    'Локальный снимок дерева категорий Ozon повреждён.',
+                )
+
+            type_id = _optional_provider_id(node.get('type_id'), 'type_id')
+            if type_id is not None:
+                if children:
+                    raise OzonCatalogError(
+                        'schema_drift',
+                        'Локальный снимок дерева категорий Ozon повреждён.',
+                    )
+                type_name = _text(
+                    node.get('type_name'),
+                    'type_name',
+                    maximum=500,
+                    required=True,
+                )
+                if not effective_disabled:
+                    result.append({
+                        'description_category_id': category_id,
+                        'type_id': type_id,
+                        'category_path': ' → '.join(path),
+                        'type_name': type_name,
+                    })
+                continue
+
+            category_name = _text(
+                node.get('category_name'),
+                'category_name',
+                maximum=500,
+                required=True,
+            )
+            walk(
+                children,
+                path=[*path, category_name],
+                ancestor_disabled=effective_disabled,
+                depth=depth + 1,
+            )
+
+    walk(tree, path=[], ancestor_disabled=False, depth=1)
+    result.sort(key=lambda item: (
+        item['category_path'].casefold(),
+        item['type_name'].casefold(),
+        item['type_id'],
+    ))
+    return result
 
 
 def _touch(snapshot) -> None:
@@ -531,10 +606,39 @@ class OzonCatalogService:
             'latest_attribute_schema': _attribute_metadata(latest_attribute),
         }
 
+    @staticmethod
+    def category_types(
+        account: MarketplaceAccount,
+        *,
+        language: str = 'DEFAULT',
+        search: str = '',
+    ) -> tuple[OzonCategoryTreeSnapshot | None, list[dict[str, Any]]]:
+        """Read active types from the latest local snapshot; never call Ozon."""
+        snapshot = OzonCategoryTreeSnapshot.objects.filter(
+            account=account,
+            language=language,
+        ).order_by('-updated_at', '-pk').first()
+        if snapshot is None:
+            return None, []
+        category_types = catalog_types_from_tree(snapshot.tree)
+        query = search.strip().casefold()
+        if query:
+            category_types = [
+                item for item in category_types
+                if query in ' '.join((
+                    item['category_path'],
+                    item['type_name'],
+                    str(item['description_category_id']),
+                    str(item['type_id']),
+                )).casefold()
+            ]
+        return snapshot, category_types
+
 
 __all__ = [
     'OzonCatalogError',
     'OzonCatalogService',
+    'catalog_types_from_tree',
     'normalize_category_attributes',
     'normalize_category_tree',
 ]

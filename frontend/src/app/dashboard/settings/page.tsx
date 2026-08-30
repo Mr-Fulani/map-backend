@@ -47,6 +47,11 @@ import {
   type SettingsLoadGroup,
 } from '@/lib/settings-page-loader';
 import { updateCatalogCategoryBranch } from '@/lib/catalog-settings-state';
+import {
+  AVITO_PRICING_LABEL,
+  canEditMapCatalogStructure,
+  MAP_CATALOG_LABEL,
+} from '@/lib/marketplace-category-boundaries';
 
 interface ApiKey {
   id: number;
@@ -165,8 +170,8 @@ const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
   'api-keys': 'API-ключи',
   marketplaces: 'Маркетплейсы',
   datasources: 'Источники данных',
-  'catalog-categories': 'Категории',
-  pricing: 'Наценки',
+  'catalog-categories': MAP_CATALOG_LABEL,
+  pricing: AVITO_PRICING_LABEL,
   'web-research': 'Интернет-исследование',
   ai: 'AI-модели',
   notifications: 'Уведомления',
@@ -2584,18 +2589,49 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Категории каталога */}
+        {/* Каталог MAP */}
         <TabsContent value="catalog-categories" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Категории каталога</CardTitle>
+              <CardTitle>Каталог MAP</CardTitle>
               <CardDescription>
-                Вы управляете категориями своего каталога. Тип категории помогает платформе безопасно включать подходящие инструменты обработки.
-                Отключите ненужные ветки (например «Для грузовиков и спецтехники» или «Автомобиль на запчасти»), чтобы авто-классификация
-                выбирала категории только из вашего ассортимента — отключение действует на всю ветку с подкатегориями.
+                Рабочая структура ваших товаров. Категории из 1С/CSV привязываются сюда;
+                защищённые ветки Avito и отдельное дерево Ozon всегда явно подписаны.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="space-y-3 rounded-lg border border-blue-500/20 bg-blue-500/5 p-4">
+                <p className="text-sm font-medium">Как проходят категории товара</p>
+                <div className="grid gap-2 text-sm md:grid-cols-3">
+                  <div className="rounded-md border bg-background p-3">
+                    <p className="text-xs text-muted-foreground">Шаг 1</p>
+                    <p className="mt-1 font-medium">1С или CSV</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Исходное название категории</p>
+                  </div>
+                  <div className="rounded-md border bg-background p-3">
+                    <p className="text-xs text-muted-foreground">Шаг 2</p>
+                    <p className="mt-1 font-medium">Каталог MAP</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Единая категория вашего товара</p>
+                  </div>
+                  <div className="rounded-md border bg-background p-3">
+                    <p className="text-xs text-muted-foreground">Шаг 3</p>
+                    <p className="mt-1 font-medium">Категория площадки</p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      Avito — защищённые ветки; Ozon — отдельная будущая привязка
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Официальные ID Avito и Ozon между собой не смешиваются. Дерево Ozon хранится
+                  отдельно для каждого Ozon-аккаунта и доступно в «Маркетплейсы → Ozon»;
+                  привязка товаров к нему появится отдельным следующим этапом.
+                </p>
+              </div>
+              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-muted-foreground">
+                В автозапчастях строки с источником «Avito» основаны на официальном дереве
+                Avito. Их можно включать и отключать для своего ассортимента, но переименовывать
+                или удалять через интерфейс нельзя.
+              </div>
               <div className="space-y-2 rounded-lg border p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs font-medium text-muted-foreground">Направления каталога</p>
@@ -2824,14 +2860,18 @@ export default function SettingsPage() {
                                   Удалить картинку
                                 </Button>
                               )}
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => startCatalogCategoryEdit(category)}
-                                disabled={isAnyCategorySaving}
-                              >
-                                Редактировать
-                              </Button>
+                              {!canEditMapCatalogStructure(category.external_source) ? (
+                                <Badge variant="outline">Официальная Avito</Badge>
+                              ) : (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => startCatalogCategoryEdit(category)}
+                                  disabled={isAnyCategorySaving}
+                                >
+                                  Редактировать
+                                </Button>
+                              )}
                               <Button
                                 size="sm"
                                 variant="outline"
@@ -2844,14 +2884,16 @@ export default function SettingsPage() {
                                 {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                                 {category.is_active ? 'Отключить' : 'Включить'}
                               </Button>
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => removeCatalogCategory(category)}
-                                disabled={isAnyCategorySaving}
-                              >
-                                Удалить
-                              </Button>
+                              {canEditMapCatalogStructure(category.external_source) && (
+                                <Button
+                                  size="sm"
+                                  variant="destructive"
+                                  onClick={() => removeCatalogCategory(category)}
+                                  disabled={isAnyCategorySaving}
+                                >
+                                  Удалить
+                                </Button>
+                              )}
                               <Badge variant={category.is_active ? 'default' : 'secondary'}>
                                 {category.is_active ? 'Активна' : 'Отключена'}
                               </Badge>
@@ -2926,16 +2968,21 @@ export default function SettingsPage() {
 
         </TabsContent>
 
-        {/* Наценки */}
+        {/* Наценки Avito */}
         <TabsContent value="pricing" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Наценки по категориям</CardTitle>
+              <CardTitle>Наценки Avito</CardTitle>
               <CardDescription>
-                Процент наценки от базовой цены товара. Применяется при создании листинга. Можно скорректировать индивидуально в боковом меню листинга.
+                Текущая схема рассчитывает цену существующих листингов Avito по категориям
+                Каталога MAP. Наценку можно скорректировать в карточке конкретного листинга.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="space-y-4">
+              <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground">
+                Ozon эти проценты сейчас не использует: публикация и цены Ozon ещё выключены.
+                Для Ozon появятся отдельные правила по аккаунту после этапа привязки категорий.
+              </div>
               <MarginEditor
                 categories={catalogCategories.filter((category) => category.is_active)}
                 onSaved={loadCatalogCategories}
