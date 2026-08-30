@@ -885,6 +885,10 @@ OZON_CATALOG_MAX_ATTRIBUTES = min(
     5000,
     max(1, int(os.environ.get('OZON_CATALOG_MAX_ATTRIBUTES', '2000'))),
 )
+OZON_CATALOG_MAX_VALUES = min(
+    500,
+    max(1, int(os.environ.get('OZON_CATALOG_MAX_VALUES', '100'))),
+)
 AVITO_TREE_MAX_DEPTH = min(
     32, max(1, int(os.environ.get('AVITO_TREE_MAX_DEPTH', '12'))),
 )

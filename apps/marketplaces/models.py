@@ -522,6 +522,66 @@ class OzonCategoryAttributeSnapshot(TimestampedModel):
         )
 
 
+class OzonAttributeValueSnapshot(TimestampedModel):
+    """Versioned result of one explicit Ozon dictionary search."""
+
+    account = models.ForeignKey(
+        MarketplaceAccount,
+        on_delete=models.CASCADE,
+        related_name='ozon_attribute_value_snapshots',
+        verbose_name='Аккаунт Ozon',
+    )
+    description_category_id = models.PositiveBigIntegerField(
+        verbose_name='ID категории Ozon',
+    )
+    type_id = models.PositiveBigIntegerField(verbose_name='ID типа товара Ozon')
+    attribute_id = models.PositiveBigIntegerField(
+        verbose_name='ID характеристики Ozon',
+    )
+    language = models.CharField(
+        max_length=10,
+        choices=OzonCategoryTreeSnapshot.LANGUAGE_CHOICES,
+        default=OzonCategoryTreeSnapshot.LANGUAGE_DEFAULT,
+        verbose_name='Язык схемы',
+    )
+    query = models.CharField(max_length=120, verbose_name='Строка поиска')
+    attribute_schema_hash = models.CharField(
+        max_length=64,
+        verbose_name='Версия схемы характеристики',
+    )
+    schema_hash = models.CharField(
+        max_length=64,
+        verbose_name='SHA-256 нормализованных значений',
+    )
+    values = models.JSONField(default=list, verbose_name='Значения справочника')
+    value_count = models.PositiveSmallIntegerField(
+        verbose_name='Количество значений',
+    )
+
+    class Meta:
+        verbose_name = 'Снимок значений характеристики Ozon'
+        verbose_name_plural = 'Снимки значений характеристик Ozon'
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'account', 'description_category_id', 'type_id',
+                    'attribute_id', 'language', 'query',
+                    'attribute_schema_hash', 'schema_hash',
+                ],
+                name='mkt_oz_value_revision_uniq',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=[
+                    'account', 'description_category_id', 'type_id',
+                    'attribute_id', '-updated_at',
+                ],
+                name='mkt_oz_value_latest_idx',
+            ),
+        ]
+
+
 def new_ozon_offer_id() -> str:
     return f'map-{uuid.uuid4().hex}'
 
@@ -574,6 +634,16 @@ class OzonOfferDraft(TimestampedModel):
         verbose_name='Тип товара Ozon',
     )
     tree_revision = models.CharField(max_length=64, blank=True)
+    attribute_schema_revision = models.CharField(
+        max_length=64,
+        blank=True,
+        default='',
+    )
+    attributes = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='Подготовленные характеристики Ozon',
+    )
 
     class Meta:
         verbose_name = 'Черновик товара Ozon'

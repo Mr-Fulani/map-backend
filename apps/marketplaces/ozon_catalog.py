@@ -11,6 +11,7 @@ from apps.marketplaces.adapters.ozon.client import OzonAPIError, OzonSellerClien
 from apps.marketplaces.models import (
     MarketplaceAccount,
     OzonAccountProfile,
+    OzonAttributeValueSnapshot,
     OzonCategoryAttributeSnapshot,
     OzonCategoryTreeSnapshot,
 )
@@ -291,6 +292,43 @@ def normalize_category_attributes(raw_attributes: list[Any]) -> list[dict[str, A
         item['group_id'], item['attribute_complex_id'], item['id'],
     ))
     return normalized
+
+
+def normalize_attribute_values(raw_values: Any) -> list[dict[str, Any]]:
+    if not isinstance(raw_values, list):
+        raise OzonCatalogError(
+            'schema_drift',
+            'Ozon вернул некорректный справочник характеристики.',
+        )
+    if len(raw_values) > settings.OZON_CATALOG_MAX_VALUES:
+        raise OzonCatalogError(
+            'schema_limit_exceeded',
+            'Справочник характеристики Ozon превысил безопасный лимит.',
+        )
+    values: list[dict[str, Any]] = []
+    seen_ids: set[int] = set()
+    for item in raw_values:
+        if not isinstance(item, Mapping):
+            raise OzonCatalogError(
+                'schema_drift',
+                'Ozon вернул некорректное значение характеристики.',
+            )
+        value_id = _provider_id(item.get('id'), 'id')
+        if value_id in seen_ids:
+            continue
+        seen_ids.add(value_id)
+        values.append({
+            'id': value_id,
+            'value': _text(
+                item.get('value'),
+                'value',
+                maximum=1000,
+                required=True,
+            ),
+            'info': _text(item.get('info'), 'info', maximum=1000),
+            'picture': _text(item.get('picture'), 'picture', maximum=2000),
+        })
+    return values
 
 
 def _schema_hash(payload: Any) -> str:
@@ -582,6 +620,75 @@ class OzonCatalogService:
             _touch(snapshot)
         return snapshot
 
+    @classmethod
+    def search_attribute_values(
+        cls,
+        account: MarketplaceAccount,
+        *,
+        description_category_id: int,
+        type_id: int,
+        attribute_id: int,
+        query: str,
+        language: str,
+        confirmed: bool,
+    ) -> OzonAttributeValueSnapshot:
+        cls._require_access(account, confirmed)
+        schema = OzonCategoryAttributeSnapshot.objects.filter(
+            account=account,
+            description_category_id=description_category_id,
+            type_id=type_id,
+            language=language,
+        ).order_by('-updated_at', '-pk').first()
+        if schema is None:
+            raise OzonCatalogError(
+                'attribute_schema_required',
+                'Сначала загрузите характеристики выбранной категории Ozon.',
+            )
+        attribute = next(
+            (
+                item for item in schema.attributes
+                if item['id'] == attribute_id and item['dictionary_id'] > 0
+            ),
+            None,
+        )
+        if attribute is None:
+            raise OzonCatalogError(
+                'invalid_dictionary_attribute',
+                'Выбранная характеристика не использует справочник Ozon.',
+            )
+        normalized_query = query.strip()
+        if len(normalized_query) < 2:
+            raise OzonCatalogError(
+                'query_too_short',
+                'Введите минимум два символа для поиска.',
+            )
+        try:
+            raw_values = cls._client(
+                account,
+            ).search_description_category_attribute_values(
+                description_category_id=description_category_id,
+                type_id=type_id,
+                attribute_id=attribute_id,
+                value=normalized_query,
+            )
+        except OzonAPIError as exc:
+            raise cls._provider_error(exc) from exc
+        values = normalize_attribute_values(raw_values)
+        snapshot, created = OzonAttributeValueSnapshot.objects.get_or_create(
+            account=account,
+            description_category_id=description_category_id,
+            type_id=type_id,
+            attribute_id=attribute_id,
+            language=language,
+            query=normalized_query,
+            attribute_schema_hash=schema.schema_hash,
+            schema_hash=_schema_hash(values),
+            defaults={'values': values, 'value_count': len(values)},
+        )
+        if not created:
+            _touch(snapshot)
+        return snapshot
+
     @staticmethod
     def state(account: MarketplaceAccount, *, language: str = 'DEFAULT') -> dict:
         tree = OzonCategoryTreeSnapshot.objects.filter(
@@ -639,6 +746,7 @@ __all__ = [
     'OzonCatalogError',
     'OzonCatalogService',
     'catalog_types_from_tree',
+    'normalize_attribute_values',
     'normalize_category_attributes',
     'normalize_category_tree',
 ]

@@ -101,6 +101,32 @@ class OzonCatalogTypesQuerySerializer(serializers.Serializer):
     )
 
 
+class OzonAttributeValueSearchSerializer(serializers.Serializer):
+    description_category_id = serializers.IntegerField(min_value=1)
+    type_id = serializers.IntegerField(min_value=1)
+    attribute_id = serializers.IntegerField(min_value=1)
+    query = serializers.CharField(
+        min_length=2,
+        max_length=120,
+        trim_whitespace=True,
+    )
+    language = serializers.ChoiceField(
+        choices=[
+            choice[0]
+            for choice in OzonCategoryTreeSnapshot.LANGUAGE_CHOICES
+        ],
+        default=OzonCategoryTreeSnapshot.LANGUAGE_DEFAULT,
+    )
+    confirm_ozon_read_only_access = serializers.BooleanField()
+
+    def validate_confirm_ozon_read_only_access(self, value):
+        if value is not True:
+            raise serializers.ValidationError(
+                'Подтвердите read-only поиск в справочнике Ozon.',
+            )
+        return value
+
+
 class OzonCatalogTypePagination(MapPagination):
     page_size = 25
     max_page_size = 50
@@ -263,3 +289,66 @@ class OzonCatalogTypesView(APIView):
             'language': data['language'],
         })
         return response
+
+
+@extend_schema(tags=['Accounts'])
+class OzonAttributeValueSearchView(APIView):
+    """Explicit bounded dictionary search; never changes an Ozon product."""
+
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
+    @extend_schema(
+        operation_id='ozon_catalog_attribute_values_search',
+        request=OzonAttributeValueSearchSerializer,
+        responses=inline_serializer(
+            name='OzonAttributeValueSearchResponse',
+            fields={
+                'status': serializers.CharField(read_only=True),
+                'data': inline_serializer(
+                    name='OzonAttributeValueSearchData',
+                    fields={
+                        'revision': serializers.CharField(read_only=True),
+                        'query': serializers.CharField(read_only=True),
+                        'values': serializers.ListField(
+                            child=serializers.DictField(),
+                            read_only=True,
+                        ),
+                    },
+                ),
+            },
+        ),
+    )
+    def post(self, request, pk):
+        account = OzonCatalogView._account(request, pk)
+        if account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        serializer = OzonAttributeValueSearchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            snapshot = OzonCatalogService.search_attribute_values(
+                account,
+                description_category_id=data['description_category_id'],
+                type_id=data['type_id'],
+                attribute_id=data['attribute_id'],
+                query=data['query'],
+                language=data['language'],
+                confirmed=data['confirm_ozon_read_only_access'],
+            )
+        except OzonCatalogError as exc:
+            response_status = {
+                'provider_disabled': status.HTTP_503_SERVICE_UNAVAILABLE,
+                'rate_limited': status.HTTP_429_TOO_MANY_REQUESTS,
+            }.get(exc.code, status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'status': 'error', 'code': exc.code, 'message': str(exc)},
+                status=response_status,
+            )
+        return Response({
+            'status': 'ok',
+            'data': {
+                'revision': snapshot.schema_hash,
+                'query': snapshot.query,
+                'values': snapshot.values,
+            },
+        })

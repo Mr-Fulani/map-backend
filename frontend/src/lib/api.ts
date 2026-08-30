@@ -1264,6 +1264,30 @@ export const accountApi = {
     language: 'DEFAULT',
     confirm_ozon_read_only_access: true,
   }),
+  refreshOzonCatalogAttributes: (
+    id: number,
+    descriptionCategoryId: number,
+    typeId: number,
+  ) => api.post(`/accounts/${id}/ozon-catalog/`, {
+    scope: 'attributes',
+    language: 'DEFAULT',
+    description_category_id: descriptionCategoryId,
+    type_id: typeId,
+    confirm_ozon_read_only_access: true,
+  }),
+  searchOzonAttributeValues: (
+    id: number,
+    data: {
+      description_category_id: number;
+      type_id: number;
+      attribute_id: number;
+      query: string;
+    },
+  ) => api.post(`/accounts/${id}/ozon-catalog/attribute-values/search/`, {
+    ...data,
+    language: 'DEFAULT',
+    confirm_ozon_read_only_access: true,
+  }),
 };
 
 // Categories

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Loader2, Search } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -11,7 +11,13 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { accountApi, productApi } from '@/lib/api';
 import type { OzonCatalogTypeItem, OzonCatalogTypesPage } from '@/lib/marketplace-account-types';
-import type { OzonOfferPreparation } from '@/lib/ozon-offer-preparation';
+import {
+  ozonAttributesPayload,
+  replaceOzonAttributeValue,
+  type OzonDictionaryValue,
+  type OzonOfferAttribute,
+  type OzonOfferPreparation,
+} from '@/lib/ozon-offer-preparation';
 
 interface AccountOption {
   id: number;
@@ -36,26 +42,61 @@ export function OzonOfferPreparationCard({
     [accounts],
   );
   const [accountChoiceId, setAccountChoiceId] = useState<number | null>(null);
-  const [loadedAccountId, setLoadedAccountId] = useState<number | null>(null);
   const [preparation, setPreparation] = useState<OzonOfferPreparation | null>(null);
+  const [attributes, setAttributes] = useState<OzonOfferAttribute[]>([]);
+  const [loadedAccountId, setLoadedAccountId] = useState<number | null>(null);
   const [action, setAction] = useState('');
   const [categoryQuery, setCategoryQuery] = useState('');
   const [categoryResults, setCategoryResults] = useState<OzonCatalogTypeItem[]>([]);
+  const [showOptional, setShowOptional] = useState(false);
+  const [dictionaryQueries, setDictionaryQueries] = useState<Record<string, string>>({});
+  const [dictionaryResults, setDictionaryResults] = useState<Record<string, OzonDictionaryValue[]>>({});
   const accountId = ozonAccounts.some((account) => account.id === accountChoiceId)
     ? accountChoiceId
     : ozonAccounts.length === 1 ? ozonAccounts[0].id : null;
   const loading = Boolean(accountId && loadedAccountId !== accountId);
+
+  const loadPreparation = useCallback(async (selectedAccountId: number) => {
+    try {
+      const response = await productApi.getOzonOffer(productId, selectedAccountId);
+      const next = envelopeData<OzonOfferPreparation>(response.data);
+      setPreparation(next);
+      setAttributes(next.attributes);
+    } catch {
+      setPreparation(null);
+      setAttributes([]);
+      toast.error('Не удалось прочитать подготовку товара для Ozon.');
+    } finally {
+      setLoadedAccountId(selectedAccountId);
+    }
+  }, [productId]);
+
+  function chooseAccount(nextAccountId: number) {
+    setAccountChoiceId(nextAccountId);
+    setCategoryQuery('');
+    setCategoryResults([]);
+    setShowOptional(false);
+    setDictionaryQueries({});
+    setDictionaryResults({});
+    setPreparation(null);
+    setAttributes([]);
+    setLoadedAccountId(null);
+  }
 
   useEffect(() => {
     if (!accountId) return undefined;
     let active = true;
     productApi.getOzonOffer(productId, accountId)
       .then((response) => {
-        if (active) setPreparation(envelopeData<OzonOfferPreparation>(response.data));
+        if (!active) return;
+        const next = envelopeData<OzonOfferPreparation>(response.data);
+        setPreparation(next);
+        setAttributes(next.attributes);
       })
       .catch(() => {
         if (!active) return;
         setPreparation(null);
+        setAttributes([]);
         toast.error('Не удалось прочитать подготовку товара для Ozon.');
       })
       .finally(() => {
@@ -72,11 +113,12 @@ export function OzonOfferPreparationCard({
         account_id: accountId,
         ...payload,
       });
-      setPreparation(envelopeData<OzonOfferPreparation>(response.data));
-      return true;
+      const next = envelopeData<OzonOfferPreparation>(response.data);
+      setPreparation(next);
+      setAttributes(next.attributes);
+      return next;
     } catch {
       toast.error('Не удалось сохранить подготовку Ozon. Проверьте выбранные данные.');
-      return false;
     } finally {
       setAction('');
     }
@@ -101,15 +143,89 @@ export function OzonOfferPreparationCard({
   }
 
   async function selectCategory(category: OzonCatalogTypeItem) {
-    const saved = await updateOffer({
+    const next = await updateOffer({
       description_category_id: category.description_category_id,
       type_id: category.type_id,
     }, 'category');
-    if (saved) {
+    if (next) {
       setCategoryResults([]);
+      setDictionaryQueries({});
+      setDictionaryResults({});
+      setShowOptional(false);
       toast.success('Категория Ozon сохранена.');
     }
   }
+
+  async function refreshAttributes() {
+    if (!accountId || !preparation?.draft?.category) return;
+    const confirmed = window.confirm(
+      'MAP прочитает схему характеристик выбранной категории в Ozon. '
+      + 'Товар, цена и остаток не изменятся. Продолжить?',
+    );
+    if (!confirmed) return;
+    setAction('schema');
+    try {
+      const category = preparation.draft.category;
+      await accountApi.refreshOzonCatalogAttributes(
+        accountId,
+        category.description_category_id,
+        category.type_id,
+      );
+      await loadPreparation(accountId);
+      setDictionaryQueries({});
+      setDictionaryResults({});
+      toast.success('Характеристики Ozon загружены в MAP.');
+    } catch {
+      toast.error('Не удалось загрузить характеристики Ozon.');
+    } finally {
+      setAction('');
+    }
+  }
+
+  function attributeKey(attribute: OzonOfferAttribute) {
+    const category = preparation?.draft?.category;
+    return [
+      accountId ?? 'none',
+      category?.description_category_id ?? 'none',
+      category?.type_id ?? 'none',
+      attribute.complex_id,
+      attribute.id,
+    ].join(':');
+  }
+
+  async function searchDictionary(attribute: OzonOfferAttribute) {
+    const category = preparation?.draft?.category;
+    if (!accountId || !category) return;
+    const key = attributeKey(attribute);
+    const query = (dictionaryQueries[key] ?? '').trim();
+    if (query.length < 2) {
+      toast.warning('Введите минимум два символа.');
+      return;
+    }
+    setAction(`dictionary:${key}`);
+    try {
+      const response = await accountApi.searchOzonAttributeValues(accountId, {
+        description_category_id: category.description_category_id,
+        type_id: category.type_id,
+        attribute_id: attribute.id,
+        query,
+      });
+      const data = envelopeData<{ values: OzonDictionaryValue[] }>(response.data);
+      setDictionaryResults((current) => ({ ...current, [key]: data.values }));
+    } catch {
+      toast.error('Не удалось найти значение в справочнике Ozon.');
+    } finally {
+      setAction('');
+    }
+  }
+
+  const visibleAttributes = attributes.filter(
+    (attribute) => (
+      showOptional
+      || attribute.is_required
+      || attribute.selected_values.length > 0
+    ),
+  );
 
   return (
     <Card>
@@ -119,14 +235,14 @@ export function OzonOfferPreparationCard({
           {preparation && (
             <Badge variant={preparation.preflight.ready ? 'default' : 'outline'}>
               {preparation.preflight.ready
-                ? 'Базовые данные готовы'
+                ? 'Готово к будущей отправке'
                 : `Нужно исправить: ${preparation.preflight.errors.length}`}
             </Badge>
           )}
         </div>
         <p className="text-sm leading-relaxed text-muted-foreground">
-          Выберите конкретный кабинет Ozon. Категория хранится отдельно и не меняет
-          категории, наценки или объявления Avito.
+          Выберите конкретный кабинет Ozon. Категории и характеристики Ozon хранятся
+          отдельно и не меняют категории, наценки или объявления Avito.
         </p>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -139,7 +255,7 @@ export function OzonOfferPreparationCard({
             <label className="text-sm font-medium">Кабинет Ozon</label>
             <Select
               value={accountId ? String(accountId) : ''}
-              onValueChange={(value) => setAccountChoiceId(Number(value))}
+              onValueChange={(value) => chooseAccount(Number(value))}
             >
               <SelectTrigger aria-label="Кабинет Ozon"><SelectValue placeholder="Выберите кабинет" /></SelectTrigger>
               <SelectContent>
@@ -206,12 +322,154 @@ export function OzonOfferPreparationCard({
               ))}
             </div>
 
+            {preparation.draft.category && (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium">Характеристики Ozon</p>
+                    <p className="text-xs text-muted-foreground">
+                      Обязательные поля отмечены. Значения справочников выбираются по названию.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={refreshAttributes}
+                    disabled={action === 'schema'}
+                  >
+                    {action === 'schema' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    {preparation.schema ? 'Обновить схему' : 'Загрузить характеристики'}
+                  </Button>
+                </div>
+
+                {preparation.schema && visibleAttributes.map((attribute) => {
+                  const key = attributeKey(attribute);
+                  const selected = attribute.selected_values[0];
+                  return (
+                    <div key={key} className="space-y-2 rounded-md border p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="text-sm font-medium">{attribute.name}</p>
+                        {attribute.is_required && <Badge variant="outline">Обязательно</Badge>}
+                      </div>
+                      {attribute.description && (
+                        <p className="text-xs text-muted-foreground">{attribute.description}</p>
+                      )}
+                      {attribute.dictionary_id > 0 ? (
+                        <>
+                          {selected && (
+                            <div className="flex items-center justify-between rounded bg-muted p-2 text-sm">
+                              <span>{selected.value}</span>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => setAttributes((current) => replaceOzonAttributeValue(
+                                  current,
+                                  attribute.id,
+                                  attribute.complex_id,
+                                  null,
+                                ))}
+                              >
+                                Очистить
+                              </Button>
+                            </div>
+                          )}
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <Input
+                              aria-label={`Поиск: ${attribute.name}`}
+                              value={dictionaryQueries[key] ?? ''}
+                              onChange={(event) => setDictionaryQueries((current) => ({
+                                ...current,
+                                [key]: event.target.value,
+                              }))}
+                              placeholder="Введите название значения"
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => searchDictionary(attribute)}
+                              disabled={action === `dictionary:${key}`}
+                            >
+                              {action === `dictionary:${key}` && (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              )}
+                              Найти в Ozon
+                            </Button>
+                          </div>
+                          {(dictionaryResults[key] ?? []).slice(0, 10).map((value) => (
+                            <button
+                              type="button"
+                              key={value.id}
+                              className="block w-full rounded border p-2 text-left text-sm hover:bg-muted/50"
+                              onClick={() => setAttributes((current) => replaceOzonAttributeValue(
+                                current,
+                                attribute.id,
+                                attribute.complex_id,
+                                {
+                                  value: value.value,
+                                  dictionary_value_id: value.id,
+                                },
+                              ))}
+                            >
+                              {value.value}
+                            </button>
+                          ))}
+                        </>
+                      ) : (
+                        <Input
+                          aria-label={attribute.name}
+                          value={selected?.value ?? ''}
+                          onChange={(event) => setAttributes((current) => replaceOzonAttributeValue(
+                            current,
+                            attribute.id,
+                            attribute.complex_id,
+                            event.target.value.trim()
+                              ? {
+                                value: event.target.value,
+                                dictionary_value_id: 0,
+                              }
+                              : null,
+                          ))}
+                          placeholder="Введите значение"
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+
+                {preparation.schema && (
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      onClick={() => updateOffer({
+                        attributes: ozonAttributesPayload(attributes),
+                      }, 'attributes')}
+                      disabled={action === 'attributes'}
+                    >
+                      {action === 'attributes' && (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      )}
+                      Сохранить характеристики
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      onClick={() => setShowOptional((value) => !value)}
+                    >
+                      {showOptional ? 'Скрыть необязательные' : 'Показать необязательные'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="space-y-2">
-              <p className="text-sm font-medium">Базовая проверка готовности</p>
+              <p className="text-sm font-medium">Проверка готовности</p>
               {preparation.preflight.ready ? (
                 <div className="flex items-start gap-2 rounded-md border border-green-500/30 bg-green-500/5 p-3 text-sm">
                   <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-600" />
-                  Аккаунт, склад, категория и основные данные готовы. Отправки в Ozon ещё нет.
+                  Все обязательные данные заполнены. Отправки в Ozon ещё нет.
                 </div>
               ) : preparation.preflight.errors.map((issue) => (
                 <div key={`${issue.code}:${issue.field}`} className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-sm">
