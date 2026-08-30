@@ -10,6 +10,9 @@ from apps.products.models import (
     ProductCrossCode, ProductEnrichmentFact, ProductImage, ProductParseJob, TenantCatalogCategory,
     TenantCategoryMapping, VehicleFitment,
 )
+from apps.products.physical_profiles import (
+    MAX_PHYSICAL_DECIMAL, VAT_RATES, normalize_vat_rate, physical_profile_presentation,
+)
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
@@ -157,6 +160,76 @@ class ProductEnrichmentSummarySerializer(serializers.Serializer):
     fitments_count = serializers.IntegerField(min_value=0)
     latest_parse_status = serializers.CharField(allow_blank=True)
     latest_parse_at = serializers.DateTimeField(allow_null=True)
+
+
+class ProductPhysicalFactSerializer(serializers.Serializer):
+    source_value = serializers.CharField(allow_null=True)
+    map_value = serializers.CharField(allow_null=True)
+    effective_value = serializers.CharField(allow_null=True)
+    effective_source = serializers.ChoiceField(choices=['1c', 'map', 'missing'])
+    source_error = serializers.CharField(allow_blank=True)
+
+
+class ProductPhysicalProfilePresentationSerializer(serializers.Serializer):
+    facts = serializers.DictField(child=ProductPhysicalFactSerializer())
+    units = serializers.DictField(child=serializers.CharField())
+    complete = serializers.BooleanField()
+    missing_fields = serializers.ListField(child=serializers.CharField())
+    source_updated_at = serializers.DateTimeField(allow_null=True)
+    updated_at = serializers.DateTimeField(allow_null=True)
+
+
+class ProductPhysicalProfileUpdateSerializer(serializers.Serializer):
+    """Tenant-editable MAP fallback; source-prefixed fields are never accepted."""
+
+    barcode = serializers.CharField(max_length=64, allow_blank=True, required=False)
+    length_mm = serializers.DecimalField(
+        max_digits=12, decimal_places=3, min_value=Decimal('0.001'),
+        max_value=MAX_PHYSICAL_DECIMAL, allow_null=True, required=False,
+    )
+    width_mm = serializers.DecimalField(
+        max_digits=12, decimal_places=3, min_value=Decimal('0.001'),
+        max_value=MAX_PHYSICAL_DECIMAL, allow_null=True, required=False,
+    )
+    height_mm = serializers.DecimalField(
+        max_digits=12, decimal_places=3, min_value=Decimal('0.001'),
+        max_value=MAX_PHYSICAL_DECIMAL, allow_null=True, required=False,
+    )
+    weight_g = serializers.DecimalField(
+        max_digits=12, decimal_places=3, min_value=Decimal('0.001'),
+        max_value=MAX_PHYSICAL_DECIMAL, allow_null=True, required=False,
+    )
+    vat_rate = serializers.DecimalField(
+        max_digits=5, decimal_places=2, min_value=Decimal('0'),
+        max_value=Decimal('100'), allow_null=True, required=False,
+    )
+
+    def validate_barcode(self, value: str) -> str:
+        if any(ord(char) < 32 for char in value):
+            raise serializers.ValidationError('Штрихкод содержит недопустимые символы.')
+        return value.strip()
+
+    def validate_vat_rate(self, value: Decimal | None) -> Decimal | None:
+        if value is None:
+            return None
+        try:
+            normalized = normalize_vat_rate(value)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+        if normalized not in VAT_RATES:
+            raise serializers.ValidationError('Выберите поддерживаемую ставку НДС.')
+        return normalized
+
+    def validate(self, attrs):
+        allowed = {'barcode', 'length_mm', 'width_mm', 'height_mm', 'weight_g', 'vat_rate'}
+        unknown = set(self.initial_data) - allowed
+        if unknown:
+            raise serializers.ValidationError(
+                f'Неподдерживаемые поля: {", ".join(sorted(unknown))}',
+            )
+        if not set(self.initial_data) & allowed:
+            raise serializers.ValidationError('Передайте хотя бы одно поле физических данных.')
+        return attrs
 
 
 class ProductSerializer(serializers.ModelSerializer):
@@ -409,12 +482,18 @@ class ProductDetailSerializer(ProductSerializer):
     latest_parse_job = serializers.SerializerMethodField()
     parse_jobs_summary = serializers.SerializerMethodField()
     listing_options = serializers.SerializerMethodField()
+    physical_profile = serializers.SerializerMethodField()
 
     class Meta(ProductSerializer.Meta):
         fields = ProductSerializer.Meta.fields + [
             'attributes', 'cross_codes', 'fitments', 'enrichment_facts',
             'latest_parse_job', 'parse_jobs_summary', 'listing_options',
+            'physical_profile',
         ]
+
+    @extend_schema_field(ProductPhysicalProfilePresentationSerializer())
+    def get_physical_profile(self, obj) -> dict:
+        return physical_profile_presentation(obj)
 
     @extend_schema_field(ProductAttributeSerializer(many=True))
     def get_attributes(self, obj) -> list[dict]:

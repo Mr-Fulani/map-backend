@@ -29,9 +29,25 @@ import {
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
   CatalogCategoryPicker,
   type CatalogCategoryOption,
 } from '@/components/products/catalog-category-picker';
+import {
+  PRODUCT_PHYSICAL_FIELDS,
+  effectivePhysicalValueForInput,
+  physicalDraftFromProfile,
+  physicalDraftToApiPayload,
+  type ProductPhysicalDraft,
+  type ProductPhysicalFieldKey,
+  type ProductPhysicalProfile,
+} from '@/lib/product-physical-profile';
 
 function isProductsListHref(value: string | null): value is string {
   return value === '/dashboard/products' || Boolean(value?.startsWith('/dashboard/products?'));
@@ -117,6 +133,7 @@ interface ProductDetail {
     'id' | 'name' | 'domain' | 'is_active'
   > | null;
   catalog_classification: ProductCatalogClassification | null;
+  physical_profile: ProductPhysicalProfile;
 }
 
 interface ProductCatalogClassification {
@@ -471,6 +488,10 @@ export default function ProductDetailPage() {
   const [editingBrand, setEditingBrand] = useState(false);
   const [brandValue, setBrandValue] = useState('');
   const [savingBrand, setSavingBrand] = useState(false);
+  const [physicalDraft, setPhysicalDraft] = useState<ProductPhysicalDraft>(() => (
+    physicalDraftFromProfile(null)
+  ));
+  const [savingPhysicalProfile, setSavingPhysicalProfile] = useState(false);
 
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
   const [imageSearchResult, setImageSearchResult] = useState<ImageSearchResult | null>(null);
@@ -512,6 +533,7 @@ export default function ProductDetailPage() {
     const res = await productApi.get(Number(id));
     const nextProduct = res.data.data as ProductDetail;
     setProduct(nextProduct);
+    setPhysicalDraft(physicalDraftFromProfile(nextProduct.physical_profile));
     setPricingListingId((current) => (
       nextProduct.listing_options.some((listing) => listing.id === current)
         ? current
@@ -600,6 +622,26 @@ export default function ProductDetailPage() {
     }
   }
 
+  function setPhysicalDraftField(field: ProductPhysicalFieldKey, value: string) {
+    setPhysicalDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  async function savePhysicalProfile() {
+    setSavingPhysicalProfile(true);
+    try {
+      const payload = physicalDraftToApiPayload(physicalDraft);
+      const response = await productApi.updatePhysicalProfile(Number(id), payload);
+      const physicalProfile = response.data.data as ProductPhysicalProfile;
+      setProduct((current) => current ? { ...current, physical_profile: physicalProfile } : current);
+      setPhysicalDraft(physicalDraftFromProfile(physicalProfile));
+      toast.success('Данные MAP сохранены');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Не удалось сохранить данные товара');
+    } finally {
+      setSavingPhysicalProfile(false);
+    }
+  }
+
   useEffect(() => {
     let active = true;
 
@@ -608,6 +650,7 @@ export default function ProductDetailPage() {
         if (!active) return;
         const nextProduct = response.data.data as ProductDetail;
         setProduct(nextProduct);
+        setPhysicalDraft(physicalDraftFromProfile(nextProduct.physical_profile));
         setPricingListingId((current) => (
           nextProduct.listing_options.some((listing) => listing.id === current)
             ? current
@@ -1100,6 +1143,7 @@ export default function ProductDetailPage() {
     && categoryAssignValue !== assignedCatalogCategoryValue;
   const descriptionAwaitsResearchReview = webResearch?.status === 'need_review'
     && webResearch.generate_after;
+  const physicalProfile = product.physical_profile;
 
   return (
     <div className="space-y-6">
@@ -1215,6 +1259,106 @@ export default function ProductDetailPage() {
                       : '—'
                   }
                 />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle className="text-base">Данные для Ozon</CardTitle>
+                <Badge variant={physicalProfile.complete ? 'default' : 'outline'}>
+                  {physicalProfile.complete
+                    ? 'Все данные заполнены'
+                    : `Нужно заполнить: ${physicalProfile.missing_fields.length}`}
+                </Badge>
+              </div>
+              <p className="text-sm leading-relaxed text-muted-foreground">
+                MAP сначала использует корректное значение из 1С. Если его нет или 1С
+                передала ошибку, заполните поле здесь. Эти данные не меняют карточку Avito.
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 sm:grid-cols-2">
+                {PRODUCT_PHYSICAL_FIELDS.map(({ key, label, unit, placeholder }) => {
+                  const fact = physicalProfile.facts[key];
+                  const from1c = fact.effective_source === '1c';
+                  const value = effectivePhysicalValueForInput(
+                    physicalProfile,
+                    key,
+                    physicalDraft,
+                  );
+                  return (
+                    <div key={key} className="space-y-1.5 rounded-lg border p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <label htmlFor={`physical-${key}`} className="text-sm font-medium">
+                          {label}{unit ? `, ${unit}` : ''}
+                        </label>
+                        <Badge
+                          variant={from1c ? 'secondary' : fact.effective_source === 'map' ? 'outline' : 'destructive'}
+                          className="shrink-0"
+                        >
+                          {from1c
+                            ? 'Из 1С'
+                            : fact.effective_source === 'map' ? 'Заполнено в MAP' : 'Не заполнено'}
+                        </Badge>
+                      </div>
+                      {key === 'vat_rate' ? (
+                        <Select
+                          value={value || 'not_set'}
+                          onValueChange={(next) => setPhysicalDraftField(
+                            key,
+                            next === 'not_set' ? '' : next,
+                          )}
+                          disabled={from1c || savingPhysicalProfile}
+                        >
+                          <SelectTrigger id={`physical-${key}`}>
+                            <SelectValue placeholder="Выберите ставку" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="not_set">Не указано</SelectItem>
+                            {['0', '5', '7', '10', '20'].map((rate) => (
+                              <SelectItem key={rate} value={rate}>{rate}%</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      ) : (
+                        <Input
+                          id={`physical-${key}`}
+                          value={value}
+                          onChange={(event) => setPhysicalDraftField(key, event.target.value)}
+                          placeholder={placeholder}
+                          inputMode={key === 'barcode' ? 'text' : 'decimal'}
+                          disabled={from1c || savingPhysicalProfile}
+                        />
+                      )}
+                      {from1c ? (
+                        <p className="text-xs text-muted-foreground">
+                          Используется автоматически. Значение MAP не перезаписывает 1С.
+                        </p>
+                      ) : fact.source_error ? (
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                          Значение из 1С не принято: {fact.source_error}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">
+                          {fact.effective_source === 'map'
+                            ? 'Будет использоваться, пока в 1С нет корректного значения.'
+                            : 'Нет корректного значения в 1С или MAP.'}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs text-muted-foreground">
+                  Размеры вводятся в сантиметрах, вес — в килограммах.
+                </p>
+                <Button onClick={savePhysicalProfile} disabled={savingPhysicalProfile}>
+                  {savingPhysicalProfile && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Сохранить данные MAP
+                </Button>
               </div>
             </CardContent>
           </Card>

@@ -27,6 +27,12 @@ _ITEM_FIELDS = frozenset({
     'StockQty',
     'Category',
     'Condition',
+    'Barcode',
+    'LengthMM',
+    'WidthMM',
+    'HeightMM',
+    'WeightG',
+    'VATRate',
 })
 
 
@@ -61,6 +67,12 @@ def _normalize_item(values: dict[str, str]) -> dict:
         'stock_qty': stock_qty,
         'category': values.get('Category', ''),
         'condition': values.get('Condition', 'new'),
+        'barcode': values.get('Barcode', ''),
+        'length_mm': values.get('LengthMM', ''),
+        'width_mm': values.get('WidthMM', ''),
+        'height_mm': values.get('HeightMM', ''),
+        'weight_g': values.get('WeightG', ''),
+        'vat_rate': values.get('VATRate', ''),
     }
 
 

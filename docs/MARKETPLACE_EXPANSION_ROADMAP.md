@@ -244,13 +244,38 @@ Ozon и аккаунт сохранились. Product/price/stock/archive ме�
 - интерфейс объясняет цепочку «1С/CSV → Каталог MAP → категория площадки» и
   не обещает ещё не реализованную привязку товара к Ozon.
 
-Локальный gate кандидата: 11 focused и 74 широких
+**O2b — `CODE_READY` 2026-08-30**: отдельный physical profile готовит товар к
+будущему Ozon preflight без изменения Avito runtime:
+
+- barcode, длина, ширина, высота, вес и НДС хранятся в нейтральных единицах
+  (мм, г, проценты) отдельно для валидного значения 1С и fallback MAP;
+- эффективное значение всегда выбирает 1С, а MAP используется только при
+  отсутствии или ошибке source-значения; импорт не перезаписывает MAP fallback;
+- 1С HTTP принимает bounded поля `barcode`, `length_mm`/`length_cm`,
+  `width_mm`/`width_cm`, `height_mm`/`height_cm`, `weight_g`/`weight_kg` и
+  `vat_rate`; 1С XML использует эквивалентные явные элементы;
+- отдельный tenant-scoped API разрешает менять только MAP-половину профиля и
+  не вызывает Avito listing sync;
+- карточка товара показывает источник каждого значения обычному пользователю,
+  вводит размеры в сантиметрах и вес в килограммах и явно сообщает, что блок
+  не меняет Avito;
+- Ozon offer mapping, provider-specific limits/preflight и любые вызовы
+  product/price/stock/archive остаются в O2c/O3.
+
+Локальный gate кандидата O2a-UX: 11 focused и 74 широких
 Ozon/provider-neutral/Avito account backend-теста, 46 frontend unit-тестов,
 TypeScript, ESLint, production webpack build 21/21, Flake8, baseline/strict
 mypy, Django system check, OpenAPI validation и migration drift прошли;
 `npm audit --omit=dev` нашёл 0 уязвимостей. Новых migrations нет. Avito
 feed/services/tasks, Product/Listing, provider mutations и фоновые задания не
 изменялись. Полный CI и production deploy остаются release gate этого пакета.
+
+Локальный gate кандидата O2b: финальные 12 focused-тестов и широкий прогон из
+468 product/Avito/provider-neutral тестов прошли; frontend unit —
+50/50. TypeScript, ESLint, webpack production build 21/21, полный Flake8,
+baseline/strict mypy, Django check, OpenAPI validation, migration drift и
+production dependency audit также прошли. Добавлена одна миграция Products;
+Ozon provider API и Avito feed runtime не вызываются этим пакетом.
 
 ## O3 — публикация и reconciliation
 

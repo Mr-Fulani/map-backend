@@ -362,6 +362,93 @@ class Product(SoftDeleteModel):
         )
 
 
+class ProductPhysicalProfile(TimestampedModel):
+    """Neutral physical facts with isolated 1C and MAP values.
+
+    Values are stored in canonical units (millimetres, grams and VAT percent).
+    Source fields are written only by a validated 1C import.  Tenant-entered
+    MAP fields remain an independent fallback and never overwrite the source.
+    """
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='product_physical_profiles',
+        verbose_name='Тенант',
+    )
+    product = models.OneToOneField(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='physical_profile',
+        verbose_name='Товар',
+    )
+
+    source_barcode = models.CharField(max_length=64, blank=True, verbose_name='Штрихкод из 1С')
+    source_length_mm = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True,
+        verbose_name='Длина из 1С, мм',
+    )
+    source_width_mm = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True,
+        verbose_name='Ширина из 1С, мм',
+    )
+    source_height_mm = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True,
+        verbose_name='Высота из 1С, мм',
+    )
+    source_weight_g = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True,
+        verbose_name='Вес из 1С, г',
+    )
+    source_vat_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        verbose_name='НДС из 1С, %',
+    )
+    source_errors = models.JSONField(
+        default=dict, blank=True,
+        verbose_name='Ошибки физических данных из 1С',
+    )
+    source_updated_at = models.DateTimeField(
+        null=True, blank=True,
+        verbose_name='Дата получения физических данных из 1С',
+    )
+
+    map_barcode = models.CharField(max_length=64, blank=True, verbose_name='Штрихкод MAP')
+    map_length_mm = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True,
+        verbose_name='Длина MAP, мм',
+    )
+    map_width_mm = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True,
+        verbose_name='Ширина MAP, мм',
+    )
+    map_height_mm = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True,
+        verbose_name='Высота MAP, мм',
+    )
+    map_weight_g = models.DecimalField(
+        max_digits=12, decimal_places=3, null=True, blank=True,
+        verbose_name='Вес MAP, г',
+    )
+    map_vat_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, null=True, blank=True,
+        verbose_name='НДС MAP, %',
+    )
+
+    class Meta:
+        verbose_name = 'Физические данные товара'
+        verbose_name_plural = 'Физические данные товаров'
+        indexes = [
+            models.Index(
+                fields=['tenant', '-updated_at'],
+                name='prd_phys_tenant_updated_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.product_id}: physical profile'
+
+
 class ProductCatalogClassification(TimestampedModel):
     """Классификация домена товара для безопасного запуска domain-specific фич."""
 
