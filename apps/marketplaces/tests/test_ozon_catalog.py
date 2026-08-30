@@ -14,6 +14,7 @@ from apps.marketplaces.models import (
 )
 from apps.marketplaces.ozon_catalog import (
     OzonCatalogError,
+    catalog_tree_level_from_tree,
     catalog_types_from_tree,
     normalize_category_attributes,
     normalize_category_tree,
@@ -91,6 +92,14 @@ def _refresh(client, token, account, payload):
 def _browse(client, token, account, params=None):
     return client.get(
         f'/api/v1/accounts/{account.pk}/ozon-catalog/types/',
+        params or {},
+        HTTP_AUTHORIZATION=f'Bearer {token}',
+    )
+
+
+def _tree_level(client, token, account, params=None):
+    return client.get(
+        f'/api/v1/accounts/{account.pk}/ozon-catalog/tree-level/',
         params or {},
         HTTP_AUTHORIZATION=f'Bearer {token}',
     )
@@ -391,6 +400,85 @@ def test_catalog_type_flattening_hides_disabled_branches_and_keeps_full_path():
         'category_path': 'Автотовары → Легковые автомобили',
         'type_name': 'Амортизатор',
     }]
+
+
+def test_catalog_tree_level_navigates_hierarchy_and_hides_dead_branches():
+    tree, _, _ = normalize_category_tree([{
+        'description_category_id': 101,
+        'category_name': 'Автотовары',
+        'disabled': False,
+        'children': [{
+            'description_category_id': 102,
+            'category_name': 'Автозапчасти',
+            'disabled': False,
+            'children': [{
+                'type_id': 202,
+                'type_name': 'Шланг тормозной',
+                'disabled': False,
+                'children': [],
+            }],
+        }, {
+            'description_category_id': 103,
+            'category_name': 'Архив',
+            'disabled': True,
+            'children': [{
+                'type_id': 303,
+                'type_name': 'Скрытый тип',
+                'disabled': False,
+                'children': [],
+            }],
+        }],
+    }])
+
+    root = catalog_tree_level_from_tree(tree)
+    nested = catalog_tree_level_from_tree(tree, parent_ids=(101, 102))
+
+    assert root == {
+        'path': [],
+        'options': [{
+            'kind': 'category',
+            'description_category_id': 101,
+            'type_id': None,
+            'name': 'Автотовары',
+            'category_path': 'Автотовары',
+        }],
+    }
+    assert nested == {
+        'path': [
+            {'description_category_id': 101, 'name': 'Автотовары'},
+            {'description_category_id': 102, 'name': 'Автозапчасти'},
+        ],
+        'options': [{
+            'kind': 'type',
+            'description_category_id': 102,
+            'type_id': 202,
+            'name': 'Шланг тормозной',
+            'category_path': 'Автотовары → Автозапчасти',
+        }],
+    }
+
+
+@pytest.mark.django_db
+def test_catalog_tree_level_api_is_local_account_scoped_and_read_only(catalog_setup):
+    _, token, account, _, other_token, _ = catalog_setup
+    _snapshot(account, _tree(202), revision='f')
+
+    with patch(TREE_READ) as provider_read:
+        root = _tree_level(Client(), token, account)
+        leaf = _tree_level(Client(), token, account, {'parent': '101'})
+        foreign = _tree_level(Client(), other_token, account)
+
+    assert root.status_code == leaf.status_code == 200
+    assert root.json()['data']['options'][0]['kind'] == 'category'
+    assert leaf.json()['data']['options'] == [{
+        'kind': 'type',
+        'description_category_id': 101,
+        'type_id': 202,
+        'name': 'Автозапчасть',
+        'category_path': 'Автотовары',
+    }]
+    assert foreign.status_code == 404
+    provider_read.assert_not_called()
 
 
 def test_schema_drift_and_resource_limits_fail_closed(settings):

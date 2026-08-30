@@ -1059,6 +1059,9 @@ export default function ProductDetailPage() {
   const descriptionAwaitsResearchReview = webResearch?.status === 'need_review'
     && webResearch.generate_after;
   const physicalProfile = product.physical_profile;
+  const requiredPhysicalMissingFields = physicalProfile.missing_fields.filter(
+    (field) => field !== 'vat_rate',
+  );
 
   return (
     <div className="space-y-6">
@@ -1182,16 +1185,18 @@ export default function ProductDetailPage() {
             <CardHeader className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle className="text-base">Упаковка и налог</CardTitle>
-                <Badge variant={physicalProfile.complete ? 'default' : 'outline'}>
-                  {physicalProfile.complete
-                    ? 'Все данные заполнены'
-                    : `Нужно заполнить: ${physicalProfile.missing_fields.length}`}
+                <Badge variant={requiredPhysicalMissingFields.length === 0 ? 'default' : 'outline'}>
+                  {requiredPhysicalMissingFields.length === 0
+                    ? 'Обязательные данные заполнены'
+                    : `Нужно заполнить: ${requiredPhysicalMissingFields.length}`}
                 </Badge>
               </div>
               <p className="text-sm leading-relaxed text-muted-foreground">
                 Это общие факты о товаре. MAP сначала использует корректное значение из
                 1С. Если его нет или 1С передала ошибку, заполните поле здесь. Значения
                 пригодятся маркетплейсам с требованиями к упаковке и не меняют поля Avito.
+                НДС указывайте только по данным 1С или бухгалтера — неизвестную ставку
+                можно оставить пустой.
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -1210,9 +1215,12 @@ export default function ProductDetailPage() {
                   return (
                     <div key={key} className="space-y-1.5 rounded-lg border p-3">
                       <div className="flex items-center justify-between gap-2">
-                        <label htmlFor={`physical-${key}`} className="text-sm font-medium">
-                          {label}{unit ? `, ${unit}` : ''}
-                        </label>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <label htmlFor={`physical-${key}`} className="text-sm font-medium">
+                            {label}{unit ? `, ${unit}` : ''}
+                          </label>
+                          {key === 'vat_rate' && <Badge variant="outline">Необязательно</Badge>}
+                        </div>
                         <Badge
                           variant={from1c ? 'secondary' : fact.effective_source === 'map' ? 'outline' : 'destructive'}
                           className="shrink-0"
@@ -1258,6 +1266,11 @@ export default function ProductDetailPage() {
                       ) : fact.source_error ? (
                         <p className="text-xs text-amber-700 dark:text-amber-400">
                           Значение из 1С не принято: {fact.source_error}
+                        </p>
+                      ) : key === 'vat_rate' ? (
+                        <p className="text-xs text-muted-foreground">
+                          Не знаете ставку — оставьте «Не указано». Это не блокирует
+                          подготовку карточки Ozon.
                         </p>
                       ) : (
                         <p className="text-xs text-muted-foreground">

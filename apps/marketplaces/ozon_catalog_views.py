@@ -1,3 +1,4 @@
+from django.conf import settings
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers, status
@@ -101,6 +102,32 @@ class OzonCatalogTypesQuerySerializer(serializers.Serializer):
     )
 
 
+class OzonCatalogTreeLevelQuerySerializer(serializers.Serializer):
+    parent = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=400,
+        trim_whitespace=True,
+    )
+    language = serializers.ChoiceField(
+        choices=[choice[0] for choice in OzonCategoryTreeSnapshot.LANGUAGE_CHOICES],
+        default=OzonCategoryTreeSnapshot.LANGUAGE_DEFAULT,
+    )
+
+    def validate_parent(self, value):
+        if not value:
+            return ()
+        raw_ids = value.split(',')
+        if len(raw_ids) > settings.OZON_CATALOG_MAX_DEPTH:
+            raise serializers.ValidationError('Путь категории Ozon слишком глубокий.')
+        if any(not item.isascii() or not item.isdecimal() for item in raw_ids):
+            raise serializers.ValidationError('Некорректный путь категории Ozon.')
+        parent_ids = tuple(int(item) for item in raw_ids)
+        if any(item <= 0 for item in parent_ids):
+            raise serializers.ValidationError('Некорректный путь категории Ozon.')
+        return parent_ids
+
+
 class OzonAttributeValueSearchSerializer(serializers.Serializer):
     description_category_id = serializers.IntegerField(min_value=1)
     type_id = serializers.IntegerField(min_value=1)
@@ -165,6 +192,45 @@ CATALOG_TYPES_RESPONSE = inline_serializer(
                     read_only=True,
                 ),
                 'language': serializers.CharField(read_only=True),
+            },
+        ),
+    },
+)
+
+CATALOG_TREE_PATH_ITEMS = inline_serializer(
+    name='OzonCatalogTreePathItem',
+    many=True,
+    fields={
+        'description_category_id': serializers.IntegerField(read_only=True),
+        'name': serializers.CharField(read_only=True),
+    },
+)
+
+CATALOG_TREE_OPTIONS = inline_serializer(
+    name='OzonCatalogTreeOption',
+    many=True,
+    fields={
+        'kind': serializers.CharField(read_only=True),
+        'description_category_id': serializers.IntegerField(read_only=True),
+        'type_id': serializers.IntegerField(allow_null=True, read_only=True),
+        'name': serializers.CharField(read_only=True),
+        'category_path': serializers.CharField(read_only=True),
+    },
+)
+
+CATALOG_TREE_LEVEL_RESPONSE = inline_serializer(
+    name='OzonCatalogTreeLevelResponse',
+    fields={
+        'status': serializers.CharField(read_only=True),
+        'data': inline_serializer(
+            name='OzonCatalogTreeLevelData',
+            fields={
+                'path': CATALOG_TREE_PATH_ITEMS,
+                'options': CATALOG_TREE_OPTIONS,
+                'tree_revision': serializers.CharField(
+                    allow_null=True,
+                    read_only=True,
+                ),
             },
         ),
     },
@@ -289,6 +355,55 @@ class OzonCatalogTypesView(APIView):
             'language': data['language'],
         })
         return response
+
+
+@extend_schema(tags=['Accounts'])
+class OzonCatalogTreeLevelView(APIView):
+    """Browse one level of the latest local Ozon tree without provider I/O."""
+
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
+    @extend_schema(
+        operation_id='ozon_catalog_tree_level',
+        parameters=[
+            OpenApiParameter(
+                'parent',
+                OpenApiTypes.STR,
+                OpenApiParameter.QUERY,
+                description='Путь ID разделов через запятую; пусто для корня.',
+            ),
+            OpenApiParameter(
+                'language', OpenApiTypes.STR, OpenApiParameter.QUERY,
+            ),
+        ],
+        responses=CATALOG_TREE_LEVEL_RESPONSE,
+    )
+    def get(self, request, pk):
+        account = OzonCatalogView._account(request, pk)
+        if account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        serializer = OzonCatalogTreeLevelQuerySerializer(data=request.query_params)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        try:
+            snapshot, level = OzonCatalogService.category_tree_level(
+                account,
+                language=data['language'],
+                parent_ids=data.get('parent', ()),
+            )
+        except OzonCatalogError as exc:
+            return Response({
+                'status': 'error',
+                'code': exc.code,
+                'message': str(exc),
+            }, status=status.HTTP_409_CONFLICT)
+        return Response({
+            'status': 'ok',
+            'data': {
+                **level,
+                'tree_revision': snapshot.schema_hash if snapshot else None,
+            },
+        })
 
 
 @extend_schema(tags=['Accounts'])

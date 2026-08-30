@@ -1264,6 +1264,15 @@ export const accountApi = {
     id: number,
     params?: { search?: string; page?: number; page_size?: number; language?: string },
   ) => api.get(`/accounts/${id}/ozon-catalog/types/`, { params }),
+  getOzonCatalogTreeLevel: (
+    id: number,
+    parentIds: number[] = [],
+  ) => api.get(`/accounts/${id}/ozon-catalog/tree-level/`, {
+    params: {
+      parent: parentIds.join(','),
+      language: 'DEFAULT',
+    },
+  }),
   refreshOzonCatalogTree: (id: number) => api.post(`/accounts/${id}/ozon-catalog/`, {
     scope: 'tree',
     language: 'DEFAULT',
