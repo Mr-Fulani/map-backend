@@ -103,7 +103,7 @@ class OzonCatalogTypesQuerySerializer(serializers.Serializer):
 
 
 class OzonCatalogTreeLevelQuerySerializer(serializers.Serializer):
-    parent = serializers.CharField(
+    parent = serializers.CharField(  # type: ignore[assignment]
         required=False,
         allow_blank=True,
         max_length=400,
