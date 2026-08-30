@@ -206,6 +206,21 @@ credentials AlfaPro не сохранялись, запросов от MAP к Oz
 Gate: schema drift tests, representative category fixtures, fail-open только
 для необязательных рекомендаций и fail-closed для обязательных provider fields.
 
+O2 выполняется отдельными последовательными пакетами:
+
+- **O2a — read-only catalog schema foundation**: ручное account-scoped чтение
+  дерева категорий и характеристик, нормализация с жёсткими лимитами,
+  versioned snapshots и локальный status API; без UI, background tasks и
+  product mutations;
+- **O2b — physical facts и provenance**: barcode, dimensions, weight и VAT с
+  приоритетом валидного значения 1C и fallback в MAP;
+- **O2c — offer mapping и preflight UI**: stable offer identity, выбор leaf
+  type, dictionary values и field-level ошибки обязательных полей.
+
+O2a не использует Avito feed/services/tasks, не меняет Listing/Product и не
+вызывает product/price/stock/archive методы Ozon. Реальный catalog refresh
+остаётся отдельным ручным read-only действием точного tenant/account.
+
 ## O3 — публикация и reconciliation
 
 Результат: create/update/archive Ozon offer с устойчивым локальным статусом.
