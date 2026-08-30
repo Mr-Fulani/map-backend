@@ -522,6 +522,83 @@ class OzonCategoryAttributeSnapshot(TimestampedModel):
         )
 
 
+def new_ozon_offer_id() -> str:
+    return f'map-{uuid.uuid4().hex}'
+
+
+class OzonOfferDraft(TimestampedModel):
+    """Local account-scoped Ozon preparation; never enters Avito Listing."""
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='ozon_offer_drafts',
+        verbose_name='Тенант',
+    )
+    product = models.ForeignKey(
+        'products.Product',
+        on_delete=models.CASCADE,
+        related_name='ozon_offer_drafts',
+        verbose_name='Товар',
+    )
+    account = models.ForeignKey(
+        MarketplaceAccount,
+        on_delete=models.CASCADE,
+        related_name='ozon_offer_drafts',
+        verbose_name='Аккаунт Ozon',
+    )
+    offer_id = models.CharField(
+        max_length=100,
+        default=new_ozon_offer_id,
+        editable=False,
+        verbose_name='Стабильный Offer ID',
+    )
+    description_category_id = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='ID категории Ozon',
+    )
+    type_id = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='ID типа товара Ozon',
+    )
+    category_path = models.CharField(
+        max_length=1000,
+        blank=True,
+        verbose_name='Путь категории Ozon',
+    )
+    type_name = models.CharField(
+        max_length=500,
+        blank=True,
+        verbose_name='Тип товара Ozon',
+    )
+    tree_revision = models.CharField(max_length=64, blank=True)
+
+    class Meta:
+        verbose_name = 'Черновик товара Ozon'
+        verbose_name_plural = 'Черновики товаров Ozon'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'product', 'account'],
+                name='mkt_oz_offer_product_account_uniq',
+            ),
+            models.UniqueConstraint(
+                fields=['account', 'offer_id'],
+                name='mkt_oz_offer_identity_uniq',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['tenant', 'account', '-updated_at'],
+                name='mkt_oz_offer_tenant_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Ozon offer {self.offer_id} / product {self.product_id}'
+
+
 class MarketplaceFeedRun(TimestampedModel):
     """Durable, provider-neutral ownership record for one feed generation.
 
