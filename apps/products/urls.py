@@ -8,7 +8,8 @@ from apps.products.views import (
     ProductEnrichmentFactReviewView, ProductEnrichmentFactsView, ProductFitmentReviewView, ProductFitmentsView,
     ProductBulkDeleteView, ProductCatalogCategoryAssignView, ProductExcludeView,
     ProductListView, ProductParseJobDetailView,
-    ProductParseView, ProductPhysicalProfileView, ProductPublishView, ProductRegenerateView,
+    ProductParseView, ProductPhysicalProfileView, ProductPhysicalSuggestionReviewView,
+    ProductPublishView, ProductRegenerateView,
     ProductReviewQueueActionView,
     ProductReviewQueueView, ProductSearchView,
     ProductSyncView, TenantCatalogCategoryBranchToggleView, TenantCatalogCategoryDefaultImageView,
@@ -75,6 +76,11 @@ urlpatterns = [
         '<int:pk>/physical-profile/',
         ProductPhysicalProfileView.as_view(),
         name='product-physical-profile',
+    ),
+    path(
+        '<int:pk>/physical-suggestions/<int:suggestion_id>/<str:action>/',
+        ProductPhysicalSuggestionReviewView.as_view(),
+        name='product-physical-suggestion-review',
     ),
     path(
         '<int:pk>/ozon-offer/',

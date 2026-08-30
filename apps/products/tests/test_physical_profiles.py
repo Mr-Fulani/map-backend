@@ -6,9 +6,15 @@ from django.test import Client
 
 from apps.datasources.encryption import encrypt
 from apps.datasources.models import DataSourceConnection
-from apps.products.models import Product, ProductPhysicalProfile
+from apps.products.models import (
+    Product, ProductPhysicalProfile, ProductPhysicalSuggestion, ReviewStatus,
+)
+from apps.products.part_parsers import ParsedPart
 from apps.products.physical_profiles import physical_profile_presentation
-from apps.products.services import ProductService
+from apps.products.physical_suggestions import (
+    extract_physical_suggestions, save_physical_suggestions,
+)
+from apps.products.services import ProductEnrichmentService, ProductService
 from apps.tenants.tests.auth import create_tenant_with_operator_key
 
 
@@ -324,3 +330,224 @@ def test_profile_endpoint_is_tenant_scoped():
         {'weight_g': '100'},
     )
     assert own_response.status_code == 200
+
+
+def test_extracts_only_explicit_valid_packaging_facts():
+    suggestions = extract_physical_suggestions({
+        'Номер EAN/Штрих-код': '4650252914394',
+        'Длина упаковки': '560 мм',
+        'Ширина упаковки': '1,5 см',
+        'Высота упаковки': '0.02 м',
+        'Вес': '0.16 кг',
+        'Вес упаковки': '0.18 кг',
+        'Длина': '900 мм',
+        'OEM': '58732H0000',
+    })
+
+    assert {field: item.value for field, item in suggestions.items()} == {
+        'barcode': '4650252914394',
+        'length_mm': '560',
+        'width_mm': '15',
+        'height_mm': '20',
+        'weight_g': '180',
+    }
+    assert 'Длина' not in {item.raw_name for item in suggestions.values()}
+
+
+def test_rejects_invalid_gtin_and_unitless_measurements():
+    suggestions = extract_physical_suggestions({
+        'EAN': '4650252914395',
+        'Длина упаковки': '560',
+        'Вес': '0.16',
+    })
+
+    assert suggestions == {}
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize('source_id', ['tachka', 'rossko', 'euroauto'])
+def test_enrichment_creates_reviewable_suggestions_without_writing_map(source_id):
+    tenant, _api_key = _tenant(f'physical-enrichment-{source_id}')
+    product = Product.objects.create(
+        tenant=tenant,
+        article='PHYS-ENRICH',
+        name='Шланг тормозной',
+        brand='MEGAPOWER',
+        price=Decimal('650.84'),
+        stock_qty=2,
+    )
+    parsed = ParsedPart(
+        brand='MEGAPOWER',
+        article=product.article,
+        source_url=f'https://{source_id}.example/item/physical',
+        attributes={
+            'Номер EAN/Штрих-код': '4650252914394',
+            'Длина упаковки': '560 мм',
+            'Ширина упаковки': '10 мм',
+            'Высота упаковки': '10 мм',
+            'Вес': '0.16 кг',
+        },
+    )
+
+    ProductEnrichmentService.save_parsed_part(tenant, product, parsed, source_id=source_id)
+
+    suggestions = ProductPhysicalSuggestion.objects.filter(
+        tenant=tenant,
+        product=product,
+        is_current=True,
+    )
+    assert suggestions.count() == 5
+    assert suggestions.get(field='weight_g').value == '160'
+    assert suggestions.get(field='barcode').source_url == parsed.source_url
+    assert not ProductPhysicalProfile.objects.filter(product=product).exists()
+
+
+@pytest.mark.django_db
+def test_suggestion_review_survives_same_value_and_resets_when_value_changes():
+    tenant, _api_key = _tenant('physical-suggestion-refresh')
+    product = Product.objects.create(
+        tenant=tenant,
+        article='PHYS-REFRESH',
+        name='Шланг тормозной',
+        price=Decimal('100'),
+        stock_qty=1,
+    )
+    save_physical_suggestions(
+        product=product,
+        attributes={'Вес': '100 г'},
+        source_id='tachka',
+        source_url='https://tachka.ru/item/refresh',
+    )
+    suggestion = ProductPhysicalSuggestion.objects.get(product=product)
+    suggestion.review_status = ReviewStatus.REJECTED
+    suggestion.save(update_fields=['review_status', 'updated_at'])
+
+    save_physical_suggestions(
+        product=product,
+        attributes={'Вес': '100 г'},
+        source_id='tachka',
+        source_url='https://tachka.ru/item/refresh',
+    )
+    suggestion.refresh_from_db()
+    assert suggestion.review_status == ReviewStatus.REJECTED
+    assert suggestion.is_current is True
+
+    save_physical_suggestions(
+        product=product,
+        attributes={'Вес': '110 г'},
+        source_id='tachka',
+        source_url='https://tachka.ru/item/refresh',
+    )
+    suggestion.refresh_from_db()
+    assert suggestion.value == '110'
+    assert suggestion.review_status == ReviewStatus.PENDING
+
+    save_physical_suggestions(
+        product=product,
+        attributes={},
+        source_id='tachka',
+        source_url='https://tachka.ru/item/refresh',
+    )
+    suggestion.refresh_from_db()
+    assert suggestion.is_current is False
+
+
+@pytest.mark.django_db
+def test_approve_writes_map_with_provenance_and_manual_patch_clears_it():
+    tenant, api_key = _tenant('physical-approve')
+    product = Product.objects.create(
+        tenant=tenant,
+        article='PHYS-APPROVE',
+        name='Шланг тормозной',
+        price=Decimal('100'),
+        stock_qty=1,
+    )
+    suggestion = ProductPhysicalSuggestion.objects.create(
+        tenant=tenant,
+        product=product,
+        field=ProductPhysicalSuggestion.Field.WEIGHT_G,
+        value='160',
+        source_id='tachka',
+        source_url='https://tachka.ru/item/approve',
+        raw_name='Вес',
+        raw_value='0.16 кг',
+    )
+
+    response = _api(
+        Client(),
+        api_key,
+        'post',
+        f'/api/v1/products/{product.pk}/physical-suggestions/{suggestion.pk}/approve/',
+    )
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    assert data['facts']['weight_g']['map_value'] == '160'
+    assert data['facts']['weight_g']['map_provenance']['source_label'] == 'Tachka.ru'
+    suggestion.refresh_from_db()
+    assert suggestion.review_status == ReviewStatus.APPROVED
+    profile = ProductPhysicalProfile.objects.get(product=product)
+    assert profile.map_weight_g == Decimal('160.000')
+    assert profile.map_provenance['weight_g']['suggestion_id'] == suggestion.pk
+
+    manual = _api(
+        Client(),
+        api_key,
+        'patch',
+        f'/api/v1/products/{product.pk}/physical-profile/',
+        {'weight_g': '175'},
+    )
+    assert manual.status_code == 200
+    assert manual.json()['data']['facts']['weight_g']['map_provenance'] is None
+    profile.refresh_from_db()
+    assert profile.map_weight_g == Decimal('175.000')
+    assert 'weight_g' not in profile.map_provenance
+
+
+@pytest.mark.django_db
+def test_approve_never_overrides_1c_and_is_tenant_scoped():
+    tenant_a, api_key_a = _tenant('physical-source-priority')
+    tenant_b, api_key_b = _tenant('physical-suggestion-tenant-b')
+    product = Product.objects.create(
+        tenant=tenant_a,
+        article='PHYS-SOURCE',
+        name='Шланг тормозной',
+        price=Decimal('100'),
+        stock_qty=1,
+    )
+    ProductPhysicalProfile.objects.create(
+        tenant=tenant_a,
+        product=product,
+        source_weight_g=Decimal('200'),
+    )
+    suggestion = ProductPhysicalSuggestion.objects.create(
+        tenant=tenant_a,
+        product=product,
+        field=ProductPhysicalSuggestion.Field.WEIGHT_G,
+        value='160',
+        source_id='tachka',
+        raw_name='Вес',
+        raw_value='0.16 кг',
+    )
+
+    other_tenant = _api(
+        Client(),
+        api_key_b,
+        'post',
+        f'/api/v1/products/{product.pk}/physical-suggestions/{suggestion.pk}/approve/',
+    )
+    assert other_tenant.status_code == 404
+
+    source_wins = _api(
+        Client(),
+        api_key_a,
+        'post',
+        f'/api/v1/products/{product.pk}/physical-suggestions/{suggestion.pk}/approve/',
+    )
+    assert source_wins.status_code == 409
+    assert source_wins.json()['code'] == 'source_value_preferred'
+    suggestion.refresh_from_db()
+    assert suggestion.review_status == ReviewStatus.PENDING
+    profile = ProductPhysicalProfile.objects.get(product=product)
+    assert profile.source_weight_g == Decimal('200.000')
+    assert profile.map_weight_g is None

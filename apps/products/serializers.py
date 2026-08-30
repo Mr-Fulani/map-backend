@@ -168,10 +168,28 @@ class ProductPhysicalFactSerializer(serializers.Serializer):
     effective_value = serializers.CharField(allow_null=True)
     effective_source = serializers.ChoiceField(choices=['1c', 'map', 'missing'])
     source_error = serializers.CharField(allow_blank=True)
+    map_provenance = serializers.DictField(allow_null=True)
+
+
+class ProductPhysicalSuggestionSerializer(serializers.Serializer):
+    id = serializers.IntegerField()
+    field = serializers.ChoiceField(
+        choices=['barcode', 'length_mm', 'width_mm', 'height_mm', 'weight_g'],
+    )
+    value = serializers.CharField()
+    source_id = serializers.CharField()
+    source_label = serializers.CharField()
+    source_url = serializers.URLField(allow_blank=True)
+    raw_name = serializers.CharField(allow_blank=True)
+    raw_value = serializers.CharField(allow_blank=True)
+    confidence = serializers.FloatField()
+    review_status = serializers.ChoiceField(choices=['pending', 'approved', 'rejected'])
+    last_seen_at = serializers.DateTimeField(allow_null=True)
 
 
 class ProductPhysicalProfilePresentationSerializer(serializers.Serializer):
     facts = serializers.DictField(child=ProductPhysicalFactSerializer())
+    suggestions = ProductPhysicalSuggestionSerializer(many=True)
     units = serializers.DictField(child=serializers.CharField())
     complete = serializers.BooleanField()
     missing_fields = serializers.ListField(child=serializers.CharField())

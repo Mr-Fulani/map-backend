@@ -18,6 +18,7 @@ const profile: ProductPhysicalProfile = {
       effective_value: 'SOURCE-CODE',
       effective_source: '1c',
       source_error: '',
+      map_provenance: null,
     },
     length_mm: {
       source_value: null,
@@ -25,6 +26,7 @@ const profile: ProductPhysicalProfile = {
       effective_value: '255',
       effective_source: 'map',
       source_error: '',
+      map_provenance: null,
     },
     width_mm: {
       source_value: null,
@@ -32,6 +34,7 @@ const profile: ProductPhysicalProfile = {
       effective_value: null,
       effective_source: 'missing',
       source_error: 'Некорректное число.',
+      map_provenance: null,
     },
     height_mm: {
       source_value: null,
@@ -39,6 +42,7 @@ const profile: ProductPhysicalProfile = {
       effective_value: '80',
       effective_source: 'map',
       source_error: '',
+      map_provenance: null,
     },
     weight_g: {
       source_value: null,
@@ -46,6 +50,7 @@ const profile: ProductPhysicalProfile = {
       effective_value: '1250',
       effective_source: 'map',
       source_error: '',
+      map_provenance: null,
     },
     vat_rate: {
       source_value: '20',
@@ -53,8 +58,10 @@ const profile: ProductPhysicalProfile = {
       effective_value: '20',
       effective_source: '1c',
       source_error: '',
+      map_provenance: null,
     },
   },
+  suggestions: [],
   units: { dimensions: 'mm', weight: 'g', vat: 'percent' },
   complete: false,
   missing_fields: ['width_mm'],

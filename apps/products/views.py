@@ -78,13 +78,16 @@ from apps.products.api_schema import (
 )
 from apps.products.models import (
     Product, ProductBulkActionJob, ProductCatalogClassification, ProductCrossCode,
-    ProductEnrichmentFact,
+    ProductEnrichmentFact, ProductPhysicalSuggestion,
     ProductBrand, ProductParseIntent, ProductParseJob, ReviewStatus,
     TenantCatalogCategory, TenantCategoryMapping,
     VehicleFitment,
 )
 from apps.products.physical_profiles import (
     physical_profile_presentation, update_map_physical_profile,
+)
+from apps.products.physical_suggestions import (
+    SourcePhysicalValueExists, review_physical_suggestion,
 )
 from apps.products.serializers import (
     ProductCatalogClassificationSerializer,
@@ -383,7 +386,7 @@ class ProductDetailView(APIView):
                 'catalog_category', 'catalog_classification', 'physical_profile',
             ).prefetch_related(
                 'images', 'attributes', 'cross_codes', 'fitments', 'enrichment_facts',
-                'parse_jobs', 'listings__account', 'listings__feed_run',
+                'physical_suggestions', 'parse_jobs', 'listings__account', 'listings__feed_run',
             ).get(
                 pk=pk, tenant=request.tenant
             )
@@ -546,7 +549,9 @@ class ProductPhysicalProfileView(APIView):
     )
     def get(self, request, pk):
         try:
-            product = Product.objects.select_related('physical_profile').get(
+            product = Product.objects.select_related('physical_profile').prefetch_related(
+                'physical_suggestions',
+            ).get(
                 pk=pk,
                 tenant=request.tenant,
             )
@@ -589,6 +594,52 @@ class ProductPhysicalProfileView(APIView):
         # Reuse the object cached by the helper so presentation performs no
         # cross-tenant or provider lookup.
         product.physical_profile = profile
+        return Response({'status': 'ok', 'data': physical_profile_presentation(product)})
+
+
+@extend_schema(tags=['Products'])
+class ProductPhysicalSuggestionReviewView(APIView):
+    """Approve one parser suggestion into MAP fallback, or reject it."""
+
+    api_key_enabled = True
+    api_key_scopes = {'POST': {'catalog:write'}}
+
+    @extend_schema(
+        operation_id='product_physical_suggestion_review',
+        request=None,
+        responses=ProductPhysicalProfileResponseSerializer,
+    )
+    def post(self, request, pk: int, suggestion_id: int, action: str):
+        if action not in {'approve', 'reject'}:
+            return Response(
+                {'status': 'error', 'code': 'bad_action'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        try:
+            review_physical_suggestion(
+                tenant=request.tenant,
+                product_id=pk,
+                suggestion_id=suggestion_id,
+                action=action,
+                actor=_review_actor(request),
+            )
+        except (Product.DoesNotExist, ProductPhysicalSuggestion.DoesNotExist):
+            return Response(
+                {'status': 'error', 'code': 'not_found', 'message': 'Предложение не найдено'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        except SourcePhysicalValueExists:
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'source_value_preferred',
+                    'message': 'Поле уже заполнено корректным значением из 1С.',
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        product = Product.objects.select_related('physical_profile').prefetch_related(
+            'physical_suggestions',
+        ).get(pk=pk, tenant=request.tenant)
         return Response({'status': 'ok', 'data': physical_profile_presentation(product)})
 
 
