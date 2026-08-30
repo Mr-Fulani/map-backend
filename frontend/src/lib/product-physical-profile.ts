@@ -8,16 +8,42 @@ export type ProductPhysicalFieldKey =
 
 export type ProductPhysicalEffectiveSource = '1c' | 'map' | 'missing';
 
+export interface ProductPhysicalMapProvenance {
+  suggestion_id: number;
+  source_id: string;
+  source_label: string;
+  source_url: string;
+  raw_name: string;
+  raw_value: string;
+  accepted_at: string;
+}
+
+export interface ProductPhysicalSuggestion {
+  id: number;
+  field: Exclude<ProductPhysicalFieldKey, 'vat_rate'>;
+  value: string;
+  source_id: string;
+  source_label: string;
+  source_url: string;
+  raw_name: string;
+  raw_value: string;
+  confidence: number;
+  review_status: 'pending' | 'approved' | 'rejected';
+  last_seen_at: string | null;
+}
+
 export interface ProductPhysicalFact {
   source_value: string | null;
   map_value: string | null;
   effective_value: string | null;
   effective_source: ProductPhysicalEffectiveSource;
   source_error: string;
+  map_provenance: ProductPhysicalMapProvenance | null;
 }
 
 export interface ProductPhysicalProfile {
   facts: Record<ProductPhysicalFieldKey, ProductPhysicalFact>;
+  suggestions: ProductPhysicalSuggestion[];
   units: {
     dimensions: 'mm';
     weight: 'g';

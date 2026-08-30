@@ -434,6 +434,10 @@ class ProductPhysicalProfile(TimestampedModel):
         max_digits=5, decimal_places=2, null=True, blank=True,
         verbose_name='НДС MAP, %',
     )
+    map_provenance = models.JSONField(
+        default=dict, blank=True,
+        verbose_name='Источники подтверждённых данных MAP',
+    )
 
     class Meta:
         verbose_name = 'Физические данные товара'
@@ -447,6 +451,73 @@ class ProductPhysicalProfile(TimestampedModel):
 
     def __str__(self):
         return f'{self.product_id}: physical profile'
+
+
+class ProductPhysicalSuggestion(TimestampedModel):
+    """A reviewable physical value found by an external catalogue parser."""
+
+    class Field(models.TextChoices):
+        BARCODE = 'barcode', 'Штрихкод'
+        LENGTH_MM = 'length_mm', 'Длина, мм'
+        WIDTH_MM = 'width_mm', 'Ширина, мм'
+        HEIGHT_MM = 'height_mm', 'Высота, мм'
+        WEIGHT_G = 'weight_g', 'Вес, г'
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='product_physical_suggestions',
+        verbose_name='Тенант',
+    )
+    product = models.ForeignKey(
+        Product,
+        on_delete=models.CASCADE,
+        related_name='physical_suggestions',
+        verbose_name='Товар',
+    )
+    field = models.CharField(max_length=20, choices=Field.choices, verbose_name='Поле')
+    value = models.CharField(max_length=64, verbose_name='Значение в единицах MAP')
+    source_id = models.CharField(max_length=50, verbose_name='Источник')
+    source_url = models.URLField(blank=True, verbose_name='URL источника')
+    raw_name = models.CharField(max_length=150, blank=True, verbose_name='Исходное название')
+    raw_value = models.TextField(blank=True, verbose_name='Исходное значение')
+    confidence = models.FloatField(default=0.8, verbose_name='Уверенность')
+    is_current = models.BooleanField(default=True, verbose_name='Найдено в последнем запуске')
+    last_seen_at = models.DateTimeField(null=True, blank=True, verbose_name='Последний раз найдено')
+    review_status = models.CharField(
+        max_length=20,
+        choices=ReviewStatus.choices,
+        default=ReviewStatus.PENDING,
+        verbose_name='Статус проверки',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True, verbose_name='Дата проверки')
+    reviewed_by = models.ForeignKey(
+        'users.User',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='reviewed_physical_suggestions',
+        verbose_name='Проверил',
+    )
+
+    class Meta:
+        verbose_name = 'Предложение физических данных товара'
+        verbose_name_plural = 'Предложения физических данных товаров'
+        indexes = [
+            models.Index(
+                fields=['tenant', 'product', 'is_current'],
+                name='prd_phys_sugg_current_idx',
+            ),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['tenant', 'product', 'source_id', 'field'],
+                name='unique_product_physical_suggestion',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.product_id}: {self.field}={self.value} [{self.source_id}]'
 
 
 class ProductCatalogClassification(TimestampedModel):

@@ -7,7 +7,8 @@ from typing import cast
 from django.utils.timezone import now
 
 from apps.datasources.models import DataSourceConnection
-from apps.products.models import Product, ProductPhysicalProfile
+from apps.products.models import Product, ProductPhysicalProfile, ProductPhysicalSuggestion
+from apps.products.physical_suggestions import physical_suggestion_presentation
 
 
 PHYSICAL_FIELD_LABELS = {
@@ -175,10 +176,18 @@ def update_map_physical_profile(
         product=product,
     )
     update_fields = []
+    provenance = dict(profile.map_provenance or {})
+    provenance_changed = False
     for field, value in values.items():
         model_field = f'map_{field}'
         setattr(profile, model_field, value or '' if field == 'barcode' else value)
         update_fields.append(model_field)
+        if field in provenance:
+            provenance.pop(field)
+            provenance_changed = True
+    if provenance_changed:
+        profile.map_provenance = provenance
+        update_fields.append('map_provenance')
     if update_fields:
         profile.save(update_fields=[*update_fields, 'updated_at'])
     return profile
@@ -197,6 +206,7 @@ def physical_profile_presentation(product: Product) -> dict:
     facts = {}
     missing_fields = []
     source_errors = profile.source_errors if profile is not None else {}
+    map_provenance = profile.map_provenance if profile is not None else {}
     for field in PHYSICAL_FIELD_LABELS:
         source_value = getattr(profile, f'source_{field}', None) if profile is not None else None
         map_value = getattr(profile, f'map_{field}', None) if profile is not None else None
@@ -228,9 +238,36 @@ def physical_profile_presentation(product: Product) -> dict:
             ),
             'effective_source': effective_source,
             'source_error': str(source_errors.get(field) or ''),
+            'map_provenance': map_provenance.get(field),
         }
+    prefetched = getattr(product, '_prefetched_objects_cache', {}).get(
+        'physical_suggestions',
+    )
+    suggestions: list[ProductPhysicalSuggestion]
+    if prefetched is None:
+        suggestions = list(product.physical_suggestions.filter(
+            tenant=product.tenant,
+            is_current=True,
+        ).order_by('field', '-confidence', 'source_id'))
+    else:
+        suggestions = sorted(
+            (
+                suggestion
+                for suggestion in prefetched
+                if suggestion.tenant_id == product.tenant_id and suggestion.is_current
+            ),
+            key=lambda suggestion: (
+                suggestion.field,
+                -suggestion.confidence,
+                suggestion.source_id,
+            ),
+        )
     return {
         'facts': facts,
+        'suggestions': [
+            physical_suggestion_presentation(suggestion)
+            for suggestion in suggestions
+        ],
         'units': {'dimensions': 'mm', 'weight': 'g', 'vat': 'percent'},
         'complete': not missing_fields,
         'missing_fields': missing_fields,

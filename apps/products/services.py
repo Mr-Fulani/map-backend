@@ -26,6 +26,7 @@ from apps.products.part_category_seed import (
 )
 from apps.products.part_parsers import ParsedPart, PartNotFound, get_part_parser
 from apps.products.physical_profiles import sync_source_physical_profile
+from apps.products.physical_suggestions import save_physical_suggestions
 from apps.products.source_policy import (
     DEFAULT_PART_SOURCE, can_raise_confidence, get_part_source_config, has_conflicting_fact,
     has_conflicting_fitment, should_auto_apply_fitment, should_auto_apply_relation,
@@ -1401,6 +1402,12 @@ class ProductEnrichmentService:
             ProductAttribute.objects.bulk_create(
                 attribute_objects,
                 ignore_conflicts=True,
+            )
+            save_physical_suggestions(
+                product=product,
+                attributes=parsed.attributes,
+                source_id=source_id,
+                source_url=parsed.source_url,
             )
 
             cross_objects = [

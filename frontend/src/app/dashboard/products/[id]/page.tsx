@@ -41,6 +41,7 @@ import {
 } from '@/components/products/catalog-category-picker';
 import {
   PRODUCT_PHYSICAL_FIELDS,
+  canonicalPhysicalValueToDisplay,
   effectivePhysicalValueForInput,
   physicalDraftFromProfile,
   physicalDraftToApiPayload,
@@ -478,6 +479,7 @@ export default function ProductDetailPage() {
     physicalDraftFromProfile(null)
   ));
   const [savingPhysicalProfile, setSavingPhysicalProfile] = useState(false);
+  const [physicalSuggestionActionId, setPhysicalSuggestionActionId] = useState<number | null>(null);
 
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
   const [imageSearchResult, setImageSearchResult] = useState<ImageSearchResult | null>(null);
@@ -606,6 +608,34 @@ export default function ProductDetailPage() {
       toast.error(error instanceof Error ? error.message : 'Не удалось сохранить данные товара');
     } finally {
       setSavingPhysicalProfile(false);
+    }
+  }
+
+  async function reviewPhysicalSuggestion(
+    suggestionId: number,
+    action: 'approve' | 'reject',
+  ) {
+    setPhysicalSuggestionActionId(suggestionId);
+    try {
+      const response = await productApi.reviewPhysicalSuggestion(
+        Number(id),
+        suggestionId,
+        action,
+      );
+      const physicalProfile = response.data.data as ProductPhysicalProfile;
+      setProduct((current) => current ? { ...current, physical_profile: physicalProfile } : current);
+      setPhysicalDraft(physicalDraftFromProfile(physicalProfile));
+      toast.success(action === 'approve' ? 'Значение подтверждено и записано в MAP' : 'Вариант отклонён');
+    } catch (error) {
+      const code = (error as { response?: { data?: { code?: string } } })
+        .response?.data?.code;
+      toast.error(
+        code === 'source_value_preferred'
+          ? 'Поле уже заполнено корректным значением из 1С.'
+          : 'Не удалось сохранить решение. Обновите страницу и повторите.',
+      );
+    } finally {
+      setPhysicalSuggestionActionId(null);
     }
   }
 
@@ -1169,6 +1199,9 @@ export default function ProductDetailPage() {
                 {PRODUCT_PHYSICAL_FIELDS.map(({ key, label, unit, placeholder }) => {
                   const fact = physicalProfile.facts[key];
                   const from1c = fact.effective_source === '1c';
+                  const suggestions = physicalProfile.suggestions.filter(
+                    (suggestion) => suggestion.field === key,
+                  );
                   const value = effectivePhysicalValueForInput(
                     physicalProfile,
                     key,
@@ -1232,6 +1265,93 @@ export default function ProductDetailPage() {
                             ? 'Будет использоваться, пока в 1С нет корректного значения.'
                             : 'Нет корректного значения в 1С или MAP.'}
                         </p>
+                      )}
+                      {fact.map_provenance && fact.effective_source === 'map' && (
+                        <p className="text-xs text-emerald-700 dark:text-emerald-400">
+                          Подтверждено из{' '}
+                          {fact.map_provenance.source_url ? (
+                            <a
+                              href={fact.map_provenance.source_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="font-medium underline underline-offset-2"
+                            >
+                              {fact.map_provenance.source_label}
+                            </a>
+                          ) : fact.map_provenance.source_label}
+                          : {fact.map_provenance.raw_value}
+                        </p>
+                      )}
+                      {suggestions.length > 0 && (
+                        <div className="space-y-2 rounded-md border bg-muted/30 p-2.5">
+                          <p className="text-xs font-medium">Найдено при обогащении</p>
+                          {suggestions.map((suggestion) => {
+                            const isApplied = fact.map_provenance?.suggestion_id === suggestion.id
+                              && fact.effective_source === 'map';
+                            const isBusy = physicalSuggestionActionId === suggestion.id;
+                            return (
+                              <div key={suggestion.id} className="space-y-2 rounded-md bg-background p-2">
+                                <div className="flex flex-wrap items-start justify-between gap-2 text-xs">
+                                  <div className="min-w-0">
+                                    <p className="font-medium">
+                                      {canonicalPhysicalValueToDisplay(key, suggestion.value)}
+                                      {unit ? ` ${unit}` : ''}
+                                    </p>
+                                    <p className="break-words text-muted-foreground">
+                                      {suggestion.source_url ? (
+                                        <a
+                                          href={suggestion.source_url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="underline underline-offset-2"
+                                        >
+                                          {suggestion.source_label}
+                                        </a>
+                                      ) : suggestion.source_label}
+                                      {' · '}{suggestion.raw_name}: {suggestion.raw_value}
+                                    </p>
+                                  </div>
+                                  {(isApplied || suggestion.review_status === 'rejected') && (
+                                    <Badge variant="outline" className="shrink-0">
+                                      {isApplied ? 'Использовано' : 'Отклонено'}
+                                    </Badge>
+                                  )}
+                                </div>
+                                {!from1c && !isApplied && (
+                                  <div className="flex flex-wrap gap-2">
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      className="h-7"
+                                      onClick={() => reviewPhysicalSuggestion(suggestion.id, 'approve')}
+                                      disabled={physicalSuggestionActionId !== null || savingPhysicalProfile}
+                                    >
+                                      {isBusy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                                      Использовать в MAP
+                                    </Button>
+                                    {suggestion.review_status !== 'rejected' && (
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="ghost"
+                                        className="h-7"
+                                        onClick={() => reviewPhysicalSuggestion(suggestion.id, 'reject')}
+                                        disabled={physicalSuggestionActionId !== null || savingPhysicalProfile}
+                                      >
+                                        Отклонить
+                                      </Button>
+                                    )}
+                                  </div>
+                                )}
+                                {from1c && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Вариант сохранён для проверки, но используется значение из 1С.
+                                  </p>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
                       )}
                     </div>
                   );

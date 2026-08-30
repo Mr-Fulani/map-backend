@@ -1106,6 +1106,11 @@ export const productApi = {
     api.patch(`/products/${id}/`, { avito_oem: avitoOem }),
   updatePhysicalProfile: (id: number, data: Record<string, string | null>) =>
     api.patch(`/products/${id}/physical-profile/`, data),
+  reviewPhysicalSuggestion: (
+    id: number,
+    suggestionId: number,
+    action: 'approve' | 'reject',
+  ) => api.post(`/products/${id}/physical-suggestions/${suggestionId}/${action}/`),
   getOzonOffer: (id: number, accountId: number) =>
     api.get(`/products/${id}/ozon-offer/`, { params: { account_id: accountId } }),
   updateOzonOffer: (id: number, data: Record<string, unknown>) =>
