@@ -218,8 +218,10 @@ O2 выполняется отдельными последовательным�
   provider reads и без product mutations;
 - **O2b — physical facts и provenance**: barcode, dimensions, weight и VAT с
   приоритетом валидного значения 1C и fallback в MAP;
-- **O2c — offer mapping и preflight UI**: stable offer identity, выбор leaf
-  type, dictionary values и field-level ошибки обязательных полей.
+- **O2c1 — identity, категория и базовый preflight**: stable offer identity на
+  точный Ozon-аккаунт, выбор leaf type и проверка общих данных товара;
+- **O2c2 — характеристики Ozon**: account/category-scoped схема атрибутов,
+  dictionary values и field-level ошибки обязательных provider-полей.
 
 O2a и O2a-UI не используют Avito feed/services/tasks, не меняют Listing/Product
 и не вызывают product/price/stock/archive методы Ozon. Реальный catalog refresh
@@ -230,7 +232,7 @@ AlfaPro сохранил отдельный account-scoped снимок: 9 796 �
 типов, revision `0985c3c51042`; после полной перезагрузки страницы выбранные
 Ozon и аккаунт сохранились. Product/price/stock/archive методы не вызывались.
 
-**O2a-UX — `CODE_READY` 2026-08-30**: текущий ограниченный пакет делает границы
+**O2a-UX — `ENABLED` 2026-08-30**: ограниченный пакет делает границы
 понятными обычному пользователю tenant-а без изменения модели данных:
 
 - существующее рабочее дерево явно называется «Каталог MAP»;
@@ -244,7 +246,11 @@ Ozon и аккаунт сохранились. Product/price/stock/archive ме�
 - интерфейс объясняет цепочку «1С/CSV → Каталог MAP → категория площадки» и
   не обещает ещё не реализованную привязку товара к Ozon.
 
-**O2b — `CODE_READY` 2026-08-30**: отдельный physical profile готовит товар к
+O2a-UX выложен на production SHA
+`02ec0cbefa75ba2606d8e555d192ddf763c27e82`; категории и наценки Avito
+остались в прежнем runtime.
+
+**O2b — `ENABLED` 2026-08-30**: отдельный physical profile готовит товар к
 будущему Ozon preflight без изменения Avito runtime:
 
 - barcode, длина, ширина, высота, вес и НДС хранятся в нейтральных единицах
@@ -276,6 +282,53 @@ feed/services/tasks, Product/Listing, provider mutations и фоновые за�
 baseline/strict mypy, Django check, OpenAPI validation, migration drift и
 production dependency audit также прошли. Добавлена одна миграция Products;
 Ozon provider API и Avito feed runtime не вызываются этим пакетом.
+
+O2b выложен на production SHA
+`10a7b9e9ef7b5eb247fb8ef7dadebaa6d88765bd`: migration
+`products.0041_product_physical_profile` применена, production topology и
+readiness прошли, live-карточка AlfaPro проверена только на чтение.
+
+**O2c1 — `CODE_READY` 2026-08-30**: товар подготавливается отдельно для каждого
+точного Ozon-аккаунта без создания Avito Listing и без provider mutations:
+
+- `OzonOfferDraft` хранит неизменяемый локальный `offer_id` на связке
+  `tenant + product + Ozon account`; переименование аккаунта identity не меняет;
+- категория выбирается только из конечных типов последнего account-scoped
+  снимка Ozon; путь и ревизия сохраняются отдельно от Каталога MAP и Avito;
+- preflight отдельно показывает ошибки аккаунта/склада, категории, физических
+  данных, цены, бренда и изображений;
+- UI прямо сообщает, что готовность не означает отправку: product import,
+  price, stock, archive, Listing и фоновые задачи остаются в O3;
+- схема характеристик, справочные значения и окончательный provider-preflight
+  намеренно вынесены в отдельный пакет O2c2.
+
+Локальный gate O2c1:
+
+```text
+docker compose run --rm django pytest \
+  apps/marketplaces/tests/test_ozon_offers.py \
+  apps/marketplaces/tests/test_ozon_catalog.py \
+  apps/marketplaces/tests/test_ozon_client.py -q
+результат: 27 passed
+
+docker compose run --rm django pytest apps/products/tests apps/marketplaces/tests -q
+результат: 1323 passed, 2 skipped
+
+npm run test:unit
+результат: 50 passed
+
+python3 -m pytest \
+  tests/test_runtime_contract.py tests/test_healthchecks.py \
+  tests/test_deploy_contract.py -q
+результат: 67 passed
+```
+
+TypeScript, ESLint, production webpack build 21/21, полный Flake8, baseline
+mypy для 718 файлов, strict mypy для 361 production-файла, Django check,
+OpenAPI validation, migration apply/drift и оба dependency audit также прошли;
+найдено 0 уязвимостей. Пакет содержит одну migration Marketplaces; Avito
+feed/services/tasks, Listing и внешние Ozon product/price/stock/archive методы
+не изменялись.
 
 ## O3 — публикация и reconciliation
 

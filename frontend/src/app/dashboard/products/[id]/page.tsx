@@ -39,6 +39,7 @@ import {
   CatalogCategoryPicker,
   type CatalogCategoryOption,
 } from '@/components/products/catalog-category-picker';
+import { OzonOfferPreparationCard } from '@/components/products/OzonOfferPreparation';
 import {
   PRODUCT_PHYSICAL_FIELDS,
   effectivePhysicalValueForInput,
@@ -1362,6 +1363,11 @@ export default function ProductDetailPage() {
               </div>
             </CardContent>
           </Card>
+
+          <OzonOfferPreparationCard
+            productId={product.id}
+            accounts={marketplaceAccounts}
+          />
 
           {/* AI-описание */}
           {(product.description_ai || generatingDescription) && (
