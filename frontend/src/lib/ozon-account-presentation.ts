@@ -144,3 +144,36 @@ export function ozonOnboardingErrorMessage(error: unknown): string {
   }
   return 'Не удалось проверить подключение Ozon. API-ключ не сохранён.';
 }
+
+export function ozonCatalogErrorMessage(error: unknown): string {
+  const response = (error as {
+    response?: {
+      status?: number;
+      data?: { code?: unknown; retry_after_seconds?: unknown };
+    };
+  } | null)?.response;
+  const code = typeof response?.data?.code === 'string' ? response.data.code : '';
+
+  if (code === 'provider_disabled') {
+    return 'Read-only справочник Ozon закрыт rollout-настройками этого аккаунта.';
+  }
+  if (code === 'account_not_ready' || code === 'invalid_credentials') {
+    return 'Сначала проверьте подключение и API-ключ аккаунта Ozon.';
+  }
+  if (code === 'rate_limited') {
+    const retryAfter = response?.data?.retry_after_seconds;
+    return Number.isSafeInteger(retryAfter) && Number(retryAfter) > 0
+      ? `Ozon ограничил обновление справочника. Повторите через ${retryAfter} сек.`
+      : 'Ozon ограничил обновление справочника. Повторите позже.';
+  }
+  if (code === 'schema_drift' || code === 'schema_limit_exceeded') {
+    return 'Формат справочника Ozon изменился. Данные не сохранены; нужна проверка интеграции.';
+  }
+  if (code === 'provider_unavailable' || code === 'connection_error') {
+    return 'Ozon Seller API временно недоступен. Повторите обновление позже.';
+  }
+  if (response?.status === 403) {
+    return 'Обновлять справочник может только владелец или администратор тенанта.';
+  }
+  return 'Не удалось безопасно обновить справочник Ozon.';
+}

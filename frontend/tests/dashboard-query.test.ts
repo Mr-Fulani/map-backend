@@ -35,8 +35,8 @@ test('dashboard query deletes empty filters and validates pages', () => {
 
 test('marketplace and account filters are normalized and preserved in URLs', () => {
   assert.equal(dashboardMarketplaceParam('avito'), 'avito');
-  assert.equal(dashboardMarketplaceParam('ozon'), '');
-  assert.equal(dashboardMarketplaceParam('ozon', ['avito', 'ozon']), 'ozon');
+  assert.equal(dashboardMarketplaceParam('ozon'), 'ozon');
+  assert.equal(dashboardMarketplaceParam('ozon', ['avito']), '');
   assert.equal(dashboardMarketplaceParam('ozon!'), '');
 
   assert.equal(dashboardPositiveIdParam('42'), 42);
@@ -46,10 +46,10 @@ test('marketplace and account filters are normalized and preserved in URLs', () 
 
   assert.equal(
     dashboardQueryHref('/dashboard/listings', 'status=active&listing=7', {
-      marketplace: 'avito',
+      marketplace: 'ozon',
       account: 42,
       page: null,
     }),
-    '/dashboard/listings?status=active&listing=7&marketplace=avito&account=42',
+    '/dashboard/listings?status=active&listing=7&marketplace=ozon&account=42',
   );
 });

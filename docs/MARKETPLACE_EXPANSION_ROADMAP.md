@@ -212,13 +212,17 @@ O2 выполняется отдельными последовательным�
   дерева категорий и характеристик, нормализация с жёсткими лимитами,
   versioned snapshots и локальный status API; без UI, background tasks и
   product mutations;
+- **O2a-UI — безопасное закрытие foundation**: account-scoped локальный статус
+  снимка и ручное подтверждённое обновление дерева в карточке Ozon, плюс
+  сохранение Ozon/account в общих provider-neutral фильтрах; без автоматических
+  provider reads и без product mutations;
 - **O2b — physical facts и provenance**: barcode, dimensions, weight и VAT с
   приоритетом валидного значения 1C и fallback в MAP;
 - **O2c — offer mapping и preflight UI**: stable offer identity, выбор leaf
   type, dictionary values и field-level ошибки обязательных полей.
 
-O2a не использует Avito feed/services/tasks, не меняет Listing/Product и не
-вызывает product/price/stock/archive методы Ozon. Реальный catalog refresh
+O2a и O2a-UI не используют Avito feed/services/tasks, не меняют Listing/Product
+и не вызывают product/price/stock/archive методы Ozon. Реальный catalog refresh
 остаётся отдельным ручным read-only действием точного tenant/account.
 
 ## O3 — публикация и reconciliation

@@ -21,7 +21,7 @@ export function dashboardPageParam(value: string | null): number {
 
 export function dashboardMarketplaceParam(
   value: string | null,
-  supported: readonly string[] = ['avito'],
+  supported: readonly string[] = ['avito', 'ozon'],
 ): string {
   return value && supported.includes(value) ? value : '';
 }

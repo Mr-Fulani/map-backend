@@ -44,6 +44,34 @@ export interface OzonAccountProfile {
   last_checked_at: string;
 }
 
+export interface OzonCatalogTreeMetadata {
+  revision: string;
+  language: string;
+  node_count: number;
+  active_type_count: number;
+  first_synced_at: string;
+  last_checked_at: string;
+}
+
+export interface OzonCatalogAttributeMetadata {
+  revision: string;
+  description_category_id: number;
+  type_id: number;
+  language: string;
+  attribute_count: number;
+  required_attribute_count: number;
+  first_synced_at: string;
+  last_checked_at: string;
+}
+
+export interface OzonCatalogState {
+  account_id: number;
+  marketplace: 'ozon';
+  tree: OzonCatalogTreeMetadata | null;
+  attribute_schema_count: number;
+  latest_attribute_schema: OzonCatalogAttributeMetadata | null;
+}
+
 export interface MarketplaceProviderCapabilities {
   account_health: boolean;
   catalog_schema: boolean;

@@ -1248,6 +1248,12 @@ export const accountApi = {
     api.patch(`/accounts/placement-addresses/${id}/`, data),
   deletePlacementAddress: (id: number) =>
     api.delete(`/accounts/placement-addresses/${id}/`),
+  getOzonCatalog: (id: number) => api.get(`/accounts/${id}/ozon-catalog/`),
+  refreshOzonCatalogTree: (id: number) => api.post(`/accounts/${id}/ozon-catalog/`, {
+    scope: 'tree',
+    language: 'DEFAULT',
+    confirm_ozon_read_only_access: true,
+  }),
 };
 
 // Categories
