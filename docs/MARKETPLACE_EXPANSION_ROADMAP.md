@@ -288,7 +288,7 @@ O2b выложен на production SHA
 `products.0041_product_physical_profile` применена, production topology и
 readiness прошли, live-карточка AlfaPro проверена только на чтение.
 
-**O2c1 — `CODE_READY` 2026-08-30**: товар подготавливается отдельно для каждого
+**O2c1 — `ENABLED` 2026-08-30**: товар подготавливается отдельно для каждого
 точного Ozon-аккаунта без создания Avito Listing и без provider mutations:
 
 - `OzonOfferDraft` хранит неизменяемый локальный `offer_id` на связке
@@ -329,6 +329,40 @@ OpenAPI validation, migration apply/drift и оба dependency audit также 
 найдено 0 уязвимостей. Пакет содержит одну migration Marketplaces; Avito
 feed/services/tasks, Listing и внешние Ozon product/price/stock/archive методы
 не изменялись.
+
+O2c1 выложен на production SHA
+`9088cf2e09f070b8b51a0bf03e64ed550b0ff069`: migration
+`marketplaces.0034_ozon_offer_draft` применена, все 10 production services,
+topology и внешний readiness прошли. Read-only проверка карточки AlfaPro
+показала отдельный Ozon-блок, точный кабинет и базовые ошибки готовности; новый
+черновик или категория во время canary не создавались. Deploy gate возвращён
+в `false`.
+
+**O2c2 — `CODE_READY` 2026-08-30**: финальная подготовка характеристик остаётся
+локальной и account/category-scoped:
+
+- схема характеристик загружается только вручную для выбранного кабинета и
+  конечного типа Ozon; автоматических provider reads и фоновых задач нет;
+- справочные значения ищутся явной кнопкой через read-only endpoint Ozon с
+  точными `description_category_id`, `type_id` и `attribute_id`;
+- результат поиска связан с точной ревизией схемы; произвольный или устаревший
+  dictionary ID из браузера не сохраняется, а текст значения берётся из
+  нормализованного ответа Ozon;
+- смена кабинета или категории очищает локальные результаты поиска, а ключи UI
+  включают account/category/type/attribute и не смешивают данные кабинетов;
+- preflight требует актуальную схему и каждую обязательную характеристику;
+  optional-поля остаются рекомендациями интерфейса;
+- Ozon-характеристики и их снимки хранятся отдельно от Каталога MAP, дерева и
+  наценок Avito; Listing, Avito feed/services/tasks и provider mutations не
+  изменяются.
+
+Локальный gate O2c2: 29 focused Ozon-тестов и широкий прогон Products +
+Marketplaces — 1325 passed, 2 skipped; frontend unit — 52/52; runtime/deploy
+contracts — 67/67. TypeScript, ESLint, production webpack build 21/21, полный
+Flake8, baseline mypy для 719 файлов, strict mypy для 361 production-файла,
+Django check, OpenAPI validation, migration drift и чистое применение всей
+цепочки до `marketplaces.0035_ozon_offer_attributes` прошли. Production npm
+audit нашёл 0 уязвимостей. Пакет содержит одну migration Marketplaces.
 
 ## O3 — публикация и reconciliation
 

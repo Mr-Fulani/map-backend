@@ -154,7 +154,10 @@ def test_catalog_methods_use_only_read_only_description_category_endpoints():
             'type': 'String',
         }],
     })
-    session = FakeSession([tree_response, attribute_response])
+    value_response = FakeResponse(200, {
+        'result': [{'id': 501, 'value': 'Test Brand'}],
+    })
+    session = FakeSession([tree_response, attribute_response, value_response])
     client = OzonSellerClient(
         client_id='5741594',
         api_key='read-only-key',
@@ -167,18 +170,33 @@ def test_catalog_methods_use_only_read_only_description_category_endpoints():
         type_id=20,
         language='RU',
     )
+    values = client.search_description_category_attribute_values(
+        description_category_id=10,
+        type_id=20,
+        attribute_id=85,
+        value='Test',
+    )
 
     assert tree[0]['description_category_id'] == 10
     assert attributes[0]['id'] == 85
+    assert values[0]['id'] == 501
     assert [call[0] for call in session.calls] == [
         'https://api-seller.ozon.ru/v1/description-category/tree',
         'https://api-seller.ozon.ru/v1/description-category/attribute',
+        'https://api-seller.ozon.ru/v1/description-category/attribute/values/search',
     ]
     assert session.calls[0][1]['json'] == {'language': 'RU'}
     assert session.calls[1][1]['json'] == {
         'description_category_id': 10,
         'type_id': 20,
         'language': 'RU',
+    }
+    assert session.calls[2][1]['json'] == {
+        'description_category_id': 10,
+        'type_id': 20,
+        'attribute_id': 85,
+        'value': 'Test',
+        'limit': 100,
     }
 
 

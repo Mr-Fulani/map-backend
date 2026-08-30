@@ -21,9 +21,15 @@ class OzonOfferUpdateSerializer(serializers.Serializer):
     account_id = serializers.IntegerField(min_value=1)
     description_category_id = serializers.IntegerField(min_value=1, required=False)
     type_id = serializers.IntegerField(min_value=1, required=False)
+    attributes = serializers.JSONField(required=False)
 
     def validate(self, attrs):
-        allowed = {'account_id', 'description_category_id', 'type_id'}
+        allowed = {
+            'account_id',
+            'description_category_id',
+            'type_id',
+            'attributes',
+        }
         unknown = set(self.initial_data) - allowed
         if unknown:
             raise serializers.ValidationError(
@@ -109,6 +115,8 @@ class ProductOzonOfferView(APIView):
                 product,
                 account,
                 category=category,
+                attributes=data.get('attributes'),
+                attributes_supplied='attributes' in data,
             )
         except OzonOfferError as exc:
             return Response(

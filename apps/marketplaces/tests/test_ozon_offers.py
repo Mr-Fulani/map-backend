@@ -1,4 +1,5 @@
 from decimal import Decimal
+from unittest.mock import patch
 
 import pytest
 from django.test import Client
@@ -10,12 +11,23 @@ from apps.marketplaces.models import (
     MarketplaceAccount,
     MarketplaceFeedRun,
     OzonAccountProfile,
+    OzonAttributeValueSnapshot,
+    OzonCategoryAttributeSnapshot,
     OzonCategoryTreeSnapshot,
     OzonOfferDraft,
 )
-from apps.marketplaces.ozon_catalog import normalize_category_tree
+from apps.marketplaces.ozon_catalog import (
+    normalize_category_attributes,
+    normalize_category_tree,
+)
 from apps.products.models import Product, ProductImage, ProductPhysicalProfile
-from apps.tenants.tests.auth import create_tenant_with_operator_key
+from apps.tenants.tests.auth import create_tenant_with_operator_key, owner_access_token
+
+
+VALUE_SEARCH = (
+    'apps.marketplaces.ozon_catalog.OzonSellerClient.'
+    'search_description_category_attribute_values'
+)
 
 
 def _tenant(slug):
@@ -77,6 +89,50 @@ def _catalog(account):
         tree=tree,
         node_count=node_count,
         active_type_count=active_type_count,
+    )
+
+
+def _attribute_catalog(account, *, revision='b' * 64):
+    attributes = normalize_category_attributes([{
+        'id': 85,
+        'attribute_complex_id': 0,
+        'name': 'Бренд',
+        'description': 'Выберите бренд',
+        'type': 'String',
+        'is_collection': False,
+        'is_required': True,
+        'is_aspect': False,
+        'max_value_count': 1,
+        'group_name': 'Основные',
+        'group_id': 1,
+        'dictionary_id': 42,
+        'category_dependent': True,
+        'complex_is_collection': False,
+    }])
+    return OzonCategoryAttributeSnapshot.objects.create(
+        account=account,
+        description_category_id=101,
+        type_id=202,
+        language='DEFAULT',
+        schema_hash=revision,
+        attributes=attributes,
+        attribute_count=1,
+        required_attribute_count=1,
+    )
+
+
+def _value_snapshot(account, schema, *, value='Canonical Brand'):
+    return OzonAttributeValueSnapshot.objects.create(
+        account=account,
+        description_category_id=101,
+        type_id=202,
+        attribute_id=85,
+        language='DEFAULT',
+        query='Brand',
+        attribute_schema_hash=schema.schema_hash,
+        schema_hash='c' * 64,
+        values=[{'id': 501, 'value': value, 'info': '', 'picture': ''}],
+        value_count=1,
     )
 
 
@@ -184,23 +240,145 @@ def test_offer_api_fences_tenant_and_provider_and_rejects_non_leaf_category():
 
 
 @pytest.mark.django_db
-def test_basic_preflight_is_ready_after_category_and_required_product_facts():
+def test_preflight_is_ready_only_after_current_required_dictionary_value():
     tenant, key = _tenant('ozon-preflight')
     account = _account(tenant, 'client-preflight')
     product = _product(tenant)
     _catalog(account)
+    schema = _attribute_catalog(account)
+    _value_snapshot(account, schema)
     _complete_product(product)
     client = Client()
 
-    ready = _request(client, key, 'patch', product, {
+    category = _request(client, key, 'patch', product, {
         'account_id': account.pk,
         'description_category_id': 101,
         'type_id': 202,
     })
+    codes = {
+        item['code']
+        for item in category.json()['data']['preflight']['errors']
+    }
+    assert codes == {'attribute_schema_outdated', 'required_attribute_missing'}
 
+    ready = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'attributes': [{
+            'id': 85,
+            'complex_id': 0,
+            'values': [{
+                'value': 'Untrusted browser text',
+                'dictionary_value_id': 501,
+            }],
+        }],
+    })
     assert ready.status_code == 200
     assert ready.json()['data']['preflight'] == {
         'ready': True,
         'errors': [],
         'recommendations': [],
     }
+    draft = OzonOfferDraft.objects.get()
+    assert draft.attribute_schema_revision == schema.schema_hash
+    assert draft.attributes[0]['values'] == [{
+        'value': 'Canonical Brand',
+        'dictionary_value_id': 501,
+    }]
+
+
+@pytest.mark.django_db
+def test_offer_rejects_arbitrary_or_stale_dictionary_value_ids():
+    tenant, key = _tenant('ozon-dictionary-fence')
+    account = _account(tenant, 'client-dictionary-fence')
+    product = _product(tenant)
+    _catalog(account)
+    current_schema = _attribute_catalog(account)
+    stale_schema_hash = 'd' * 64
+    stale_snapshot = _value_snapshot(account, current_schema)
+    stale_snapshot.attribute_schema_hash = stale_schema_hash
+    stale_snapshot.save(update_fields=['attribute_schema_hash', 'updated_at'])
+    client = Client()
+    _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'description_category_id': 101,
+        'type_id': 202,
+    })
+
+    stale = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'attributes': [{
+            'id': 85,
+            'complex_id': 0,
+            'values': [{'value': 'Fake', 'dictionary_value_id': 501}],
+        }],
+    })
+    arbitrary = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'attributes': [{
+            'id': 85,
+            'complex_id': 0,
+            'values': [{'value': 'Fake', 'dictionary_value_id': 999}],
+        }],
+    })
+
+    assert stale.status_code == arbitrary.status_code == 400
+    assert stale.json()['code'] == arbitrary.json()['code'] == 'invalid_dictionary_value'
+    draft = OzonOfferDraft.objects.get()
+    assert draft.attributes == []
+    assert draft.attribute_schema_revision == ''
+
+
+@pytest.mark.django_db
+def test_dictionary_search_is_explicit_versioned_and_account_fenced(settings):
+    tenant, _key = _tenant('ozon-values')
+    other, _other_key = _tenant('ozon-values-other')
+    account = _account(tenant, 'client-values')
+    _catalog(account)
+    schema = _attribute_catalog(account)
+    settings.OZON_ACCOUNT_CONNECTION_ENABLED = True
+    settings.OZON_ACCOUNT_CONNECTION_TENANT_SLUGS = (tenant.slug,)
+    settings.OZON_ACCOUNT_CONNECTION_CLIENT_IDS = (account.external_id,)
+    owner_token = owner_access_token(tenant)
+    other_owner_token = owner_access_token(other)
+    url = f'/api/v1/accounts/{account.pk}/ozon-catalog/attribute-values/search/'
+    payload = {
+        'description_category_id': 101,
+        'type_id': 202,
+        'attribute_id': 85,
+        'query': 'Test',
+        'language': 'DEFAULT',
+        'confirm_ozon_read_only_access': True,
+    }
+
+    with patch(VALUE_SEARCH, return_value=[
+        {'id': 502, 'value': 'Second', 'info': '', 'picture': ''},
+        {'id': 501, 'value': 'First', 'info': '', 'picture': ''},
+        {'id': 502, 'value': 'Duplicate', 'info': '', 'picture': ''},
+    ]) as provider_read:
+        response = Client().post(
+            url,
+            payload,
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {owner_token}',
+        )
+        foreign = Client().post(
+            url,
+            payload,
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {other_owner_token}',
+        )
+
+    assert response.status_code == 200
+    assert [item['id'] for item in response.json()['data']['values']] == [502, 501]
+    assert foreign.status_code == 404
+    provider_read.assert_called_once_with(
+        description_category_id=101,
+        type_id=202,
+        attribute_id=85,
+        value='Test',
+    )
+    snapshot = OzonAttributeValueSnapshot.objects.get()
+    assert snapshot.attribute_schema_hash == schema.schema_hash
+    assert snapshot.schema_hash
+    assert not OzonOfferDraft.objects.exists()
+    assert other.marketplace_accounts.count() == 0

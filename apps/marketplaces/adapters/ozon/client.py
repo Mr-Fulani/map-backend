@@ -235,6 +235,35 @@ class OzonSellerClient:
             )
         return result
 
+    def search_description_category_attribute_values(
+        self,
+        *,
+        description_category_id: int,
+        type_id: int,
+        attribute_id: int,
+        value: str,
+    ) -> list[dict[str, Any]]:
+        payload = self._post(
+            '/v1/description-category/attribute/values/search',
+            {
+                'description_category_id': description_category_id,
+                'type_id': type_id,
+                'attribute_id': attribute_id,
+                'value': value,
+                'limit': 100,
+            },
+            max_bytes=settings.OZON_CATALOG_RESPONSE_MAX_BYTES,
+        )
+        result = payload.get('result')
+        if isinstance(result, Mapping):
+            result = result.get('values')
+        if not isinstance(result, list):
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректный справочник характеристики.',
+            )
+        return result
+
     def _post(
         self,
         path: str,
