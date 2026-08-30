@@ -25,6 +25,7 @@ from apps.products.part_category_seed import (
     BASE_PART_CATEGORY_TREE, normalize_category_name,
 )
 from apps.products.part_parsers import ParsedPart, PartNotFound, get_part_parser
+from apps.products.physical_profiles import sync_source_physical_profile
 from apps.products.source_policy import (
     DEFAULT_PART_SOURCE, can_raise_confidence, get_part_source_config, has_conflicting_fact,
     has_conflicting_fitment, should_auto_apply_fitment, should_auto_apply_relation,
@@ -398,7 +399,9 @@ class ProductService:
         }
 
         if existing is None:
-            return Product.objects.create(**lookup, **defaults), 'created', None
+            product = Product.objects.create(**lookup, **defaults)
+            sync_source_physical_profile(product, datasource, data)
+            return product, 'created', None
 
         old_hash = existing.hash_1c
         old_data = {
@@ -437,6 +440,7 @@ class ProductService:
             update_fields.extend(('deleted_at', 'sync_excluded'))
         existing.save(update_fields=tuple(dict.fromkeys(update_fields)))
 
+        change_type = None
         if old_hash != hash_new:
             new_data = {
                 'price': data.get('price', '0'),
@@ -448,8 +452,9 @@ class ProductService:
                 'description': data.get('description', ''),
             }
             change_type = ProductService.detect_change_type(old_data, new_data)
-            if change_type is not None:
-                return existing, 'updated', change_type
+        sync_source_physical_profile(existing, datasource, data)
+        if change_type is not None:
+            return existing, 'updated', change_type
         return existing, 'unchanged', None
 
     @classmethod
@@ -532,7 +537,7 @@ class ProductService:
                     tenant=tenant,
                     datasource=datasource,
                     article__in=articles,
-                ).order_by('pk')
+                ).select_related('physical_profile').order_by('pk')
             )
             existing_by_article = {
                 product.article: product for product in existing_products

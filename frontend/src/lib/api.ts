@@ -1104,6 +1104,8 @@ export const productApi = {
   updateBrand: (id: number, brand: string) => api.patch(`/products/${id}/`, { brand }),
   updateAvitoOem: (id: number, avitoOem: string) =>
     api.patch(`/products/${id}/`, { avito_oem: avitoOem }),
+  updatePhysicalProfile: (id: number, data: Record<string, string | null>) =>
+    api.patch(`/products/${id}/physical-profile/`, data),
   brandOptions: (productId: number, q = '') =>
     api.get('/products/brand-options/', { params: { product_id: productId, q } }),
   publish: (id: number, accountIds: number[]) => (

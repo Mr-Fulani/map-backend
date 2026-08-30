@@ -6,7 +6,8 @@ from apps.products.views import (
     ProductEnrichmentFactReviewView, ProductEnrichmentFactsView, ProductFitmentReviewView, ProductFitmentsView,
     ProductBulkDeleteView, ProductCatalogCategoryAssignView, ProductExcludeView,
     ProductListView, ProductParseJobDetailView,
-    ProductParseView, ProductPublishView, ProductRegenerateView, ProductReviewQueueActionView,
+    ProductParseView, ProductPhysicalProfileView, ProductPublishView, ProductRegenerateView,
+    ProductReviewQueueActionView,
     ProductReviewQueueView, ProductSearchView,
     ProductSyncView, TenantCatalogCategoryBranchToggleView, TenantCatalogCategoryDefaultImageView,
     TenantCatalogCategoryDetailView, TenantCatalogCategoryListView,
@@ -68,6 +69,11 @@ urlpatterns = [
     path('bulk-delete/', ProductBulkDeleteView.as_view(), name='product-bulk-delete'),
     path('sync/<int:connection_id>/', ProductSyncView.as_view(), name='product-sync'),
     path('<int:pk>/', ProductDetailView.as_view(), name='product-detail'),
+    path(
+        '<int:pk>/physical-profile/',
+        ProductPhysicalProfileView.as_view(),
+        name='product-physical-profile',
+    ),
     path('<int:pk>/fitments/', ProductFitmentsView.as_view(), name='product-fitments'),
     path(
         '<int:pk>/fitments/<int:fitment_id>/<str:action>/',

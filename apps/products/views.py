@@ -63,6 +63,7 @@ from apps.products.api_schema import (
     ProductParseJobResponseSerializer,
     ProductParseRequestSerializer,
     ProductParseResponseSerializer,
+    ProductPhysicalProfileResponseSerializer,
     ProductPublishResponseSerializer,
     ProductRegenerateRequestSerializer,
     ProductRegenerateErrorSerializer,
@@ -82,10 +83,14 @@ from apps.products.models import (
     TenantCatalogCategory, TenantCategoryMapping,
     VehicleFitment,
 )
+from apps.products.physical_profiles import (
+    physical_profile_presentation, update_map_physical_profile,
+)
 from apps.products.serializers import (
     ProductCatalogClassificationSerializer,
     ProductBulkActionJobSerializer, ProductCrossCodeSerializer, ProductEnrichmentFactSerializer,
-    ProductDetailSerializer, ProductParseJobSerializer, ProductSerializer,
+    ProductDetailSerializer, ProductParseJobSerializer, ProductPhysicalProfileUpdateSerializer,
+    ProductSerializer,
     TenantCatalogCategorySerializer, TenantCategoryMappingSerializer,
     VehicleFitmentSerializer,
 )
@@ -374,7 +379,9 @@ class ProductDetailView(APIView):
     )
     def get(self, request, pk):
         try:
-            product = Product.objects.select_related('catalog_category', 'catalog_classification').prefetch_related(
+            product = Product.objects.select_related(
+                'catalog_category', 'catalog_classification', 'physical_profile',
+            ).prefetch_related(
                 'images', 'attributes', 'cross_codes', 'fitments', 'enrichment_facts',
                 'parse_jobs', 'listings__account', 'listings__feed_run',
             ).get(
@@ -519,6 +526,70 @@ class ProductDetailView(APIView):
         if brand_changed or oem_changed:
             transaction.on_commit(lambda: sync_product_listings_task.delay(product.pk, 'content'))
         return Response({'status': 'ok', 'data': ProductDetailSerializer(product, context={'request': request}).data})
+
+
+@extend_schema(tags=['Products'])
+class ProductPhysicalProfileView(APIView):
+    """Read or patch MAP fallback without mutating 1C or Avito fields."""
+
+    api_key_enabled = True
+    api_key_scopes = {
+        'GET': {'catalog:read'},
+        'HEAD': {'catalog:read'},
+        'OPTIONS': {'catalog:read'},
+        'PATCH': {'catalog:write'},
+    }
+
+    @extend_schema(
+        operation_id='product_physical_profile_retrieve',
+        responses=ProductPhysicalProfileResponseSerializer,
+    )
+    def get(self, request, pk):
+        try:
+            product = Product.objects.select_related('physical_profile').get(
+                pk=pk,
+                tenant=request.tenant,
+            )
+        except Product.DoesNotExist:
+            return Response(
+                {'status': 'error', 'code': 'not_found', 'message': 'Товар не найден'},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        return Response({'status': 'ok', 'data': physical_profile_presentation(product)})
+
+    @extend_schema(
+        operation_id='product_physical_profile_update',
+        request=ProductPhysicalProfileUpdateSerializer,
+        responses=ProductPhysicalProfileResponseSerializer,
+    )
+    def patch(self, request, pk):
+        serializer = ProductPhysicalProfileUpdateSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'validation_error',
+                    'message': 'Проверьте физические данные товара.',
+                    **serializer.errors,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        with transaction.atomic():
+            try:
+                product = Product.objects.select_for_update().get(
+                    pk=pk,
+                    tenant=request.tenant,
+                )
+            except Product.DoesNotExist:
+                return Response(
+                    {'status': 'error', 'code': 'not_found', 'message': 'Товар не найден'},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            profile = update_map_physical_profile(product, serializer.validated_data)
+        # Reuse the object cached by the helper so presentation performs no
+        # cross-tenant or provider lookup.
+        product.physical_profile = profile
+        return Response({'status': 'ok', 'data': physical_profile_presentation(product)})
 
 
 @extend_schema(tags=['Products'])

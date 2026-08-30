@@ -367,6 +367,9 @@ def test_onec_xml_parses_valid_bounded_response():
     payload = (
         b'<Catalog><Item><UUID>u1</UUID><Article>A1</Article>'
         b'<Name>Part</Name><Price>10.50</Price><StockQty>3</StockQty>'
+        b'<Barcode>4601234567890</Barcode><LengthMM>250</LengthMM>'
+        b'<WidthMM>120</WidthMM><HeightMM>80</HeightMM>'
+        b'<WeightG>1250</WeightG><VATRate>20</VATRate>'
         b'</Item></Catalog>'
     )
     response = _xml_response(payload)
@@ -388,6 +391,12 @@ def test_onec_xml_parses_valid_bounded_response():
         'stock_qty': 3,
         'category': '',
         'condition': 'new',
+        'barcode': '4601234567890',
+        'length_mm': '250',
+        'width_mm': '120',
+        'height_mm': '80',
+        'weight_g': '1250',
+        'vat_rate': '20',
     }]
 
 

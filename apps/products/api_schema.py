@@ -13,6 +13,7 @@ from apps.products.serializers import (
     ProductCrossCodeSerializer,
     ProductDetailSerializer,
     ProductEnrichmentFactSerializer,
+    ProductPhysicalProfilePresentationSerializer,
     ProductParseJobSerializer,
     ProductSerializer,
     TenantCatalogCategorySerializer,
@@ -49,6 +50,11 @@ class ProductResponseSerializer(serializers.Serializer):
 class ProductDetailResponseSerializer(serializers.Serializer):
     status = serializers.CharField(default='ok')
     data = ProductDetailSerializer()  # type: ignore[assignment]
+
+
+class ProductPhysicalProfileResponseSerializer(serializers.Serializer):
+    status = serializers.CharField(default='ok')
+    data = ProductPhysicalProfilePresentationSerializer()  # type: ignore[assignment]
 
 
 class ProductFeedFieldUpdateRequestSerializer(serializers.Serializer):
