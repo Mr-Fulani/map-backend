@@ -2154,7 +2154,6 @@ class ProductReviewQueueView(APIView):
         if not item_type or item_type == 'fitment':
             fitment_qs = VehicleFitment.objects.select_related('product').filter(
                 tenant=request.tenant,
-                needs_review=True,
                 review_status=ReviewStatus.PENDING,
             )
             if product_id is not None:
@@ -2614,22 +2613,26 @@ class ProductRegenerateView(APIView):
         # The paid-ingress transaction below locks Product for its own CAS.
         # Materialize a missing category/classification first so its
         # account-first writer can never be entered after that Product lock.
-        if (
-            request.tenant.supports_auto_parts_enrichment
-            and request.tenant.requires_product_auto_parts_check
-            and not ProductCatalogClassification.objects.filter(
-                product_id=pk,
-                tenant=request.tenant,
-            ).exists()
-        ):
+        if not ProductCatalogClassification.objects.filter(
+            product_id=pk,
+            tenant=request.tenant,
+        ).exists():
             product_for_classification = get_object_or_404(
                 Product,
                 pk=pk,
                 tenant=request.tenant,
             )
-            ProductEnrichmentService.classify_product_catalog_domain(
-                product_for_classification,
-            )
+            if (
+                ProductEnrichmentService.tenant_requires_product_auto_parts_check(
+                    request.tenant,
+                )
+                or ProductEnrichmentService.product_catalog_supports_auto_parts(
+                    product_for_classification,
+                )
+            ):
+                ProductEnrichmentService.classify_product_catalog_domain(
+                    product_for_classification,
+                )
 
         with transaction.atomic():
             type(request.tenant).objects.select_for_update().only('pk').get(
@@ -2710,11 +2713,10 @@ class ProductRegenerateView(APIView):
                         },
                         status=status.HTTP_400_BAD_REQUEST,
                     )
-                product_needs_plain_ai = (
-                    not request.tenant.supports_auto_parts_enrichment
-                    or (
-                        request.tenant.requires_product_auto_parts_check
-                        and not ProductEnrichmentService.is_product_auto_part_candidate(product)
+                product_needs_plain_ai = not (
+                    ProductEnrichmentService.should_enrich_before_ai(
+                        request.tenant,
+                        product,
                     )
                 )
                 expected_task_name = (

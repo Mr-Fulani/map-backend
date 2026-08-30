@@ -346,17 +346,8 @@ def test_conflicting_source_fitment_is_kept_for_review_without_polluting_applica
     assert reviewable.needs_review is True
     assert reviewable.source_url == 'https://example.test/part/P50136'
     assert product.fitments.count() == 2
-    assert product.applicability == [{
-        'make': 'MERCEDES-BENZ',
-        'model': 'E-CLASS',
-        'generation': 'W213',
-        'date_from': '01.2016',
-        'date_to': '2023',
-        'modification': 'E 220 d',
-        'engine_code': '213.005',
-        'power_hp': 194,
-        'source_id': 'tachka',
-    }]
+    assert product.fitments.get(source_id='tachka').needs_review is True
+    assert product.applicability == []
 
 
 @pytest.mark.django_db

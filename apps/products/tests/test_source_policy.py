@@ -2,7 +2,7 @@ import pytest
 
 from apps.products.source_policy import (
     DEFAULT_PART_SOURCE, get_part_source_config, get_part_source_policy,
-    get_part_source_policies, should_auto_apply_record,
+    get_part_source_policies, should_auto_apply_fitment, should_auto_apply_record,
 )
 
 
@@ -68,3 +68,29 @@ def test_review_status_overrides_auto_apply_policy():
 
     assert should_auto_apply_record(ApprovedRecord()) is True
     assert should_auto_apply_record(RejectedRecord()) is False
+
+
+def test_fitments_require_human_approval_before_auto_apply():
+    class PendingTenantFitment:
+        source_id = DEFAULT_PART_SOURCE
+        model = 'E-CLASS'
+        confidence = 1.0
+        needs_review = False
+        review_status = 'pending'
+
+    class ApprovedTenantFitment(PendingTenantFitment):
+        review_status = 'approved'
+
+    class ParserGlobalFitment:
+        source_id = DEFAULT_PART_SOURCE
+        model = 'E-CLASS'
+        confidence = 1.0
+        needs_review = False
+
+    class HumanGlobalFitment(ParserGlobalFitment):
+        source_id = 'human_review'
+
+    assert should_auto_apply_fitment(PendingTenantFitment()) is False
+    assert should_auto_apply_fitment(ApprovedTenantFitment()) is True
+    assert should_auto_apply_fitment(ParserGlobalFitment()) is False
+    assert should_auto_apply_fitment(HumanGlobalFitment()) is True

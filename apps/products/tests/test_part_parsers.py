@@ -39,7 +39,13 @@ SAMPLE_HTML = """
       <tr><th>Аналог</th><td>FDB5032</td></tr>
     </table>
     <div class="description">Колодки для задней оси с тормозной системой TRW.</div>
-    <p>E-CLASS (W213) 01.2016-2023 E 220 d 4-matic (213.005) 194 л.с</p>
+    <section class="product-applicability">
+      <h2>Подходит для следующих модификаций:</h2>
+      <ul>
+        <h3>MERCEDES-BENZ</h3>
+        <li>E-CLASS (W213) 01.2016-2023 E 220 d 4-matic (213.005) 194 л.с</li>
+      </ul>
+    </section>
     <img src="/images/p50136.jpg" />
   </body>
 </html>
@@ -203,6 +209,7 @@ def test_tachka_parser_extracts_enrichment_data_from_html():
     assert parsed.fitments[0].generation == 'W213'
     assert parsed.fitments[0].engine_code == '213.005'
     assert parsed.fitments[0].power_hp == 194
+    assert parsed.fitments[0].needs_review is True
     assert parsed.image_urls == ['https://tachka.ru/images/p50136.jpg']
     assert 'description' in parsed.description_facts
 
@@ -237,6 +244,25 @@ def test_tachka_parser_extracts_fitments_from_flat_json_ld_fallback():
         ('MERCEDES-BENZ', 'E-CLASS', 'W213'),
     ]
     assert parsed.description_facts == {}
+
+
+def test_tachka_parser_ignores_fitment_shaped_text_outside_product_profile():
+    html = """
+    <html><body>
+      <h1>BRAVE BRHP174 Шланг тормозной</h1>
+      <aside class="recommendations">
+        HYUNDAI TUCSON (JM) 2004-2010 2.0 (G4GC) 142 л.с
+      </aside>
+    </body></html>
+    """
+
+    parsed = TachkaPartParser().parse_html(
+        html,
+        brand='BRAVE',
+        article='BRHP174',
+    )
+
+    assert parsed.fitments == []
 
 
 def test_parse_fitment_line_keeps_uncertain_data_reviewable():
@@ -456,8 +482,8 @@ def test_run_parse_job_applies_known_knowledge_and_refreshes_source_offer(monkey
     product_b.refresh_from_db()
     assert fetch_called is True
     assert result['status'] == 'success'
-    assert result['fitments_count'] == 1
-    assert job.parsed_data['applied_knowledge']['fitments_count'] == 1
+    assert result['fitments_count'] == 0
+    assert job.parsed_data['applied_knowledge']['fitments_count'] == 0
     assert job.source_price == Decimal('1499.00')
     assert job.source_availability == 'in_stock'
     assert job.source_quantity == 3
@@ -501,6 +527,7 @@ def test_schedule_ai_generation_uses_plain_ai_when_fitments_are_already_trusted(
         model='E-CLASS',
         generation='W213',
         confidence=0.95,
+        review_status='approved',
     )
 
     with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
@@ -949,6 +976,22 @@ def test_rossko_parser_extracts_fitments():
     assert e_class[1].engine_code == '213.005'
     cls_fitments = [f for f in parsed.fitments if f.model == 'CLS']
     assert cls_fitments[0].engine_code == '257.314'
+    assert all(item.needs_review for item in parsed.fitments)
+
+
+def test_rossko_parser_ignores_fitments_outside_applicability_tab():
+    html = ROSSKO_PRODUCT_HTML.replace(
+        '</body>',
+        '<aside>HYUNDAI TUCSON (JM) 2004-2010 2.0 (G4GC) 142 л.с</aside></body>',
+    )
+
+    parsed = RosskoPartParser().parse_html(
+        html,
+        brand='BREMBO',
+        article='P50136',
+    )
+
+    assert all(item.model != 'TUCSON' for item in parsed.fitments)
 
 
 def test_rossko_parser_extracts_fitments_from_heading_fallback():
@@ -1011,7 +1054,7 @@ def test_source_fitments_are_saved_to_platform_knowledge_graph(source_id, html):
         make='MERCEDES-BENZ',
         model='C-CLASS',
         generation='W205',
-        needs_review=False,
+        needs_review=True,
     ).exists()
 
 
@@ -1098,6 +1141,7 @@ def test_euroauto_parser_extracts_product_fitments_analogues_and_only_own_images
         ('Hyundai', 'Solaris', '2017', '2022'),
         ('Solaris', 'HS', '2024', ''),
     ]
+    assert all(item.needs_review for item in parsed.fitments)
     assert [(item.brand, item.article) for item in parsed.related_parts] == [
         ('Hyundai-Kia', '92401-H5000'),
         ('SAT', 'ST-221-19S7L'),
@@ -1133,6 +1177,30 @@ def test_euroauto_parser_extracts_indexed_search_payload_without_source_brand():
     assert parsed.source_offer.price == Decimal('4253.00')
     assert parsed.source_offer.price_is_from is True
     assert parsed.source_offer.availability == 'preorder'
+
+
+def test_euroauto_search_ignores_full_page_raw_content_fitments():
+    payload = {
+        '_map_request': {'article': 'BRHP174', 'hint': 'Шланг тормозной BRAVE'},
+        'results': [{
+            'url': 'https://euroauto.ru/firms/brave/brhp174',
+            'title': 'BRHP174 Brave Шланг тормозной',
+            'content': 'BRHP174 Brave Шланг тормозной',
+            'raw_content': (
+                'Рекомендуемые товары HYUNDAI TUCSON (2004-2010) '
+                'и KIA SPORTAGE (2010-2015)'
+            ),
+            'score': 0.9,
+        }],
+    }
+
+    parsed = EuroautoPartParser(fetcher=object()).parse_search_html(
+        json.dumps(payload, ensure_ascii=False),
+        brand='BRAVE',
+        article='BRHP174',
+    )
+
+    assert parsed.fitments == []
 
 
 def test_euroauto_parser_prefers_result_with_fitment_over_sparse_firm_page():
@@ -1211,7 +1279,7 @@ def test_euroauto_fitments_and_analogues_are_learned_by_platform_graph():
         source_id='euroauto',
         make='Hyundai',
         model='Solaris',
-        needs_review=False,
+        needs_review=True,
     ).exists()
     assert GlobalPartRelation.objects.filter(
         source_part__normalized_brand='METACO',

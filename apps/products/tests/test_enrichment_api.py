@@ -50,6 +50,22 @@ def make_product(tenant, article='P50136', brand='BREMBO', name=None, category_1
     )
 
 
+def enable_apparel_category(tenant):
+    from apps.products.services import ProductCategorySeedService
+
+    ProductCategorySeedService.enable_tenant_catalog_domain(
+        tenant,
+        'apparel',
+        seed_templates=False,
+    )
+    return TenantCatalogCategory.objects.create(
+        tenant=tenant,
+        name='Куртки',
+        root_domain=CatalogDomain.objects.get(slug='apparel'),
+        domain=ProductCatalogClassification.Domain.APPAREL,
+    )
+
+
 @pytest.mark.django_db
 @pytest.mark.parametrize(
     ('method', 'path'),
@@ -573,6 +589,7 @@ def test_fitment_review_rejects_and_refreshes_product_applicability():
         generation='G30',
         confidence=1.0,
         needs_review=False,
+        review_status=ReviewStatus.APPROVED,
     )
     ProductEnrichmentService.refresh_product_denormalized_enrichment(product)
     product.save(update_fields=['oem_numbers', 'cross_numbers', 'applicability'])
@@ -659,6 +676,29 @@ def test_review_queue_lists_tenant_scoped_pending_items():
     ids = {item['id'] for item in data}
     assert ids == {f'fitment:{fitment.pk}', f'fact:{fact.pk}'}
     assert all(item['product']['id'] == product.pk for item in data)
+
+
+@pytest.mark.django_db
+def test_review_queue_includes_legacy_pending_fitment_without_review_flag():
+    tenant, _ = make_tenant('review-queue-legacy-fitment')
+    product = make_product(tenant)
+    fitment = VehicleFitment.objects.create(
+        tenant=tenant,
+        product=product,
+        source_id='tachka',
+        make='HYUNDAI',
+        model='TUCSON',
+        confidence=0.9,
+        needs_review=False,
+        review_status=ReviewStatus.PENDING,
+    )
+
+    response = owner_client(tenant).get(
+        f'/api/v1/products/review-queue/?type=fitment&product_id={product.pk}',
+    )
+
+    assert response.status_code == 200
+    assert [item['id'] for item in response.json()['data']] == [f'fitment:{fitment.pk}']
 
 
 @pytest.mark.django_db
@@ -827,9 +867,13 @@ def test_review_queue_approves_fitment_and_refreshes_applicability():
     consumer_tenant, _ = make_tenant('review-fitment-consumer')
     consumer_product = make_product(consumer_tenant)
     assert ProductKnowledgeGraphService.apply_known_fitments_to_product(consumer_product) == 1
-    assert consumer_product.fitments.filter(
+    inherited = consumer_product.fitments.get(
         make='MERCEDES-BENZ', model='E-CLASS', generation='W213',
-    ).exists()
+    )
+    consumer_product.refresh_from_db()
+    assert inherited.review_status == ReviewStatus.APPROVED
+    assert inherited.needs_review is False
+    assert consumer_product.applicability[0]['model'] == 'E-CLASS'
 
 
 @pytest.mark.django_db
@@ -1380,6 +1424,35 @@ def test_parse_endpoint_rejects_non_auto_parts_product_for_mixed_tenant():
 
 
 @pytest.mark.django_db
+def test_parse_endpoint_rejects_apparel_for_legacy_auto_tenant_with_two_domains():
+    tenant, api_key = make_tenant('parse-auto-plus-apparel')
+    apparel_category = enable_apparel_category(tenant)
+    product = make_product(
+        tenant,
+        article='JACKET1',
+        brand='NO_BRAND',
+        name='Мужская куртка',
+        category_1c='Одежда',
+    )
+    product.catalog_category = apparel_category
+    product.save(update_fields=['catalog_category', 'updated_at'])
+
+    response = Client().post(
+        '/api/v1/products/parse/',
+        {
+            'product_id': product.pk,
+            'idempotency_key': str(uuid.uuid4()),
+        },
+        content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {api_key}',
+    )
+
+    assert response.status_code == 400
+    assert response.json()['code'] == 'product_is_not_auto_part'
+    assert tenant.product_parse_jobs.count() == 0
+
+
+@pytest.mark.django_db
 def test_regenerate_endpoint_for_mixed_non_auto_part_queues_ai_without_enrichment(
     django_capture_on_commit_callbacks,
 ):
@@ -1409,6 +1482,42 @@ def test_regenerate_endpoint_for_mixed_non_auto_part_queues_ai_without_enrichmen
     assert tenant.product_parse_jobs.count() == 0
     product.refresh_from_db()
     assert product.catalog_classification.domain == ProductCatalogClassification.Domain.JEWELLERY
+    assert BackgroundJobDispatch.objects.filter(
+        task_name='apps.ai_agent.tasks.generate_description_task',
+        args=[product.pk],
+    ).count() == 1
+
+
+@pytest.mark.django_db
+def test_regenerate_apparel_for_legacy_auto_tenant_uses_plain_ai(
+    django_capture_on_commit_callbacks,
+):
+    tenant, api_key = make_tenant('regenerate-auto-plus-apparel')
+    apparel_category = enable_apparel_category(tenant)
+    product = make_product(
+        tenant,
+        article='JACKET2',
+        brand='NO_BRAND',
+        name='Мужская куртка',
+        category_1c='Одежда',
+    )
+    product.catalog_category = apparel_category
+    product.save(update_fields=['catalog_category', 'updated_at'])
+
+    with patch('apps.core.tasks.execute_background_dispatch.apply_async'):
+        with django_capture_on_commit_callbacks(execute=True):
+            response = Client().post(
+                f'/api/v1/products/{product.pk}/regenerate/',
+                {'idempotency_key': '10000000-0000-4000-8000-000000000099'},
+                content_type='application/json',
+                HTTP_AUTHORIZATION=f'Bearer {api_key}',
+            )
+
+    assert response.status_code == 202
+    assert response.json()['data']['job_id'] is None
+    assert tenant.product_parse_jobs.count() == 0
+    product.refresh_from_db()
+    assert product.catalog_classification.domain == ProductCatalogClassification.Domain.APPAREL
     assert BackgroundJobDispatch.objects.filter(
         task_name='apps.ai_agent.tasks.generate_description_task',
         args=[product.pk],

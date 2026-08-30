@@ -375,7 +375,7 @@ deploy gate возвращён в `false`.
 
 O3 выполняется двумя последовательными пакетами:
 
-- **O3a — provider-aware listing workspace (`CODE_READY` 2026-08-30)**:
+- **O3a — provider-aware listing workspace (`ENABLED` 2026-08-30)**:
   общие данные и медиа остаются у товара, а готовность и действия
   разделены по точному Avito/Ozon-аккаунту; Ozon остаётся
   локальной подготовкой без кнопки provider publication;
@@ -399,6 +399,12 @@ production webpack build 21/21 и production dependency audit с 0 уязвим�
 Products + Marketplaces regression — 1325 passed, 2 skipped; runtime/deploy
 contracts — 67/67. `git diff --check` чистый.
 
+O3a выложен на production SHA
+`63c406efd231e21fa0cf349200dfc58ca6ff7967`: все 10 production services,
+topology и внешний readiness прошли. Read-only AlfaPro canary подтвердил
+раздельные Avito/Ozon-кабинеты и отдельную Ozon-проекцию; черновики и provider
+mutations не запускались. Deploy gate возвращён в `false`.
+
 Результат O3b: create/update/archive Ozon offer с устойчивым
 локальным статусом.
 
@@ -411,6 +417,31 @@ contracts — 67/67. `git diff --check` чистый.
 
 Gate: fault tests для timeout/429/5xx/partial result, полный backend/frontend
 gate, выключенный deploy и один account-scoped production canary.
+
+## E1 — безопасность обогащения для мультитематического каталога
+
+E1a отделяет найденную применяемость от подтверждённой и не использует
+название товара как жёсткий фильтр:
+
+- Tachka читает применяемость только из профильной секции карточки или из
+  размеченного блока `Подходит для следующих модификаций` точного Product
+  JSON-LD; общий текст страницы и рекомендации не сканируются;
+- Rossko читает только профильную вкладку `applicability` конкретной карточки;
+- Euroauto читает профильный блок карточки либо `title + content` точного
+  результата по артикулу; full-page `raw_content` не участвует в извлечении
+  или ранжировании применяемости;
+- все найденные parser-fitments остаются tenant-scoped доказательствами до
+  ручного `Одобрить`/`Отклонить`; в AI-контекст и денормализованную
+  применяемость попадают только одобренные варианты;
+- между тенантами распространяется только копия с provenance `human_review`;
+  старые pending-записи без `needs_review` также требуют решения человека;
+- у тенанта с несколькими доменами конкретная неавтомобильная категория
+  блокирует Tachka/Rossko/Euroauto, но обычная AI-генерация для одежды и других
+  товаров остаётся доступной.
+
+E1b отдельно добавит отметку устаревшего AI-текста после решения оператора и
+предложения физических параметров MAP с provenance; автоматическое удаление
+или регенерация ранее созданного текста в E1a не выполняются.
 
 ## O4 — цены, остатки, статистика и эксплуатация
 

@@ -36,6 +36,7 @@ from apps.tenants.models import CatalogDomain, TenantCatalogDomain
 
 MAX_BULK_ACTION_PAUSE_SECONDS = 3600
 MAX_BULK_ACTION_PRODUCT_IDS = settings.API_BULK_MAX_ITEMS
+FITMENT_SOURCES_REQUIRING_REVIEW = frozenset({'tachka', 'rossko', 'euroauto'})
 
 
 class _PlatformCategorySeed(TypedDict):
@@ -733,9 +734,44 @@ class ProductEnrichmentService:
         'brembo', 'trw', 'kyb',
     ]
 
-    @staticmethod
-    def ensure_auto_parts_enabled(tenant) -> None:
-        if not getattr(tenant, 'supports_auto_parts_enrichment', True):
+    @classmethod
+    def _auto_parts_catalog_capabilities(cls, tenant) -> tuple[bool, bool]:
+        enabled_domains = list(TenantCatalogDomain.objects.filter(
+            tenant=tenant,
+            is_enabled=True,
+            domain__is_active=True,
+        ).values_list('domain__slug', 'domain__supports_auto_parts_enrichment'))
+        flags = [supports for _, supports in enabled_domains]
+        primary_domain_is_enabled = any(
+            slug == getattr(tenant, 'catalog_domain', '')
+            for slug, _ in enabled_domains
+        )
+        primary_supports = getattr(tenant, 'supports_auto_parts_enrichment', True)
+        supports = bool(
+            primary_supports
+            or (primary_domain_is_enabled and any(flags))
+        )
+        requires_product_check = bool(
+            getattr(tenant, 'requires_product_auto_parts_check', False)
+            or (
+                primary_domain_is_enabled
+                and any(flags)
+                and any(not flag for flag in flags)
+            )
+        )
+        return supports, requires_product_check
+
+    @classmethod
+    def tenant_supports_auto_parts_enrichment(cls, tenant) -> bool:
+        return cls._auto_parts_catalog_capabilities(tenant)[0]
+
+    @classmethod
+    def tenant_requires_product_auto_parts_check(cls, tenant) -> bool:
+        return cls._auto_parts_catalog_capabilities(tenant)[1]
+
+    @classmethod
+    def ensure_auto_parts_enabled(cls, tenant) -> None:
+        if not cls.tenant_supports_auto_parts_enrichment(tenant):
             raise AutoPartsEnrichmentDisabled(
                 'Автозапчастное обогащение доступно только для каталога автозапчастей.'
             )
@@ -1150,7 +1186,8 @@ class ProductEnrichmentService:
 
     @classmethod
     def ensure_product_auto_parts_eligible(cls, tenant, product: Product | None) -> None:
-        if product is None and getattr(tenant, 'requires_product_auto_parts_check', False):
+        tenant_supports, requires_product_check = cls._auto_parts_catalog_capabilities(tenant)
+        if product is None and requires_product_check:
             raise ProductIsNotAutoPart(
                 'Для смешанного каталога нужно указать товар, чтобы проверить, что это автозапчасть.'
             )
@@ -1159,15 +1196,21 @@ class ProductEnrichmentService:
             return
 
         product_category_supports = cls.product_catalog_supports_auto_parts(product)
-        if not getattr(tenant, 'supports_auto_parts_enrichment', True) and not product_category_supports:
+        category = product.catalog_category
+        if (
+            category is not None
+            and category.root_domain is not None
+            and not category.root_domain.supports_auto_parts_enrichment
+        ):
+            raise ProductIsNotAutoPart(
+                'Для товара выбрана неавтомобильная категория, поэтому автопарсер не запускается.'
+            )
+        if not tenant_supports and not product_category_supports:
             raise AutoPartsEnrichmentDisabled(
                 'Автозапчастное обогащение доступно только для каталога автозапчастей.'
             )
         if (
-            (
-                getattr(tenant, 'requires_product_auto_parts_check', False)
-                or product_category_supports
-            )
+            (requires_product_check or product_category_supports)
             and not cls.is_product_auto_part_candidate(product)
         ):
             raise ProductIsNotAutoPart(
@@ -1287,14 +1330,11 @@ class ProductEnrichmentService:
 
     @classmethod
     def should_enrich_before_ai(cls, tenant, product: Product) -> bool:
-        if not getattr(tenant, 'supports_auto_parts_enrichment', True):
-            return False
         if not product.article:
             return False
-        if (
-            getattr(tenant, 'requires_product_auto_parts_check', False)
-            and not cls.is_product_auto_part_candidate(product)
-        ):
+        try:
+            cls.ensure_product_auto_parts_eligible(tenant, product)
+        except (AutoPartsEnrichmentDisabled, ProductIsNotAutoPart):
             return False
         return not cls.has_trusted_fitments(product)
 
@@ -1499,7 +1539,10 @@ class ProductEnrichmentService:
             power_hp=parsed_fitment.power_hp,
             raw_text=parsed_fitment.raw_text,
             confidence=parsed_fitment.confidence,
-            needs_review=parsed_fitment.needs_review,
+            needs_review=(
+                parsed_fitment.needs_review
+                or source_id in FITMENT_SOURCES_REQUIRING_REVIEW
+            ),
             last_seen_at=now(),
         )
         existing = product.fitments.all()
@@ -2036,16 +2079,26 @@ class ProductBulkActionService:
         ]:
             ProductEnrichmentService.ensure_auto_parts_enabled(tenant)
         source_config = get_part_source_config(source_id)
-        products = list(Product.objects.filter(tenant=tenant, pk__in=product_ids).order_by('pk'))
+        products = list(Product.objects.filter(
+            tenant=tenant,
+            pk__in=product_ids,
+        ).select_related('catalog_category__root_domain').order_by('pk'))
         if action in [
             ProductBulkActionJob.Action.ENRICH_SELECTED,
             ProductBulkActionJob.Action.ENRICH_MISSING_DATA,
             ProductBulkActionJob.Action.ENRICH_THEN_GENERATE,
-        ] and getattr(tenant, 'requires_product_auto_parts_check', False):
-            products = [
-                product for product in products
-                if ProductEnrichmentService.is_product_auto_part_candidate(product)
-            ]
+        ]:
+            eligible_products = []
+            for product in products:
+                try:
+                    ProductEnrichmentService.ensure_product_auto_parts_eligible(
+                        tenant,
+                        product,
+                    )
+                except (AutoPartsEnrichmentDisabled, ProductIsNotAutoPart):
+                    continue
+                eligible_products.append(product)
+            products = eligible_products
         valid_ids = [product.pk for product in products]
         skipped_count = max(len(set(product_ids)) - len(valid_ids), 0)
         defaults = {
@@ -2502,7 +2555,10 @@ class ProductKnowledgeGraphService:
         source_url: str = '',
     ) -> GlobalPartFitment:
         vehicle_make, vehicle_model, vehicle_generation = VehicleKnowledgeService.resolve_fitment(fitment)
-        incoming_needs_review = fitment.needs_review
+        incoming_needs_review = bool(
+            fitment.needs_review
+            or source_id in FITMENT_SOURCES_REQUIRING_REVIEW
+        )
         global_fitment, created = GlobalPartFitment.objects.get_or_create(
             part=part,
             source_id=source_id[:50],
@@ -2752,7 +2808,7 @@ class ProductKnowledgeGraphService:
         for fitment in fitments:
             if not should_auto_apply_fitment(fitment):
                 continue
-            _, was_created = VehicleFitment.objects.get_or_create(
+            local_fitment, was_created = VehicleFitment.objects.get_or_create(
                 tenant=product.tenant,
                 product=product,
                 source_id=fitment.source_id or 'knowledge_graph',
@@ -2770,9 +2826,24 @@ class ProductKnowledgeGraphService:
                     'confidence': fitment.confidence,
                     'needs_review': False,
                     'last_seen_at': now(),
+                    'review_status': ReviewStatus.APPROVED,
+                    'reviewed_at': now(),
                 },
             )
-            if was_created:
+            was_applied = was_created
+            if (
+                not was_created
+                and fitment.source_id == 'human_review'
+                and local_fitment.review_status == ReviewStatus.PENDING
+            ):
+                local_fitment.review_status = ReviewStatus.APPROVED
+                local_fitment.needs_review = False
+                local_fitment.reviewed_at = now()
+                local_fitment.save(update_fields=[
+                    'review_status', 'needs_review', 'reviewed_at', 'updated_at',
+                ])
+                was_applied = True
+            if was_applied:
                 created += 1
 
         if created:
