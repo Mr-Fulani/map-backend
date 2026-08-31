@@ -33,6 +33,7 @@ import {
 } from '@/components/products/catalog-category-picker';
 import { WebResearchSettingsCard } from '@/components/settings/web-research-settings';
 import { OzonAccountSettings } from '@/components/marketplaces/OzonAccountSettings';
+import { OzonPolicySettings } from '@/components/marketplaces/OzonPolicySettings';
 import type {
   AutoloadOnboarding,
   AvitoAccountHealth,
@@ -51,6 +52,8 @@ import {
   AVITO_PRICING_LABEL,
   canEditMapCatalogStructure,
   MAP_CATALOG_LABEL,
+  OZON_CATEGORIES_LABEL,
+  OZON_PRICING_LABEL,
 } from '@/lib/marketplace-category-boundaries';
 
 interface ApiKey {
@@ -160,7 +163,8 @@ interface AISettings {
 
 const SETTINGS_TABS = [
   'profile', 'organization', 'api-keys', 'marketplaces', 'datasources',
-  'catalog-categories', 'pricing', 'web-research', 'ai', 'notifications',
+  'catalog-categories', 'ozon-categories', 'pricing', 'ozon-pricing',
+  'web-research', 'ai', 'notifications',
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
 
@@ -171,7 +175,9 @@ const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
   marketplaces: 'Маркетплейсы',
   datasources: 'Источники данных',
   'catalog-categories': MAP_CATALOG_LABEL,
+  'ozon-categories': OZON_CATEGORIES_LABEL,
   pricing: AVITO_PRICING_LABEL,
+  'ozon-pricing': OZON_PRICING_LABEL,
   'web-research': 'Интернет-исследование',
   ai: 'AI-модели',
   notifications: 'Уведомления',
@@ -2968,6 +2974,16 @@ export default function SettingsPage() {
 
         </TabsContent>
 
+        <TabsContent value="ozon-categories" className="mt-4 space-y-4">
+          <OzonPolicySettings
+            accounts={ozonAccounts}
+            loading={loadingAccounts}
+            canManage={canManageMarketplaceAccounts}
+            connectionEnabled={isOzonConnectionEnabled}
+            mode="categories"
+          />
+        </TabsContent>
+
         {/* Наценки Avito */}
         <TabsContent value="pricing" className="mt-4 space-y-4">
           <Card>
@@ -2980,8 +2996,8 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground">
-                Ozon эти проценты сейчас не использует: публикация и цены Ozon ещё выключены.
-                Для Ozon появятся отдельные правила по аккаунту после этапа привязки категорий.
+                Эти проценты относятся только к Avito. Для Ozon используется отдельная
+                вкладка «Наценки Ozon» и отдельные правила каждого кабинета.
               </div>
               <MarginEditor
                 categories={catalogCategories.filter((category) => category.is_active)}
@@ -2989,6 +3005,16 @@ export default function SettingsPage() {
               />
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="ozon-pricing" className="mt-4 space-y-4">
+          <OzonPolicySettings
+            accounts={ozonAccounts}
+            loading={loadingAccounts}
+            canManage={canManageMarketplaceAccounts}
+            connectionEnabled={isOzonConnectionEnabled}
+            mode="margins"
+          />
         </TabsContent>
 
         <TabsContent value="web-research" className="mt-4 space-y-4">

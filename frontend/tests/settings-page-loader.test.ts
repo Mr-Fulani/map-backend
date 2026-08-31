@@ -12,6 +12,8 @@ test('settings only load data required by the visible tab', () => {
   assert.deepEqual(settingsLoadGroups('organization'), []);
   assert.deepEqual(settingsLoadGroups('web-research'), []);
   assert.deepEqual(settingsLoadGroups('marketplaces'), ['marketplaces']);
+  assert.deepEqual(settingsLoadGroups('ozon-categories'), ['marketplaces']);
+  assert.deepEqual(settingsLoadGroups('ozon-pricing'), ['marketplaces']);
   assert.deepEqual(
     settingsLoadGroups('catalog-categories'),
     ['catalog-domains', 'catalog'],
