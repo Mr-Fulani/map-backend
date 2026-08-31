@@ -744,6 +744,11 @@ class OzonOfferDraft(TimestampedModel):
         blank=True,
         verbose_name='Подготовленные характеристики Ozon',
     )
+    autofill = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name='Безопасное автозаполнение Ozon',
+    )
 
     class Meta:
         verbose_name = 'Черновик товара Ozon'

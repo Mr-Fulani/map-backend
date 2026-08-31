@@ -3,6 +3,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from django.db import transaction
+from django.utils import timezone
 
 from apps.marketplaces.models import (
     MarketplaceAccount,
@@ -92,6 +93,33 @@ def _attribute_presentation(
 
 def _issue(code: str, field: str, label: str, message: str) -> dict[str, str]:
     return {'code': code, 'field': field, 'label': label, 'message': message}
+
+
+def _autofill_presentation(draft: OzonOfferDraft | None) -> dict[str, Any]:
+    raw: Mapping[str, Any] = (
+        draft.autofill
+        if draft is not None and isinstance(draft.autofill, Mapping)
+        else {}
+    )
+    raw_fields = raw.get('fields')
+    fields = {
+        str(key): dict(value.items())
+        for key, value in raw_fields.items()
+        if isinstance(value, Mapping)
+    } if isinstance(raw_fields, Mapping) else {}
+    raw_recommendations = raw.get('recommendations')
+    recommendations = raw_recommendations if isinstance(raw_recommendations, list) else []
+    return {
+        'status': str(raw.get('status') or 'not_started'),
+        'updated_at': raw.get('updated_at'),
+        'moderated_at': raw.get('moderated_at'),
+        'applied_count': int(raw.get('applied_count') or 0),
+        'preserved_count': int(raw.get('preserved_count') or 0),
+        'fields': fields,
+        'recommendations': [
+            dict(item.items()) for item in recommendations if isinstance(item, Mapping)
+        ],
+    }
 
 
 def _offer_pricing(
@@ -189,7 +217,7 @@ def _preflight(
                 'category',
                 'Категория Ozon',
                 'Эта категория выключена для выбранного кабинета. '
-                'Включите её в «Настройки → Маркетплейсы → Ozon» '
+                'Включите её во вкладке «Настройки → Категории Ozon» '
                 'или выберите другой тип товара.',
             ))
 
@@ -301,6 +329,7 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
             'updated_at': schema.updated_at,
         },
         'pricing': pricing,
+        'autofill': _autofill_presentation(draft),
         'preflight': _preflight(product, account, draft, schema, pricing),
     }
 
@@ -503,6 +532,7 @@ def update_offer_draft(
         if changed:
             draft.attributes = []
             draft.attribute_schema_revision = ''
+            draft.autofill = {}
 
     if attributes_supplied:
         schema = _latest_schema(
@@ -517,5 +547,50 @@ def update_offer_draft(
             )
         draft.attributes = _normalize_attributes(attributes, account, schema)
         draft.attribute_schema_revision = schema.schema_hash
+        raw_autofill: Mapping[str, Any] = (
+            draft.autofill if isinstance(draft.autofill, Mapping) else {}
+        )
+        raw_fields = raw_autofill.get('fields')
+        fields: dict[str, Any] = {
+            str(key): dict(value.items())
+            for key, value in raw_fields.items()
+            if isinstance(value, Mapping)
+        } if isinstance(raw_fields, Mapping) else {}
+        selected_identities = {
+            f"{item['complex_id']}:{item['id']}" for item in draft.attributes
+        }
+        for identity in selected_identities:
+            previous_field = fields.get(identity)
+            fields[identity] = {
+                **(
+                    dict(previous_field.items())
+                    if isinstance(previous_field, Mapping)
+                    else {}
+                ),
+                'state': 'tenant_confirmed',
+                'source': 'tenant',
+                'source_label': 'Проверено тенантом',
+                'confidence': 1.0,
+                'message': 'Значение проверено и сохранено пользователем.',
+            }
+        raw_recommendations = raw_autofill.get('recommendations')
+        recommendations = [
+            dict(item.items()) for item in (
+                raw_recommendations if isinstance(raw_recommendations, list) else []
+            )
+            if isinstance(item, Mapping)
+            and (
+                f"{int(item.get('complex_id') or 0)}:"
+                f"{int(item.get('attribute_id') or 0)}"
+            ) not in selected_identities
+        ]
+        draft.autofill = {
+            **dict(raw_autofill),
+            'status': 'needs_review' if recommendations else 'moderated',
+            'updated_at': timezone.now().isoformat(),
+            'moderated_at': timezone.now().isoformat(),
+            'fields': fields,
+            'recommendations': recommendations,
+        }
     draft.save()
     return draft

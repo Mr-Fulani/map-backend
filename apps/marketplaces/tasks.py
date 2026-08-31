@@ -6284,3 +6284,11 @@ def sync_avito_category_tree(self):
             raise self.retry(exc=exc, countdown=300 * (self.request.retries + 1))
     finally:
         lock.release()
+
+
+@shared_task(queue='part_parsing')
+def prepare_ozon_offers_after_enrichment(product_id: int):
+    """Safely refresh account-scoped Ozon drafts after common enrichment."""
+    from apps.marketplaces.ozon_autofill import autofill_active_ozon_offers
+
+    return autofill_active_ozon_offers(product_id)

@@ -1115,6 +1115,8 @@ export const productApi = {
     api.get(`/products/${id}/ozon-offer/`, { params: { account_id: accountId } }),
   updateOzonOffer: (id: number, data: Record<string, unknown>) =>
     api.patch(`/products/${id}/ozon-offer/`, data),
+  autofillOzonOffer: (id: number, accountId: number) =>
+    api.post(`/products/${id}/ozon-offer/`, { account_id: accountId }),
   brandOptions: (productId: number, q = '') =>
     api.get('/products/brand-options/', { params: { product_id: productId, q } }),
   publish: (id: number, accountIds: number[]) => (

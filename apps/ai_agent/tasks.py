@@ -32,6 +32,17 @@ def _write_sync_log(tenant, status: str, message: str) -> None:
         pass
 
 
+def _schedule_ozon_autofill(product_id: int, trigger_key: str) -> None:
+    try:
+        from apps.marketplaces.ozon_autofill import schedule_ozon_autofill
+
+        schedule_ozon_autofill(product_id, trigger_key=trigger_key)
+    except Exception:
+        # The AI result is already paid and applied. Ozon preparation is a
+        # follow-up and must not roll it back or mark generation as failed.
+        pass
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=60,
              retry_backoff=True, queue='ai_generate')
 def generate_description_task(self, product_id: int):
@@ -52,6 +63,10 @@ def generate_description_task(self, product_id: int):
     )
     if pending_operation_id is not None:
         result = apply_description_provider_operation(pending_operation_id)
+        _schedule_ozon_autofill(
+            product_id,
+            f'ai-operation:{pending_operation_id}',
+        )
         _write_sync_log(
             tenant,
             'ok',
@@ -99,6 +114,7 @@ def generate_description_task(self, product_id: int):
 
     operation_id = result.pop('_provider_operation_id')
     result = apply_description_provider_operation(operation_id)
+    _schedule_ozon_autofill(product_id, f'ai-operation:{operation_id}')
 
     # Product/Listing writes and the exact operation's applied marker commit in
     # one transaction inside apply_description_provider_operation().

@@ -3,7 +3,8 @@
 import { useEffect, useState, useRef, useCallback, type RefObject } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { productApi, imageApi } from '@/lib/api';
+import { accountApi, productApi, imageApi } from '@/lib/api';
+import { OzonOfferPreparationCard } from '@/components/products/OzonOfferPreparation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -49,6 +50,7 @@ import {
   type ProductPhysicalFieldKey,
   type ProductPhysicalProfile,
 } from '@/lib/product-physical-profile';
+import type { MarketplaceAccount } from '@/lib/marketplace-account-types';
 
 function isProductsListHref(value: string | null): value is string {
   return value === '/dashboard/products' || Boolean(value?.startsWith('/dashboard/products?'));
@@ -467,6 +469,8 @@ export default function ProductDetailPage() {
   const [showAllFitments, setShowAllFitments] = useState(false);
   const [showAllEnrichmentFacts, setShowAllEnrichmentFacts] = useState(false);
   const [pricingListingId, setPricingListingId] = useState<number | null>(null);
+  const [marketplaceAccounts, setMarketplaceAccounts] = useState<MarketplaceAccount[]>([]);
+  const [ozonPreparationRevision, setOzonPreparationRevision] = useState(0);
 
   const [images, setImages] = useState<ProductImage[]>([]);
   const [imagesLoading, setImagesLoading] = useState(true);
@@ -528,6 +532,17 @@ export default function ProductDetailPage() {
     setCategoryAssignValue(nextProduct.catalog_category?.id ? String(nextProduct.catalog_category.id) : '');
   }, [id]);
 
+  const refreshOzonPreparations = useCallback(async () => {
+    const accountIds = marketplaceAccounts
+      .filter((account) => account.marketplace === 'ozon' && account.is_active)
+      .map((account) => account.id);
+    if (accountIds.length === 0) return;
+    await Promise.allSettled(
+      accountIds.map((accountId) => productApi.autofillOzonOffer(Number(id), accountId)),
+    );
+    setOzonPreparationRevision((current) => current + 1);
+  }, [id, marketplaceAccounts]);
+
   const loadWebResearch = useCallback(async () => {
     const res = await productApi.latestWebResearch(Number(id));
     const run = (res.data.data ?? null) as WebResearchRun | null;
@@ -562,6 +577,7 @@ export default function ProductDetailPage() {
           setGeneratingDescription(false);
           setParseThenGenerate(false);
           setProduct(updated);
+          await refreshOzonPreparations();
           toast.success('Описание сгенерировано на основе доступных данных');
         }
       } catch {
@@ -571,7 +587,7 @@ export default function ProductDetailPage() {
         setParseThenGenerate(false);
       }
     }, 2000);
-  }, [id]);
+  }, [id, refreshOzonPreparations]);
 
   useEffect(() => () => {
     if (descriptionPollRef.current) clearInterval(descriptionPollRef.current);
@@ -582,6 +598,7 @@ export default function ProductDetailPage() {
     try {
       await productApi.updateBrand(Number(id), brandValue.trim());
       await loadProduct();
+      await refreshOzonPreparations();
       setEditingBrand(false);
       toast.success('Бренд сохранён — импорт из источника его не перезапишет');
     } catch {
@@ -603,6 +620,7 @@ export default function ProductDetailPage() {
       const physicalProfile = response.data.data as ProductPhysicalProfile;
       setProduct((current) => current ? { ...current, physical_profile: physicalProfile } : current);
       setPhysicalDraft(physicalDraftFromProfile(physicalProfile));
+      await refreshOzonPreparations();
       toast.success('Данные MAP сохранены');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Не удалось сохранить данные товара');
@@ -675,6 +693,15 @@ export default function ProductDetailPage() {
       })
       .catch(() => undefined);
 
+    accountApi.list()
+      .then((response) => {
+        if (!active) return;
+        setMarketplaceAccounts(
+          (response.data.data ?? response.data) as MarketplaceAccount[],
+        );
+      })
+      .catch(() => undefined);
+
     return () => { active = false; };
   }, [id]);
 
@@ -690,6 +717,7 @@ export default function ProductDetailPage() {
           setWebResearchRunId(null);
           clearInterval(interval);
           await loadProduct();
+          await refreshOzonPreparations();
           if (run.status === 'need_review') {
             toast.warning(`Интернет-агент нашёл факты: ${run.claim_count}. Проверьте их перед применением.`);
           } else if (run.status === 'no_results') {
@@ -713,7 +741,13 @@ export default function ProductDetailPage() {
       }
     }, 2000);
     return () => clearInterval(interval);
-  }, [webResearchRunId, loadProduct, product?.description_ai, waitForGeneratedDescription]);
+  }, [
+    webResearchRunId,
+    loadProduct,
+    product?.description_ai,
+    refreshOzonPreparations,
+    waitForGeneratedDescription,
+  ]);
 
   useEffect(() => {
     productApi.catalogCategories({ assignable: true })
@@ -813,6 +847,7 @@ export default function ProductDetailPage() {
         if (settledJobs.length === jobs.length) {
           setParseJobIds([]);
           setPrimaryParseJobId(null);
+          await refreshOzonPreparations();
           const job = jobs.find((item) => item.id === primaryParseJobId) ?? jobs[0];
           if (parseThenGenerate) {
             // The parser task schedules the fallback immediately before it exits;
@@ -870,6 +905,7 @@ export default function ProductDetailPage() {
     loadImages,
     loadProduct,
     loadWebResearch,
+    refreshOzonPreparations,
     waitForGeneratedDescription,
   ]);
 
@@ -1869,6 +1905,16 @@ export default function ProductDetailPage() {
             </CardContent>
           </Card>
 
+          {marketplaceAccounts.some((account) => (
+            account.marketplace === 'ozon' && account.is_active
+          )) && (
+            <OzonOfferPreparationCard
+              productId={product.id}
+              accounts={marketplaceAccounts}
+              refreshToken={ozonPreparationRevision}
+            />
+          )}
+
           {/* Фотографии */}
           <Card ref={imagesSectionRef} className="scroll-mt-24">
             <CardHeader>
@@ -2205,8 +2251,9 @@ export default function ProductDetailPage() {
               <div className="rounded-md border border-primary/20 bg-primary/5 p-3">
                 <p className="text-sm font-medium">После проверки товара</p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  Категорию, обязательные поля, кабинет и публикацию Avito или Ozon
-                  настраивайте в одном дровере раздела «Листинги».
+                  Проверьте общие данные, медиа и карточку Ozon выше. В разделе
+                  «Листинги» MAP ещё раз покажет ошибки отдельно для Avito и Ozon,
+                  а вы выберете нужный кабинет и площадку для публикации.
                 </p>
                 <Button asChild className="mt-3 w-full">
                   <Link href={`/dashboard/listings?product=${product.id}`}>
