@@ -293,6 +293,13 @@ export default function PublicationWorkspaceDrawer({
         side="right"
         className="h-[100dvh] w-[100dvw] min-w-0 max-w-[100dvw] overflow-hidden p-0 sm:max-w-[100dvw] xl:w-[min(96vw,1440px)] xl:max-w-[min(96vw,1440px)]"
       >
+        <SheetHeader className="sr-only">
+          <SheetTitle>
+            {product
+              ? `Каналы публикации · ${product.article} · ${product.name}`
+              : 'Каналы публикации'}
+          </SheetTitle>
+        </SheetHeader>
         {loading ? (
           <div className="flex h-full items-center justify-center gap-2 text-muted-foreground">
             <Loader2 className="h-5 w-5 animate-spin" /> Открываем каналы публикации…
@@ -323,10 +330,6 @@ export default function PublicationWorkspaceDrawer({
           </div>
         ) : selectedView.kind === 'ozon' && selectedAccount ? (
           <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
-            <SheetHeader className="sr-only">
-              <SheetTitle>Ozon · {product.article} · {product.name}</SheetTitle>
-            </SheetHeader>
-
             <div className="min-w-0 shrink-0 overflow-hidden border-b bg-background/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur xl:hidden">
               <p className="truncate pr-10 font-mono text-xs text-muted-foreground">{product.article}</p>
               <p className="truncate pr-10 text-sm font-medium">{product.name}</p>
@@ -379,12 +382,12 @@ export default function PublicationWorkspaceDrawer({
                 <div className="space-y-5 p-4 pb-8 sm:p-5">
                   <SheetHeader className="text-left">
                     <div className="flex min-w-0 items-start gap-3">
-                      <SheetTitle className="min-w-0 flex-1 break-words pr-1 leading-tight [overflow-wrap:anywhere]">
+                      <h2 className="min-w-0 flex-1 break-words pr-1 text-lg font-semibold leading-tight text-foreground [overflow-wrap:anywhere]">
                         <span className="mb-1 block truncate font-mono text-xs text-muted-foreground">
                           {product.article}
                         </span>
                         {product.name}
-                      </SheetTitle>
+                      </h2>
                       <Badge variant={selectedOzonPreparation?.preflight.ready ? 'default' : 'outline'}>
                         {selectedOzonPreparation?.preflight.ready ? 'Готово' : 'Черновик'}
                       </Badge>
@@ -464,7 +467,7 @@ export default function PublicationWorkspaceDrawer({
           <div className="h-full overflow-y-auto bg-muted/15 p-4 pb-10 sm:p-6">
             <SheetHeader className="pr-10 text-left">
               <div className="flex flex-wrap items-center gap-2">
-                <SheetTitle>Листинг товара</SheetTitle>
+                <h2 className="text-lg font-semibold text-foreground">Листинг товара</h2>
                 <Badge variant="outline">{product.article}</Badge>
               </div>
               <p className="text-sm text-muted-foreground">{product.name}</p>
