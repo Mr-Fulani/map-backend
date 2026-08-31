@@ -38,6 +38,8 @@ PHYSICAL_LABELS = {
 
 MAX_DICTIONARY_SNAPSHOTS_PER_ATTRIBUTE = 20
 PRICE_QUANTUM = Decimal('0.01')
+BOOLEAN_ATTRIBUTE_TYPES = frozenset({'boolean', 'bool'})
+BOOLEAN_ATTRIBUTE_NAMES = frozenset({'нужен код маркировки'})
 
 
 def _latest_schema(
@@ -93,6 +95,56 @@ def _attribute_presentation(
 
 def _issue(code: str, field: str, label: str, message: str) -> dict[str, str]:
     return {'code': code, 'field': field, 'label': label, 'message': message}
+
+
+def _is_boolean_attribute(definition: Mapping[str, Any]) -> bool:
+    if int(definition.get('dictionary_id') or 0) > 0:
+        return False
+    attribute_type = str(definition.get('type') or '').strip().casefold()
+    attribute_name = str(definition.get('name') or '').strip().casefold()
+    return (
+        attribute_type in BOOLEAN_ATTRIBUTE_TYPES
+        or attribute_name in BOOLEAN_ATTRIBUTE_NAMES
+    )
+
+
+def _stored_attribute_value_error(
+    definition: Mapping[str, Any],
+    values: Any,
+) -> str | None:
+    if not isinstance(values, list) or not values:
+        return None
+    if int(definition.get('dictionary_id') or 0) > 0:
+        for item in values:
+            if not isinstance(item, Mapping):
+                return 'Выберите значение из справочника Ozon.'
+            value_id = item.get('dictionary_value_id')
+            value = item.get('value')
+            if (
+                isinstance(value_id, bool)
+                or not isinstance(value_id, int)
+                or value_id <= 0
+                or not isinstance(value, str)
+                or not value.strip()
+            ):
+                return 'Выберите значение из справочника Ozon.'
+        return None
+    if _is_boolean_attribute(definition):
+        if len(values) != 1 or not isinstance(values[0], Mapping):
+            return 'Выберите только «Да» или «Нет».'
+        value = values[0].get('value')
+        value_id = values[0].get('dictionary_value_id', 0)
+        if value not in {'true', 'false'} or value_id not in (0, None, ''):
+            return 'Выберите только «Да» или «Нет».'
+        return None
+    for item in values:
+        if not isinstance(item, Mapping):
+            return 'Проверьте значение характеристики Ozon.'
+        value = item.get('value')
+        value_id = item.get('dictionary_value_id', 0)
+        if not isinstance(value, str) or not value.strip() or value_id not in (0, None, ''):
+            return 'Проверьте значение характеристики Ozon.'
+    return None
 
 
 def _autofill_presentation(draft: OzonOfferDraft | None) -> dict[str, Any]:
@@ -242,12 +294,25 @@ def _preflight(
                     attribute['attribute_complex_id'],
                     attribute['id'],
                 )
-                if attribute['is_required'] and not selected.get(identity):
+                selected_values = selected.get(identity)
+                if attribute['is_required'] and not selected_values:
                     errors.append(_issue(
                         'required_attribute_missing',
                         f'attribute:{identity[0]}:{identity[1]}',
                         attribute['name'],
                         'Заполните обязательную характеристику Ozon.',
+                    ))
+                    continue
+                value_error = _stored_attribute_value_error(
+                    attribute,
+                    selected_values,
+                )
+                if value_error:
+                    errors.append(_issue(
+                        'invalid_attribute_value',
+                        f'attribute:{identity[0]}:{identity[1]}',
+                        attribute['name'],
+                        value_error,
                     ))
 
     physical = physical_profile_presentation(product)
@@ -445,6 +510,11 @@ def _normalize_attributes(
                 'invalid_attribute_values',
                 'Проверьте значение характеристики Ozon.',
             )
+        if _is_boolean_attribute(definition) and len(raw_values) > 1:
+            raise OzonOfferError(
+                'invalid_boolean_value',
+                f'{definition["name"]}: выберите только один вариант — «Да» или «Нет».',
+            )
         maximum = min(definition['max_value_count'] or 10, 10)
         if len(raw_values) > maximum:
             raise OzonOfferError(
@@ -466,12 +536,22 @@ def _normalize_attributes(
                         'invalid_attribute_values',
                         'Проверьте значение характеристики Ozon.',
                     )
-                value = str(raw_value.get('value') or '').strip()[:1000]
+                raw_value_text = raw_value.get('value')
+                value = (
+                    raw_value_text.strip()[:1000]
+                    if isinstance(raw_value_text, str)
+                    else ''
+                )
                 dictionary_value_id = raw_value.get('dictionary_value_id', 0)
                 if dictionary_value_id not in (0, None, '') or not value:
                     raise OzonOfferError(
                         'invalid_attribute_value',
                         'Введите значение характеристики Ozon.',
+                    )
+                if _is_boolean_attribute(definition) and value not in {'true', 'false'}:
+                    raise OzonOfferError(
+                        'invalid_boolean_value',
+                        f'{definition["name"]}: выберите только «Да» или «Нет».',
                     )
                 values.append({'value': value, 'dictionary_value_id': 0})
         if values:

@@ -99,6 +99,52 @@ export interface OzonDictionaryValue {
   picture: string;
 }
 
+const OZON_BOOLEAN_VALUES = new Set(['true', 'false']);
+const OZON_BOOLEAN_ATTRIBUTE_NAMES = new Set([
+  'нужен код маркировки',
+]);
+
+export function isOzonBooleanAttribute(
+  attribute: Pick<OzonOfferAttribute, 'dictionary_id' | 'name' | 'type'>,
+) {
+  if (attribute.dictionary_id > 0) return false;
+  const type = attribute.type.trim().toLocaleLowerCase('ru-RU');
+  const name = attribute.name.trim().toLocaleLowerCase('ru-RU');
+  return type === 'boolean' || type === 'bool' || OZON_BOOLEAN_ATTRIBUTE_NAMES.has(name);
+}
+
+export function ozonAttributeValidationMessage(attribute: OzonOfferAttribute): string | null {
+  if (attribute.selected_values.length === 0) return null;
+  if (attribute.dictionary_id > 0) {
+    return attribute.selected_values.every((value) => (
+      Number.isSafeInteger(value.dictionary_value_id)
+      && value.dictionary_value_id > 0
+      && value.value.trim().length > 0
+    ))
+      ? null
+      : 'Выберите значение из справочника Ozon.';
+  }
+  if (isOzonBooleanAttribute(attribute)) {
+    return attribute.selected_values.length === 1
+      && OZON_BOOLEAN_VALUES.has(attribute.selected_values[0].value)
+      && attribute.selected_values[0].dictionary_value_id === 0
+      ? null
+      : 'Выберите только «Да» или «Нет».';
+  }
+  return attribute.selected_values.every((value) => (
+    value.dictionary_value_id === 0 && value.value.trim().length > 0
+  ))
+    ? null
+    : 'Проверьте значение характеристики Ozon.';
+}
+
+export function ozonAttributesValidationErrors(attributes: OzonOfferAttribute[]) {
+  return attributes.flatMap((attribute) => {
+    const message = ozonAttributeValidationMessage(attribute);
+    return message ? [{ attribute, message }] : [];
+  });
+}
+
 export function ozonAttributesPayload(attributes: OzonOfferAttribute[]) {
   return attributes
     .filter((attribute) => attribute.selected_values.length > 0)

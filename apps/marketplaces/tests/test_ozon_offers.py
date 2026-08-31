@@ -175,6 +175,50 @@ def _autofill_attribute_catalog(account):
     )
 
 
+def _strict_input_attribute_catalog(account):
+    attributes = normalize_category_attributes([{
+        'id': 2,
+        'attribute_complex_id': 0,
+        'name': 'ТН ВЭД коды ЕАЭС',
+        'description': 'Выберите значение из справочника',
+        'type': 'String',
+        'is_collection': False,
+        'is_required': True,
+        'is_aspect': False,
+        'max_value_count': 1,
+        'group_name': 'Основные',
+        'group_id': 1,
+        'dictionary_id': 42,
+        'category_dependent': True,
+        'complex_is_collection': False,
+    }, {
+        'id': 3,
+        'attribute_complex_id': 0,
+        'name': 'Нужен код маркировки',
+        'description': 'Выберите Да или Нет',
+        'type': 'Boolean',
+        'is_collection': False,
+        'is_required': True,
+        'is_aspect': False,
+        'max_value_count': 1,
+        'group_name': 'Основные',
+        'group_id': 1,
+        'dictionary_id': 0,
+        'category_dependent': True,
+        'complex_is_collection': False,
+    }])
+    return OzonCategoryAttributeSnapshot.objects.create(
+        account=account,
+        description_category_id=101,
+        type_id=202,
+        language='DEFAULT',
+        schema_hash='f' * 64,
+        attributes=attributes,
+        attribute_count=len(attributes),
+        required_attribute_count=len(attributes),
+    )
+
+
 def _autofill_dictionary_value(account, schema, attribute_id, query, value_id):
     return OzonAttributeValueSnapshot.objects.create(
         account=account,
@@ -654,6 +698,128 @@ def test_offer_rejects_arbitrary_or_stale_dictionary_value_ids():
     draft = OzonOfferDraft.objects.get()
     assert draft.attributes == []
     assert draft.attribute_schema_revision == ''
+
+
+@pytest.mark.django_db
+def test_offer_accepts_only_boolean_choices_and_canonical_dictionary_values():
+    tenant, key = _tenant('ozon-strict-values')
+    account = _account(tenant, 'client-strict-values')
+    product = _product(tenant)
+    _catalog(account)
+    schema = _strict_input_attribute_catalog(account)
+    _autofill_dictionary_value(account, schema, 2, '4009 32 000 0', 932)
+    client = Client()
+    _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'description_category_id': 101,
+        'type_id': 202,
+    })
+
+    invalid_boolean = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'attributes': [{
+            'id': 2,
+            'complex_id': 0,
+            'values': [{'value': 'ignored', 'dictionary_value_id': 932}],
+        }, {
+            'id': 3,
+            'complex_id': 0,
+            'values': [{'value': '4009 32 000 0', 'dictionary_value_id': 0}],
+        }],
+    })
+    invalid_dictionary = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'attributes': [{
+            'id': 2,
+            'complex_id': 0,
+            'values': [{'value': 'false', 'dictionary_value_id': 0}],
+        }],
+    })
+    multiple_boolean_values = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'attributes': [{
+            'id': 3,
+            'complex_id': 0,
+            'values': [
+                {'value': 'false', 'dictionary_value_id': 0},
+                {'value': 'true', 'dictionary_value_id': 0},
+            ],
+        }],
+    })
+    valid = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'attributes': [{
+            'id': 2,
+            'complex_id': 0,
+            'values': [{'value': 'ignored', 'dictionary_value_id': 932}],
+        }, {
+            'id': 3,
+            'complex_id': 0,
+            'values': [{'value': 'false', 'dictionary_value_id': 0}],
+        }],
+    })
+
+    assert (
+        invalid_boolean.status_code
+        == invalid_dictionary.status_code
+        == multiple_boolean_values.status_code
+        == 400
+    )
+    assert invalid_boolean.json()['code'] == 'invalid_boolean_value'
+    assert invalid_dictionary.json()['code'] == 'invalid_dictionary_value'
+    assert multiple_boolean_values.json()['code'] == 'invalid_boolean_value'
+    assert valid.status_code == 200
+    assert OzonOfferDraft.objects.get().attributes == [{
+        'id': 2,
+        'complex_id': 0,
+        'values': [{
+            'value': '4009 32 000 0',
+            'dictionary_value_id': 932,
+        }],
+    }, {
+        'id': 3,
+        'complex_id': 0,
+        'values': [{'value': 'false', 'dictionary_value_id': 0}],
+    }]
+
+
+@pytest.mark.django_db
+def test_preflight_blocks_legacy_invalid_ozon_attribute_values():
+    tenant, key = _tenant('ozon-legacy-invalid-values')
+    account = _account(tenant, 'client-legacy-invalid-values')
+    product = _product(tenant)
+    _catalog(account)
+    schema = _strict_input_attribute_catalog(account)
+    client = Client()
+    _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'description_category_id': 101,
+        'type_id': 202,
+    })
+    draft = OzonOfferDraft.objects.get()
+    draft.attributes = [{
+        'id': 2,
+        'complex_id': 0,
+        'values': [{'value': 'false', 'dictionary_value_id': 0}],
+    }, {
+        'id': 3,
+        'complex_id': 0,
+        'values': [{'value': '4009 32 000 0', 'dictionary_value_id': 0}],
+    }]
+    draft.attribute_schema_revision = schema.schema_hash
+    draft.save(update_fields=['attributes', 'attribute_schema_revision', 'updated_at'])
+
+    response = _request(client, key, 'get', product, account_id=account.pk)
+
+    invalid = [
+        issue for issue in response.json()['data']['preflight']['errors']
+        if issue['code'] == 'invalid_attribute_value'
+    ]
+    assert response.status_code == 200
+    assert {issue['label'] for issue in invalid} == {
+        'ТН ВЭД коды ЕАЭС',
+        'Нужен код маркировки',
+    }
 
 
 @pytest.mark.django_db

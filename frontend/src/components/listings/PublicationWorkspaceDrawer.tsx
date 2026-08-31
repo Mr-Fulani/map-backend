@@ -1,18 +1,25 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   FileText,
   Images,
   Loader2,
   PackageSearch,
+  Pencil,
+  RefreshCw,
+  Save,
+  Send,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { MarketplaceChannelSwitcher } from '@/components/listings/MarketplaceChannelSwitcher';
-import { OzonOfferPreparationCard } from '@/components/products/OzonOfferPreparation';
+import {
+  OzonOfferPreparationCard,
+  type OzonOfferPreparationCardHandle,
+} from '@/components/products/OzonOfferPreparation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -173,8 +180,10 @@ export default function PublicationWorkspaceDrawer({
   const [loadError, setLoadError] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [preparingAccountId, setPreparingAccountId] = useState<number | null>(null);
+  const [ozonFooterAction, setOzonFooterAction] = useState<'save' | 'regenerate' | null>(null);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const [ozonMobilePanel, setOzonMobilePanel] = useState<'preparation' | 'product'>('preparation');
+  const ozonPreparationRef = useRef<OzonOfferPreparationCardHandle>(null);
   const open = productId !== null;
 
   useEffect(() => {
@@ -287,6 +296,33 @@ export default function PublicationWorkspaceDrawer({
     ? ozonPreparations[selectedAccount.id] ?? null
     : null;
 
+  async function saveOzonPreparation() {
+    setOzonFooterAction('save');
+    try {
+      await ozonPreparationRef.current?.saveAttributes();
+    } finally {
+      setOzonFooterAction(null);
+    }
+  }
+
+  async function regenerateProductForOzon() {
+    if (!product) return;
+    setOzonFooterAction('regenerate');
+    try {
+      await productApi.regenerate(product.id);
+      toast.success(
+        'Обогащение и новая генерация товара запущены. Ручные значения Ozon останутся без изменений.',
+      );
+    } catch (error: unknown) {
+      const message = (
+        error as { response?: { data?: { message?: string } } }
+      ).response?.data?.message;
+      toast.error(message ?? 'Не удалось запустить повторное обогащение товара.');
+    } finally {
+      setOzonFooterAction(null);
+    }
+  }
+
   return (
     <Sheet open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <SheetContent
@@ -368,6 +404,7 @@ export default function PublicationWorkspaceDrawer({
                     Категории, характеристики и цена Ozon сохраняются отдельно от Avito.
                   </div>
                   <OzonOfferPreparationCard
+                    ref={ozonPreparationRef}
                     key={`${product.id}:${selectedAccount.id}`}
                     productId={product.id}
                     accounts={[selectedAccount]}
@@ -458,6 +495,68 @@ export default function PublicationWorkspaceDrawer({
                   <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
                     Это общие проверенные данные товара. Исправления выполняются в разделе
                     «Товары», а категория, характеристики и цена Ozon — слева в этой карточке.
+                  </div>
+
+                  <div className="space-y-2 border-t pt-4">
+                    <p className="text-sm font-medium">Действия с карточкой Ozon</p>
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      Кнопки расположены так же, как в Avito, но используют отдельные данные
+                      и операции Ozon. Действия Avito не вызываются.
+                    </p>
+                    <Button
+                      type="button"
+                      className="w-full"
+                      onClick={saveOzonPreparation}
+                      disabled={
+                        ozonFooterAction !== null
+                        || !selectedOzonPreparation?.draft
+                        || !selectedOzonPreparation.schema
+                      }
+                    >
+                      {ozonFooterAction === 'save'
+                        ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        : <Save className="mr-2 h-4 w-4" />}
+                      {ozonFooterAction === 'save' ? 'Проверяем и сохраняем...' : 'Проверить и сохранить'}
+                    </Button>
+                    <Button
+                      type="button"
+                      className="w-full"
+                      disabled
+                    >
+                      <Send className="mr-2 h-4 w-4" />
+                      Отправить в Ozon
+                    </Button>
+                    <p className={`rounded-md border p-2.5 text-xs ${
+                      selectedOzonPreparation?.preflight.ready
+                        ? 'border-blue-500/30 bg-blue-500/5 text-blue-950 dark:text-blue-100'
+                        : 'border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100'
+                    }`}
+                    >
+                      {selectedOzonPreparation?.preflight.ready
+                        ? 'Карточка готова. Отправка станет доступна на этапе подключения безопасной публикации через Ozon Seller API.'
+                        : `Сначала исправьте обязательные поля: ${selectedOzonPreparation?.preflight.errors.length ?? 0}. Затем MAP разрешит отправку, когда будет подключена публикация Ozon.`}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="w-full"
+                      onClick={regenerateProductForOzon}
+                      disabled={ozonFooterAction !== null}
+                    >
+                      <RefreshCw className={`mr-2 h-4 w-4 ${
+                        ozonFooterAction === 'regenerate' ? 'animate-spin' : ''
+                      }`}
+                      />
+                      {ozonFooterAction === 'regenerate'
+                        ? 'Запускаем обогащение...'
+                        : 'Перегенерировать AI'}
+                    </Button>
+                    <Button asChild variant="outline" className="w-full">
+                      <Link href={`/dashboard/products/${product.id}?returnTo=%2Fdashboard%2Flistings`}>
+                        <Pencil className="mr-2 h-4 w-4" />
+                        Редактировать данные товара
+                      </Link>
+                    </Button>
                   </div>
                 </div>
               </section>

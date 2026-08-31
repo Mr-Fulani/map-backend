@@ -1,6 +1,14 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   AlertCircle,
   ArrowLeft,
@@ -27,7 +35,10 @@ import type {
 } from '@/lib/marketplace-account-types';
 import {
   ozonAttributesPayload,
+  ozonAttributesValidationErrors,
   ozonAttributeIdentity,
+  isOzonBooleanAttribute,
+  ozonAttributeValidationMessage,
   replaceOzonAttributeValue,
   type OzonDictionaryValue,
   type OzonOfferAttribute,
@@ -63,21 +74,30 @@ function percent(value: string): string {
   })}%`;
 }
 
-export function OzonOfferPreparationCard({
-  productId,
-  accounts,
-  onPreparationChange,
-  showAccountSelector = true,
-  embedded = false,
-  refreshToken = 0,
-}: {
+export interface OzonOfferPreparationCardHandle {
+  saveAttributes: () => Promise<boolean>;
+}
+
+interface OzonOfferPreparationCardProps {
   productId: number;
   accounts: AccountOption[];
   onPreparationChange?: (preparation: OzonOfferPreparation | null) => void;
   showAccountSelector?: boolean;
   embedded?: boolean;
   refreshToken?: string | number;
-}) {
+}
+
+export const OzonOfferPreparationCard = forwardRef<
+OzonOfferPreparationCardHandle,
+OzonOfferPreparationCardProps
+>(function OzonOfferPreparationCard({
+  productId,
+  accounts,
+  onPreparationChange,
+  showAccountSelector = true,
+  embedded = false,
+  refreshToken = 0,
+}, ref) {
   const ozonAccounts = useMemo(
     () => accounts.filter((account) => account.marketplace === 'ozon' && account.is_active),
     [accounts],
@@ -210,6 +230,28 @@ export function OzonOfferPreparationCard({
       setAction('');
     }
   }
+
+  async function saveAttributes(): Promise<boolean> {
+    const invalid = ozonAttributesValidationErrors(attributes);
+    if (invalid.length > 0) {
+      toast.error(`${invalid[0].attribute.name}: ${invalid[0].message}`);
+      return false;
+    }
+    const next = await updateOffer({
+      attributes: ozonAttributesPayload(attributes),
+    }, 'attributes');
+    if (!next) return false;
+    if (next.preflight.errors.length > 0) {
+      toast.warning(
+        `Характеристики сохранены, но карточка пока не готова. Осталось исправить: ${next.preflight.errors.length}.`,
+      );
+    } else {
+      toast.success('Характеристики сохранены и прошли проверку MAP.');
+    }
+    return true;
+  }
+
+  useImperativeHandle(ref, () => ({ saveAttributes }));
 
   async function autofillOffer(successMessage = 'Данные Ozon подготовлены для проверки.') {
     if (!accountId) return null;
@@ -723,14 +765,20 @@ export function OzonOfferPreparationCard({
                     item.attribute_id === attribute.id
                     && (item.complex_id ?? 0) === attribute.complex_id
                   ));
-                  const needsRequiredValue = attribute.is_required && !selected;
+                  const validationMessage = ozonAttributeValidationMessage(attribute);
+                  const hasInvalidValue = Boolean(validationMessage);
+                  const hasValidValue = Boolean(selected) && !hasInvalidValue;
+                  const needsRequiredValue = attribute.is_required && !hasValidValue;
+                  const booleanAttribute = isOzonBooleanAttribute(attribute);
                   return (
                     <div
                       key={key}
                       className={`space-y-2 rounded-md border border-l-4 p-3 ${
-                        needsRequiredValue
+                        hasInvalidValue
+                          ? 'border-red-500/50 bg-red-500/5'
+                          : needsRequiredValue
                           ? 'border-amber-500/50 bg-amber-500/5'
-                          : selected
+                          : hasValidValue
                             ? 'border-emerald-500/35 bg-emerald-500/5'
                             : 'border-dashed bg-muted/20'
                       }`}
@@ -738,7 +786,15 @@ export function OzonOfferPreparationCard({
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-medium">{attribute.name}</p>
                         {attribute.is_required && <Badge variant="outline">Обязательно</Badge>}
-                        {selected ? (
+                        {hasInvalidValue ? (
+                          <Badge
+                            variant="outline"
+                            className="border-red-500/50 bg-red-500/10 text-red-900 dark:text-red-100"
+                          >
+                            <AlertCircle className="mr-1 h-3 w-3" />
+                            Исправить значение
+                          </Badge>
+                        ) : hasValidValue ? (
                           <Badge
                             variant="outline"
                             className="border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
@@ -784,7 +840,44 @@ export function OzonOfferPreparationCard({
                           </span>
                         </div>
                       )}
-                      {attribute.dictionary_id > 0 ? (
+                      {validationMessage && (
+                        <div className="flex items-start gap-2 rounded border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-950 dark:text-red-100">
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span><strong>Сохранённое значение некорректно:</strong> {validationMessage}</span>
+                        </div>
+                      )}
+                      {booleanAttribute ? (
+                        <div className="space-y-2">
+                          <div
+                            role="group"
+                            aria-label={attribute.name}
+                            className="grid max-w-sm grid-cols-2 gap-2"
+                          >
+                            {([
+                              ['false', 'Нет'],
+                              ['true', 'Да'],
+                            ] as const).map(([value, label]) => (
+                              <Button
+                                key={value}
+                                type="button"
+                                variant={selected?.value === value ? 'default' : 'outline'}
+                                className="w-full"
+                                onClick={() => setAttributes((current) => replaceOzonAttributeValue(
+                                  current,
+                                  attribute.id,
+                                  attribute.complex_id,
+                                  { value, dictionary_value_id: 0 },
+                                ))}
+                              >
+                                {label}
+                              </Button>
+                            ))}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            Выберите один вариант. MAP сам преобразует его в нужный формат Ozon.
+                          </p>
+                        </div>
+                      ) : attribute.dictionary_id > 0 ? (
                         <>
                           {selected && (
                             <div className="flex items-center justify-between rounded border border-emerald-500/30 bg-emerald-500/10 p-2 text-sm">
@@ -876,9 +969,7 @@ export function OzonOfferPreparationCard({
                   <div className="flex flex-wrap gap-2">
                     <Button
                       type="button"
-                      onClick={() => updateOffer({
-                        attributes: ozonAttributesPayload(attributes),
-                      }, 'attributes')}
+                      onClick={saveAttributes}
                       disabled={action === 'attributes'}
                     >
                       {action === 'attributes' && (
@@ -923,4 +1014,4 @@ export function OzonOfferPreparationCard({
       </CardContent>
     </Card>
   );
-}
+});

@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  isOzonBooleanAttribute,
+  ozonAttributesValidationErrors,
   ozonAttributesPayload,
   replaceOzonAttributeValue,
   type OzonOfferAttribute,
@@ -63,5 +65,37 @@ test('sends provider IDs and omits empty attributes', () => {
     id: 100,
     complex_id: 3,
     values: [{ value: 'Сталь', dictionary_value_id: 0 }],
+  }]);
+});
+
+test('recognizes boolean Ozon attributes and rejects arbitrary text', () => {
+  const marking: OzonOfferAttribute = {
+    id: 200,
+    complex_id: 0,
+    attribute_complex_id: 0,
+    name: 'Нужен код маркировки',
+    description: 'Выберите Да или Нет',
+    type: 'String',
+    is_required: true,
+    max_value_count: 1,
+    dictionary_id: 0,
+    selected_values: [{ value: '4009320000', dictionary_value_id: 0 }],
+  };
+
+  assert.equal(isOzonBooleanAttribute(marking), true);
+  assert.deepEqual(ozonAttributesValidationErrors([marking]).map((item) => item.message), [
+    'Выберите только «Да» или «Нет».',
+  ]);
+  const corrected = replaceOzonAttributeValue(
+    [marking],
+    marking.id,
+    marking.complex_id,
+    { value: 'false', dictionary_value_id: 0 },
+  );
+  assert.deepEqual(ozonAttributesValidationErrors(corrected), []);
+  assert.deepEqual(ozonAttributesPayload(corrected), [{
+    id: 200,
+    complex_id: 0,
+    values: [{ value: 'false', dictionary_value_id: 0 }],
   }]);
 });
