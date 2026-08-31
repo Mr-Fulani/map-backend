@@ -923,6 +923,13 @@ function ListingDrawerContent({
           side="right"
           className="h-[100dvh] w-[100dvw] min-w-0 max-w-[100dvw] overflow-hidden p-0 sm:max-w-[100dvw] xl:w-[min(96vw,1440px)] xl:max-w-[min(96vw,1440px)]"
         >
+          <SheetHeader className="sr-only">
+            <SheetTitle>
+              {listing
+                ? `Листинг · ${listing.product_article} · ${listing.product_name}`
+                : 'Листинг товара'}
+            </SheetTitle>
+          </SheetHeader>
           {loading || !listing ? (
             <div className="flex items-center justify-center h-full text-muted-foreground">
               Загрузка...
@@ -931,7 +938,7 @@ function ListingDrawerContent({
             <div className="flex h-full flex-col overflow-y-auto p-5">
               <SheetHeader>
                 <div className="flex flex-wrap items-center gap-2">
-                  <SheetTitle>{listing.product_name}</SheetTitle>
+                  <h2 className="text-lg font-semibold text-foreground">{listing.product_name}</h2>
                   <Badge variant="outline">{listing.marketplace_label}</Badge>
                 </div>
                 <p className="text-sm text-muted-foreground">
@@ -995,12 +1002,12 @@ function ListingDrawerContent({
                   <div className="w-full min-w-0 max-w-full space-y-5 overflow-x-hidden p-4 pb-8 sm:p-5 sm:pb-8">
               <SheetHeader>
                 <div className="flex min-w-0 items-start gap-3">
-                  <SheetTitle className="min-w-0 flex-1 break-words pr-1 leading-tight [overflow-wrap:anywhere]">
+                  <h2 className="min-w-0 flex-1 break-words pr-1 text-lg font-semibold leading-tight text-foreground [overflow-wrap:anywhere]">
                     <span className="mb-1 block min-w-0 truncate font-mono text-xs text-muted-foreground">
                       {listing.product_article}
                     </span>
                     {listing.product_name}
-                  </SheetTitle>
+                  </h2>
                   <Badge
                     variant={listing.delivery_stage === 'delivery_failed' ? 'destructive' : (STATUS_VARIANT[listing.status] ?? 'outline')}
                     className="max-w-[42%] shrink-0 whitespace-normal text-right leading-tight"
