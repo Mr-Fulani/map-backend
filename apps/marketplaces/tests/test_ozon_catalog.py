@@ -476,6 +476,14 @@ def test_catalog_tree_level_api_is_local_account_scoped_and_read_only(catalog_se
         'type_id': 202,
         'name': 'Автозапчасть',
         'category_path': 'Автотовары',
+        'policy': {
+            'enabled_override': None,
+            'effective_enabled': True,
+            'enabled_source': None,
+            'margin_pct': None,
+            'effective_margin_pct': '0',
+            'margin_source': None,
+        },
     }]
     assert foreign.status_code == 404
     provider_read.assert_not_called()

@@ -10,6 +10,7 @@ from apps.marketplaces.views import (
 )
 from apps.marketplaces.ozon_catalog_views import (
     OzonAttributeValueSearchView,
+    OzonCategoryPolicyView,
     OzonCatalogTreeLevelView,
     OzonCatalogTypesView,
     OzonCatalogView,
@@ -43,6 +44,11 @@ urlpatterns = [
         '<int:pk>/ozon-catalog/tree-level/',
         OzonCatalogTreeLevelView.as_view(),
         name='account-ozon-catalog-tree-level',
+    ),
+    path(
+        '<int:pk>/ozon-catalog/category-policy/',
+        OzonCategoryPolicyView.as_view(),
+        name='account-ozon-category-policy',
     ),
     path(
         '<int:pk>/ozon-catalog/attribute-values/search/',

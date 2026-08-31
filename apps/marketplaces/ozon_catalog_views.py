@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.conf import settings
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
@@ -7,6 +9,12 @@ from rest_framework.response import Response
 
 from apps.marketplaces.models import MarketplaceAccount, OzonCategoryTreeSnapshot
 from apps.marketplaces.ozon_catalog import OzonCatalogError, OzonCatalogService
+from apps.marketplaces.ozon_category_policies import (
+    CategoryPolicyChanges,
+    OzonCategoryPolicyError,
+    decorate_tree_level_with_policies,
+    update_category_policy,
+)
 from apps.core.pagination import MapPagination
 from apps.tenants.api_views import ListingsAPIView as APIView
 from apps.tenants.permissions import TenantAdminWritePermission
@@ -128,6 +136,54 @@ class OzonCatalogTreeLevelQuerySerializer(serializers.Serializer):
         return parent_ids
 
 
+class OzonCategoryPolicyUpdateSerializer(serializers.Serializer):
+    description_category_id = serializers.IntegerField(min_value=1)
+    type_id = serializers.IntegerField(
+        min_value=1,
+        required=False,
+        allow_null=True,
+        default=None,
+    )
+    category_path_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1),
+        allow_empty=False,
+        max_length=settings.OZON_CATALOG_MAX_DEPTH,
+    )
+    tree_revision = serializers.CharField(min_length=64, max_length=64)
+    enabled_override = serializers.BooleanField(required=False, allow_null=True)
+    margin_pct = serializers.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        min_value=Decimal('-100'),
+        required=False,
+        allow_null=True,
+    )
+
+    def validate(self, attrs):
+        allowed = {
+            'description_category_id',
+            'type_id',
+            'category_path_ids',
+            'tree_revision',
+            'enabled_override',
+            'margin_pct',
+        }
+        unknown = set(self.initial_data) - allowed
+        if unknown:
+            raise serializers.ValidationError(
+                f'Неподдерживаемые поля: {", ".join(sorted(unknown))}',
+            )
+        if not {'enabled_override', 'margin_pct'}.intersection(self.initial_data):
+            raise serializers.ValidationError(
+                'Передайте включение категории или наценку Ozon.',
+            )
+        if attrs['category_path_ids'][-1] != attrs['description_category_id']:
+            raise serializers.ValidationError({
+                'category_path_ids': 'Путь должен завершаться выбранной категорией Ozon.',
+            })
+        return attrs
+
+
 class OzonAttributeValueSearchSerializer(serializers.Serializer):
     description_category_id = serializers.IntegerField(min_value=1)
     type_id = serializers.IntegerField(min_value=1)
@@ -206,6 +262,38 @@ CATALOG_TREE_PATH_ITEMS = inline_serializer(
     },
 )
 
+CATALOG_POLICY_SOURCE = inline_serializer(
+    name='OzonCategoryPolicySource',
+    allow_null=True,
+    fields={
+        'description_category_id': serializers.IntegerField(read_only=True),
+        'type_id': serializers.IntegerField(allow_null=True, read_only=True),
+        'name': serializers.CharField(read_only=True),
+        'category_path': serializers.CharField(read_only=True),
+    },
+)
+
+CATALOG_POLICY_STATE = inline_serializer(
+    name='OzonCategoryPolicyState',
+    fields={
+        'enabled_override': serializers.BooleanField(allow_null=True, read_only=True),
+        'effective_enabled': serializers.BooleanField(read_only=True),
+        'enabled_source': CATALOG_POLICY_SOURCE,
+        'margin_pct': serializers.DecimalField(
+            max_digits=5,
+            decimal_places=2,
+            allow_null=True,
+            read_only=True,
+        ),
+        'effective_margin_pct': serializers.DecimalField(
+            max_digits=5,
+            decimal_places=2,
+            read_only=True,
+        ),
+        'margin_source': CATALOG_POLICY_SOURCE,
+    },
+)
+
 CATALOG_TREE_OPTIONS = inline_serializer(
     name='OzonCatalogTreeOption',
     many=True,
@@ -215,6 +303,7 @@ CATALOG_TREE_OPTIONS = inline_serializer(
         'type_id': serializers.IntegerField(allow_null=True, read_only=True),
         'name': serializers.CharField(read_only=True),
         'category_path': serializers.CharField(read_only=True),
+        'policy': CATALOG_POLICY_STATE,
     },
 )
 
@@ -397,6 +486,11 @@ class OzonCatalogTreeLevelView(APIView):
                 'code': exc.code,
                 'message': str(exc),
             }, status=status.HTTP_409_CONFLICT)
+        level = decorate_tree_level_with_policies(
+            account,
+            level,
+            parent_ids=data.get('parent', ()),
+        )
         return Response({
             'status': 'ok',
             'data': {
@@ -404,6 +498,56 @@ class OzonCatalogTreeLevelView(APIView):
                 'tree_revision': snapshot.schema_hash if snapshot else None,
             },
         })
+
+
+@extend_schema(tags=['Accounts'])
+class OzonCategoryPolicyView(APIView):
+    """Update local account-scoped category settings without provider I/O."""
+
+    permission_classes = [IsAuthenticated, TenantAdminWritePermission]
+
+    @extend_schema(
+        operation_id='ozon_category_policy_update',
+        request=OzonCategoryPolicyUpdateSerializer,
+        responses=inline_serializer(
+            name='OzonCategoryPolicyUpdateResponse',
+            fields={
+                'status': serializers.CharField(read_only=True),
+                'data': serializers.DictField(read_only=True),
+            },
+        ),
+    )
+    def patch(self, request, pk):
+        account = OzonCatalogView._account(request, pk)
+        if account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        serializer = OzonCategoryPolicyUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        changes: CategoryPolicyChanges = {}
+        if 'enabled_override' in data:
+            changes['enabled_override'] = data['enabled_override']
+        if 'margin_pct' in data:
+            changes['margin_pct'] = data['margin_pct']
+        try:
+            result = update_category_policy(
+                account,
+                description_category_id=data['description_category_id'],
+                type_id=data['type_id'],
+                category_path_ids=tuple(data['category_path_ids']),
+                expected_tree_revision=data['tree_revision'],
+                changes=changes,
+            )
+        except OzonCategoryPolicyError as exc:
+            response_status = {
+                'tree_required': status.HTTP_409_CONFLICT,
+                'tree_revision_outdated': status.HTTP_409_CONFLICT,
+            }.get(exc.code, status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'status': 'error', 'code': exc.code, 'message': str(exc)},
+                status=response_status,
+            )
+        return Response({'status': 'ok', 'data': result})
 
 
 @extend_schema(tags=['Accounts'])

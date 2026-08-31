@@ -582,6 +582,106 @@ class OzonAttributeValueSnapshot(TimestampedModel):
         ]
 
 
+class OzonCategoryPolicy(TimestampedModel):
+    """Sparse tenant/account overrides layered on an immutable Ozon tree.
+
+    The provider snapshot remains the source of truth.  These rows only store
+    tenant choices for one exact Ozon account and never enter Avito category,
+    listing or feed workflows.
+    """
+
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.CASCADE,
+        related_name='ozon_category_policies',
+        verbose_name='Тенант',
+    )
+    account = models.ForeignKey(
+        MarketplaceAccount,
+        on_delete=models.CASCADE,
+        related_name='ozon_category_policies',
+        verbose_name='Аккаунт Ozon',
+    )
+    description_category_id = models.PositiveBigIntegerField(
+        verbose_name='ID категории Ozon',
+    )
+    type_id = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='ID типа товара Ozon',
+    )
+    enabled_override = models.BooleanField(
+        null=True,
+        blank=True,
+        verbose_name='Собственное включение категории',
+        help_text='Пустое значение наследует настройку ближайшей родительской категории.',
+    )
+    margin_pct = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name='Наценка Ozon, %',
+        help_text='Пустое значение наследует наценку ближайшей родительской категории.',
+    )
+    category_path = models.CharField(
+        max_length=1000,
+        blank=True,
+        verbose_name='Последний известный путь категории Ozon',
+    )
+    node_name = models.CharField(
+        max_length=500,
+        blank=True,
+        verbose_name='Последнее известное название узла Ozon',
+    )
+    tree_revision = models.CharField(
+        max_length=64,
+        verbose_name='Ревизия дерева Ozon',
+    )
+
+    class Meta:
+        verbose_name = 'Правило категории Ozon'
+        verbose_name_plural = 'Правила категорий Ozon'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['account', 'description_category_id'],
+                condition=models.Q(type_id__isnull=True),
+                name='mkt_oz_policy_category_uniq',
+            ),
+            models.UniqueConstraint(
+                fields=['account', 'description_category_id', 'type_id'],
+                condition=models.Q(type_id__isnull=False),
+                name='mkt_oz_policy_type_uniq',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(enabled_override__isnull=False)
+                    | models.Q(margin_pct__isnull=False)
+                ),
+                name='mkt_oz_policy_has_override',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(margin_pct__isnull=True)
+                    | models.Q(margin_pct__gte=-100)
+                ),
+                name='mkt_oz_policy_margin_min',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['tenant', 'account', 'description_category_id'],
+                name='mkt_oz_policy_lookup_idx',
+            ),
+        ]
+
+    def __str__(self):
+        identity = str(self.description_category_id)
+        if self.type_id is not None:
+            identity = f'{identity}:{self.type_id}'
+        return f'Ozon policy {self.account_id} / {identity}'
+
+
 def new_ozon_offer_id() -> str:
     return f'map-{uuid.uuid4().hex}'
 
