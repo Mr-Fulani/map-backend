@@ -371,6 +371,33 @@ services, topology и внешний readiness прошли. Read-only AlfaPro
 canary подтвердил account-scoped подготовку без provider mutations;
 deploy gate возвращён в `false`.
 
+**O2c3 — `CODE_READY` 2026-08-31**: общее обогащение товара и подготовка
+Ozon объединены в один понятный tenant-facing сценарий без изменения Avito:
+
+- после parser/AI enrichment MAP ставит отдельное безопасное автозаполнение
+  для каждого активного Ozon-кабинета точного tenant-а;
+- бренд, артикул производителя, стабильное название модели, выбранный тип и
+  подтверждённый barcode переносятся только из известных фактов товара;
+- dictionary-поля сохраняются автоматически только при одном точном совпадении
+  в account/category/schema-scoped справочнике Ozon;
+- ТН ВЭД, маркировка, категория без однозначного mapping и неизвестные
+  обязательные поля не придумываются: tenant получает рекомендацию и заполняет
+  их вручную;
+- ручное значение получает provenance «Проверено тенантом» и последующее
+  обогащение его не перезаписывает;
+- один редактор Ozon используется и в карточке товара для первичной модерации,
+  и в provider-aware drawer раздела «Листинги» для повторного preflight;
+- внешние product/price/stock/archive методы Ozon, `Listing`, Avito feed,
+  Avito category tree и Avito-наценки пакет не меняет.
+
+Локальный gate O2c3: Ozon offer — 12/12; parser/AI/Avito listing review —
+195/195; Products + Marketplaces — 1356 passed, 2 skipped; frontend unit —
+63/63; runtime/deploy contracts — 67/67; production build — 21/21 страниц.
+TypeScript, ESLint, полный Flake8, baseline mypy для 726 файлов, production
+mypy для 364 файлов, Django check, OpenAPI validation и migration drift
+прошли. Пакет содержит одну migration Marketplaces
+`0037_ozon_offer_autofill`; полный CI и deploy остаются release gate.
+
 ## O3 — публикация и reconciliation
 
 O3 выполняется двумя последовательными пакетами:

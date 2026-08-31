@@ -25,6 +25,33 @@ export interface OzonPreflightIssue {
   message: string;
 }
 
+export interface OzonAutofillField {
+  state: 'auto_filled' | 'kept_manual' | 'kept_previous' | 'tenant_confirmed';
+  source: string;
+  source_label: string;
+  confidence: number;
+  message: string;
+}
+
+export interface OzonAutofillRecommendation {
+  code: string;
+  attribute_id: number | null;
+  complex_id: number | null;
+  label: string;
+  message: string;
+  candidate: string;
+}
+
+export interface OzonAutofillState {
+  status: string;
+  updated_at: string | null;
+  moderated_at: string | null;
+  applied_count: number;
+  preserved_count: number;
+  fields: Record<string, OzonAutofillField>;
+  recommendations: OzonAutofillRecommendation[];
+}
+
 export interface OzonOfferPreparation {
   account: { id: number; name: string; marketplace: 'ozon' };
   draft: null | {
@@ -53,11 +80,16 @@ export interface OzonOfferPreparation {
     final_price: string;
     policy: OzonCategoryPolicyState;
   };
+  autofill: OzonAutofillState;
   preflight: {
     ready: boolean;
     errors: OzonPreflightIssue[];
     recommendations: OzonPreflightIssue[];
   };
+}
+
+export function ozonAttributeIdentity(attribute: Pick<OzonOfferAttribute, 'id' | 'complex_id'>) {
+  return `${attribute.complex_id}:${attribute.id}`;
 }
 
 export interface OzonDictionaryValue {

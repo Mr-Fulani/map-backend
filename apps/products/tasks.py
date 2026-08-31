@@ -73,6 +73,16 @@ def _write_sync_log(tenant, event_type: str, status: str, message: str) -> None:
         pass
 
 
+def _schedule_ozon_autofill(product_id: int, trigger_key: str) -> None:
+    """Ozon preparation must never turn successful enrichment into a failure."""
+    try:
+        from apps.marketplaces.ozon_autofill import schedule_ozon_autofill
+
+        schedule_ozon_autofill(product_id, trigger_key=trigger_key)
+    except Exception:
+        logger.exception('Не удалось поставить Ozon autofill product=%s', product_id)
+
+
 @shared_task(bind=True, max_retries=3, default_retry_delay=60, queue='sync_import')
 def import_from_datasource(self, connection_id: int):
     started_at = time.monotonic()
@@ -379,6 +389,7 @@ def parse_single_part(self, job_id: int):
         from apps.core.dispatch import enqueue_durable_task
         job = ProductParseJob.objects.only('fallback_origin_key').get(pk=job_id)
         origin_key = job.fallback_origin_key or f'parse-job:{job_id}'
+        _schedule_ozon_autofill(product_id, f'parse-job:{job_id}')
         enqueue_durable_task(
             'apps.web_research.tasks.schedule_web_research_fallback',
             args=[product_id, False, origin_key],
@@ -398,6 +409,7 @@ def parse_single_part_then_generate_description(self, job_id: int):
         from apps.core.dispatch import enqueue_durable_task
         job = ProductParseJob.objects.only('fallback_origin_key').get(pk=job_id)
         origin_key = job.fallback_origin_key or f'parse-job:{job_id}'
+        _schedule_ozon_autofill(product_id, f'parse-job:{job_id}')
         enqueue_durable_task(
             'apps.web_research.tasks.schedule_web_research_fallback',
             args=[product_id, True, origin_key],

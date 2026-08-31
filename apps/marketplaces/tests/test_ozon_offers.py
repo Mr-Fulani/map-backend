@@ -21,6 +21,7 @@ from apps.marketplaces.ozon_catalog import (
     normalize_category_attributes,
     normalize_category_tree,
 )
+from apps.marketplaces.ozon_autofill import schedule_ozon_autofill
 from apps.products.models import Product, ProductImage, ProductPhysicalProfile
 from apps.tenants.tests.auth import create_tenant_with_operator_key, owner_access_token
 
@@ -137,6 +138,58 @@ def _value_snapshot(account, schema, *, value='Canonical Brand'):
     )
 
 
+def _autofill_attribute_catalog(account):
+    raw_attributes = [
+        (1, 'Название модели', 0),
+        (2, 'Код ТН ВЭД', 0),
+        (3, 'Нужен код маркировки', 71),
+        (4, 'Бренд', 72),
+        (5, 'Партномер (артикул производителя)', 0),
+        (6, 'Тип', 73),
+    ]
+    attributes = normalize_category_attributes([{
+        'id': attribute_id,
+        'attribute_complex_id': 0,
+        'name': name,
+        'description': '',
+        'type': 'String',
+        'is_collection': False,
+        'is_required': True,
+        'is_aspect': False,
+        'max_value_count': 1,
+        'group_name': 'Основные',
+        'group_id': 1,
+        'dictionary_id': dictionary_id,
+        'category_dependent': True,
+        'complex_is_collection': False,
+    } for attribute_id, name, dictionary_id in raw_attributes])
+    return OzonCategoryAttributeSnapshot.objects.create(
+        account=account,
+        description_category_id=101,
+        type_id=202,
+        language='DEFAULT',
+        schema_hash='e' * 64,
+        attributes=attributes,
+        attribute_count=len(attributes),
+        required_attribute_count=len(attributes),
+    )
+
+
+def _autofill_dictionary_value(account, schema, attribute_id, query, value_id):
+    return OzonAttributeValueSnapshot.objects.create(
+        account=account,
+        description_category_id=101,
+        type_id=202,
+        attribute_id=attribute_id,
+        language='DEFAULT',
+        query=query,
+        attribute_schema_hash=schema.schema_hash,
+        schema_hash=f'{value_id:064x}',
+        values=[{'id': value_id, 'value': query, 'info': '', 'picture': ''}],
+        value_count=1,
+    )
+
+
 def _complete_product(product):
     ProductPhysicalProfile.objects.create(
         tenant=product.tenant,
@@ -215,6 +268,125 @@ def test_offer_identity_is_stable_account_scoped_and_never_enters_avito_runtime(
     assert reread.json()['data']['draft']['offer_id'] == offer_id
     assert OzonOfferDraft.objects.get().category_path == 'Автотовары'
     assert Listing.objects.count() == MarketplaceFeedRun.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_ozon_autofill_uses_safe_facts_and_recommends_regulatory_review():
+    tenant, key = _tenant('ozon-autofill')
+    account = _account(tenant, 'client-autofill')
+    product = _product(tenant)
+    _catalog(account)
+    schema = _autofill_attribute_catalog(account)
+    _autofill_dictionary_value(account, schema, 4, 'Test Brand', 401)
+    _autofill_dictionary_value(account, schema, 6, 'Амортизатор', 601)
+    client = Client()
+    selected = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'description_category_id': 101,
+        'type_id': 202,
+    })
+
+    response = _request(client, key, 'post', product, {
+        'account_id': account.pk,
+    })
+
+    assert selected.status_code == response.status_code == 200
+    data = response.json()['data']
+    values = {
+        attribute['id']: attribute['selected_values'][0]
+        for attribute in data['attributes']
+        if attribute['selected_values']
+    }
+    assert values == {
+        1: {'value': 'Test Brand OZ-1', 'dictionary_value_id': 0},
+        4: {'value': 'Test Brand', 'dictionary_value_id': 401},
+        5: {'value': 'OZ-1', 'dictionary_value_id': 0},
+        6: {'value': 'Амортизатор', 'dictionary_value_id': 601},
+    }
+    assert data['autofill']['status'] == 'needs_review'
+    assert data['autofill']['applied_count'] == 4
+    assert {
+        item['code'] for item in data['autofill']['recommendations']
+    } == {
+        'tnved_confirmation_required',
+        'marking_confirmation_required',
+    }
+    assert {
+        item['code'] for item in data['preflight']['errors']
+    } >= {'required_attribute_missing'}
+    assert Listing.objects.count() == MarketplaceFeedRun.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_ozon_autofill_never_overwrites_tenant_confirmed_value():
+    tenant, key = _tenant('ozon-autofill-manual')
+    account = _account(tenant, 'client-autofill-manual')
+    product = _product(tenant)
+    _catalog(account)
+    schema = _autofill_attribute_catalog(account)
+    _autofill_dictionary_value(account, schema, 4, 'Test Brand', 401)
+    _autofill_dictionary_value(account, schema, 6, 'Амортизатор', 601)
+    client = Client()
+    _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'description_category_id': 101,
+        'type_id': 202,
+    })
+    autofilled = _request(client, key, 'post', product, {
+        'account_id': account.pk,
+    }).json()['data']
+    payload = []
+    for attribute in autofilled['attributes']:
+        values = attribute['selected_values']
+        if attribute['id'] == 5:
+            values = [{'value': 'MANUAL-PART', 'dictionary_value_id': 0}]
+        if values:
+            payload.append({
+                'id': attribute['id'],
+                'complex_id': attribute['complex_id'],
+                'values': values,
+            })
+    saved = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'attributes': payload,
+    })
+    product.article = 'NEW-ARTICLE'
+    product.save(update_fields=['article', 'updated_at'])
+
+    repeated = _request(client, key, 'post', product, {
+        'account_id': account.pk,
+    })
+
+    assert saved.status_code == repeated.status_code == 200
+    part_number = next(
+        item for item in repeated.json()['data']['attributes'] if item['id'] == 5
+    )
+    assert part_number['selected_values'] == [{
+        'value': 'MANUAL-PART',
+        'dictionary_value_id': 0,
+    }]
+    assert repeated.json()['data']['autofill']['fields']['0:5']['state'] == 'kept_manual'
+
+
+@pytest.mark.django_db
+def test_connected_ozon_account_schedules_durable_autofill_after_enrichment():
+    tenant, _key = _tenant('ozon-autofill-dispatch')
+    _account(tenant, 'client-autofill-dispatch')
+    product = _product(tenant)
+
+    with patch('apps.core.dispatch.enqueue_durable_task') as enqueue:
+        scheduled = schedule_ozon_autofill(
+            product.pk,
+            trigger_key='parse-job:17',
+        )
+
+    assert scheduled is True
+    enqueue.assert_called_once_with(
+        'apps.marketplaces.tasks.prepare_ozon_offers_after_enrichment',
+        args=[product.pk],
+        deduplication_key='ozon-autofill:parse-job:17',
+        max_run_attempts=4,
+    )
 
 
 @pytest.mark.django_db

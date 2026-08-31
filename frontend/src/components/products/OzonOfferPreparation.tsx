@@ -1,7 +1,16 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, ArrowLeft, CheckCircle2, FolderTree, Loader2, Search } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowLeft,
+  CheckCircle2,
+  FolderTree,
+  Loader2,
+  Search,
+  ShieldCheck,
+  WandSparkles,
+} from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
@@ -18,6 +27,7 @@ import type {
 } from '@/lib/marketplace-account-types';
 import {
   ozonAttributesPayload,
+  ozonAttributeIdentity,
   replaceOzonAttributeValue,
   type OzonDictionaryValue,
   type OzonOfferAttribute,
@@ -59,12 +69,14 @@ export function OzonOfferPreparationCard({
   onPreparationChange,
   showAccountSelector = true,
   embedded = false,
+  refreshToken = 0,
 }: {
   productId: number;
   accounts: AccountOption[];
   onPreparationChange?: (preparation: OzonOfferPreparation | null) => void;
   showAccountSelector?: boolean;
   embedded?: boolean;
+  refreshToken?: string | number;
 }) {
   const ozonAccounts = useMemo(
     () => accounts.filter((account) => account.marketplace === 'ozon' && account.is_active),
@@ -160,7 +172,7 @@ export function OzonOfferPreparationCard({
         if (active) setLoadedAccountId(accountId);
       });
     return () => { active = false; };
-  }, [accountId, applyPreparation, productId]);
+  }, [accountId, applyPreparation, productId, refreshToken]);
 
   useEffect(() => {
     if (!accountId) return;
@@ -199,6 +211,25 @@ export function OzonOfferPreparationCard({
     }
   }
 
+  async function autofillOffer(successMessage = 'Данные Ozon подготовлены для проверки.') {
+    if (!accountId) return null;
+    setAction('autofill');
+    try {
+      const response = await productApi.autofillOzonOffer(productId, accountId);
+      const next = envelopeData<OzonOfferPreparation>(response.data);
+      applyPreparation(next);
+      setDictionaryQueries({});
+      setDictionaryResults({});
+      toast.success(successMessage);
+      return next;
+    } catch {
+      toast.error('Не удалось подготовить поля Ozon. Сохранённые вручную данные не изменены.');
+      return null;
+    } finally {
+      setAction('');
+    }
+  }
+
   async function findCategories() {
     if (!accountId) return;
     setAction('categories');
@@ -227,7 +258,7 @@ export function OzonOfferPreparationCard({
       setDictionaryQueries({});
       setDictionaryResults({});
       setShowOptional(false);
-      toast.success('Категория Ozon сохранена.');
+      await autofillOffer('Категория сохранена, безопасные поля заполнены.');
     }
   }
 
@@ -375,15 +406,85 @@ export function OzonOfferPreparationCard({
             <Loader2 className="h-4 w-4 animate-spin" /> Загружаем подготовку…
           </div>
         ) : accountId && preparation && !preparation.draft ? (
-          <Button onClick={() => updateOffer({}, 'start')} disabled={Boolean(action)}>
-            {action === 'start' && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Начать подготовку для этого кабинета
-          </Button>
+          <div className="space-y-3 rounded-md border bg-muted/20 p-4">
+            <div>
+              <p className="text-sm font-medium">Подготовить карточку из данных товара</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                MAP перенесёт только подтверждённые значения. Категорию, ТН ВЭД,
+                маркировку и неоднозначные справочники нужно будет проверить вручную.
+              </p>
+            </div>
+            <Button onClick={() => autofillOffer()} disabled={Boolean(action)}>
+              {action === 'autofill'
+                ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                : <WandSparkles className="mr-2 h-4 w-4" />}
+              Подготовить данные Ozon
+            </Button>
+          </div>
         ) : preparation?.draft ? (
           <>
             <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
               Служебный код карточки: <span className="font-mono">{preparation.draft.offer_id}</span>.
               Он создаётся один раз и не меняется при переименовании кабинета.
+            </div>
+
+            <div className="space-y-3 rounded-md border border-blue-500/20 bg-blue-500/5 p-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="flex items-center gap-2 text-sm font-medium">
+                    <ShieldCheck className="h-4 w-4 text-blue-600" />
+                    Автозаполнение MAP
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    Значения из товара и точные совпадения Ozon заполняются автоматически.
+                    Рискованные поля MAP не придумывает.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => autofillOffer('Данные Ozon проверены и обновлены.')}
+                  disabled={Boolean(action)}
+                >
+                  {action === 'autofill'
+                    ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    : <WandSparkles className="mr-2 h-4 w-4" />}
+                  Заполнить из товара
+                </Button>
+              </div>
+              {preparation.autofill.status === 'not_started' ? (
+                <p className="text-xs text-muted-foreground">
+                  Автозаполнение ещё не запускалось для этого кабинета.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2 text-xs">
+                  <Badge variant="secondary">
+                    Заполнено MAP: {preparation.autofill.applied_count}
+                  </Badge>
+                  {preparation.autofill.preserved_count > 0 && (
+                    <Badge variant="outline">
+                      Сохранено ручных: {preparation.autofill.preserved_count}
+                    </Badge>
+                  )}
+                  {preparation.autofill.recommendations.length > 0 && (
+                    <Badge variant="outline">
+                      Проверить: {preparation.autofill.recommendations.length}
+                    </Badge>
+                  )}
+                </div>
+              )}
+              {preparation.autofill.recommendations
+                .filter((item) => item.attribute_id === null)
+                .map((item) => (
+                  <div
+                    key={item.code}
+                    className="flex items-start gap-2 rounded border border-amber-500/20 bg-background/70 p-2 text-xs"
+                  >
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
+                    <span><strong>{item.label}:</strong> {item.message}</span>
+                  </div>
+                ))}
             </div>
 
             <div className="space-y-3">
@@ -441,7 +542,7 @@ export function OzonOfferPreparationCard({
                 ) : categoryTreeLevel.tree_revision === null ? (
                   <p className="text-sm text-muted-foreground">
                     Справочник Ozon ещё не загружен для этого кабинета. Обновите дерево
-                    в разделе «Настройки → Маркетплейсы».
+                    во вкладке «Настройки → Категории Ozon».
                   </p>
                 ) : categoryTreeLevel.options.length > 0 ? (
                   <Select
@@ -556,7 +657,7 @@ export function OzonOfferPreparationCard({
                 <p className="text-xs text-muted-foreground">
                   {preparation.pricing.policy.margin_source
                     ? `Наценка задана для «${preparation.pricing.policy.margin_source.name}».`
-                    : 'Используется стандартная наценка 0%. Задать её можно в «Настройки → Маркетплейсы → Ozon».'}
+                    : 'Используется стандартная наценка 0%. Задать её можно во вкладке «Настройки → Наценки Ozon».'}
                 </p>
               </div>
             )}
@@ -585,14 +686,39 @@ export function OzonOfferPreparationCard({
                 {preparation.schema && visibleAttributes.map((attribute) => {
                   const key = attributeKey(attribute);
                   const selected = attribute.selected_values[0];
+                  const autofill = preparation.autofill.fields[ozonAttributeIdentity(attribute)];
+                  const recommendation = preparation.autofill.recommendations.find((item) => (
+                    item.attribute_id === attribute.id
+                    && (item.complex_id ?? 0) === attribute.complex_id
+                  ));
                   return (
                     <div key={key} className="space-y-2 rounded-md border p-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-medium">{attribute.name}</p>
                         {attribute.is_required && <Badge variant="outline">Обязательно</Badge>}
+                        {autofill && (
+                          <Badge variant={autofill.state === 'auto_filled' ? 'secondary' : 'outline'}>
+                            {autofill.state === 'auto_filled' ? 'Заполнено MAP' : 'Проверено вручную'}
+                          </Badge>
+                        )}
                       </div>
                       {attribute.description && (
                         <p className="text-xs text-muted-foreground">{attribute.description}</p>
+                      )}
+                      {autofill && (
+                        <p className="text-xs text-muted-foreground">
+                          Источник: {autofill.source_label}. {autofill.message}
+                        </p>
+                      )}
+                      {recommendation && (
+                        <div className="rounded border border-amber-500/20 bg-amber-500/5 p-2 text-xs">
+                          <strong>Нужно проверить:</strong> {recommendation.message}
+                          {recommendation.candidate && (
+                            <span className="block pt-1 text-muted-foreground">
+                              Найденный вариант: {recommendation.candidate}
+                            </span>
+                          )}
+                        </div>
                       )}
                       {attribute.dictionary_id > 0 ? (
                         <>

@@ -4,6 +4,7 @@ from rest_framework import serializers, status
 from rest_framework.response import Response
 
 from apps.marketplaces.models import MarketplaceAccount
+from apps.marketplaces.ozon_autofill import OzonAutofillError, autofill_ozon_offer
 from apps.marketplaces.ozon_offers import (
     OzonOfferError,
     offer_presentation,
@@ -65,6 +66,7 @@ class ProductOzonOfferView(APIView):
         'HEAD': {'catalog:read'},
         'OPTIONS': {'catalog:read'},
         'PATCH': {'catalog:write'},
+        'POST': {'catalog:write'},
     }
 
     @staticmethod
@@ -119,6 +121,27 @@ class ProductOzonOfferView(APIView):
                 attributes_supplied='attributes' in data,
             )
         except OzonOfferError as exc:
+            return Response(
+                {'status': 'error', 'code': exc.code, 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({'status': 'ok', 'data': offer_presentation(product, account)})
+
+    @extend_schema(
+        operation_id='product_ozon_offer_autofill',
+        request=OzonOfferAccountQuerySerializer,
+        responses=OZON_OFFER_RESPONSE,
+    )
+    def post(self, request, pk):
+        serializer = OzonOfferAccountQuerySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product = self._product(request, pk)
+        account = self._account(request, serializer.validated_data['account_id'])
+        if product is None or account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        try:
+            autofill_ozon_offer(product, account, allow_provider_reads=True)
+        except OzonAutofillError as exc:
             return Response(
                 {'status': 'error', 'code': exc.code, 'message': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
