@@ -366,10 +366,15 @@ export function OzonOfferPreparationCard({
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-base">Подготовка карточки Ozon</CardTitle>
           {preparation && (
-            <Badge variant={preparation.preflight.ready ? 'default' : 'outline'}>
+            <Badge
+              variant="outline"
+              className={preparation.preflight.ready
+                ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+                : 'border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100'}
+            >
               {preparation.preflight.ready
-                ? 'Готово к будущей отправке'
-                : `Нужно исправить: ${preparation.preflight.errors.length}`}
+                ? 'Готово: обязательные поля заполнены'
+                : `Нужно заполнить: ${preparation.preflight.errors.length}`}
             </Badge>
           )}
         </div>
@@ -423,6 +428,21 @@ export function OzonOfferPreparationCard({
           </div>
         ) : preparation?.draft ? (
           <>
+            <div className="grid gap-2 text-xs sm:grid-cols-3">
+              <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-amber-950 dark:text-amber-100">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span><strong className="block">Нужно заполнить</strong>Без этого Ozon не примет карточку</span>
+              </div>
+              <div className="flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2.5 text-emerald-950 dark:text-emerald-100">
+                <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                <span><strong className="block">Готово</strong>Действие Тенанта не требуется</span>
+              </div>
+              <div className="rounded-md border border-dashed bg-muted/30 p-2.5 text-muted-foreground">
+                <strong className="block text-foreground">Рекомендация</strong>
+                Не блокирует подготовку карточки
+              </div>
+            </div>
+
             <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
               Служебный код карточки: <span className="font-mono">{preparation.draft.offer_id}</span>.
               Он создаётся один раз и не меняется при переименовании кабинета.
@@ -459,17 +479,26 @@ export function OzonOfferPreparationCard({
                 </p>
               ) : (
                 <div className="flex flex-wrap gap-2 text-xs">
-                  <Badge variant="secondary">
-                    Заполнено MAP: {preparation.autofill.applied_count}
+                  <Badge
+                    variant="outline"
+                    className="border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+                  >
+                    Готово · MAP: {preparation.autofill.applied_count}
                   </Badge>
                   {preparation.autofill.preserved_count > 0 && (
-                    <Badge variant="outline">
-                      Сохранено ручных: {preparation.autofill.preserved_count}
+                    <Badge
+                      variant="outline"
+                      className="border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+                    >
+                      Готово · вручную: {preparation.autofill.preserved_count}
                     </Badge>
                   )}
                   {preparation.autofill.recommendations.length > 0 && (
-                    <Badge variant="outline">
-                      Проверить: {preparation.autofill.recommendations.length}
+                    <Badge
+                      variant="outline"
+                      className="border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100"
+                    >
+                      Нужно решить: {preparation.autofill.recommendations.length}
                     </Badge>
                   )}
                 </div>
@@ -479,10 +508,10 @@ export function OzonOfferPreparationCard({
                 .map((item) => (
                   <div
                     key={item.code}
-                    className="flex items-start gap-2 rounded border border-amber-500/20 bg-background/70 p-2 text-xs"
+                    className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-950 dark:text-amber-100"
                   >
-                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-500" />
-                    <span><strong>{item.label}:</strong> {item.message}</span>
+                    <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                    <span><strong>Нужно ваше решение · {item.label}:</strong> {item.message}</span>
                   </div>
                 ))}
             </div>
@@ -495,9 +524,12 @@ export function OzonOfferPreparationCard({
                 </p>
               </div>
               {preparation.draft.category && (
-                <div className="rounded-md border p-3 text-sm">
-                  <p>{preparation.draft.category.category_path}</p>
-                  <p className="font-medium">{preparation.draft.category.type_name}</p>
+                <div className="flex items-start gap-2 rounded-md border border-emerald-500/35 bg-emerald-500/5 p-3 text-sm">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                  <div>
+                    <p className="text-muted-foreground">{preparation.draft.category.category_path}</p>
+                    <p className="font-medium">{preparation.draft.category.type_name}</p>
+                  </div>
                 </div>
               )}
               <div className="space-y-3 rounded-md border p-3">
@@ -691,40 +723,75 @@ export function OzonOfferPreparationCard({
                     item.attribute_id === attribute.id
                     && (item.complex_id ?? 0) === attribute.complex_id
                   ));
+                  const needsRequiredValue = attribute.is_required && !selected;
                   return (
-                    <div key={key} className="space-y-2 rounded-md border p-3">
+                    <div
+                      key={key}
+                      className={`space-y-2 rounded-md border border-l-4 p-3 ${
+                        needsRequiredValue
+                          ? 'border-amber-500/50 bg-amber-500/5'
+                          : selected
+                            ? 'border-emerald-500/35 bg-emerald-500/5'
+                            : 'border-dashed bg-muted/20'
+                      }`}
+                    >
                       <div className="flex flex-wrap items-center gap-2">
                         <p className="text-sm font-medium">{attribute.name}</p>
                         {attribute.is_required && <Badge variant="outline">Обязательно</Badge>}
-                        {autofill && (
-                          <Badge variant={autofill.state === 'auto_filled' ? 'secondary' : 'outline'}>
-                            {autofill.state === 'auto_filled' ? 'Заполнено MAP' : 'Проверено вручную'}
+                        {selected ? (
+                          <Badge
+                            variant="outline"
+                            className="border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
+                          >
+                            <CheckCircle2 className="mr-1 h-3 w-3" />
+                            {autofill?.state === 'auto_filled' ? 'Готово · MAP' : 'Готово · вручную'}
+                          </Badge>
+                        ) : needsRequiredValue ? (
+                          <Badge
+                            variant="outline"
+                            className="border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100"
+                          >
+                            <AlertCircle className="mr-1 h-3 w-3" />
+                            Заполнить вручную
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className="border-dashed text-muted-foreground">
+                            Можно пропустить
                           </Badge>
                         )}
                       </div>
                       {attribute.description && (
-                        <p className="text-xs text-muted-foreground">{attribute.description}</p>
+                        <p className="rounded bg-background/70 p-2 text-xs text-muted-foreground">
+                          {attribute.description}
+                        </p>
                       )}
                       {autofill && (
-                        <p className="text-xs text-muted-foreground">
-                          Источник: {autofill.source_label}. {autofill.message}
+                        <p className="flex items-start gap-1.5 text-xs text-emerald-800 dark:text-emerald-200">
+                          <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span><strong>Почему заполнено:</strong> {autofill.source_label}. {autofill.message}</span>
                         </p>
                       )}
                       {recommendation && (
-                        <div className="rounded border border-amber-500/20 bg-amber-500/5 p-2 text-xs">
-                          <strong>Нужно проверить:</strong> {recommendation.message}
+                        <div className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-950 dark:text-amber-100">
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                          <span>
+                            <strong>Требуется ваше решение:</strong> {recommendation.message}
                           {recommendation.candidate && (
-                            <span className="block pt-1 text-muted-foreground">
-                              Найденный вариант: {recommendation.candidate}
+                            <span className="block pt-1 text-amber-800 dark:text-amber-200">
+                              MAP нашёл вариант для сверки: {recommendation.candidate}
                             </span>
                           )}
+                          </span>
                         </div>
                       )}
                       {attribute.dictionary_id > 0 ? (
                         <>
                           {selected && (
-                            <div className="flex items-center justify-between rounded bg-muted p-2 text-sm">
-                              <span>{selected.value}</span>
+                            <div className="flex items-center justify-between rounded border border-emerald-500/30 bg-emerald-500/10 p-2 text-sm">
+                              <span className="flex items-center gap-1.5 font-medium">
+                                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                                {selected.value}
+                              </span>
                               <Button
                                 type="button"
                                 size="sm"
@@ -743,6 +810,7 @@ export function OzonOfferPreparationCard({
                           <div className="flex flex-col gap-2 sm:flex-row">
                             <Input
                               aria-label={`Поиск: ${attribute.name}`}
+                              className={needsRequiredValue ? 'border-amber-500/50 bg-background' : undefined}
                               value={dictionaryQueries[key] ?? ''}
                               onChange={(event) => setDictionaryQueries((current) => ({
                                 ...current,
@@ -784,6 +852,7 @@ export function OzonOfferPreparationCard({
                       ) : (
                         <Input
                           aria-label={attribute.name}
+                          className={needsRequiredValue ? 'border-amber-500/50 bg-background' : undefined}
                           value={selected?.value ?? ''}
                           onChange={(event) => setAttributes((current) => replaceOzonAttributeValue(
                             current,
@@ -832,20 +901,21 @@ export function OzonOfferPreparationCard({
             <div className="space-y-2">
               <p className="text-sm font-medium">Проверка готовности</p>
               {preparation.preflight.ready ? (
-                <div className="flex items-start gap-2 rounded-md border border-green-500/30 bg-green-500/5 p-3 text-sm">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 text-green-600" />
-                  Все обязательные данные заполнены. Отправки в Ozon ещё нет.
+                <div className="flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-950 dark:text-emerald-100">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span><strong>Готово.</strong> Все обязательные данные заполнены. Отправки в Ozon ещё нет.</span>
                 </div>
               ) : preparation.preflight.errors.map((issue) => (
-                <div key={`${issue.code}:${issue.field}`} className="flex items-start gap-2 rounded-md border border-amber-500/20 bg-amber-500/5 p-3 text-sm">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
-                  <span><strong>{issue.label}:</strong> {issue.message}</span>
+                <div key={`${issue.code}:${issue.field}`} className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-950 dark:text-amber-100">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span><strong>Блокирует отправку · {issue.label}:</strong> {issue.message}</span>
                 </div>
               ))}
               {preparation.preflight.recommendations.map((issue) => (
-                <p key={`${issue.code}:${issue.field}`} className="text-xs text-muted-foreground">
-                  Рекомендация — {issue.label.toLowerCase()}: {issue.message}
-                </p>
+                <div key={`${issue.code}:${issue.field}`} className="flex items-start gap-2 rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-xs text-blue-950 dark:text-blue-100">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span><strong>Рекомендация · не блокирует · {issue.label}:</strong> {issue.message}</span>
+                </div>
               ))}
             </div>
           </>

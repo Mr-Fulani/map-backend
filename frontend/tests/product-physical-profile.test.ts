@@ -6,7 +6,10 @@ import {
   effectivePhysicalValueForInput,
   physicalDraftFromProfile,
   physicalDraftToApiPayload,
+  physicalSuggestionIsAlreadyUsed,
+  physicalSuggestionNeedsReview,
   type ProductPhysicalProfile,
+  type ProductPhysicalSuggestion,
 } from '../src/lib/product-physical-profile';
 
 
@@ -114,5 +117,47 @@ test('rejects unsupported VAT before sending the request', () => {
       vat_rate: '18',
     }),
     /НДС/,
+  );
+});
+
+test('does not ask to approve an enrichment value already used by MAP', () => {
+  const suggestion: ProductPhysicalSuggestion = {
+    id: 42,
+    field: 'length_mm',
+    value: '255',
+    source_id: 'tachka',
+    source_label: 'Tachka.ru',
+    source_url: 'https://example.test/product',
+    raw_name: 'Длина упаковки',
+    raw_value: '255 мм',
+    confidence: 0.95,
+    review_status: 'pending',
+    last_seen_at: '2026-08-31T12:00:00Z',
+  };
+
+  assert.equal(physicalSuggestionIsAlreadyUsed(profile, suggestion), true);
+  assert.equal(physicalSuggestionNeedsReview(profile, suggestion), false);
+});
+
+test('asks for review only when an enrichment value is still undecided', () => {
+  const suggestion: ProductPhysicalSuggestion = {
+    id: 43,
+    field: 'width_mm',
+    value: '120',
+    source_id: 'tachka',
+    source_label: 'Tachka.ru',
+    source_url: 'https://example.test/product',
+    raw_name: 'Ширина упаковки',
+    raw_value: '120 мм',
+    confidence: 0.95,
+    review_status: 'pending',
+    last_seen_at: '2026-08-31T12:00:00Z',
+  };
+
+  assert.equal(physicalSuggestionIsAlreadyUsed(profile, suggestion), false);
+  assert.equal(physicalSuggestionNeedsReview(profile, suggestion), true);
+  assert.equal(
+    physicalSuggestionNeedsReview(profile, { ...suggestion, review_status: 'rejected' }),
+    false,
   );
 });

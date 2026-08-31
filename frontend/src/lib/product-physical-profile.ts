@@ -159,3 +159,22 @@ export function effectivePhysicalValueForInput(
   }
   return draft[field];
 }
+
+export function physicalSuggestionIsAlreadyUsed(
+  profile: ProductPhysicalProfile,
+  suggestion: ProductPhysicalSuggestion,
+): boolean {
+  const fact = profile.facts[suggestion.field];
+  return fact.effective_source !== 'missing'
+    && fact.effective_value === suggestion.value;
+}
+
+export function physicalSuggestionNeedsReview(
+  profile: ProductPhysicalProfile,
+  suggestion: ProductPhysicalSuggestion,
+): boolean {
+  const fact = profile.facts[suggestion.field];
+  return fact.effective_source !== '1c'
+    && suggestion.review_status !== 'rejected'
+    && !physicalSuggestionIsAlreadyUsed(profile, suggestion);
+}
