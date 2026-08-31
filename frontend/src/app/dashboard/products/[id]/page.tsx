@@ -27,6 +27,8 @@ import {
   Trash2,
   ExternalLink,
   Store,
+  AlertCircle,
+  CheckCircle2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import {
@@ -46,6 +48,8 @@ import {
   effectivePhysicalValueForInput,
   physicalDraftFromProfile,
   physicalDraftToApiPayload,
+  physicalSuggestionIsAlreadyUsed,
+  physicalSuggestionNeedsReview,
   type ProductPhysicalDraft,
   type ProductPhysicalFieldKey,
   type ProductPhysicalProfile,
@@ -1098,6 +1102,9 @@ export default function ProductDetailPage() {
   const requiredPhysicalMissingFields = physicalProfile.missing_fields.filter(
     (field) => field !== 'vat_rate',
   );
+  const physicalSuggestionsToReview = physicalProfile.suggestions.filter(
+    (suggestion) => physicalSuggestionNeedsReview(physicalProfile, suggestion),
+  );
 
   return (
     <div className="space-y-6">
@@ -1221,9 +1228,14 @@ export default function ProductDetailPage() {
             <CardHeader className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle className="text-base">Упаковка и налог</CardTitle>
-                <Badge variant={requiredPhysicalMissingFields.length === 0 ? 'default' : 'outline'}>
+                <Badge
+                  variant="outline"
+                  className={requiredPhysicalMissingFields.length === 0
+                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+                    : 'border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100'}
+                >
                   {requiredPhysicalMissingFields.length === 0
-                    ? 'Обязательные данные заполнены'
+                    ? 'Готово: обязательные данные заполнены'
                     : `Нужно заполнить: ${requiredPhysicalMissingFields.length}`}
                 </Badge>
               </div>
@@ -1236,12 +1248,40 @@ export default function ProductDetailPage() {
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
+              <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+                <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-amber-950 dark:text-amber-100">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span><strong className="block">Заполнить</strong>Пустое обязательное поле</span>
+                </div>
+                <div className="flex items-start gap-2 rounded-md border border-blue-500/40 bg-blue-500/10 p-2.5 text-blue-950 dark:text-blue-100">
+                  <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">?</span>
+                  <span>
+                    <strong className="block">Подтвердить</strong>
+                    {physicalSuggestionsToReview.length > 0
+                      ? `MAP нашёл вариантов: ${physicalSuggestionsToReview.length}`
+                      : 'Найденное при обогащении'}
+                  </span>
+                </div>
+                <div className="flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2.5 text-emerald-950 dark:text-emerald-100">
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                  <span><strong className="block">Готово</strong>Уже используется из 1С или MAP</span>
+                </div>
+                <div className="rounded-md border border-dashed bg-muted/30 p-2.5 text-muted-foreground">
+                  <strong className="block text-foreground">Необязательно</strong>
+                  Можно оставить пустым
+                </div>
+              </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 {PRODUCT_PHYSICAL_FIELDS.map(({ key, label, unit, placeholder }) => {
                   const fact = physicalProfile.facts[key];
                   const from1c = fact.effective_source === '1c';
+                  const isOptional = key === 'vat_rate';
+                  const isMissing = fact.effective_source === 'missing';
                   const suggestions = physicalProfile.suggestions.filter(
                     (suggestion) => suggestion.field === key,
+                  );
+                  const hasSuggestionToReview = suggestions.some(
+                    (suggestion) => physicalSuggestionNeedsReview(physicalProfile, suggestion),
                   );
                   const value = effectivePhysicalValueForInput(
                     physicalProfile,
@@ -1249,21 +1289,44 @@ export default function ProductDetailPage() {
                     physicalDraft,
                   );
                   return (
-                    <div key={key} className="space-y-1.5 rounded-lg border p-3">
+                    <div
+                      key={key}
+                      className={`space-y-2 rounded-lg border border-l-4 p-3 ${
+                        hasSuggestionToReview
+                          ? 'border-blue-500/40 bg-blue-500/5'
+                          : isMissing && !isOptional
+                            ? 'border-amber-500/50 bg-amber-500/5'
+                            : isMissing
+                              ? 'border-dashed bg-muted/20'
+                              : 'border-emerald-500/35 bg-emerald-500/5'
+                      }`}
+                    >
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-2">
                           <label htmlFor={`physical-${key}`} className="text-sm font-medium">
                             {label}{unit ? `, ${unit}` : ''}
                           </label>
-                          {key === 'vat_rate' && <Badge variant="outline">Необязательно</Badge>}
+                          {isOptional && (
+                            <Badge variant="outline" className="border-dashed text-muted-foreground">
+                              Необязательно
+                            </Badge>
+                          )}
                         </div>
                         <Badge
-                          variant={from1c ? 'secondary' : fact.effective_source === 'map' ? 'outline' : 'destructive'}
-                          className="shrink-0"
+                          variant="outline"
+                          className={`shrink-0 ${
+                            from1c || fact.effective_source === 'map'
+                              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+                              : isOptional
+                                ? 'border-dashed text-muted-foreground'
+                                : 'border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100'
+                          }`}
                         >
                           {from1c
-                            ? 'Из 1С'
-                            : fact.effective_source === 'map' ? 'Заполнено в MAP' : 'Не заполнено'}
+                            ? 'Готово · из 1С'
+                            : fact.effective_source === 'map'
+                              ? 'Готово · в MAP'
+                              : isOptional ? 'Можно пропустить' : 'Нужно заполнить'}
                         </Badge>
                       </div>
                       {key === 'vat_rate' ? (
@@ -1332,14 +1395,44 @@ export default function ProductDetailPage() {
                         </p>
                       )}
                       {suggestions.length > 0 && (
-                        <div className="space-y-2 rounded-md border bg-muted/30 p-2.5">
-                          <p className="text-xs font-medium">Найдено при обогащении</p>
+                        <div className={`space-y-2 rounded-md border p-2.5 ${
+                          hasSuggestionToReview
+                            ? 'border-blue-500/40 bg-blue-500/10'
+                            : 'border-emerald-500/30 bg-emerald-500/5'
+                        }`}
+                        >
+                          <p className="flex items-center gap-1.5 text-xs font-semibold">
+                            {hasSuggestionToReview ? (
+                              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">?</span>
+                            ) : (
+                              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                            )}
+                            {hasSuggestionToReview
+                              ? 'MAP нашёл значение — подтвердите или отклоните'
+                              : 'Найденное значение уже обработано'}
+                          </p>
                           {suggestions.map((suggestion) => {
-                            const isApplied = fact.map_provenance?.suggestion_id === suggestion.id
-                              && fact.effective_source === 'map';
+                            const matchesCurrentValue = physicalSuggestionIsAlreadyUsed(
+                              physicalProfile,
+                              suggestion,
+                            );
+                            const isApplied = matchesCurrentValue;
+                            const needsReview = physicalSuggestionNeedsReview(
+                              physicalProfile,
+                              suggestion,
+                            );
                             const isBusy = physicalSuggestionActionId === suggestion.id;
                             return (
-                              <div key={suggestion.id} className="space-y-2 rounded-md bg-background p-2">
+                              <div
+                                key={suggestion.id}
+                                className={`space-y-2 rounded-md border p-2 ${
+                                  needsReview
+                                    ? 'border-blue-500/30 bg-background'
+                                    : isApplied
+                                      ? 'border-emerald-500/30 bg-emerald-500/5'
+                                      : 'border-border bg-muted/30 opacity-75'
+                                }`}
+                              >
                                 <div className="flex flex-wrap items-start justify-between gap-2 text-xs">
                                   <div className="min-w-0">
                                     <p className="font-medium">
@@ -1361,12 +1454,17 @@ export default function ProductDetailPage() {
                                     </p>
                                   </div>
                                   {(isApplied || suggestion.review_status === 'rejected') && (
-                                    <Badge variant="outline" className="shrink-0">
-                                      {isApplied ? 'Использовано' : 'Отклонено'}
+                                    <Badge
+                                      variant="outline"
+                                      className={isApplied
+                                        ? 'shrink-0 border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+                                        : 'shrink-0 text-muted-foreground'}
+                                    >
+                                      {isApplied ? 'Готово · уже в поле' : 'Отклонено'}
                                     </Badge>
                                   )}
                                 </div>
-                                {!from1c && !isApplied && (
+                                {needsReview && (
                                   <div className="flex flex-wrap gap-2">
                                     <Button
                                       type="button"
@@ -1376,7 +1474,7 @@ export default function ProductDetailPage() {
                                       disabled={physicalSuggestionActionId !== null || savingPhysicalProfile}
                                     >
                                       {isBusy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-                                      Использовать в MAP
+                                      Принять значение
                                     </Button>
                                     {suggestion.review_status !== 'rejected' && (
                                       <Button
@@ -1394,7 +1492,7 @@ export default function ProductDetailPage() {
                                 )}
                                 {from1c && (
                                   <p className="text-xs text-muted-foreground">
-                                    Вариант сохранён для проверки, но используется значение из 1С.
+                                    Действие не требуется: значение из 1С имеет приоритет.
                                   </p>
                                 )}
                               </div>
