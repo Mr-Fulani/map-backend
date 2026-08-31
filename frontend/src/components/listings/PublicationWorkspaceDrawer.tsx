@@ -4,7 +4,10 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
+  FileText,
+  Images,
   Loader2,
+  PackageSearch,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -18,7 +21,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { accountApi, listingApi, productApi } from '@/lib/api';
+import { accountApi, imageApi, listingApi, productApi } from '@/lib/api';
 import type { OzonOfferPreparation } from '@/lib/ozon-offer-preparation';
 import {
   avitoTargetState,
@@ -45,7 +48,20 @@ interface WorkspaceProduct {
   article: string;
   name: string;
   brand: string | null;
+  price: string;
+  stock_qty: number;
+  title_ai: string;
+  description_ai: string;
   listing_options: ProductListingOption[];
+}
+
+interface WorkspaceImage {
+  id: number;
+  status: string;
+  is_primary: boolean;
+  position: number;
+  url: string;
+  thumb_url: string;
 }
 
 interface AvitoListingDetail extends PublicationWorkspaceListing {
@@ -65,9 +81,23 @@ function envelopeData<T>(body: unknown): T {
   return (body as { data: T }).data;
 }
 
+function rubles(value: string): string {
+  return `${Number(value).toLocaleString('ru-RU', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} ₽`;
+}
+
+function imageStatusLabel(status: string): string {
+  if (['auto_approved', 'manually_set', 'imported'].includes(status)) return 'Одобрено';
+  if (status === 'rejected') return 'Отклонено';
+  return 'На проверке';
+}
+
 interface WorkspaceSnapshot {
   product: WorkspaceProduct;
   accounts: WorkspaceAccount[];
+  images: WorkspaceImage[];
   avitoListings: Record<number, AvitoListingDetail>;
   ozonPreparations: Record<number, OzonOfferPreparation>;
 }
@@ -75,9 +105,10 @@ interface WorkspaceSnapshot {
 async function fetchPublicationWorkspace(
   requestedProductId: number,
 ): Promise<WorkspaceSnapshot> {
-  const [productResponse, accountsResponse] = await Promise.all([
+  const [productResponse, accountsResponse, imagesResponse] = await Promise.all([
     productApi.get(requestedProductId),
     accountApi.list(),
+    imageApi.list(requestedProductId).catch(() => null),
   ]);
   const product = envelopeData<WorkspaceProduct>(productResponse.data);
   const accountResults = (
@@ -86,6 +117,15 @@ async function fetchPublicationWorkspace(
   const accounts = accountResults.filter((account) => (
     account.is_active && ['avito', 'ozon'].includes(account.marketplace)
   ));
+  const images = (imagesResponse
+    ? envelopeData<WorkspaceImage[]>(imagesResponse.data)
+    : [])
+    .slice()
+    .sort((left, right) => (
+      Number(right.is_primary) - Number(left.is_primary)
+      || left.position - right.position
+      || left.id - right.id
+    ));
   const listingResponses = await Promise.all(
     product.listing_options.map((option) => (
       listingApi.get(option.id).then((response) => (
@@ -114,7 +154,7 @@ async function fetchPublicationWorkspace(
     ozonPreparations[result.accountId] = result.preparation;
   });
 
-  return { product, accounts, avitoListings, ozonPreparations };
+  return { product, accounts, images, avitoListings, ozonPreparations };
 }
 
 export default function PublicationWorkspaceDrawer({
@@ -126,12 +166,15 @@ export default function PublicationWorkspaceDrawer({
 }: Props) {
   const [product, setProduct] = useState<WorkspaceProduct | null>(null);
   const [accounts, setAccounts] = useState<WorkspaceAccount[]>([]);
+  const [images, setImages] = useState<WorkspaceImage[]>([]);
   const [avitoListings, setAvitoListings] = useState<Record<number, AvitoListingDetail>>({});
   const [ozonPreparations, setOzonPreparations] = useState<Record<number, OzonOfferPreparation>>({});
   const [loading, setLoading] = useState(productId !== null);
   const [loadError, setLoadError] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [preparingAccountId, setPreparingAccountId] = useState<number | null>(null);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [ozonMobilePanel, setOzonMobilePanel] = useState<'preparation' | 'product'>('preparation');
   const open = productId !== null;
 
   useEffect(() => {
@@ -142,6 +185,9 @@ export default function PublicationWorkspaceDrawer({
         if (cancelled) return;
         setProduct(snapshot.product);
         setAccounts(snapshot.accounts);
+        setImages(snapshot.images);
+        setActiveImageIndex(0);
+        setOzonMobilePanel('preparation');
         setAvitoListings(snapshot.avitoListings);
         setOzonPreparations(snapshot.ozonPreparations);
         setLoadError(false);
@@ -150,6 +196,7 @@ export default function PublicationWorkspaceDrawer({
         if (cancelled) return;
         setProduct(null);
         setAccounts([]);
+        setImages([]);
         setAvitoListings({});
         setOzonPreparations({});
         setLoadError(true);
@@ -209,6 +256,11 @@ export default function PublicationWorkspaceDrawer({
     });
   }, [selectedAccount]);
 
+  function selectAccount(accountId: number) {
+    setOzonMobilePanel('preparation');
+    onSelectedAccountChange(accountId);
+  }
+
   async function prepareAvito(account: WorkspaceAccount) {
     if (!product) return;
     setPreparingAccountId(account.id);
@@ -230,11 +282,16 @@ export default function PublicationWorkspaceDrawer({
     }
   }
 
+  const activeImage = images[activeImageIndex] ?? images[0] ?? null;
+  const selectedOzonPreparation = selectedAccount?.marketplace === 'ozon'
+    ? ozonPreparations[selectedAccount.id] ?? null
+    : null;
+
   return (
     <Sheet open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <SheetContent
         side="right"
-        className="h-[100dvh] w-[100dvw] min-w-0 max-w-[100dvw] overflow-y-auto p-0 sm:max-w-[100dvw] xl:w-[min(94vw,1280px)] xl:max-w-[min(94vw,1280px)]"
+        className="h-[100dvh] w-[100dvw] min-w-0 max-w-[100dvw] overflow-hidden p-0 sm:max-w-[100dvw] xl:w-[min(96vw,1440px)] xl:max-w-[min(96vw,1440px)]"
       >
         {loading ? (
           <div className="flex h-full items-center justify-center gap-2 text-muted-foreground">
@@ -255,8 +312,156 @@ export default function PublicationWorkspaceDrawer({
               </div>
             </div>
           </div>
+        ) : accounts.length === 0 ? (
+          <div className="flex h-full items-center justify-center bg-muted/15 p-6">
+            <div className="max-w-md rounded-lg border bg-background p-5 text-center text-sm">
+              <p className="font-medium">Нет активных кабинетов маркетплейсов</p>
+              <Button asChild className="mt-3" variant="outline">
+                <Link href="/dashboard/settings#marketplaces">Открыть настройки</Link>
+              </Button>
+            </div>
+          </div>
+        ) : selectedView.kind === 'ozon' && selectedAccount ? (
+          <div className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+            <SheetHeader className="sr-only">
+              <SheetTitle>Ozon · {product.article} · {product.name}</SheetTitle>
+            </SheetHeader>
+
+            <div className="min-w-0 shrink-0 overflow-hidden border-b bg-background/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur xl:hidden">
+              <p className="truncate pr-10 font-mono text-xs text-muted-foreground">{product.article}</p>
+              <p className="truncate pr-10 text-sm font-medium">{product.name}</p>
+              <div className="mt-3 grid min-w-0 grid-cols-2 rounded-lg bg-muted p-1">
+                <button
+                  type="button"
+                  onClick={() => setOzonMobilePanel('preparation')}
+                  className={`flex h-9 min-w-0 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${ozonMobilePanel === 'preparation' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
+                >
+                  <FileText className="h-4 w-4" /> Карточка Ozon
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOzonMobilePanel('product')}
+                  className={`flex h-9 min-w-0 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${ozonMobilePanel === 'product' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
+                >
+                  <PackageSearch className="h-4 w-4" /> Товар
+                </button>
+              </div>
+            </div>
+
+            <div className="min-w-0 shrink-0 border-b bg-background px-4 py-3 sm:px-5">
+              <MarketplaceChannelSwitcher
+                accounts={accounts}
+                selectedAccountId={selectedAccount.id}
+                states={accountStates}
+                onSelect={selectAccount}
+              />
+            </div>
+
+            <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden xl:grid-cols-[minmax(600px,1fr)_minmax(440px,520px)]">
+              <section className={`${ozonMobilePanel === 'preparation' ? 'block' : 'hidden'} min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain border-r xl:block`}>
+                <div className="w-full min-w-0 space-y-4 p-4 pb-8 sm:p-5">
+                  <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-muted-foreground">
+                    Карточка относится только к кабинету «{selectedAccount.name}».
+                    Категории, характеристики и цена Ozon сохраняются отдельно от Avito.
+                  </div>
+                  <OzonOfferPreparationCard
+                    key={`${product.id}:${selectedAccount.id}`}
+                    productId={product.id}
+                    accounts={[selectedAccount]}
+                    onPreparationChange={handleOzonPreparationChange}
+                    showAccountSelector={false}
+                    embedded
+                  />
+                </div>
+              </section>
+
+              <section className={`${ozonMobilePanel === 'product' ? 'block' : 'hidden'} min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-background xl:block`}>
+                <div className="space-y-5 p-4 pb-8 sm:p-5">
+                  <SheetHeader className="text-left">
+                    <div className="flex min-w-0 items-start gap-3">
+                      <SheetTitle className="min-w-0 flex-1 break-words pr-1 leading-tight [overflow-wrap:anywhere]">
+                        <span className="mb-1 block truncate font-mono text-xs text-muted-foreground">
+                          {product.article}
+                        </span>
+                        {product.name}
+                      </SheetTitle>
+                      <Badge variant={selectedOzonPreparation?.preflight.ready ? 'default' : 'outline'}>
+                        {selectedOzonPreparation?.preflight.ready ? 'Готово' : 'Черновик'}
+                      </Badge>
+                      <Badge variant="outline">Ozon</Badge>
+                    </div>
+                  </SheetHeader>
+
+                  <div className="space-y-2">
+                    <div className="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden rounded-lg border bg-muted">
+                      {activeImage?.url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={activeImage.url} alt="" className="h-full w-full object-contain" />
+                      ) : (
+                        <div className="text-center text-sm text-muted-foreground">
+                          <Images className="mx-auto mb-2 h-7 w-7" />
+                          У товара пока нет фотографий
+                        </div>
+                      )}
+                    </div>
+                    {images.length > 0 && (
+                      <div className="flex gap-2 overflow-x-auto pb-1">
+                        {images.map((image, index) => (
+                          <button
+                            key={image.id}
+                            type="button"
+                            title={imageStatusLabel(image.status)}
+                            onClick={() => setActiveImageIndex(index)}
+                            className={`h-14 w-14 shrink-0 overflow-hidden rounded-md border bg-muted ${index === activeImageIndex ? 'ring-2 ring-primary' : ''}`}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={image.thumb_url || image.url} alt="" className="h-full w-full object-cover" />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Базовая цена</p>
+                      <p className="mt-1 font-semibold tabular-nums">{rubles(product.price)}</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Остаток</p>
+                      <p className="mt-1 font-semibold tabular-nums">{product.stock_qty} шт.</p>
+                    </div>
+                    <div className="rounded-lg border p-3">
+                      <p className="text-xs text-muted-foreground">Бренд</p>
+                      <p className="mt-1 truncate font-semibold">{product.brand || 'Не указан'}</p>
+                    </div>
+                  </div>
+
+                  <div className="space-y-4 border-t pt-4">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Заголовок после обогащения</p>
+                      <p className="mt-1 text-sm font-medium leading-relaxed">
+                        {product.title_ai || product.name}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">AI-описание</p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+                        {product.description_ai || 'Описание ещё не подготовлено.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
+                    Это общие проверенные данные товара. Исправления выполняются в разделе
+                    «Товары», а категория, характеристики и цена Ozon — слева в этой карточке.
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
         ) : (
-          <div className="min-h-full bg-muted/15 p-4 pb-10 sm:p-6">
+          <div className="h-full overflow-y-auto bg-muted/15 p-4 pb-10 sm:p-6">
             <SheetHeader className="pr-10 text-left">
               <div className="flex flex-wrap items-center gap-2">
                 <SheetTitle>Листинг товара</SheetTitle>
@@ -264,71 +469,40 @@ export default function PublicationWorkspaceDrawer({
               </div>
               <p className="text-sm text-muted-foreground">{product.name}</p>
             </SheetHeader>
-
-            {accounts.length === 0 ? (
-              <div className="mt-5 rounded-lg border bg-background p-5 text-sm">
-                <p>Нет активных кабинетов маркетплейсов.</p>
-                <Button asChild className="mt-3" variant="outline">
-                  <Link href="/dashboard/settings#marketplaces">Открыть настройки</Link>
-                </Button>
-              </div>
-            ) : (
-              <div className="mt-5 space-y-5">
-                <div className="rounded-lg border bg-background p-4">
-                  <MarketplaceChannelSwitcher
-                    accounts={accounts}
-                    selectedAccountId={selectedAccount?.id ?? null}
-                    states={accountStates}
-                    onSelect={onSelectedAccountChange}
-                  />
-                </div>
-
-                <main className="min-w-0">
-                  {selectedAccount && (
-                    selectedView.kind === 'avito_listing' || selectedView.kind === 'avito_setup'
-                  ) ? (
-                    <div className="rounded-lg border bg-background p-4 sm:p-5">
-                      {selectedView.kind === 'avito_listing' ? (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                          Открываем данные Avito без промежуточного экрана…
-                        </div>
-                      ) : (
-                        <>
-                          <p className="text-sm font-medium">Avito · {selectedAccount.name}</p>
-                          <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                            Для этого кабинета ещё нет черновика. MAP создаст его
-                            через текущую проверенную логику Avito, без немедленной отправки.
-                          </p>
-                          <Button
-                            className="mt-4"
-                            onClick={() => prepareAvito(selectedAccount)}
-                            disabled={preparingAccountId === selectedAccount.id}
-                          >
-                            {preparingAccountId === selectedAccount.id && (
-                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            )}
-                            Подготовить черновик Avito
-                          </Button>
-                        </>
+            <div className="mt-5 rounded-lg border bg-background p-4">
+              <MarketplaceChannelSwitcher
+                accounts={accounts}
+                selectedAccountId={selectedAccount?.id ?? null}
+                states={accountStates}
+                onSelect={selectAccount}
+              />
+            </div>
+            {selectedAccount && (
+              <div className="mt-5 rounded-lg border bg-background p-4 sm:p-5">
+                {selectedView.kind === 'avito_listing' ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Открываем данные Avito без промежуточного экрана…
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-sm font-medium">Avito · {selectedAccount.name}</p>
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                      Для этого кабинета ещё нет черновика. MAP создаст его через текущую
+                      проверенную логику Avito, без немедленной отправки.
+                    </p>
+                    <Button
+                      className="mt-4"
+                      onClick={() => prepareAvito(selectedAccount)}
+                      disabled={preparingAccountId === selectedAccount.id}
+                    >
+                      {preparingAccountId === selectedAccount.id && (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                       )}
-                    </div>
-                  ) : selectedView.kind === 'ozon' && selectedAccount ? (
-                    <div className="space-y-3">
-                      <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-muted-foreground">
-                        Это отдельная проекция Ozon для кабинета «{selectedAccount.name}».
-                        Она не меняет поля, дерево, наценки или фид Avito.
-                      </div>
-                      <OzonOfferPreparationCard
-                        key={`${product.id}:${selectedAccount.id}`}
-                        productId={product.id}
-                        accounts={[selectedAccount]}
-                        onPreparationChange={handleOzonPreparationChange}
-                        showAccountSelector={false}
-                      />
-                    </div>
-                  ) : null}
-                </main>
+                      Подготовить черновик Avito
+                    </Button>
+                  </>
+                )}
               </div>
             )}
           </div>

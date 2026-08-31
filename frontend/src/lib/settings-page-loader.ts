@@ -11,6 +11,8 @@ export type SettingsLoadGroup =
 const TAB_LOAD_GROUPS: Readonly<Record<string, readonly SettingsLoadGroup[]>> = {
   'api-keys': ['api-keys'],
   marketplaces: ['marketplaces'],
+  'ozon-categories': ['marketplaces'],
+  'ozon-pricing': ['marketplaces'],
   datasources: ['datasources'],
   'catalog-categories': ['catalog-domains', 'catalog'],
   pricing: ['pricing-categories'],

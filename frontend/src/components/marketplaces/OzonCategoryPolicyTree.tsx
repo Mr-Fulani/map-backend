@@ -16,13 +16,6 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import { accountApi } from '@/lib/api';
 import type {
   OzonCatalogTreeLevel,
@@ -37,13 +30,13 @@ import {
   ozonPolicySourceLabel,
   ozonTreeLevelResponse,
   type OzonCategoryPolicyDraft,
-  type OzonEnabledDraft,
 } from '@/lib/ozon-category-policy-ui';
 
 interface OzonCategoryPolicyTreeProps {
   accountId: number;
   accountName: string;
   canManage: boolean;
+  mode: 'categories' | 'margins';
 }
 
 function policyErrorDetails(error: unknown): { code: string; message: string } {
@@ -84,6 +77,7 @@ export function OzonCategoryPolicyTree({
   accountId,
   accountName,
   canManage,
+  mode,
 }: OzonCategoryPolicyTreeProps) {
   const [level, setLevel] = useState<OzonCatalogTreeLevel | null>(null);
   const [parentIds, setParentIds] = useState<number[]>([]);
@@ -208,9 +202,22 @@ export function OzonCategoryPolicyTree({
   }
 
   function resetPolicy(option: OzonCatalogTreeOption) {
-    const inherited: OzonCategoryPolicyDraft = { enabled: 'inherit', margin: '' };
+    const current = drafts[ozonPolicyKey(option)] ?? ozonPolicyDraft(option);
+    const inherited: OzonCategoryPolicyDraft = mode === 'categories'
+      ? { ...current, enabled: 'inherit' }
+      : { ...current, margin: '' };
     updateDraft(option, inherited);
     void savePolicy(option, inherited);
+  }
+
+  function toggleCategory(option: OzonCatalogTreeOption) {
+    const current = drafts[ozonPolicyKey(option)] ?? ozonPolicyDraft(option);
+    const next: OzonCategoryPolicyDraft = {
+      ...current,
+      enabled: option.policy.effective_enabled ? 'disabled' : 'enabled',
+    };
+    updateDraft(option, next);
+    void savePolicy(option, next);
   }
 
   if (loading && !level) {
@@ -242,13 +249,14 @@ export function OzonCategoryPolicyTree({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground">
+      <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground">
         <p className="font-medium text-foreground">
-          Категории и наценки кабинета «{accountName}»
+          {mode === 'categories' ? 'Категории' : 'Наценки'} кабинета «{accountName}»
         </p>
         <p className="mt-1">
-          Настройка действует только для этого кабинета Ozon. Она не меняет дерево MAP,
-          категории, наценки или объявления Avito и ничего не отправляет в Ozon.
+          {mode === 'categories'
+            ? 'Включайте только нужные разделы Ozon. Настройка раздела наследуется всеми вложенными категориями и типами товара.'
+            : 'Пустое значение наследует наценку ближайшего родительского раздела. Цена товара и наценки Avito не изменяются.'}
         </p>
       </div>
 
@@ -306,129 +314,130 @@ export function OzonCategoryPolicyTree({
           {search.trim() ? 'В этом разделе ничего не найдено.' : 'В разделе нет доступных категорий.'}
         </p>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {visibleOptions.map((option) => {
             const key = ozonPolicyKey(option);
             const draft = drafts[key] ?? ozonPolicyDraft(option);
             const isSaving = savingKey === key;
-            const hasOwnSettings = (
-              option.policy.enabled_override !== null || option.policy.margin_pct !== null
-            );
+            const hasOwnSetting = mode === 'categories'
+              ? option.policy.enabled_override !== null
+              : option.policy.margin_pct !== null;
             return (
-              <div key={key} className="rounded-md border bg-background p-3">
-                <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                  <div className="min-w-0 flex-1">
+              <div
+                key={key}
+                className="flex flex-col gap-3 rounded-lg border bg-background p-3 md:flex-row md:items-center md:justify-between"
+              >
+                <div className="flex min-w-0 items-center gap-3">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border bg-muted/60">
+                    {option.kind === 'category'
+                      ? <Folder className="h-5 w-5 text-blue-500" />
+                      : <Tag className="h-5 w-5 text-violet-500" />}
+                  </div>
+                  <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      {option.kind === 'category'
-                        ? <Folder className="h-4 w-4 shrink-0 text-blue-500" />
-                        : <Tag className="h-4 w-4 shrink-0 text-violet-500" />}
-                      <p className="break-words text-sm font-medium">{option.name}</p>
-                      <Badge variant="outline">
-                        {option.kind === 'category' ? 'Раздел' : 'Тип товара'}
-                      </Badge>
-                      <Badge
-                        variant={option.policy.effective_enabled ? 'default' : 'secondary'}
-                        className={option.policy.effective_enabled
-                          ? 'bg-green-600 hover:bg-green-600'
-                          : undefined}
-                      >
-                        {option.policy.effective_enabled ? 'Включено' : 'Выключено'}
-                      </Badge>
+                      <p className="break-words font-medium">{option.name}</p>
+                      <Badge variant="outline">Официальная Ozon</Badge>
                     </div>
-                    <p className="mt-1 break-words text-xs text-muted-foreground">
+                    <p className="mt-0.5 break-words text-xs text-muted-foreground">
                       {option.category_path}
                     </p>
-                    <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                      <p>
-                        Статус: {ozonPolicySourceLabel(
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {mode === 'categories'
+                        ? `Статус: ${ozonPolicySourceLabel(
                           option.policy.enabled_source,
                           option,
                           'включено по умолчанию',
-                        )}
-                      </p>
-                      <p>
-                        Итоговая наценка: <span className="font-medium text-foreground">
-                          {option.policy.effective_margin_pct}%
-                        </span>{' '}
-                        ({ozonPolicySourceLabel(
+                        )}`
+                        : `Итог: ${option.policy.effective_margin_pct}% · ${ozonPolicySourceLabel(
                           option.policy.margin_source,
                           option,
-                          '0% по умолчанию',
-                        )})
-                      </p>
-                    </div>
+                          'без наценки',
+                        )}`}
+                    </p>
                   </div>
-                  {option.kind === 'category' && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      disabled={loading || savingKey !== null}
-                      onClick={() => void loadLevel(ozonCategoryPathIds(level, option))}
-                    >
-                      Открыть ветку
-                      <ChevronRight className="ml-1 h-3.5 w-3.5" />
-                    </Button>
-                  )}
                 </div>
 
-                <div className="mt-3 grid gap-3 border-t pt-3 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] md:items-end">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium" htmlFor={`ozon-enabled-${key}`}>
-                      Публикация
-                    </label>
-                    <Select
-                      value={draft.enabled}
-                      disabled={!canManage || savingKey !== null}
-                      onValueChange={(value) => updateDraft(option, {
-                        enabled: value as OzonEnabledDraft,
-                      })}
-                    >
-                      <SelectTrigger id={`ozon-enabled-${key}`}>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="inherit">Наследовать от родителя</SelectItem>
-                        <SelectItem value="enabled">Включить</SelectItem>
-                        <SelectItem value="disabled">Выключить</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-[11px] text-muted-foreground">
-                      Для раздела настройка наследуется всей веткой.
-                    </p>
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium" htmlFor={`ozon-margin-${key}`}>
-                      Своя наценка, %
-                    </label>
-                    <Input
-                      id={`ozon-margin-${key}`}
-                      type="text"
-                      inputMode="decimal"
-                      value={draft.margin}
-                      maxLength={7}
-                      disabled={!canManage || savingKey !== null}
-                      onChange={(event) => updateDraft(option, { margin: event.target.value })}
-                      placeholder="Пусто — наследовать"
-                    />
-                    <p className="text-[11px] text-muted-foreground">
-                      Можно оставить пустым и использовать значение родителя.
-                    </p>
-                    {validationErrors[key] && (
-                      <p className="text-xs text-destructive">{validationErrors[key]}</p>
+                {mode === 'categories' ? (
+                  <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                    {option.kind === 'category' && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={loading || savingKey !== null}
+                        onClick={() => void loadLevel(ozonCategoryPathIds(level, option))}
+                      >
+                        Открыть ветку
+                        <ChevronRight className="ml-1 h-3.5 w-3.5" />
+                      </Button>
                     )}
-                  </div>
-                  <div className="flex flex-wrap gap-2 md:justify-end">
+                    {hasOwnSetting && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={!canManage || savingKey !== null}
+                        onClick={() => resetPolicy(option)}
+                      >
+                        <RotateCcw className="mr-1 h-3.5 w-3.5" />
+                        Наследовать
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
-                      disabled={!canManage || savingKey !== null || !hasOwnSettings}
-                      onClick={() => resetPolicy(option)}
+                      disabled={!canManage || savingKey !== null}
+                      onClick={() => toggleCategory(option)}
                     >
-                      <RotateCcw className="mr-1 h-3.5 w-3.5" />
-                      Сбросить
+                      {isSaving && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                      {option.policy.effective_enabled ? 'Отключить' : 'Включить'}
                     </Button>
+                    <Badge variant={option.policy.effective_enabled ? 'default' : 'secondary'}>
+                      {option.policy.effective_enabled ? 'Активна' : 'Отключена'}
+                    </Badge>
+                  </div>
+                ) : (
+                  <div className="flex w-full flex-col gap-2 md:w-auto md:min-w-[520px] md:flex-row md:items-center md:justify-end">
+                    {option.kind === 'category' && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={loading || savingKey !== null}
+                        onClick={() => void loadLevel(ozonCategoryPathIds(level, option))}
+                      >
+                        Внутрь
+                        <ChevronRight className="ml-1 h-3.5 w-3.5" />
+                      </Button>
+                    )}
+                    <div className="flex items-center gap-1">
+                      <Input
+                        id={`ozon-margin-${key}`}
+                        aria-label={`Наценка Ozon: ${option.name}`}
+                        className="w-32"
+                        type="text"
+                        inputMode="decimal"
+                        value={draft.margin}
+                        maxLength={7}
+                        disabled={!canManage || savingKey !== null}
+                        onChange={(event) => updateDraft(option, { margin: event.target.value })}
+                        placeholder="Наследовать"
+                      />
+                      <span className="text-sm text-muted-foreground">%</span>
+                    </div>
+                    {hasOwnSetting && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={!canManage || savingKey !== null}
+                        onClick={() => resetPolicy(option)}
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        <span className="sr-only">Сбросить наценку</span>
+                      </Button>
+                    )}
                     <Button
                       type="button"
                       size="sm"
@@ -441,7 +450,10 @@ export function OzonCategoryPolicyTree({
                       {isSaving ? 'Сохраняем…' : 'Сохранить'}
                     </Button>
                   </div>
-                </div>
+                )}
+                {validationErrors[key] && (
+                  <p className="text-xs text-destructive md:basis-full">{validationErrors[key]}</p>
+                )}
               </div>
             );
           })}

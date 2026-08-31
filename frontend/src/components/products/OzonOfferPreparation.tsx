@@ -58,11 +58,13 @@ export function OzonOfferPreparationCard({
   accounts,
   onPreparationChange,
   showAccountSelector = true,
+  embedded = false,
 }: {
   productId: number;
   accounts: AccountOption[];
   onPreparationChange?: (preparation: OzonOfferPreparation | null) => void;
   showAccountSelector?: boolean;
+  embedded?: boolean;
 }) {
   const ozonAccounts = useMemo(
     () => accounts.filter((account) => account.marketplace === 'ozon' && account.is_active),
@@ -328,8 +330,8 @@ export function OzonOfferPreparationCard({
   );
 
   return (
-    <Card>
-      <CardHeader className="space-y-2">
+    <Card className={embedded ? 'border-0 bg-transparent shadow-none' : undefined}>
+      <CardHeader className={`space-y-2 ${embedded ? 'px-0 pt-0' : ''}`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle className="text-base">Подготовка карточки Ozon</CardTitle>
           {preparation && (
@@ -346,7 +348,7 @@ export function OzonOfferPreparationCard({
             : 'Это данные выбранного выше кабинета Ozon. Они не меняют категории, наценки или объявления Avito.'}
         </p>
       </CardHeader>
-      <CardContent className="space-y-5">
+      <CardContent className={`space-y-5 ${embedded ? 'px-0 pb-0' : ''}`}>
         {ozonAccounts.length === 0 ? (
           <p className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
             Сначала подключите аккаунт Ozon в разделе «Настройки → Маркетплейсы».

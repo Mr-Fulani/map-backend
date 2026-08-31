@@ -1,7 +1,8 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { AlertCircle, FolderTree, Loader2, RefreshCw } from 'lucide-react';
+import { AlertCircle, FolderTree, Loader2, Percent, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { OzonCategoryPolicyTree } from '@/components/marketplaces/OzonCategoryPolicyTree';
@@ -16,6 +17,7 @@ interface OzonCatalogStatusProps {
   accountActive: boolean;
   canManage: boolean;
   connectionEnabled: boolean;
+  view?: 'summary' | 'categories' | 'margins';
 }
 
 function catalogResponse(body: unknown): OzonCatalogState {
@@ -38,12 +40,12 @@ export function OzonCatalogStatus({
   accountActive,
   canManage,
   connectionEnabled,
+  view = 'summary',
 }: OzonCatalogStatusProps) {
   const [catalog, setCatalog] = useState<OzonCatalogState | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadFailed, setLoadFailed] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -72,7 +74,6 @@ export function OzonCatalogStatus({
     try {
       const response = await accountApi.refreshOzonCatalogTree(accountId);
       setCatalog(catalogResponse(response.data));
-      setSettingsOpen(false);
       setLoadFailed(false);
       toast.success('Справочник категорий Ozon обновлён в режиме только чтения.');
     } catch (error: unknown) {
@@ -88,16 +89,20 @@ export function OzonCatalogStatus({
   );
 
   return (
-    <div className="rounded-md border bg-muted/20 p-3">
+    <div className="rounded-lg border bg-muted/20 p-3 sm:p-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <FolderTree className="h-4 w-4 text-muted-foreground" />
-            <p className="text-sm font-medium">Категории и наценки Ozon</p>
+            <p className="text-sm font-medium">
+              {view === 'summary'
+                ? 'Категории и наценки Ozon'
+                : view === 'categories' ? 'Справочник категорий Ozon' : 'Правила наценок Ozon'}
+            </p>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
-            Отдельное дерево и правила только для кабинета «{accountName}».
-            Avito и Каталог MAP не изменяются.
+            Отдельные данные только для кабинета «{accountName}».
+            Каталог MAP и Avito не изменяются.
           </p>
         </div>
         <Button
@@ -144,23 +149,29 @@ export function OzonCatalogStatus({
             </div>
           </div>
 
-          <Button
-            type="button"
-            size="sm"
-            variant={settingsOpen ? 'secondary' : 'outline'}
-            onClick={() => setSettingsOpen((current) => !current)}
-          >
-            <FolderTree className="mr-2 h-3.5 w-3.5" />
-            {settingsOpen ? 'Скрыть настройки' : 'Настроить категории и наценки'}
-          </Button>
-
-          {settingsOpen && (
-            <div className="rounded-md border bg-background p-3">
+          {view === 'summary' ? (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Button asChild type="button" size="sm" variant="outline">
+                <Link href="/dashboard/settings#ozon-categories">
+                  <FolderTree className="mr-2 h-3.5 w-3.5" />
+                  Открыть категории Ozon
+                </Link>
+              </Button>
+              <Button asChild type="button" size="sm" variant="outline">
+                <Link href="/dashboard/settings#ozon-pricing">
+                  <Percent className="mr-2 h-3.5 w-3.5" />
+                  Открыть наценки Ozon
+                </Link>
+              </Button>
+            </div>
+          ) : (
+            <div className="rounded-lg border bg-background p-3 sm:p-4">
               <OzonCategoryPolicyTree
-                key={`${accountId}:${tree.revision}`}
+                key={`${accountId}:${tree.revision}:${view}`}
                 accountId={accountId}
                 accountName={accountName}
                 canManage={canManage}
+                mode={view}
               />
             </div>
           )}
