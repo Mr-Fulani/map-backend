@@ -348,6 +348,7 @@ export function OzonAccountSettings({
 
                   <OzonCatalogStatus
                     accountId={account.id}
+                    accountName={account.name}
                     accountActive={account.is_active}
                     canManage={canManage}
                     connectionEnabled={connectionEnabled}

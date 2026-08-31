@@ -99,18 +99,44 @@ export interface OzonCatalogTreePathItem {
   name: string;
 }
 
-export interface OzonCatalogTreeOption {
-  kind: 'category' | 'type';
+export interface OzonCategoryPolicySource {
   description_category_id: number;
   type_id: number | null;
   name: string;
   category_path: string;
 }
 
+export interface OzonCategoryPolicyState {
+  enabled_override: boolean | null;
+  effective_enabled: boolean;
+  enabled_source: OzonCategoryPolicySource | null;
+  margin_pct: string | null;
+  effective_margin_pct: string;
+  margin_source: OzonCategoryPolicySource | null;
+}
+
+export interface OzonCatalogTreeOption {
+  kind: 'category' | 'type';
+  description_category_id: number;
+  type_id: number | null;
+  name: string;
+  category_path: string;
+  policy: OzonCategoryPolicyState;
+}
+
 export interface OzonCatalogTreeLevel {
   path: OzonCatalogTreePathItem[];
   options: OzonCatalogTreeOption[];
   tree_revision: string | null;
+}
+
+export interface OzonCategoryPolicyUpdate {
+  description_category_id: number;
+  type_id: number | null;
+  category_path_ids: number[];
+  tree_revision: string;
+  enabled_override: boolean | null;
+  margin_pct: string | null;
 }
 
 export interface MarketplaceProviderCapabilities {

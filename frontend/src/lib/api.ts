@@ -1273,6 +1273,10 @@ export const accountApi = {
       language: 'DEFAULT',
     },
   }),
+  updateOzonCategoryPolicy: (
+    id: number,
+    data: import('./marketplace-account-types').OzonCategoryPolicyUpdate,
+  ) => api.patch(`/accounts/${id}/ozon-catalog/category-policy/`, data),
   refreshOzonCatalogTree: (id: number) => api.post(`/accounts/${id}/ozon-catalog/`, {
     scope: 'tree',
     language: 'DEFAULT',
