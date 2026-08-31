@@ -102,7 +102,7 @@ export function OzonCatalogStatus({
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
             Отдельные данные только для кабинета «{accountName}».
-            Каталог MAP и Avito не изменяются.
+            Каталог товаров и настройки Avito не изменяются.
           </p>
         </div>
         <Button
@@ -152,13 +152,13 @@ export function OzonCatalogStatus({
           {view === 'summary' ? (
             <div className="flex flex-col gap-2 sm:flex-row">
               <Button asChild type="button" size="sm" variant="outline">
-                <Link href="/dashboard/settings#ozon-categories">
+                <Link href="/dashboard/settings#marketplace-categories-ozon">
                   <FolderTree className="mr-2 h-3.5 w-3.5" />
                   Открыть категории Ozon
                 </Link>
               </Button>
               <Button asChild type="button" size="sm" variant="outline">
-                <Link href="/dashboard/settings#ozon-pricing">
+                <Link href="/dashboard/settings#marketplace-pricing-ozon">
                   <Percent className="mr-2 h-3.5 w-3.5" />
                   Открыть наценки Ozon
                 </Link>

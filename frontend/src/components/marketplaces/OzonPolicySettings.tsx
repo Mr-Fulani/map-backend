@@ -45,12 +45,13 @@ export function OzonPolicySettings({
       <CardHeader>
         <div className="flex flex-wrap items-center gap-2">
           <CardTitle>{title}</CardTitle>
-          <Badge variant="outline">Отдельно от Avito</Badge>
+          {mode === 'categories' && <Badge variant="outline">Официальное дерево</Badge>}
+          <Badge variant="outline">Отдельно для кабинета</Badge>
         </div>
         <CardDescription>
           {mode === 'categories'
-            ? 'Официальное дерево Ozon для выбранного кабинета. Включайте и выключайте ветки так же понятно, как категории каталога.'
-            : 'Наценки рассчитываются только для выбранного кабинета Ozon и наследуются по его собственному дереву.'}
+            ? 'Выбирайте доступные ветки Ozon в общем интерфейсе площадок. Настройки выбранного кабинета не меняют Avito.'
+            : 'Правила рассчитываются только для выбранного кабинета Ozon и наследуются по его собственному дереву.'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

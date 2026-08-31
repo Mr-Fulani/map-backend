@@ -34,6 +34,8 @@ import {
 import { WebResearchSettingsCard } from '@/components/settings/web-research-settings';
 import { OzonAccountSettings } from '@/components/marketplaces/OzonAccountSettings';
 import { OzonPolicySettings } from '@/components/marketplaces/OzonPolicySettings';
+import { AvitoCategorySettings } from '@/components/marketplaces/AvitoCategorySettings';
+import { MarketplaceSettingsSwitcher } from '@/components/marketplaces/MarketplaceSettingsSwitcher';
 import type {
   AutoloadOnboarding,
   AvitoAccountHealth,
@@ -51,10 +53,16 @@ import { updateCatalogCategoryBranch } from '@/lib/catalog-settings-state';
 import {
   AVITO_PRICING_LABEL,
   canEditMapCatalogStructure,
+  mapCatalogCategorySourceLabel,
   MAP_CATALOG_LABEL,
-  OZON_CATEGORIES_LABEL,
-  OZON_PRICING_LABEL,
+  MARKETPLACE_CATEGORIES_LABEL,
+  MARKETPLACE_PRICING_LABEL,
 } from '@/lib/marketplace-category-boundaries';
+import {
+  resolveSettingsHash,
+  settingsHash,
+  type MarketplaceSettingsProvider,
+} from '@/lib/settings-marketplace-navigation';
 
 interface ApiKey {
   id: number;
@@ -163,7 +171,7 @@ interface AISettings {
 
 const SETTINGS_TABS = [
   'profile', 'organization', 'api-keys', 'marketplaces', 'datasources',
-  'catalog-categories', 'ozon-categories', 'pricing', 'ozon-pricing',
+  'catalog-categories', 'marketplace-categories', 'marketplace-pricing',
   'web-research', 'ai', 'notifications',
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
@@ -175,9 +183,8 @@ const SETTINGS_TAB_LABELS: Record<SettingsTab, string> = {
   marketplaces: 'Маркетплейсы',
   datasources: 'Источники данных',
   'catalog-categories': MAP_CATALOG_LABEL,
-  'ozon-categories': OZON_CATEGORIES_LABEL,
-  pricing: AVITO_PRICING_LABEL,
-  'ozon-pricing': OZON_PRICING_LABEL,
+  'marketplace-categories': MARKETPLACE_CATEGORIES_LABEL,
+  'marketplace-pricing': MARKETPLACE_PRICING_LABEL,
   'web-research': 'Интернет-исследование',
   ai: 'AI-модели',
   notifications: 'Уведомления',
@@ -326,6 +333,8 @@ export default function SettingsPage() {
   const { user, tenant, role, clearLocalSession } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<SettingsTab>('profile');
+  const [categoryMarketplace, setCategoryMarketplace] = useState<MarketplaceSettingsProvider>('avito');
+  const [pricingMarketplace, setPricingMarketplace] = useState<MarketplaceSettingsProvider>('avito');
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [isOzonConnectionEnabled, setOzonConnectionEnabled] = useState(false);
@@ -403,8 +412,11 @@ export default function SettingsPage() {
   useEffect(() => {
     function syncTab() {
       const rawHash = window.location.hash.slice(1);
-      const hash = (rawHash === 'accounts' ? 'marketplaces' : rawHash) as SettingsTab;
-      if (SETTINGS_TABS.includes(hash)) setActiveTab(hash);
+      const resolved = resolveSettingsHash(rawHash);
+      const tab = resolved.tab as SettingsTab;
+      if (SETTINGS_TABS.includes(tab)) setActiveTab(tab);
+      if (resolved.categoryProvider) setCategoryMarketplace(resolved.categoryProvider);
+      if (resolved.pricingProvider) setPricingMarketplace(resolved.pricingProvider);
     }
     syncTab();
     window.addEventListener('hashchange', syncTab);
@@ -414,8 +426,12 @@ export default function SettingsPage() {
   // При смене вкладки обновляем хэш (кроме первого рендера)
   useEffect(() => {
     if (!didMount.current) { didMount.current = true; return; }
-    window.history.replaceState(null, '', `#${activeTab}`);
-  }, [activeTab]);
+    window.history.replaceState(
+      null,
+      '',
+      `#${settingsHash(activeTab, categoryMarketplace, pricingMarketplace)}`,
+    );
+  }, [activeTab, categoryMarketplace, pricingMarketplace]);
 
   // Profile state
   const [phoneDraft, setPhoneDraft] = useState<string | null>(null);
@@ -2595,14 +2611,14 @@ export default function SettingsPage() {
           </Card>
         </TabsContent>
 
-        {/* Каталог MAP */}
+        {/* Внутренний каталог товаров */}
         <TabsContent value="catalog-categories" className="mt-4 space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Каталог MAP</CardTitle>
+              <CardTitle>{MAP_CATALOG_LABEL}</CardTitle>
               <CardDescription>
-                Рабочая структура ваших товаров. Категории из 1С/CSV привязываются сюда;
-                защищённые ветки Avito и отдельное дерево Ozon всегда явно подписаны.
+                Внутренняя рабочая структура ассортимента. Сюда привязываются категории
+                из 1С и CSV, а затем товар получает отдельную категорию каждой площадки.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -2616,27 +2632,40 @@ export default function SettingsPage() {
                   </div>
                   <div className="rounded-md border bg-background p-3">
                     <p className="text-xs text-muted-foreground">Шаг 2</p>
-                    <p className="mt-1 font-medium">Каталог MAP</p>
-                    <p className="mt-1 text-xs text-muted-foreground">Единая категория вашего товара</p>
+                    <p className="mt-1 font-medium">Каталог товаров</p>
+                    <p className="mt-1 text-xs text-muted-foreground">Понятная внутренняя категория</p>
                   </div>
                   <div className="rounded-md border bg-background p-3">
                     <p className="text-xs text-muted-foreground">Шаг 3</p>
                     <p className="mt-1 font-medium">Категория площадки</p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Avito — защищённые ветки; Ozon — отдельная будущая привязка
+                      Отдельный выбор для Avito, Ozon и будущих площадок
                     </p>
                   </div>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Официальные ID Avito и Ozon между собой не смешиваются. Дерево Ozon хранится
-                  отдельно для каждого Ozon-аккаунта и доступно в «Маркетплейсы → Ozon»;
-                  привязка товаров к нему появится отдельным следующим этапом.
+                  Официальные ID Avito и Ozon не смешиваются. Категорию площадки MAP
+                  хранит отдельно от внутренней категории товара и отдельно для каждого канала.
                 </p>
               </div>
-              <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-muted-foreground">
-                В автозапчастях строки с источником «Avito» основаны на официальном дереве
-                Avito. Их можно включать и отключать для своего ассортимента, но переименовывать
-                или удалять через интерфейс нельзя.
+              <div className="flex flex-col gap-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+                <p>
+                  Часть исторического каталога основана на защищённых категориях Avito.
+                  Совместимость сохранена; управлять доступностью этих веток удобнее
+                  в едином разделе категорий площадок.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => {
+                    setCategoryMarketplace('avito');
+                    setActiveTab('marketplace-categories');
+                  }}
+                >
+                  Открыть категории Avito
+                </Button>
               </div>
               <div className="space-y-2 rounded-lg border p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -2809,7 +2838,12 @@ export default function SettingsPage() {
                             </div>
                           ) : (
                             <div className="min-w-0">
-                              <p className="break-words font-medium">{category.name}</p>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <p className="break-words font-medium">{category.name}</p>
+                                <Badge variant={canEditMapCatalogStructure(category.external_source) ? 'secondary' : 'outline'}>
+                                  {mapCatalogCategorySourceLabel(category.external_source)}
+                                </Badge>
+                              </div>
                               <p className="text-xs text-muted-foreground">
                                 {category.parent
                                   ? `Родитель: ${catalogCategories.find((c) => c.id === category.parent)?.name ?? '—'}`
@@ -2916,9 +2950,9 @@ export default function SettingsPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Привязка категорий из источника</CardTitle>
+              <CardTitle>Категории 1С/CSV → Каталог товаров</CardTitle>
               <CardDescription>
-                Свяжите категории из 1С/CSV со своими категориями каталога. Сырые данные товара не меняются.
+                Свяжите исходные названия с внутренними категориями. Сырые данные товара не меняются.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -2974,47 +3008,72 @@ export default function SettingsPage() {
 
         </TabsContent>
 
-        <TabsContent value="ozon-categories" className="mt-4 space-y-4">
-          <OzonPolicySettings
-            accounts={ozonAccounts}
-            loading={loadingAccounts}
-            canManage={canManageMarketplaceAccounts}
-            connectionEnabled={isOzonConnectionEnabled}
-            mode="categories"
+        <TabsContent value="marketplace-categories" className="mt-4 space-y-4">
+          <MarketplaceSettingsSwitcher
+            value={categoryMarketplace}
+            onChange={setCategoryMarketplace}
+            title={MARKETPLACE_CATEGORIES_LABEL}
           />
+          {categoryMarketplace === 'avito' ? (
+            <AvitoCategorySettings
+              categories={catalogCategories}
+              loading={loadingCatalogCategories}
+              canManage={canManageMarketplaceAccounts}
+              savingCategoryId={savingCatalogCategoryId}
+              onToggle={(category) => {
+                const currentCategory = catalogCategories.find((item) => item.id === category.id);
+                if (currentCategory) void toggleCatalogCategory(currentCategory);
+              }}
+            />
+          ) : (
+            <OzonPolicySettings
+              accounts={ozonAccounts}
+              loading={loadingAccounts}
+              canManage={canManageMarketplaceAccounts}
+              connectionEnabled={isOzonConnectionEnabled}
+              mode="categories"
+            />
+          )}
         </TabsContent>
 
-        {/* Наценки Avito */}
-        <TabsContent value="pricing" className="mt-4 space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Наценки Avito</CardTitle>
-              <CardDescription>
-                Текущая схема рассчитывает цену существующих листингов Avito по категориям
-                Каталога MAP. Наценку можно скорректировать в карточке конкретного листинга.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground">
-                Эти проценты относятся только к Avito. Для Ozon используется отдельная
-                вкладка «Наценки Ozon» и отдельные правила каждого кабинета.
-              </div>
-              <MarginEditor
-                categories={catalogCategories.filter((category) => category.is_active)}
-                onSaved={loadCatalogCategories}
-              />
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="ozon-pricing" className="mt-4 space-y-4">
-          <OzonPolicySettings
-            accounts={ozonAccounts}
-            loading={loadingAccounts}
-            canManage={canManageMarketplaceAccounts}
-            connectionEnabled={isOzonConnectionEnabled}
-            mode="margins"
+        <TabsContent value="marketplace-pricing" className="mt-4 space-y-4">
+          <MarketplaceSettingsSwitcher
+            value={pricingMarketplace}
+            onChange={setPricingMarketplace}
+            title={MARKETPLACE_PRICING_LABEL}
           />
+          {pricingMarketplace === 'avito' ? (
+            <Card>
+              <CardHeader>
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardTitle>{AVITO_PRICING_LABEL}</CardTitle>
+                  <Badge variant="outline">Общие для организации</Badge>
+                </div>
+                <CardDescription>
+                  Текущая проверенная схема рассчитывает цены листингов Avito по категориям
+                  каталога товаров. Наценку можно скорректировать в конкретном листинге.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground">
+                  Эти проценты относятся только к Avito. Переключитесь на Ozon, чтобы
+                  увидеть независимые правила выбранного кабинета Ozon.
+                </div>
+                <MarginEditor
+                  categories={catalogCategories.filter((category) => category.is_active)}
+                  onSaved={loadCatalogCategories}
+                />
+              </CardContent>
+            </Card>
+          ) : (
+            <OzonPolicySettings
+              accounts={ozonAccounts}
+              loading={loadingAccounts}
+              canManage={canManageMarketplaceAccounts}
+              connectionEnabled={isOzonConnectionEnabled}
+              mode="margins"
+            />
+          )}
         </TabsContent>
 
         <TabsContent value="web-research" className="mt-4 space-y-4">

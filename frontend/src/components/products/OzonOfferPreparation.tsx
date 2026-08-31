@@ -616,7 +616,7 @@ OzonOfferPreparationCardProps
                 ) : categoryTreeLevel.tree_revision === null ? (
                   <p className="text-sm text-muted-foreground">
                     Справочник Ozon ещё не загружен для этого кабинета. Обновите дерево
-                    во вкладке «Настройки → Категории Ozon».
+                    во вкладке «Настройки → Категории площадок → Ozon».
                   </p>
                 ) : categoryTreeLevel.options.length > 0 ? (
                   <Select
@@ -731,7 +731,7 @@ OzonOfferPreparationCardProps
                 <p className="text-xs text-muted-foreground">
                   {preparation.pricing.policy.margin_source
                     ? `Наценка задана для «${preparation.pricing.policy.margin_source.name}».`
-                    : 'Используется стандартная наценка 0%. Задать её можно во вкладке «Настройки → Наценки Ozon».'}
+                    : 'Используется стандартная наценка 0%. Задать её можно во вкладке «Настройки → Правила цены → Ozon».'}
                 </p>
               </div>
             )}
