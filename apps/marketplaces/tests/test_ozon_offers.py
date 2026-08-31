@@ -13,6 +13,7 @@ from apps.marketplaces.models import (
     OzonAccountProfile,
     OzonAttributeValueSnapshot,
     OzonCategoryAttributeSnapshot,
+    OzonCategoryPolicy,
     OzonCategoryTreeSnapshot,
     OzonOfferDraft,
 )
@@ -164,6 +165,28 @@ def _request(client, key, method, product, payload=None, account_id=None):
         content_type='application/json',
         HTTP_AUTHORIZATION=f'Bearer {key}',
     )
+
+
+def _ready_offer(client, key, product, account):
+    schema = _attribute_catalog(account)
+    _value_snapshot(account, schema)
+    _complete_product(product)
+    _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'description_category_id': 101,
+        'type_id': 202,
+    })
+    return _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'attributes': [{
+            'id': 85,
+            'complex_id': 0,
+            'values': [{
+                'value': 'Ignored browser text',
+                'dictionary_value_id': 501,
+            }],
+        }],
+    })
 
 
 @pytest.mark.django_db
@@ -324,6 +347,99 @@ def test_missing_vat_is_a_recommendation_and_does_not_block_ozon_readiness():
     assert [item['code'] for item in preflight['recommendations']] == [
         'vat_recommended',
     ]
+
+
+@pytest.mark.django_db
+def test_offer_uses_inherited_ozon_margin_without_mutating_avito_runtime():
+    tenant, key = _tenant('ozon-offer-price')
+    account = _account(tenant, 'client-offer-price')
+    second_account = _account(tenant, 'client-offer-price-second')
+    product = _product(tenant)
+    tree = _catalog(account)
+    _catalog(second_account)
+    OzonCategoryPolicy.objects.create(
+        tenant=tenant,
+        account=account,
+        description_category_id=101,
+        enabled_override=True,
+        margin_pct=Decimal('12.50'),
+        category_path='Автотовары',
+        node_name='Автотовары',
+        tree_revision=tree.schema_hash,
+    )
+
+    response = _ready_offer(Client(), key, product, account)
+    second_schema = _attribute_catalog(second_account)
+    _value_snapshot(second_account, second_schema)
+    client = Client()
+    _request(client, key, 'patch', product, {
+        'account_id': second_account.pk,
+        'description_category_id': 101,
+        'type_id': 202,
+    })
+    second_response = _request(client, key, 'patch', product, {
+        'account_id': second_account.pk,
+        'attributes': [{
+            'id': 85,
+            'complex_id': 0,
+            'values': [{
+                'value': 'Ignored browser text',
+                'dictionary_value_id': 501,
+            }],
+        }],
+    })
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    assert data['pricing']['base_price'] == '1000.00'
+    assert data['pricing']['effective_margin_pct'] == '12.50'
+    assert data['pricing']['final_price'] == '1125.00'
+    assert data['pricing']['policy']['effective_enabled'] is True
+    assert data['pricing']['policy']['margin_source']['description_category_id'] == 101
+    assert data['preflight']['ready'] is True
+    second_data = second_response.json()['data']
+    assert second_data['pricing']['effective_margin_pct'] == '0'
+    assert second_data['pricing']['final_price'] == '1000.00'
+    assert second_data['preflight']['ready'] is True
+    assert OzonOfferDraft.objects.filter(product=product).count() == 2
+    assert Listing.objects.count() == MarketplaceFeedRun.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_disabled_category_and_nonpositive_ozon_price_block_only_ozon():
+    tenant, key = _tenant('ozon-offer-policy-block')
+    account = _account(tenant, 'client-offer-policy-block')
+    product = _product(tenant)
+    tree = _catalog(account)
+    client = Client()
+    ready = _ready_offer(client, key, product, account)
+    assert ready.json()['data']['preflight']['ready'] is True
+    draft = OzonOfferDraft.objects.get(account=account, product=product)
+    draft_updated_at = draft.updated_at
+    OzonCategoryPolicy.objects.create(
+        tenant=tenant,
+        account=account,
+        description_category_id=101,
+        enabled_override=False,
+        margin_pct=Decimal('-100.00'),
+        category_path='Автотовары',
+        node_name='Автотовары',
+        tree_revision=tree.schema_hash,
+    )
+
+    response = _request(client, key, 'get', product, account_id=account.pk)
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    assert data['pricing']['final_price'] == '0.00'
+    assert data['pricing']['policy']['effective_enabled'] is False
+    assert {issue['code'] for issue in data['preflight']['errors']} == {
+        'category_disabled',
+        'offer_price_invalid',
+    }
+    draft.refresh_from_db()
+    assert draft.updated_at == draft_updated_at
+    assert Listing.objects.count() == MarketplaceFeedRun.objects.count() == 0
 
 
 @pytest.mark.django_db

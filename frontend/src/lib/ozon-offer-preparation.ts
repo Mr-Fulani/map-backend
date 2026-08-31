@@ -1,3 +1,5 @@
+import type { OzonCategoryPolicyState } from './marketplace-account-types';
+
 export interface OzonOfferValue {
   value: string;
   dictionary_value_id: number;
@@ -44,6 +46,12 @@ export interface OzonOfferPreparation {
     attribute_count: number;
     required_attribute_count: number;
     updated_at: string;
+  };
+  pricing: null | {
+    base_price: string;
+    effective_margin_pct: string;
+    final_price: string;
+    policy: OzonCategoryPolicyState;
   };
   preflight: {
     ready: boolean;

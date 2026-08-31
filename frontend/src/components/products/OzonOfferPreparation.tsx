@@ -39,6 +39,20 @@ function treeOptionValue(option: OzonCatalogTreeOption): string {
   return [option.kind, option.description_category_id, option.type_id ?? 0].join(':');
 }
 
+function rubles(value: string): string {
+  return `${Number(value).toLocaleString('ru-RU', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })} ₽`;
+}
+
+function percent(value: string): string {
+  return `${Number(value).toLocaleString('ru-RU', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2,
+  })}%`;
+}
+
 export function OzonOfferPreparationCard({
   productId,
   accounts,
@@ -447,8 +461,17 @@ export function OzonOfferPreparationCard({
                     </SelectTrigger>
                     <SelectContent>
                       {categoryTreeLevel.options.map((option) => (
-                        <SelectItem key={treeOptionValue(option)} value={treeOptionValue(option)}>
+                        <SelectItem
+                          key={treeOptionValue(option)}
+                          value={treeOptionValue(option)}
+                          disabled={option.kind === 'type' && !option.policy.effective_enabled}
+                        >
                           {option.kind === 'category' ? `Раздел: ${option.name} ›` : option.name}
+                          {!option.policy.effective_enabled && (
+                            option.kind === 'type'
+                              ? ' — выключено в настройках'
+                              : ' — ветка выключена по умолчанию'
+                          )}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -491,6 +514,50 @@ export function OzonOfferPreparationCard({
                 </div>
               </details>
             </div>
+
+            {preparation.pricing && (
+              <div className={`space-y-3 rounded-md border p-3 ${
+                preparation.pricing.policy.effective_enabled
+                  ? 'bg-muted/20'
+                  : 'border-amber-500/30 bg-amber-500/5'
+              }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-medium">Цена для Ozon</p>
+                    <p className="text-xs text-muted-foreground">
+                      Рассчитывается отдельно для выбранного кабинета. Цена товара и Avito не меняются.
+                    </p>
+                  </div>
+                  <Badge variant={preparation.pricing.policy.effective_enabled ? 'outline' : 'destructive'}>
+                    {preparation.pricing.policy.effective_enabled
+                      ? 'Категория включена'
+                      : 'Категория выключена'}
+                  </Badge>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground">Цена товара</p>
+                    <p className="font-medium tabular-nums">{rubles(preparation.pricing.base_price)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Наценка Ozon</p>
+                    <p className="font-medium tabular-nums">
+                      {percent(preparation.pricing.effective_margin_pct)}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground">Итоговая цена Ozon</p>
+                    <p className="font-semibold tabular-nums">{rubles(preparation.pricing.final_price)}</p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {preparation.pricing.policy.margin_source
+                    ? `Наценка задана для «${preparation.pricing.policy.margin_source.name}».`
+                    : 'Используется стандартная наценка 0%. Задать её можно в «Настройки → Маркетплейсы → Ozon».'}
+                </p>
+              </div>
+            )}
 
             {preparation.draft.category && (
               <div className="space-y-3">

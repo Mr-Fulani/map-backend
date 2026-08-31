@@ -93,6 +93,7 @@ test('Ozon target reports exact account draft readiness', () => {
     },
     attributes: [],
     schema: null,
+    pricing: null,
     preflight: {
       ready: false,
       errors: [
@@ -123,6 +124,7 @@ test('Ozon target does not infer readiness from an empty error list', () => {
     },
     attributes: [],
     schema: null,
+    pricing: null,
     preflight: {
       ready: false,
       errors: [],

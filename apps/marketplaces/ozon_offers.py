@@ -1,5 +1,5 @@
 from collections.abc import Mapping
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
 
 from django.db import transaction
@@ -12,6 +12,10 @@ from apps.marketplaces.models import (
     OzonOfferDraft,
 )
 from apps.marketplaces.ozon_catalog import OzonCatalogService
+from apps.marketplaces.ozon_category_policies import (
+    OzonCategoryPolicyError,
+    resolved_category_type_policy,
+)
 from apps.products.models import Product, ProductImage
 from apps.products.physical_profiles import physical_profile_presentation
 
@@ -32,6 +36,7 @@ PHYSICAL_LABELS = {
 }
 
 MAX_DICTIONARY_SNAPSHOTS_PER_ATTRIBUTE = 20
+PRICE_QUANTUM = Decimal('0.01')
 
 
 def _latest_schema(
@@ -89,11 +94,51 @@ def _issue(code: str, field: str, label: str, message: str) -> dict[str, str]:
     return {'code': code, 'field': field, 'label': label, 'message': message}
 
 
+def _offer_pricing(
+    product: Product,
+    account: MarketplaceAccount,
+    draft: OzonOfferDraft | None,
+) -> dict[str, Any] | None:
+    if (
+        draft is None
+        or draft.description_category_id is None
+        or draft.type_id is None
+    ):
+        return None
+    try:
+        resolution = resolved_category_type_policy(
+            account,
+            description_category_id=draft.description_category_id,
+            type_id=draft.type_id,
+        )
+    except OzonCategoryPolicyError:
+        return None
+    if resolution is None:
+        return None
+
+    policy = resolution['policy']
+    base_price = Decimal(product.price).quantize(
+        PRICE_QUANTUM,
+        rounding=ROUND_HALF_UP,
+    )
+    margin_pct = Decimal(policy['effective_margin_pct'])
+    final_price = (
+        base_price * (Decimal('1') + margin_pct / Decimal('100'))
+    ).quantize(PRICE_QUANTUM, rounding=ROUND_HALF_UP)
+    return {
+        'base_price': str(base_price),
+        'effective_margin_pct': str(margin_pct),
+        'final_price': str(final_price),
+        'policy': policy,
+    }
+
+
 def _preflight(
     product: Product,
     account: MarketplaceAccount,
     draft: OzonOfferDraft | None,
     schema: OzonCategoryAttributeSnapshot | None,
+    pricing: dict[str, Any] | None,
 ) -> dict[str, Any]:
     errors: list[dict[str, str]] = []
     recommendations: list[dict[str, str]] = []
@@ -136,6 +181,16 @@ def _preflight(
             errors.append(_issue(
                 'tree_revision_outdated', 'category', 'Категория Ozon',
                 'Дерево Ozon обновилось — подтвердите категорию ещё раз.',
+            ))
+
+        if pricing is not None and not pricing['policy']['effective_enabled']:
+            errors.append(_issue(
+                'category_disabled',
+                'category',
+                'Категория Ozon',
+                'Эта категория выключена для выбранного кабинета. '
+                'Включите её в «Настройки → Маркетплейсы → Ozon» '
+                'или выберите другой тип товара.',
             ))
 
         if schema is None:
@@ -188,6 +243,14 @@ def _preflight(
         errors.append(_issue('brand_missing', 'brand', 'Бренд', 'Укажите бренд товара.'))
     if Decimal(product.price) <= 0:
         errors.append(_issue('price_missing', 'price', 'Цена', 'Цена должна быть больше нуля.'))
+    elif pricing is not None and Decimal(pricing['final_price']) <= 0:
+        errors.append(_issue(
+            'offer_price_invalid',
+            'price',
+            'Цена Ozon',
+            'После применения наценки цена Ozon должна быть больше нуля. '
+            'Исправьте наценку в настройках выбранного кабинета.',
+        ))
     if not product.images.exclude(status=ProductImage.Status.REJECTED).exists():
         errors.append(_issue('image_missing', 'images', 'Фотографии', 'Добавьте хотя бы одну фотографию.'))
     if not (product.description_ai or '').strip():
@@ -214,6 +277,7 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
         draft.description_category_id if draft else None,
         draft.type_id if draft else None,
     )
+    pricing = _offer_pricing(product, account, draft)
     return {
         'account': {'id': account.pk, 'name': account.name, 'marketplace': 'ozon'},
         'draft': None if draft is None else {
@@ -236,7 +300,8 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
             'required_attribute_count': schema.required_attribute_count,
             'updated_at': schema.updated_at,
         },
-        'preflight': _preflight(product, account, draft, schema),
+        'pricing': pricing,
+        'preflight': _preflight(product, account, draft, schema, pricing),
     }
 
 

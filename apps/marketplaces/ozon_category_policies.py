@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, TypedDict
 
+from django.conf import settings
 from django.db import transaction
 
 from apps.marketplaces.models import (
@@ -142,6 +143,83 @@ def resolve_category_node(
     )
 
 
+def resolve_active_category_type(
+    snapshot: OzonCategoryTreeSnapshot,
+    *,
+    description_category_id: int,
+    type_id: int,
+) -> ResolvedOzonCategoryNode:
+    """Resolve one active type and its exact category IDs from a local tree."""
+
+    matches: list[tuple[int, ...]] = []
+    visited = 0
+
+    def walk(
+        nodes: Any,
+        *,
+        category_ids: tuple[int, ...],
+        depth: int,
+    ) -> None:
+        nonlocal visited
+        if depth > settings.OZON_CATALOG_MAX_DEPTH or not isinstance(nodes, list):
+            raise OzonCategoryPolicyError(
+                'invalid_category_tree',
+                'Локальный снимок дерева Ozon повреждён.',
+            )
+        for item in nodes:
+            visited += 1
+            if (
+                visited > settings.OZON_CATALOG_MAX_NODES
+                or not isinstance(item, dict)
+            ):
+                raise OzonCategoryPolicyError(
+                    'invalid_category_tree',
+                    'Локальный снимок дерева Ozon повреждён.',
+                )
+            if item.get('disabled') is not False:
+                continue
+            children = item.get('children')
+            if not isinstance(children, list):
+                raise OzonCategoryPolicyError(
+                    'invalid_category_tree',
+                    'Локальный снимок дерева Ozon повреждён.',
+                )
+            item_type_id = item.get('type_id')
+            if item_type_id is None:
+                item_category_id = item.get('description_category_id')
+                if not isinstance(item_category_id, int) or item_category_id <= 0:
+                    raise OzonCategoryPolicyError(
+                        'invalid_category_tree',
+                        'Локальный снимок дерева Ozon повреждён.',
+                    )
+                walk(
+                    children,
+                    category_ids=(*category_ids, item_category_id),
+                    depth=depth + 1,
+                )
+                continue
+            if (
+                item.get('description_category_id') == description_category_id
+                and item_type_id == type_id
+                and category_ids
+                and category_ids[-1] == description_category_id
+            ):
+                matches.append(category_ids)
+
+    walk(snapshot.tree, category_ids=(), depth=1)
+    if len(matches) != 1:
+        raise OzonCategoryPolicyError(
+            'invalid_category_type',
+            'Выбранный тип отсутствует в актуальном дереве Ozon.',
+        )
+    return resolve_category_node(
+        snapshot,
+        description_category_id=description_category_id,
+        type_id=type_id,
+        category_path_ids=matches[0],
+    )
+
+
 def _policy_identity(
     description_category_id: int,
     type_id: int | None,
@@ -217,6 +295,43 @@ def effective_policy_state(
         ),
         'effective_margin_pct': str(margin),
         'margin_source': _source_presentation(margin_source),
+    }
+
+
+def resolved_category_type_policy(
+    account: MarketplaceAccount,
+    *,
+    description_category_id: int,
+    type_id: int,
+) -> dict | None:
+    """Return the effective local policy for one selected Ozon type."""
+
+    snapshot = latest_tree_snapshot(account)
+    if snapshot is None:
+        return None
+    node = resolve_active_category_type(
+        snapshot,
+        description_category_id=description_category_id,
+        type_id=type_id,
+    )
+    policies = {
+        _policy_identity(policy.description_category_id, policy.type_id): policy
+        for policy in OzonCategoryPolicy.objects.filter(
+            tenant=account.tenant,
+            account=account,
+        )
+    }
+    return {
+        'tree_revision': snapshot.schema_hash,
+        'category_path_ids': list(node.category_ids),
+        'category_path': node.category_path,
+        'type_name': node.node_name,
+        'policy': effective_policy_state(
+            policies=policies,
+            category_ids=node.category_ids,
+            description_category_id=description_category_id,
+            type_id=type_id,
+        ),
     }
 
 
@@ -367,6 +482,8 @@ __all__ = [
     'OzonCategoryPolicyError',
     'decorate_tree_level_with_policies',
     'effective_policy_state',
+    'resolve_active_category_type',
     'resolve_category_node',
+    'resolved_category_type_policy',
     'update_category_policy',
 ]

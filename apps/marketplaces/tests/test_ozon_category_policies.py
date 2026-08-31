@@ -13,6 +13,7 @@ from apps.marketplaces.models import (
     OzonCategoryTreeSnapshot,
 )
 from apps.marketplaces.ozon_catalog import normalize_category_tree
+from apps.marketplaces.ozon_category_policies import resolved_category_type_policy
 from apps.tenants.services import TenantService
 from apps.tenants.tests.auth import owner_access_token
 
@@ -198,6 +199,45 @@ def test_branch_and_leaf_overrides_inherit_inside_one_account(policy_setup):
     assert policies.count() == 2
     assert all(policy.tenant_id == policy_setup['tenant'].pk for policy in policies)
     assert policies.get(type_id=202).margin_pct == Decimal('20.00')
+
+
+@pytest.mark.django_db
+def test_selected_offer_type_resolves_exact_nested_policy_path(policy_setup):
+    account = policy_setup['account']
+    revision = policy_setup['snapshot'].schema_hash
+    OzonCategoryPolicy.objects.create(
+        tenant=policy_setup['tenant'],
+        account=account,
+        description_category_id=101,
+        enabled_override=False,
+        margin_pct=Decimal('12.50'),
+        category_path='Автотовары',
+        node_name='Автотовары',
+        tree_revision=revision,
+    )
+    OzonCategoryPolicy.objects.create(
+        tenant=policy_setup['tenant'],
+        account=account,
+        description_category_id=102,
+        type_id=202,
+        enabled_override=True,
+        margin_pct=Decimal('20.00'),
+        category_path='Автотовары → Автозапчасти',
+        node_name='Шланг тормозной',
+        tree_revision=revision,
+    )
+
+    resolution = resolved_category_type_policy(
+        account,
+        description_category_id=102,
+        type_id=202,
+    )
+
+    assert resolution['category_path_ids'] == [101, 102]
+    assert resolution['category_path'] == 'Автотовары → Автозапчасти'
+    assert resolution['type_name'] == 'Шланг тормозной'
+    assert resolution['policy']['effective_enabled'] is True
+    assert resolution['policy']['effective_margin_pct'] == '20.00'
 
 
 @pytest.mark.django_db
