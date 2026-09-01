@@ -589,8 +589,8 @@ django-timezone-field==7.2.2 \
 django-unfold==0.103.0 \
     --hash=sha256:161cd07cf644a0c64ba6bbd7ff2202a9c2b5a20734df6dd749d667f50bd8a8ba
     # via -r requirements/base.in
-djangorestframework==3.16.1 \
-    --hash=sha256:33a59f47fb9c85ede792cbf88bde71893bcda0667bc573f784649521f1102cec
+djangorestframework==3.17.2 \
+    --hash=sha256:cb0546a7415d5b46c04e0f4fe0a54b2109f4fdd5e83ca773c8c6183a6493d042
     # via
     #   -r requirements/base.in
     #   djangorestframework-simplejwt
