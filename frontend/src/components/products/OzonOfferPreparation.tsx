@@ -15,8 +15,6 @@ import {
   CheckCircle2,
   FolderTree,
   Loader2,
-  RotateCcw,
-  Save,
   Search,
   ShieldCheck,
   WandSparkles,
@@ -28,6 +26,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { OzonOfferAttributeEditor } from '@/components/products/OzonOfferAttributeEditor';
+import { OzonOfferPricingEditor } from '@/components/products/OzonOfferPricingEditor';
 import { accountApi, productApi } from '@/lib/api';
 import type {
   OzonCatalogTreeLevel,
@@ -39,8 +39,6 @@ import {
   ozonAttributesPayload,
   ozonAttributesValidationErrors,
   ozonAttributeIdentity,
-  isOzonBooleanAttribute,
-  ozonAttributeValidationMessage,
   replaceOzonAttributeValue,
   type OzonDictionaryValue,
   type OzonOfferAttribute,
@@ -66,20 +64,6 @@ function envelopeData<T>(body: unknown): T {
 
 function treeOptionValue(option: OzonCatalogTreeOption): string {
   return [option.kind, option.description_category_id, option.type_id ?? 0].join(':');
-}
-
-function rubles(value: string): string {
-  return `${Number(value).toLocaleString('ru-RU', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })} ₽`;
-}
-
-function percent(value: string): string {
-  return `${Number(value).toLocaleString('ru-RU', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 2,
-  })}%`;
 }
 
 export interface OzonOfferPreparationCardHandle {
@@ -771,92 +755,17 @@ OzonOfferPreparationCardProps
             </div>
 
             {preparation.pricing && (
-              <div className={`space-y-3 rounded-md border p-3 ${
-                preparation.pricing.policy.effective_enabled
-                  ? 'bg-muted/20'
-                  : 'border-amber-500/30 bg-amber-500/5'
-              }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
-                    <p className="text-sm font-medium">Цена для Ozon</p>
-                    <p className="text-xs text-muted-foreground">
-                      Рассчитывается отдельно для выбранного кабинета. Цена товара и Avito не меняются.
-                    </p>
-                  </div>
-                  <Badge variant={preparation.pricing.policy.effective_enabled ? 'outline' : 'destructive'}>
-                    {preparation.pricing.policy.effective_enabled
-                      ? 'Категория включена'
-                      : 'Категория выключена'}
-                  </Badge>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-3">
-                  <div>
-                    <p className="text-xs text-muted-foreground">Цена товара</p>
-                    <p className="font-medium tabular-nums">{rubles(preparation.pricing.base_price)}</p>
-                  </div>
-                  <div className="space-y-1">
-                    <label htmlFor={`ozon-offer-margin-${accountId}`} className="text-xs text-muted-foreground">
-                      Наценка Ozon, %
-                    </label>
-                    <Input
-                      id={`ozon-offer-margin-${accountId}`}
-                      value={marginOverride}
-                      inputMode="decimal"
-                      placeholder={preparation.pricing.policy.effective_margin_pct}
-                      disabled={action === 'pricing'}
-                      onChange={(event) => updateMargin(event.target.value)}
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label htmlFor={`ozon-offer-price-${accountId}`} className="text-xs text-muted-foreground">
-                      Итоговая цена Ozon, ₽
-                    </label>
-                    <Input
-                      id={`ozon-offer-price-${accountId}`}
-                      value={priceDraft}
-                      inputMode="decimal"
-                      disabled={action === 'pricing'}
-                      onChange={(event) => updatePrice(event.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
-                  <p className="text-xs text-muted-foreground">
-                    {pricingMode === 'price'
-                      ? 'Индивидуальная точная цена этого товара и кабинета. Avito не изменяется.'
-                      : pricingMode === 'margin'
-                        ? 'Индивидуальная наценка этого товара и кабинета. Avito не изменяется.'
-                      : preparation.pricing.policy.margin_source
-                        ? `Наследуется правило «${preparation.pricing.policy.margin_source.name}»: ${percent(preparation.pricing.policy.effective_margin_pct)}.`
-                        : 'Наследуется стандартная наценка 0%.'}
-                  </p>
-                  <div className="flex shrink-0 gap-2">
-                    {pricingMode !== 'inherited' && (
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        disabled={action === 'pricing'}
-                        onClick={() => updateMargin('')}
-                      >
-                        <RotateCcw className="mr-1 h-3.5 w-3.5" /> Наследовать
-                      </Button>
-                    )}
-                    <Button
-                      type="button"
-                      size="sm"
-                      disabled={action === 'pricing'}
-                      onClick={() => void savePricing()}
-                    >
-                      {action === 'pricing'
-                        ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
-                        : <Save className="mr-1 h-3.5 w-3.5" />}
-                      Сохранить цену
-                    </Button>
-                  </div>
-                </div>
-              </div>
+              <OzonOfferPricingEditor
+                accountId={accountId}
+                pricing={preparation.pricing}
+                mode={pricingMode}
+                margin={marginOverride}
+                price={priceDraft}
+                saving={action === 'pricing'}
+                onMarginChange={updateMargin}
+                onPriceChange={updatePrice}
+                onSave={() => void savePricing()}
+              />
             )}
 
             {preparation.draft.category && (
@@ -882,209 +791,32 @@ OzonOfferPreparationCardProps
 
                 {preparation.schema && visibleAttributes.map((attribute) => {
                   const key = attributeKey(attribute);
-                  const selected = attribute.selected_values[0];
                   const autofill = preparation.autofill.fields[ozonAttributeIdentity(attribute)];
                   const recommendation = preparation.autofill.recommendations.find((item) => (
                     item.attribute_id === attribute.id
                     && (item.complex_id ?? 0) === attribute.complex_id
                   ));
-                  const validationMessage = ozonAttributeValidationMessage(attribute);
-                  const hasInvalidValue = Boolean(validationMessage);
-                  const hasValidValue = Boolean(selected) && !hasInvalidValue;
-                  const needsRequiredValue = attribute.is_required && !hasValidValue;
-                  const booleanAttribute = isOzonBooleanAttribute(attribute);
                   return (
-                    <div
+                    <OzonOfferAttributeEditor
                       key={key}
-                      className={`space-y-2 rounded-md border border-l-4 p-3 ${
-                        hasInvalidValue
-                          ? 'border-red-500/50 bg-red-500/5'
-                          : needsRequiredValue
-                          ? 'border-amber-500/50 bg-amber-500/5'
-                          : hasValidValue
-                            ? 'border-emerald-500/35 bg-emerald-500/5'
-                            : 'border-dashed bg-muted/20'
-                      }`}
-                    >
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-medium">{attribute.name}</p>
-                        {attribute.is_required && <Badge variant="outline">Обязательно</Badge>}
-                        {hasInvalidValue ? (
-                          <Badge
-                            variant="outline"
-                            className="border-red-500/50 bg-red-500/10 text-red-900 dark:text-red-100"
-                          >
-                            <AlertCircle className="mr-1 h-3 w-3" />
-                            Исправить значение
-                          </Badge>
-                        ) : hasValidValue ? (
-                          <Badge
-                            variant="outline"
-                            className="border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
-                          >
-                            <CheckCircle2 className="mr-1 h-3 w-3" />
-                            {autofill?.state === 'auto_filled' ? 'Готово · MAP' : 'Готово · вручную'}
-                          </Badge>
-                        ) : needsRequiredValue ? (
-                          <Badge
-                            variant="outline"
-                            className="border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100"
-                          >
-                            <AlertCircle className="mr-1 h-3 w-3" />
-                            Заполнить вручную
-                          </Badge>
-                        ) : (
-                          <Badge variant="outline" className="border-dashed text-muted-foreground">
-                            Можно пропустить
-                          </Badge>
-                        )}
-                      </div>
-                      {attribute.description && (
-                        <p className="rounded bg-background/70 p-2 text-xs text-muted-foreground">
-                          {attribute.description}
-                        </p>
-                      )}
-                      {autofill && (
-                        <p className="flex items-start gap-1.5 text-xs text-emerald-800 dark:text-emerald-200">
-                          <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                          <span><strong>Почему заполнено:</strong> {autofill.source_label}. {autofill.message}</span>
-                        </p>
-                      )}
-                      {recommendation && (
-                        <div className="flex items-start gap-2 rounded border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-950 dark:text-amber-100">
-                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                          <span>
-                            <strong>Требуется ваше решение:</strong> {recommendation.message}
-                          {recommendation.candidate && (
-                            <span className="block pt-1 text-amber-800 dark:text-amber-200">
-                              MAP нашёл вариант для сверки: {recommendation.candidate}
-                            </span>
-                          )}
-                          </span>
-                        </div>
-                      )}
-                      {validationMessage && (
-                        <div className="flex items-start gap-2 rounded border border-red-500/40 bg-red-500/10 p-2 text-xs text-red-950 dark:text-red-100">
-                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                          <span><strong>Сохранённое значение некорректно:</strong> {validationMessage}</span>
-                        </div>
-                      )}
-                      {booleanAttribute ? (
-                        <div className="space-y-2">
-                          <div
-                            role="group"
-                            aria-label={attribute.name}
-                            className="grid max-w-sm grid-cols-2 gap-2"
-                          >
-                            {([
-                              ['false', 'Нет'],
-                              ['true', 'Да'],
-                            ] as const).map(([value, label]) => (
-                              <Button
-                                key={value}
-                                type="button"
-                                variant={selected?.value === value ? 'default' : 'outline'}
-                                className="w-full"
-                                onClick={() => setAttributes((current) => replaceOzonAttributeValue(
-                                  current,
-                                  attribute.id,
-                                  attribute.complex_id,
-                                  { value, dictionary_value_id: 0 },
-                                ))}
-                              >
-                                {label}
-                              </Button>
-                            ))}
-                          </div>
-                          <p className="text-xs text-muted-foreground">
-                            Выберите один вариант. MAP сам преобразует его в нужный формат Ozon.
-                          </p>
-                        </div>
-                      ) : attribute.dictionary_id > 0 ? (
-                        <>
-                          {selected && (
-                            <div className="flex items-center justify-between rounded border border-emerald-500/30 bg-emerald-500/10 p-2 text-sm">
-                              <span className="flex items-center gap-1.5 font-medium">
-                                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                                {selected.value}
-                              </span>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                onClick={() => setAttributes((current) => replaceOzonAttributeValue(
-                                  current,
-                                  attribute.id,
-                                  attribute.complex_id,
-                                  null,
-                                ))}
-                              >
-                                Очистить
-                              </Button>
-                            </div>
-                          )}
-                          <div className="flex flex-col gap-2 sm:flex-row">
-                            <Input
-                              aria-label={`Поиск: ${attribute.name}`}
-                              className={needsRequiredValue ? 'border-amber-500/50 bg-background' : undefined}
-                              value={dictionaryQueries[key] ?? ''}
-                              onChange={(event) => setDictionaryQueries((current) => ({
-                                ...current,
-                                [key]: event.target.value,
-                              }))}
-                              placeholder="Введите название значения"
-                            />
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => searchDictionary(attribute)}
-                              disabled={action === `dictionary:${key}`}
-                            >
-                              {action === `dictionary:${key}` && (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                              )}
-                              Найти в Ozon
-                            </Button>
-                          </div>
-                          {(dictionaryResults[key] ?? []).slice(0, 10).map((value) => (
-                            <button
-                              type="button"
-                              key={value.id}
-                              className="block w-full rounded border p-2 text-left text-sm hover:bg-muted/50"
-                              onClick={() => setAttributes((current) => replaceOzonAttributeValue(
-                                current,
-                                attribute.id,
-                                attribute.complex_id,
-                                {
-                                  value: value.value,
-                                  dictionary_value_id: value.id,
-                                },
-                              ))}
-                            >
-                              {value.value}
-                            </button>
-                          ))}
-                        </>
-                      ) : (
-                        <Input
-                          aria-label={attribute.name}
-                          className={needsRequiredValue ? 'border-amber-500/50 bg-background' : undefined}
-                          value={selected?.value ?? ''}
-                          onChange={(event) => setAttributes((current) => replaceOzonAttributeValue(
-                            current,
-                            attribute.id,
-                            attribute.complex_id,
-                            event.target.value.trim()
-                              ? {
-                                value: event.target.value,
-                                dictionary_value_id: 0,
-                              }
-                              : null,
-                          ))}
-                          placeholder="Введите значение"
-                        />
-                      )}
-                    </div>
+                      attribute={attribute}
+                      autofill={autofill}
+                      recommendation={recommendation}
+                      dictionaryQuery={dictionaryQueries[key] ?? ''}
+                      dictionaryResults={dictionaryResults[key] ?? []}
+                      dictionaryLoading={action === `dictionary:${key}`}
+                      onDictionaryQueryChange={(value) => setDictionaryQueries((current) => ({
+                        ...current,
+                        [key]: value,
+                      }))}
+                      onDictionarySearch={() => void searchDictionary(attribute)}
+                      onValueChange={(value) => setAttributes((current) => replaceOzonAttributeValue(
+                        current,
+                        attribute.id,
+                        attribute.complex_id,
+                        value,
+                      ))}
+                    />
                   );
                 })}
 

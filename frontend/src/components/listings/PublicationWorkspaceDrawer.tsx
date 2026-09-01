@@ -6,22 +6,14 @@ import {
   AlertCircle,
   BarChart3,
   FileText,
-  Images,
   Loader2,
-  PackageSearch,
-  Pencil,
-  RefreshCw,
-  Save,
-  Send,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { MarketplaceChannelSwitcher } from '@/components/listings/MarketplaceChannelSwitcher';
 import MarketPricingPanel from '@/components/listings/MarketPricingPanel';
-import {
-  OzonOfferPreparationCard,
-  type OzonOfferPreparationCardHandle,
-} from '@/components/products/OzonOfferPreparation';
+import { OzonListingEditorPanel } from '@/components/listings/OzonListingEditorPanel';
+import type { OzonOfferPreparationCardHandle } from '@/components/products/OzonOfferPreparation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -88,19 +80,6 @@ interface Props {
 
 function envelopeData<T>(body: unknown): T {
   return (body as { data: T }).data;
-}
-
-function rubles(value: string): string {
-  return `${Number(value).toLocaleString('ru-RU', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })} ₽`;
-}
-
-function imageStatusLabel(status: string): string {
-  if (['auto_approved', 'manually_set', 'imported'].includes(status)) return 'Одобрено';
-  if (status === 'rejected') return 'Отклонено';
-  return 'На проверке';
 }
 
 interface WorkspaceSnapshot {
@@ -183,8 +162,7 @@ export default function PublicationWorkspaceDrawer({
   const [reloadToken, setReloadToken] = useState(0);
   const [preparingAccountId, setPreparingAccountId] = useState<number | null>(null);
   const [ozonFooterAction, setOzonFooterAction] = useState<'save' | 'regenerate' | null>(null);
-  const [activeImageIndex, setActiveImageIndex] = useState(0);
-  const [ozonPanel, setOzonPanel] = useState<'preparation' | 'pricing' | 'product'>('preparation');
+  const [ozonPanel, setOzonPanel] = useState<'preparation' | 'pricing'>('preparation');
   const ozonPreparationRef = useRef<OzonOfferPreparationCardHandle>(null);
   const open = productId !== null;
 
@@ -197,7 +175,6 @@ export default function PublicationWorkspaceDrawer({
         setProduct(snapshot.product);
         setAccounts(snapshot.accounts);
         setImages(snapshot.images);
-        setActiveImageIndex(0);
         setOzonPanel('preparation');
         setAvitoListings(snapshot.avitoListings);
         setOzonPreparations(snapshot.ozonPreparations);
@@ -293,7 +270,6 @@ export default function PublicationWorkspaceDrawer({
     }
   }
 
-  const activeImage = images[activeImageIndex] ?? images[0] ?? null;
   const selectedOzonPreparation = selectedAccount?.marketplace === 'ozon'
     ? ozonPreparations[selectedAccount.id] ?? null
     : null;
@@ -377,7 +353,7 @@ export default function PublicationWorkspaceDrawer({
             <div className="min-w-0 shrink-0 overflow-hidden border-b bg-background/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur xl:hidden">
               <p className="truncate pr-10 font-mono text-xs text-muted-foreground">{product.article}</p>
               <p className="truncate pr-10 text-sm font-medium">{product.name}</p>
-              <div className="mt-3 grid min-w-0 grid-cols-3 rounded-lg bg-muted p-1">
+              <div className="mt-3 grid min-w-0 grid-cols-2 rounded-lg bg-muted p-1">
                 <button
                   type="button"
                   onClick={() => setOzonPanel('preparation')}
@@ -392,13 +368,6 @@ export default function PublicationWorkspaceDrawer({
                 >
                   <BarChart3 className="h-4 w-4" /> Рынок
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setOzonPanel('product')}
-                  className={`flex h-9 min-w-0 items-center justify-center gap-1 rounded-md text-xs font-medium transition-colors sm:gap-2 sm:text-sm ${ozonPanel === 'product' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
-                >
-                  <PackageSearch className="h-4 w-4" /> Товар
-                </button>
               </div>
             </div>
 
@@ -411,45 +380,11 @@ export default function PublicationWorkspaceDrawer({
               />
             </div>
 
-            <div className="hidden min-w-0 shrink-0 border-b bg-muted/20 px-5 py-2 xl:block">
-              <div className="grid w-[min(100%,520px)] grid-cols-2 rounded-lg bg-muted p-1">
-                <button
-                  type="button"
-                  onClick={() => setOzonPanel('preparation')}
-                  className={`flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${ozonPanel !== 'pricing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
-                >
-                  <FileText className="h-4 w-4" /> Карточка Ozon
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setOzonPanel('pricing')}
-                  className={`flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${ozonPanel === 'pricing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
-                >
-                  <BarChart3 className="h-4 w-4" /> Рынок и цены
-                </button>
-              </div>
-            </div>
-
-            <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden xl:grid-cols-[minmax(600px,1fr)_minmax(440px,520px)]">
-              <section className={`${ozonPanel === 'preparation' ? 'block' : 'hidden'} min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain border-r`}>
-                <div className="w-full min-w-0 space-y-4 p-4 pb-8 sm:p-5">
-                  <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-muted-foreground">
-                    Карточка относится только к кабинету «{selectedAccount.name}».
-                    Категории, характеристики и цена Ozon сохраняются отдельно от Avito.
-                  </div>
-                  <OzonOfferPreparationCard
-                    ref={ozonPreparationRef}
-                    key={`${product.id}:${selectedAccount.id}`}
-                    productId={product.id}
-                    accounts={[selectedAccount]}
-                    onPreparationChange={handleOzonPreparationChange}
-                    showAccountSelector={false}
-                    embedded
-                  />
-                </div>
-              </section>
-
-              <section className={`${ozonPanel === 'pricing' ? 'block' : 'hidden'} min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain border-r`}>
+            <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden xl:grid-cols-[minmax(600px,1fr)_minmax(520px,560px)]">
+              <section
+                data-testid="ozon-market-audit-panel"
+                className={`${ozonPanel === 'pricing' ? 'block' : 'hidden'} min-h-0 min-w-0 max-w-full overflow-x-hidden overflow-y-auto overscroll-contain border-r xl:block`}
+              >
                 <MarketPricingPanel
                   productId={product.id}
                   referencePrice={selectedOzonPreparation?.pricing?.final_price ?? product.price}
@@ -458,150 +393,21 @@ export default function PublicationWorkspaceDrawer({
                 />
               </section>
 
-              <section className={`${ozonPanel === 'product' ? 'block' : 'hidden'} min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-background xl:block`}>
-                <div className="space-y-5 p-4 pb-8 sm:p-5">
-                  <SheetHeader className="text-left">
-                    <div className="flex min-w-0 items-start gap-3">
-                      <h2 className="min-w-0 flex-1 break-words pr-1 text-lg font-semibold leading-tight text-foreground [overflow-wrap:anywhere]">
-                        <span className="mb-1 block truncate font-mono text-xs text-muted-foreground">
-                          {product.article}
-                        </span>
-                        {product.name}
-                      </h2>
-                      <Badge variant={selectedOzonPreparation?.preflight.ready ? 'default' : 'outline'}>
-                        {selectedOzonPreparation?.preflight.ready ? 'Готово' : 'Черновик'}
-                      </Badge>
-                      <Badge variant="outline">Ozon</Badge>
-                    </div>
-                  </SheetHeader>
-
-                  <div className="space-y-2">
-                    <div className="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden rounded-lg border bg-muted">
-                      {activeImage?.url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={activeImage.url} alt="" className="h-full w-full object-contain" />
-                      ) : (
-                        <div className="text-center text-sm text-muted-foreground">
-                          <Images className="mx-auto mb-2 h-7 w-7" />
-                          У товара пока нет фотографий
-                        </div>
-                      )}
-                    </div>
-                    {images.length > 0 && (
-                      <div className="flex gap-2 overflow-x-auto pb-1">
-                        {images.map((image, index) => (
-                          <button
-                            key={image.id}
-                            type="button"
-                            title={imageStatusLabel(image.status)}
-                            onClick={() => setActiveImageIndex(index)}
-                            className={`h-14 w-14 shrink-0 overflow-hidden rounded-md border bg-muted ${index === activeImageIndex ? 'ring-2 ring-primary' : ''}`}
-                          >
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={image.thumb_url || image.url} alt="" className="h-full w-full object-cover" />
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
-                    <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Базовая цена</p>
-                      <p className="mt-1 font-semibold tabular-nums">{rubles(product.price)}</p>
-                    </div>
-                    <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Остаток</p>
-                      <p className="mt-1 font-semibold tabular-nums">{product.stock_qty} шт.</p>
-                    </div>
-                    <div className="rounded-lg border p-3">
-                      <p className="text-xs text-muted-foreground">Бренд</p>
-                      <p className="mt-1 truncate font-semibold">{product.brand || 'Не указан'}</p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-4 border-t pt-4">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Заголовок после обогащения</p>
-                      <p className="mt-1 text-sm font-medium leading-relaxed">
-                        {product.title_ai || product.name}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">AI-описание</p>
-                      <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-                        {product.description_ai || 'Описание ещё не подготовлено.'}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                    Это общие проверенные данные товара. Исправления выполняются в разделе
-                    «Товары», а категория, характеристики и цена Ozon — слева в этой карточке.
-                  </div>
-
-                  <div className="space-y-2 border-t pt-4">
-                    <p className="text-sm font-medium">Действия с карточкой Ozon</p>
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      Кнопки расположены так же, как в Avito, но используют отдельные данные
-                      и операции Ozon. Действия Avito не вызываются.
-                    </p>
-                    <Button
-                      type="button"
-                      className="w-full"
-                      onClick={saveOzonPreparation}
-                      disabled={
-                        ozonFooterAction !== null
-                        || !selectedOzonPreparation?.draft
-                        || !selectedOzonPreparation.schema
-                      }
-                    >
-                      {ozonFooterAction === 'save'
-                        ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        : <Save className="mr-2 h-4 w-4" />}
-                      {ozonFooterAction === 'save' ? 'Проверяем и сохраняем...' : 'Проверить и сохранить'}
-                    </Button>
-                    <Button
-                      type="button"
-                      className="w-full"
-                      disabled
-                    >
-                      <Send className="mr-2 h-4 w-4" />
-                      Отправить в Ozon
-                    </Button>
-                    <p className={`rounded-md border p-2.5 text-xs ${
-                      selectedOzonPreparation?.preflight.ready
-                        ? 'border-blue-500/30 bg-blue-500/5 text-blue-950 dark:text-blue-100'
-                        : 'border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100'
-                    }`}
-                    >
-                      {selectedOzonPreparation?.preflight.ready
-                        ? 'Карточка готова. Отправка станет доступна на этапе подключения безопасной публикации через Ozon Seller API.'
-                        : `Сначала исправьте обязательные поля: ${selectedOzonPreparation?.preflight.errors.length ?? 0}. Затем MAP разрешит отправку, когда будет подключена публикация Ozon.`}
-                    </p>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="w-full"
-                      onClick={regenerateProductForOzon}
-                      disabled={ozonFooterAction !== null}
-                    >
-                      <RefreshCw className={`mr-2 h-4 w-4 ${
-                        ozonFooterAction === 'regenerate' ? 'animate-spin' : ''
-                      }`}
-                      />
-                      {ozonFooterAction === 'regenerate'
-                        ? 'Запускаем обогащение...'
-                        : 'Перегенерировать AI'}
-                    </Button>
-                    <Button asChild variant="outline" className="w-full">
-                      <Link href={`/dashboard/products/${product.id}?returnTo=%2Fdashboard%2Flistings`}>
-                        <Pencil className="mr-2 h-4 w-4" />
-                        Редактировать данные товара
-                      </Link>
-                    </Button>
-                  </div>
-                </div>
+              <section
+                data-testid="ozon-listing-editor-panel"
+                className={`${ozonPanel === 'preparation' ? 'block' : 'hidden'} min-h-0 min-w-0 max-w-full overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-gutter:stable] xl:block`}
+              >
+                <OzonListingEditorPanel
+                  product={product}
+                  account={selectedAccount}
+                  preparation={selectedOzonPreparation}
+                  images={images}
+                  preparationRef={ozonPreparationRef}
+                  footerAction={ozonFooterAction}
+                  onPreparationChange={handleOzonPreparationChange}
+                  onSave={() => void saveOzonPreparation()}
+                  onRegenerate={() => void regenerateProductForOzon()}
+                />
               </section>
             </div>
           </div>
