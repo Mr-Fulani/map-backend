@@ -201,13 +201,40 @@ def _offer_pricing(
         PRICE_QUANTUM,
         rounding=ROUND_HALF_UP,
     )
-    margin_pct = Decimal(policy['effective_margin_pct'])
-    final_price = (
-        base_price * (Decimal('1') + margin_pct / Decimal('100'))
-    ).quantize(PRICE_QUANTUM, rounding=ROUND_HALF_UP)
+    category_margin_pct = Decimal(policy['effective_margin_pct'])
+    if draft.price_override is not None:
+        final_price = Decimal(draft.price_override).quantize(
+            PRICE_QUANTUM,
+            rounding=ROUND_HALF_UP,
+        )
+        margin_pct = (
+            (
+                (final_price / base_price - Decimal('1')) * Decimal('100')
+            ).quantize(PRICE_QUANTUM, rounding=ROUND_HALF_UP)
+            if base_price > 0
+            else Decimal('0')
+        )
+        margin_source = 'offer_price'
+    else:
+        margin_pct = (
+            Decimal(draft.margin_pct)
+            if draft.margin_pct is not None
+            else category_margin_pct
+        )
+        final_price = (
+            base_price * (Decimal('1') + margin_pct / Decimal('100'))
+        ).quantize(PRICE_QUANTUM, rounding=ROUND_HALF_UP)
+        margin_source = 'offer_margin' if draft.margin_pct is not None else 'category'
     return {
         'base_price': str(base_price),
         'effective_margin_pct': str(margin_pct),
+        'margin_override': (
+            str(draft.margin_pct) if draft.margin_pct is not None else None
+        ),
+        'price_override': (
+            str(draft.price_override) if draft.price_override is not None else None
+        ),
+        'margin_source': margin_source,
         'final_price': str(final_price),
         'policy': policy,
     }
@@ -342,7 +369,7 @@ def _preflight(
             'price',
             'Цена Ozon',
             'После применения наценки цена Ozon должна быть больше нуля. '
-            'Исправьте наценку в настройках выбранного кабинета.',
+            'Исправьте цену в карточке или наценку категории выбранного кабинета.',
         ))
     if not product.images.exclude(status=ProductImage.Status.REJECTED).exists():
         errors.append(_issue('image_missing', 'images', 'Фотографии', 'Добавьте хотя бы одну фотографию.'))
@@ -384,6 +411,12 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
                 'tree_revision': draft.tree_revision,
             },
             'attribute_schema_revision': draft.attribute_schema_revision,
+            'margin_pct': (
+                str(draft.margin_pct) if draft.margin_pct is not None else None
+            ),
+            'price_override': (
+                str(draft.price_override) if draft.price_override is not None else None
+            ),
             'updated_at': draft.updated_at,
         },
         'attributes': _attribute_presentation(schema, draft),
@@ -572,6 +605,10 @@ def update_offer_draft(
     category: tuple[int, int] | None = None,
     attributes: Any = None,
     attributes_supplied: bool = False,
+    margin_pct: Decimal | None = None,
+    margin_supplied: bool = False,
+    price_override: Decimal | None = None,
+    price_supplied: bool = False,
 ) -> OzonOfferDraft:
     if (
         product.tenant_id != account.tenant_id
@@ -672,5 +709,13 @@ def update_offer_draft(
             'fields': fields,
             'recommendations': recommendations,
         }
+    if margin_supplied:
+        draft.margin_pct = margin_pct
+        if margin_pct is not None or not price_supplied:
+            draft.price_override = None
+    if price_supplied:
+        draft.price_override = price_override
+        if price_override is not None or not margin_supplied:
+            draft.margin_pct = None
     draft.save()
     return draft

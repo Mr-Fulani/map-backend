@@ -622,6 +622,61 @@ def test_offer_uses_inherited_ozon_margin_without_mutating_avito_runtime():
 
 
 @pytest.mark.django_db
+def test_offer_margin_override_is_account_scoped_and_can_restore_inheritance():
+    tenant, key = _tenant('ozon-offer-margin-override')
+    account = _account(tenant, 'client-offer-margin-override')
+    product = _product(tenant)
+    tree = _catalog(account)
+    OzonCategoryPolicy.objects.create(
+        tenant=tenant,
+        account=account,
+        description_category_id=101,
+        enabled_override=True,
+        margin_pct=Decimal('12.50'),
+        category_path='Автотовары',
+        node_name='Автотовары',
+        tree_revision=tree.schema_hash,
+    )
+    client = Client()
+    _ready_offer(client, key, product, account)
+
+    overridden = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'margin_pct': '25.00',
+    })
+    assert overridden.status_code == 200
+    override_data = overridden.json()['data']
+    assert override_data['draft']['margin_pct'] == '25.00'
+    assert override_data['pricing']['margin_override'] == '25.00'
+    assert override_data['pricing']['margin_source'] == 'offer_margin'
+    assert override_data['pricing']['final_price'] == '1250.00'
+    exact = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'margin_pct': None,
+        'price_override': '1035.11',
+    })
+    exact_data = exact.json()['data']
+    assert exact.status_code == 200
+    assert exact_data['draft']['price_override'] == '1035.11'
+    assert exact_data['draft']['margin_pct'] is None
+    assert exact_data['pricing']['margin_source'] == 'offer_price'
+    assert exact_data['pricing']['final_price'] == '1035.11'
+    inherited = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'margin_pct': None,
+        'price_override': None,
+    })
+    assert inherited.status_code == 200
+    inherited_data = inherited.json()['data']
+    assert inherited_data['draft']['margin_pct'] is None
+    assert inherited_data['draft']['price_override'] is None
+    assert inherited_data['pricing']['margin_override'] is None
+    assert inherited_data['pricing']['effective_margin_pct'] == '12.50'
+    assert inherited_data['pricing']['final_price'] == '1125.00'
+    assert Listing.objects.count() == MarketplaceFeedRun.objects.count() == 0
+
+
+@pytest.mark.django_db
 def test_disabled_category_and_nonpositive_ozon_price_block_only_ozon():
     tenant, key = _tenant('ozon-offer-policy-block')
     account = _account(tenant, 'client-offer-policy-block')

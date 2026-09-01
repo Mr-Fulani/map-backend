@@ -65,6 +65,8 @@ export interface OzonOfferPreparation {
       tree_revision: string;
     };
     attribute_schema_revision: string;
+    margin_pct: string | null;
+    price_override: string | null;
     updated_at: string;
   };
   attributes: OzonOfferAttribute[];
@@ -77,6 +79,9 @@ export interface OzonOfferPreparation {
   pricing: null | {
     base_price: string;
     effective_margin_pct: string;
+    margin_override: string | null;
+    price_override: string | null;
+    margin_source: 'offer_margin' | 'offer_price' | 'category';
     final_price: string;
     policy: OzonCategoryPolicyState;
   };

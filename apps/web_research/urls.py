@@ -2,7 +2,7 @@ from django.urls import path
 
 from apps.web_research.views import (
     ListingMarketComparisonView, ProductMarketOfferListView,
-    ProductMarketResearchView, TenantWebResearchSettingsView,
+    ProductMarketComparisonView, ProductMarketResearchView, TenantWebResearchSettingsView,
     ProductWebResearchView, WebResearchRunDetailView, WebResearchRunListView,
     WebSearchProviderListView,
 )
@@ -38,6 +38,11 @@ urlpatterns = [
         'products/<int:product_pk>/market-offers/',
         ProductMarketOfferListView.as_view(),
         name='product-market-offers',
+    ),
+    path(
+        'products/<int:product_pk>/market-comparison/',
+        ProductMarketComparisonView.as_view(),
+        name='product-market-comparison',
     ),
     path(
         'listings/<int:listing_pk>/market-comparison/',

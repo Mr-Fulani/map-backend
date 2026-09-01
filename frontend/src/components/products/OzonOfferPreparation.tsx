@@ -15,6 +15,8 @@ import {
   CheckCircle2,
   FolderTree,
   Loader2,
+  RotateCcw,
+  Save,
   Search,
   ShieldCheck,
   WandSparkles,
@@ -76,6 +78,7 @@ function percent(value: string): string {
 
 export interface OzonOfferPreparationCardHandle {
   saveAttributes: () => Promise<boolean>;
+  applyMarketPrice: (price: string) => boolean;
 }
 
 interface OzonOfferPreparationCardProps {
@@ -114,6 +117,9 @@ OzonOfferPreparationCardProps
   const [showOptional, setShowOptional] = useState(false);
   const [dictionaryQueries, setDictionaryQueries] = useState<Record<string, string>>({});
   const [dictionaryResults, setDictionaryResults] = useState<Record<string, OzonDictionaryValue[]>>({});
+  const [marginOverride, setMarginOverride] = useState('');
+  const [priceDraft, setPriceDraft] = useState('');
+  const [pricingMode, setPricingMode] = useState<'inherited' | 'margin' | 'price'>('inherited');
   const accountId = ozonAccounts.some((account) => account.id === accountChoiceId)
     ? accountChoiceId
     : ozonAccounts.length === 1 ? ozonAccounts[0].id : null;
@@ -123,6 +129,15 @@ OzonOfferPreparationCardProps
   const applyPreparation = useCallback((next: OzonOfferPreparation | null) => {
     setPreparation(next);
     setAttributes(next?.attributes ?? []);
+    setMarginOverride(next?.pricing?.margin_override ?? '');
+    setPriceDraft(next?.pricing?.final_price ?? '');
+    setPricingMode(
+      next?.pricing?.price_override !== null && next?.pricing?.price_override !== undefined
+        ? 'price'
+        : next?.pricing?.margin_override !== null && next?.pricing?.margin_override !== undefined
+          ? 'margin'
+          : 'inherited',
+    );
     onPreparationChange?.(next);
   }, [onPreparationChange]);
 
@@ -171,6 +186,9 @@ OzonOfferPreparationCardProps
     setDictionaryResults({});
     setPreparation(null);
     setAttributes([]);
+    setMarginOverride('');
+    setPriceDraft('');
+    setPricingMode('inherited');
     setLoadedAccountId(null);
   }
 
@@ -232,6 +250,22 @@ OzonOfferPreparationCardProps
   }
 
   async function saveAttributes(): Promise<boolean> {
+    const normalizedMargin = marginOverride.trim().replace(',', '.');
+    if (
+      normalizedMargin !== ''
+      && (!Number.isFinite(Number(normalizedMargin)) || Number(normalizedMargin) <= -100)
+    ) {
+      toast.error('Наценка Ozon должна быть числом больше −100%.');
+      return false;
+    }
+    const normalizedPrice = priceDraft.trim().replace(',', '.');
+    if (
+      pricingMode === 'price'
+      && (!Number.isFinite(Number(normalizedPrice)) || Number(normalizedPrice) <= 0)
+    ) {
+      toast.error('Цена Ozon должна быть числом больше нуля.');
+      return false;
+    }
     const invalid = ozonAttributesValidationErrors(attributes);
     if (invalid.length > 0) {
       toast.error(`${invalid[0].attribute.name}: ${invalid[0].message}`);
@@ -239,6 +273,8 @@ OzonOfferPreparationCardProps
     }
     const next = await updateOffer({
       attributes: ozonAttributesPayload(attributes),
+      margin_pct: pricingMode === 'margin' ? normalizedMargin : null,
+      price_override: pricingMode === 'price' ? normalizedPrice : null,
     }, 'attributes');
     if (!next) return false;
     if (next.preflight.errors.length > 0) {
@@ -251,7 +287,79 @@ OzonOfferPreparationCardProps
     return true;
   }
 
-  useImperativeHandle(ref, () => ({ saveAttributes }));
+  function applyMarketPrice(price: string): boolean {
+    const basePrice = Number(preparation?.pricing?.base_price);
+    const selectedPrice = Number(price);
+    if (
+      !Number.isFinite(basePrice)
+      || basePrice <= 0
+      || !Number.isFinite(selectedPrice)
+      || selectedPrice <= 0
+    ) {
+      toast.error('Не удалось рассчитать наценку по выбранной цене.');
+      return false;
+    }
+    setPriceDraft(selectedPrice.toFixed(2));
+    setMarginOverride((((selectedPrice / basePrice) - 1) * 100).toFixed(2));
+    setPricingMode('price');
+    return true;
+  }
+
+  useImperativeHandle(ref, () => ({ saveAttributes, applyMarketPrice }));
+
+  async function savePricing() {
+    const normalizedMargin = marginOverride.trim().replace(',', '.');
+    if (
+      normalizedMargin !== ''
+      && (!Number.isFinite(Number(normalizedMargin)) || Number(normalizedMargin) <= -100)
+    ) {
+      toast.error('Наценка Ozon должна быть числом больше −100%.');
+      return;
+    }
+    const normalizedPrice = priceDraft.trim().replace(',', '.');
+    if (
+      pricingMode === 'price'
+      && (!Number.isFinite(Number(normalizedPrice)) || Number(normalizedPrice) <= 0)
+    ) {
+      toast.error('Цена Ozon должна быть числом больше нуля.');
+      return;
+    }
+    const next = await updateOffer({
+      margin_pct: pricingMode === 'margin' ? normalizedMargin : null,
+      price_override: pricingMode === 'price' ? normalizedPrice : null,
+    }, 'pricing');
+    if (next) toast.success('Цена Ozon сохранена только для выбранного кабинета.');
+  }
+
+  function updateMargin(nextMargin: string) {
+    setMarginOverride(nextMargin);
+    const basePrice = Number(preparation?.pricing?.base_price);
+    const normalized = nextMargin.trim().replace(',', '.');
+    if (normalized === '') {
+      setPricingMode('inherited');
+      setPriceDraft(preparation?.pricing?.policy.effective_margin_pct
+        ? (basePrice * (
+          1 + Number(preparation.pricing.policy.effective_margin_pct) / 100
+        )).toFixed(2)
+        : preparation?.pricing?.final_price ?? '');
+      return;
+    }
+    setPricingMode('margin');
+    const margin = Number(normalized);
+    if (Number.isFinite(basePrice) && Number.isFinite(margin)) {
+      setPriceDraft((basePrice * (1 + margin / 100)).toFixed(2));
+    }
+  }
+
+  function updatePrice(nextPrice: string) {
+    setPriceDraft(nextPrice);
+    setPricingMode('price');
+    const basePrice = Number(preparation?.pricing?.base_price);
+    const normalized = Number(nextPrice.trim().replace(',', '.'));
+    if (Number.isFinite(basePrice) && basePrice > 0 && Number.isFinite(normalized)) {
+      setMarginOverride((((normalized / basePrice) - 1) * 100).toFixed(2));
+    }
+  }
 
   async function autofillOffer(successMessage = 'Данные Ozon подготовлены для проверки.') {
     if (!accountId) return null;
@@ -717,22 +825,67 @@ OzonOfferPreparationCardProps
                     <p className="text-xs text-muted-foreground">Цена товара</p>
                     <p className="font-medium tabular-nums">{rubles(preparation.pricing.base_price)}</p>
                   </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Наценка Ozon</p>
-                    <p className="font-medium tabular-nums">
-                      {percent(preparation.pricing.effective_margin_pct)}
-                    </p>
+                  <div className="space-y-1">
+                    <label htmlFor={`ozon-offer-margin-${accountId}`} className="text-xs text-muted-foreground">
+                      Наценка Ozon, %
+                    </label>
+                    <Input
+                      id={`ozon-offer-margin-${accountId}`}
+                      value={marginOverride}
+                      inputMode="decimal"
+                      placeholder={preparation.pricing.policy.effective_margin_pct}
+                      disabled={action === 'pricing'}
+                      onChange={(event) => updateMargin(event.target.value)}
+                    />
                   </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground">Итоговая цена Ozon</p>
-                    <p className="font-semibold tabular-nums">{rubles(preparation.pricing.final_price)}</p>
+                  <div className="space-y-1">
+                    <label htmlFor={`ozon-offer-price-${accountId}`} className="text-xs text-muted-foreground">
+                      Итоговая цена Ozon, ₽
+                    </label>
+                    <Input
+                      id={`ozon-offer-price-${accountId}`}
+                      value={priceDraft}
+                      inputMode="decimal"
+                      disabled={action === 'pricing'}
+                      onChange={(event) => updatePrice(event.target.value)}
+                    />
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  {preparation.pricing.policy.margin_source
-                    ? `Наценка задана для «${preparation.pricing.policy.margin_source.name}».`
-                    : 'Используется стандартная наценка 0%. Задать её можно во вкладке «Настройки → Правила цены → Ozon».'}
-                </p>
+                <div className="flex flex-col gap-2 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    {pricingMode === 'price'
+                      ? 'Индивидуальная точная цена этого товара и кабинета. Avito не изменяется.'
+                      : pricingMode === 'margin'
+                        ? 'Индивидуальная наценка этого товара и кабинета. Avito не изменяется.'
+                      : preparation.pricing.policy.margin_source
+                        ? `Наследуется правило «${preparation.pricing.policy.margin_source.name}»: ${percent(preparation.pricing.policy.effective_margin_pct)}.`
+                        : 'Наследуется стандартная наценка 0%.'}
+                  </p>
+                  <div className="flex shrink-0 gap-2">
+                    {pricingMode !== 'inherited' && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={action === 'pricing'}
+                        onClick={() => updateMargin('')}
+                      >
+                        <RotateCcw className="mr-1 h-3.5 w-3.5" /> Наследовать
+                      </Button>
+                    )}
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={action === 'pricing'}
+                      onClick={() => void savePricing()}
+                    >
+                      {action === 'pricing'
+                        ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                        : <Save className="mr-1 h-3.5 w-3.5" />}
+                      Сохранить цену
+                    </Button>
+                  </div>
+                </div>
               </div>
             )}
 

@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-import { listingApi, webResearchApi } from '@/lib/api';
+import { productApi, webResearchApi } from '@/lib/api';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -95,7 +95,7 @@ interface TenantResearchSettings {
 }
 
 interface Comparison {
-  listing_id: number;
+  listing_id: number | null;
   product_id: number;
   base_price: string;
   listing_price: string;
@@ -254,10 +254,17 @@ function Filters({
 }
 
 export default function MarketPricingPanel({
-  listingId, listingStatus, onApplyPrice, refreshKey = 0,
+  productId,
+  referencePrice,
+  channelLabel,
+  channelStatus,
+  onApplyPrice,
+  refreshKey = 0,
 }: {
-  listingId: number;
-  listingStatus: string;
+  productId: number;
+  referencePrice: string;
+  channelLabel: string;
+  channelStatus?: string;
   onApplyPrice: (price: string) => void;
   refreshKey?: number;
 }) {
@@ -278,9 +285,9 @@ export default function MarketPricingPanel({
 
   const requestComparison = useCallback(async () => {
     void refreshKey;
-    const response = await listingApi.marketComparison(listingId);
+    const response = await productApi.marketComparison(productId, referencePrice);
     return response.data.data as Comparison;
-  }, [listingId, refreshKey]);
+  }, [productId, referencePrice, refreshKey]);
 
   const applyComparison = useCallback((data: Comparison) => {
     setComparison(data);
@@ -466,6 +473,9 @@ export default function MarketPricingPanel({
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <h2 className="text-xl font-semibold tracking-tight">Рынок и цены</h2>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            Исследование общее для товара. Ниже оно сравнивается с ценой канала {channelLabel}.
+          </p>
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
             <span className="inline-flex items-center gap-1"><Globe2 className="h-3.5 w-3.5" />{comparison.region.label}</span>
             <span>Обновлено: {dateTime(comparison.freshness.last_checked_at)}</span>
@@ -505,7 +515,7 @@ export default function MarketPricingPanel({
         <div className="grid grid-cols-2 gap-2 md:grid-cols-3 2xl:grid-cols-4">
           <SummaryCard label="Наша базовая цена товара" value={rubles(comparison.base_price)} />
           <SummaryCard
-            label="Цена вашего объявления"
+            label={`Цена для ${channelLabel}`}
             value={rubles(comparison.listing_price)}
             hint={comparisonSentence(comparison.statistics.listing_vs_base, 'нашей базовой цены')}
             tone={comparison.statistics.listing_vs_base?.direction === 'above' ? 'warning' : 'positive'}
@@ -519,7 +529,7 @@ export default function MarketPricingPanel({
           <SummaryCard label="Самая высокая подтверждённая цена" value={rubles(comparison.statistics.maximum)} />
           <SummaryCard label="Продавцов с товаром в наличии" value={String(comparison.statistics.available_seller_count)} hint={`Подтверждённых предложений в расчёте: ${comparison.statistics.verified_offer_count}`} />
           <SummaryCard
-            label="Цена объявления относительно рынка"
+            label={`Цена ${channelLabel} относительно рынка`}
             value={difference ? `${Math.abs(Number(difference.percent)).toLocaleString('ru-RU')}%` : '—'}
             hint={comparisonSentence(difference, 'типичной цены на рынке') ?? 'Недостаточно данных'}
             tone={differenceTone}
@@ -539,7 +549,7 @@ export default function MarketPricingPanel({
               <p className="mt-3 text-xl font-semibold tabular-nums">{offer.price_is_from && <span className="mr-1 text-xs font-normal text-muted-foreground">от</span>}{offer.price ? `${Number(offer.price).toLocaleString('ru-RU')} ${offer.currency === 'RUB' ? '₽' : offer.currency}` : '—'}</p>
               <div className="mt-2 grid gap-1.5">
                 <ComparisonLine difference={offer.difference_from_base} reference="нашей базовой цены" />
-                <ComparisonLine difference={offer.difference_from_listing} reference="цены объявления" />
+                <ComparisonLine difference={offer.difference_from_listing} reference={`цены ${channelLabel}`} />
               </div>
               <div className="mt-3 space-y-1 text-xs text-muted-foreground">
                 {offer.quantity !== null && <p>Количество: {offer.quantity}</p>}
@@ -588,11 +598,11 @@ export default function MarketPricingPanel({
                 <div className="mt-3 flex flex-wrap items-end justify-between gap-2"><div><p className="text-xl font-semibold tabular-nums">{offer.is_price_from && <span className="mr-1 text-xs font-normal text-muted-foreground">от</span>}{Number(offer.price).toLocaleString('ru-RU')} {offer.currency === 'RUB' ? '₽' : offer.currency}</p>{offer.currency !== 'RUB' && <p className="text-xs text-muted-foreground">{offer.normalized_price ? `≈ ${rubles(offer.normalized_price)}` : 'Конвертация недоступна'}</p>}</div><Badge variant="outline">{offer.availability_label}</Badge></div>
                 <div className="mt-2 grid gap-1.5">
                   <ComparisonLine difference={offer.difference_from_base} reference="нашей базовой цены" />
-                  <ComparisonLine difference={offer.difference_from_listing} reference="цены объявления" />
+                  <ComparisonLine difference={offer.difference_from_listing} reference={`цены ${channelLabel}`} />
                 </div>
                 <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs [&_dd]:min-w-0 [&_dd]:break-words"><dt className="text-muted-foreground">Состояние</dt><dd>{offer.condition_label}</dd><dt className="text-muted-foreground">Точность</dt><dd>{Math.round(offer.match_confidence * 100)}%</dd><dt className="text-muted-foreground">Найдено по</dt><dd className="truncate" title={offer.matched_code || offer.article}>{offer.matched_code || offer.article || 'не подтверждено'}</dd><dt className="text-muted-foreground">Проверено</dt><dd>{dateTime(offer.captured_at)}</dd>{offer.quantity !== null && <><dt className="text-muted-foreground">Количество</dt><dd>{offer.quantity}</dd></>}{offer.delivery_text && <><dt className="text-muted-foreground">Доставка</dt><dd>{offer.delivery_text}</dd></>}</dl>
                 {offer.match_reasons.length > 0 && <p className="mt-3 line-clamp-2 text-xs text-muted-foreground">{offer.match_reasons.join(' · ')}</p>}
-                <div className="mt-4 flex flex-wrap gap-2"><Button size="sm" variant="outline" asChild><a href={offer.url} target="_blank" rel="noreferrer">Открыть <ExternalLink className="ml-1 h-3.5 w-3.5" /></a></Button><Button size="sm" onClick={() => { onApplyPrice(offer.normalized_price!); toast.success(listingStatus === 'active' ? 'Цена подготовлена. После сохранения отправим безопасное обновление в Avito.' : 'Цена подставлена в черновик объявления.'); }} disabled={!offer.normalized_price}>Подставить цену</Button></div>
+                <div className="mt-4 flex flex-wrap gap-2"><Button size="sm" variant="outline" asChild><a href={offer.url} target="_blank" rel="noreferrer">Открыть <ExternalLink className="ml-1 h-3.5 w-3.5" /></a></Button><Button size="sm" onClick={() => { onApplyPrice(offer.normalized_price!); toast.success(channelLabel === 'Avito' && channelStatus === 'active' ? 'Цена подготовлена. После сохранения отправим безопасное обновление в Avito.' : `Цена подставлена в карточку ${channelLabel}. Проверьте и сохраните её.`); }} disabled={!offer.normalized_price}>Подставить цену</Button></div>
                 <p className="mt-2 text-[11px] text-muted-foreground">Источник поиска: {offer.provider_id || 'не указан'}. Подстановка не публикует изменение автоматически.</p>
               </article>
             ))}

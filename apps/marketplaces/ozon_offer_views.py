@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 from rest_framework import serializers, status
@@ -23,6 +25,20 @@ class OzonOfferUpdateSerializer(serializers.Serializer):
     description_category_id = serializers.IntegerField(min_value=1, required=False)
     type_id = serializers.IntegerField(min_value=1, required=False)
     attributes = serializers.JSONField(required=False)
+    margin_pct = serializers.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        min_value=Decimal('-99.99'),
+        required=False,
+        allow_null=True,
+    )
+    price_override = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal('0.01'),
+        required=False,
+        allow_null=True,
+    )
 
     def validate(self, attrs):
         allowed = {
@@ -30,6 +46,8 @@ class OzonOfferUpdateSerializer(serializers.Serializer):
             'description_category_id',
             'type_id',
             'attributes',
+            'margin_pct',
+            'price_override',
         }
         unknown = set(self.initial_data) - allowed
         if unknown:
@@ -43,6 +61,10 @@ class OzonOfferUpdateSerializer(serializers.Serializer):
         if category_fields and len(category_fields) != 2:
             raise serializers.ValidationError(
                 'ID категории и типа Ozon нужно передать вместе.',
+            )
+        if attrs.get('margin_pct') is not None and attrs.get('price_override') is not None:
+            raise serializers.ValidationError(
+                'Передайте либо индивидуальную наценку, либо точную цену Ozon.',
             )
         return attrs
 
@@ -119,6 +141,10 @@ class ProductOzonOfferView(APIView):
                 category=category,
                 attributes=data.get('attributes'),
                 attributes_supplied='attributes' in data,
+                margin_pct=data.get('margin_pct'),
+                margin_supplied='margin_pct' in data,
+                price_override=data.get('price_override'),
+                price_supplied='price_override' in data,
             )
         except OzonOfferError as exc:
             return Response(

@@ -118,23 +118,31 @@ def verified_statistics(product, *, listing_price: Decimal | None = None) -> dic
     }
 
 
-def listing_market_comparison(listing) -> dict:
-    product = listing.product
-    settings = get_tenant_research_settings(listing.tenant)
+def product_market_comparison(
+    product,
+    *,
+    reference_price: Decimal | None = None,
+    listing_id: int | None = None,
+) -> dict:
+    """Build one product-owned market snapshot for any publication channel."""
+    reference_price = (
+        Decimal(reference_price) if reference_price is not None else Decimal(product.price)
+    )
+    settings = get_tenant_research_settings(product.tenant)
     offers = fresh_offer_queryset(product).order_by('normalized_price', '-captured_at')
     active_run = WebResearchRun.objects.filter(
-        tenant=listing.tenant,
+        tenant=product.tenant,
         product=product,
         purpose__in=[WebResearchRun.Purpose.PRICING, WebResearchRun.Purpose.COMBINED],
         status__in=[WebResearchRun.Status.QUEUED, WebResearchRun.Status.RUNNING],
     ).order_by('-created_at').first()
     latest_run = WebResearchRun.objects.filter(
-        tenant=listing.tenant,
+        tenant=product.tenant,
         product=product,
         purpose__in=[WebResearchRun.Purpose.PRICING, WebResearchRun.Purpose.COMBINED],
     ).order_by('-created_at').first()
     stale_count = CompetitorOffer.objects.filter(
-        tenant=listing.tenant, product=product, expires_at__lte=now(),
+        tenant=product.tenant, product=product, expires_at__lte=now(),
     ).count()
     pending_count = offers.filter(review_status=CompetitorOffer.ReviewStatus.PENDING).count()
     warnings = []
@@ -155,17 +163,19 @@ def listing_market_comparison(listing) -> dict:
         )
         payload['difference_from_base'] = _difference(comparable_price, product.price)
         payload['difference_from_listing'] = _difference(
-            comparable_price, listing.price_on_listing,
+            comparable_price, reference_price,
         )
 
     return {
-        'listing_id': listing.pk,
+        'listing_id': listing_id,
         'product_id': product.pk,
         'base_price': _money(product.price),
-        'listing_price': _money(listing.price_on_listing),
-        'catalog_offers': catalog_offers(product, listing_price=listing.price_on_listing),
+        # Keep the legacy response key so existing clients remain compatible.
+        # In product-scoped consumers this is the selected channel's reference price.
+        'listing_price': _money(reference_price),
+        'catalog_offers': catalog_offers(product, listing_price=reference_price),
         'internet_offers': internet_offers,
-        'statistics': verified_statistics(product, listing_price=listing.price_on_listing),
+        'statistics': verified_statistics(product, listing_price=reference_price),
         'region': {
             'preset': settings.region_preset,
             'label': settings.get_region_preset_display(),
@@ -181,3 +191,12 @@ def listing_market_comparison(listing) -> dict:
         'latest_run': WebResearchRunSerializer(latest_run).data if latest_run else None,
         'warnings': warnings,
     }
+
+
+def listing_market_comparison(listing) -> dict:
+    """Backward-compatible listing projection over product market data."""
+    return product_market_comparison(
+        listing.product,
+        reference_price=listing.price_on_listing,
+        listing_id=listing.pk,
+    )

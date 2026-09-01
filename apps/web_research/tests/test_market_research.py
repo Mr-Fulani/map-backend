@@ -19,7 +19,11 @@ from apps.tenants.tests.auth import (
     create_operator_key, create_tenant_with_operator_key,
     owner_client as make_owner_client,
 )
-from apps.web_research.market import _difference, listing_market_comparison
+from apps.web_research.market import (
+    _difference,
+    listing_market_comparison,
+    product_market_comparison,
+)
 from apps.web_research.models import (
     CompetitorOffer, TenantWebResearchSettings, WebResearchEvidence, WebResearchRun,
 )
@@ -296,6 +300,40 @@ def test_unconfirmed_offer_is_excluded_from_market_statistics():
     assert comparison['statistics']['median_vs_base']['percent'] == '-16.7'
     assert comparison['internet_offers'][1]['difference_from_base']['percent'] == '-16.7'
     assert any('не участвуют' in warning for warning in comparison['warnings'])
+
+
+@pytest.mark.django_db
+def test_product_market_comparison_is_channel_neutral_and_tenant_scoped():
+    tenant_a, _ = make_tenant('product-market-a')
+    tenant_b, _ = make_tenant('product-market-b')
+    product_a = make_product(tenant_a)
+    product_b = make_product(tenant_b)
+    owner_client = make_owner_client(tenant_a)
+
+    response = owner_client.get(
+        f'/api/v1/products/{product_a.pk}/market-comparison/',
+        {'reference_price': '21000.00'},
+    )
+    foreign = owner_client.get(
+        f'/api/v1/products/{product_b.pk}/market-comparison/',
+    )
+    invalid = owner_client.get(
+        f'/api/v1/products/{product_a.pk}/market-comparison/',
+        {'reference_price': '0'},
+    )
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    assert data['listing_id'] is None
+    assert data['product_id'] == product_a.pk
+    assert data['listing_price'] == '21000.00'
+    assert data['statistics']['listing_vs_base']['percent'] == '16.7'
+    assert foreign.status_code == 404
+    assert invalid.status_code == 400
+
+    direct = product_market_comparison(product_a, reference_price=Decimal('21000'))
+    assert direct['listing_id'] is None
+    assert direct['listing_price'] == '21000.00'
 
 
 @pytest.mark.django_db

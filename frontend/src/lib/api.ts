@@ -1113,6 +1113,10 @@ export const productApi = {
   ) => api.post(`/products/${id}/physical-suggestions/${suggestionId}/${action}/`),
   getOzonOffer: (id: number, accountId: number) =>
     api.get(`/products/${id}/ozon-offer/`, { params: { account_id: accountId } }),
+  marketComparison: (id: number, referencePrice?: string) =>
+    api.get(`/products/${id}/market-comparison/`, {
+      params: referencePrice ? { reference_price: referencePrice } : undefined,
+    }),
   updateOzonOffer: (id: number, data: Record<string, unknown>) =>
     api.patch(`/products/${id}/ozon-offer/`, data),
   autofillOzonOffer: (id: number, accountId: number) =>

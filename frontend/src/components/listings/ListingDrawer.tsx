@@ -991,8 +991,10 @@ function ListingDrawerContent({
               <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden xl:grid-cols-[minmax(600px,1fr)_minmax(520px,560px)]">
                 <section className={`${activePanel === 'pricing' ? 'block' : 'hidden'} min-h-0 min-w-0 max-w-full overflow-x-hidden overflow-y-auto overscroll-contain border-r xl:block`}>
                   <MarketPricingPanel
-                    listingId={listing.id}
-                    listingStatus={listing.status}
+                    productId={listing.product_id}
+                    referencePrice={listing.price_on_listing}
+                    channelLabel="Avito"
+                    channelStatus={listing.status}
                     onApplyPrice={applyMarketPrice}
                     refreshKey={pricingRefreshKey}
                   />

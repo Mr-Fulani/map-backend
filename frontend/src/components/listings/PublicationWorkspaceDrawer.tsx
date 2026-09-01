@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
+  BarChart3,
   FileText,
   Images,
   Loader2,
@@ -16,6 +17,7 @@ import {
 import { toast } from 'sonner';
 
 import { MarketplaceChannelSwitcher } from '@/components/listings/MarketplaceChannelSwitcher';
+import MarketPricingPanel from '@/components/listings/MarketPricingPanel';
 import {
   OzonOfferPreparationCard,
   type OzonOfferPreparationCardHandle,
@@ -182,7 +184,7 @@ export default function PublicationWorkspaceDrawer({
   const [preparingAccountId, setPreparingAccountId] = useState<number | null>(null);
   const [ozonFooterAction, setOzonFooterAction] = useState<'save' | 'regenerate' | null>(null);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
-  const [ozonMobilePanel, setOzonMobilePanel] = useState<'preparation' | 'product'>('preparation');
+  const [ozonPanel, setOzonPanel] = useState<'preparation' | 'pricing' | 'product'>('preparation');
   const ozonPreparationRef = useRef<OzonOfferPreparationCardHandle>(null);
   const open = productId !== null;
 
@@ -196,7 +198,7 @@ export default function PublicationWorkspaceDrawer({
         setAccounts(snapshot.accounts);
         setImages(snapshot.images);
         setActiveImageIndex(0);
-        setOzonMobilePanel('preparation');
+        setOzonPanel('preparation');
         setAvitoListings(snapshot.avitoListings);
         setOzonPreparations(snapshot.ozonPreparations);
         setLoadError(false);
@@ -266,7 +268,7 @@ export default function PublicationWorkspaceDrawer({
   }, [selectedAccount]);
 
   function selectAccount(accountId: number) {
-    setOzonMobilePanel('preparation');
+    setOzonPanel('preparation');
     onSelectedAccountChange(accountId);
   }
 
@@ -302,6 +304,12 @@ export default function PublicationWorkspaceDrawer({
       await ozonPreparationRef.current?.saveAttributes();
     } finally {
       setOzonFooterAction(null);
+    }
+  }
+
+  function applyOzonMarketPrice(price: string) {
+    if (ozonPreparationRef.current?.applyMarketPrice(price)) {
+      setOzonPanel('preparation');
     }
   }
 
@@ -369,18 +377,25 @@ export default function PublicationWorkspaceDrawer({
             <div className="min-w-0 shrink-0 overflow-hidden border-b bg-background/95 px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] backdrop-blur xl:hidden">
               <p className="truncate pr-10 font-mono text-xs text-muted-foreground">{product.article}</p>
               <p className="truncate pr-10 text-sm font-medium">{product.name}</p>
-              <div className="mt-3 grid min-w-0 grid-cols-2 rounded-lg bg-muted p-1">
+              <div className="mt-3 grid min-w-0 grid-cols-3 rounded-lg bg-muted p-1">
                 <button
                   type="button"
-                  onClick={() => setOzonMobilePanel('preparation')}
-                  className={`flex h-9 min-w-0 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${ozonMobilePanel === 'preparation' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
+                  onClick={() => setOzonPanel('preparation')}
+                  className={`flex h-9 min-w-0 items-center justify-center gap-1 rounded-md text-xs font-medium transition-colors sm:gap-2 sm:text-sm ${ozonPanel === 'preparation' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
                 >
-                  <FileText className="h-4 w-4" /> Карточка Ozon
+                  <FileText className="h-4 w-4" /> Карточка
                 </button>
                 <button
                   type="button"
-                  onClick={() => setOzonMobilePanel('product')}
-                  className={`flex h-9 min-w-0 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${ozonMobilePanel === 'product' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
+                  onClick={() => setOzonPanel('pricing')}
+                  className={`flex h-9 min-w-0 items-center justify-center gap-1 rounded-md text-xs font-medium transition-colors sm:gap-2 sm:text-sm ${ozonPanel === 'pricing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
+                >
+                  <BarChart3 className="h-4 w-4" /> Рынок
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOzonPanel('product')}
+                  className={`flex h-9 min-w-0 items-center justify-center gap-1 rounded-md text-xs font-medium transition-colors sm:gap-2 sm:text-sm ${ozonPanel === 'product' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
                 >
                   <PackageSearch className="h-4 w-4" /> Товар
                 </button>
@@ -396,8 +411,27 @@ export default function PublicationWorkspaceDrawer({
               />
             </div>
 
+            <div className="hidden min-w-0 shrink-0 border-b bg-muted/20 px-5 py-2 xl:block">
+              <div className="grid w-[min(100%,520px)] grid-cols-2 rounded-lg bg-muted p-1">
+                <button
+                  type="button"
+                  onClick={() => setOzonPanel('preparation')}
+                  className={`flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${ozonPanel !== 'pricing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
+                >
+                  <FileText className="h-4 w-4" /> Карточка Ozon
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOzonPanel('pricing')}
+                  className={`flex h-9 items-center justify-center gap-2 rounded-md text-sm font-medium transition-colors ${ozonPanel === 'pricing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
+                >
+                  <BarChart3 className="h-4 w-4" /> Рынок и цены
+                </button>
+              </div>
+            </div>
+
             <div className="grid min-h-0 min-w-0 flex-1 grid-cols-[minmax(0,1fr)] overflow-hidden xl:grid-cols-[minmax(600px,1fr)_minmax(440px,520px)]">
-              <section className={`${ozonMobilePanel === 'preparation' ? 'block' : 'hidden'} min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain border-r xl:block`}>
+              <section className={`${ozonPanel === 'preparation' ? 'block' : 'hidden'} min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain border-r`}>
                 <div className="w-full min-w-0 space-y-4 p-4 pb-8 sm:p-5">
                   <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-muted-foreground">
                     Карточка относится только к кабинету «{selectedAccount.name}».
@@ -415,7 +449,16 @@ export default function PublicationWorkspaceDrawer({
                 </div>
               </section>
 
-              <section className={`${ozonMobilePanel === 'product' ? 'block' : 'hidden'} min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-background xl:block`}>
+              <section className={`${ozonPanel === 'pricing' ? 'block' : 'hidden'} min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain border-r`}>
+                <MarketPricingPanel
+                  productId={product.id}
+                  referencePrice={selectedOzonPreparation?.pricing?.final_price ?? product.price}
+                  channelLabel="Ozon"
+                  onApplyPrice={applyOzonMarketPrice}
+                />
+              </section>
+
+              <section className={`${ozonPanel === 'product' ? 'block' : 'hidden'} min-h-0 min-w-0 overflow-x-hidden overflow-y-auto overscroll-contain bg-background xl:block`}>
                 <div className="space-y-5 p-4 pb-8 sm:p-5">
                   <SheetHeader className="text-left">
                     <div className="flex min-w-0 items-start gap-3">

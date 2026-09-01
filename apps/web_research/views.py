@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.db import transaction
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
@@ -27,7 +29,7 @@ from apps.tenants.models import TenantUser
 from apps.products.services import (
     AutoPartsEnrichmentDisabled, ProductEnrichmentService, ProductIsNotAutoPart,
 )
-from apps.web_research.market import listing_market_comparison
+from apps.web_research.market import listing_market_comparison, product_market_comparison
 from apps.web_research.models import CompetitorOffer, WebResearchRun
 from apps.web_research.serializers import (
     CompetitorOfferSerializer, ListingMarketComparisonSerializer,
@@ -68,6 +70,15 @@ class MarketResearchStartRequestSerializer(_StrictRequestSerializer):
         required=False, allow_blank=True, max_length=50,
     )
     force = serializers.BooleanField(required=False, default=False)
+
+
+class ProductMarketComparisonQuerySerializer(_StrictRequestSerializer):
+    reference_price = serializers.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        min_value=Decimal('0.01'),
+        required=False,
+    )
 
 
 _COVERAGE_SCHEMA = inline_serializer(
@@ -806,3 +817,33 @@ class ListingMarketComparisonView(APIView):
             pk=listing_pk, tenant=request.tenant,
         )
         return Response({'status': 'ok', 'data': listing_market_comparison(listing)})
+
+
+@extend_schema(tags=['Web research'])
+class ProductMarketComparisonView(APIView):
+    api_key_enabled = True
+
+    @extend_schema(
+        summary='Общее сравнение товара с рынком для выбранного канала',
+        parameters=[OpenApiParameter(
+            'reference_price',
+            OpenApiTypes.DECIMAL,
+            description='Текущая цена выбранного канала публикации.',
+        )],
+        responses=_MARKET_COMPARISON_RESPONSE,
+    )
+    def get(self, request, product_pk: int):
+        query = ProductMarketComparisonQuerySerializer(data=request.query_params)
+        query.is_valid(raise_exception=True)
+        product = get_object_or_404(
+            Product.objects.select_related('tenant'),
+            pk=product_pk,
+            tenant=request.tenant,
+        )
+        return Response({
+            'status': 'ok',
+            'data': product_market_comparison(
+                product,
+                reference_price=query.validated_data.get('reference_price'),
+            ),
+        })

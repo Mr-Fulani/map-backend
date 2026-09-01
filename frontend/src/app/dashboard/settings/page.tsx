@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, Search } from 'lucide-react';
+import { Loader2, Plus, Trash2, Copy, Check, ExternalLink, Bell, BellOff, KeyRound, Upload, FileSpreadsheet, Server, FileCode2, AlertCircle, CheckCircle2, ChevronRight, Folder, RotateCcw, Search, Tag } from 'lucide-react';
 import {
   datasourceApi,
   profileApi,
@@ -198,25 +198,43 @@ const FALLBACK_DOMAIN_LABELS: Record<string, string> = {
   unknown: 'Не определено',
 };
 
-// Раскладывает плоский список категорий в порядок дерева (родитель → дети) с
-// глубиной для отступов. Категория с отсутствующим родителем считается корневой.
-function buildCategoryTree(cats: CatalogCategory[]): { category: CatalogCategory; depth: number }[] {
-  const ids = new Set(cats.map((c) => c.id));
-  const byParent = new Map<number | null, CatalogCategory[]>();
-  for (const c of cats) {
-    const key = c.parent && ids.has(c.parent) ? c.parent : null;
-    if (!byParent.has(key)) byParent.set(key, []);
-    byParent.get(key)!.push(c);
+function catalogCategoryPath(
+  category: CatalogCategory,
+  byId: ReadonlyMap<number, CatalogCategory>,
+): CatalogCategory[] {
+  const result: CatalogCategory[] = [];
+  const seen = new Set<number>();
+  let current: CatalogCategory | undefined = category;
+  while (current && !seen.has(current.id)) {
+    result.unshift(current);
+    seen.add(current.id);
+    current = current.parent === null ? undefined : byId.get(current.parent);
   }
-  byParent.forEach((list) => list.sort((a, b) => a.name.localeCompare(b.name, 'ru')));
+  return result;
+}
+
+function buildCategoryTree(
+  categories: CatalogCategory[],
+): { category: CatalogCategory; depth: number }[] {
+  const ids = new Set(categories.map((category) => category.id));
+  const byParent = new Map<number | null, CatalogCategory[]>();
+  for (const category of categories) {
+    const parent = category.parent !== null && ids.has(category.parent)
+      ? category.parent
+      : null;
+    byParent.set(parent, [...(byParent.get(parent) ?? []), category]);
+  }
+  byParent.forEach((items) => items.sort((left, right) => (
+    left.name.localeCompare(right.name, 'ru-RU')
+  )));
   const result: { category: CatalogCategory; depth: number }[] = [];
-  const walk = (parent: number | null, depth: number) => {
-    for (const c of byParent.get(parent) ?? []) {
-      result.push({ category: c, depth });
-      walk(c.id, depth + 1);
+  const append = (parent: number | null, depth: number) => {
+    for (const category of byParent.get(parent) ?? []) {
+      result.push({ category, depth });
+      append(category.id, depth + 1);
     }
   };
-  walk(null, 0);
+  append(null, 0);
   return result;
 }
 
@@ -228,16 +246,18 @@ function MarginEditor({
   onSaved: () => Promise<void>;
 }) {
   const [search, setSearch] = useState('');
+  const [parentId, setParentId] = useState<number | null>(null);
   const [values, setValues] = useState<Record<number, string>>(() =>
     Object.fromEntries(categories.map((c) => [c.id, c.default_margin_pct ?? ''])),
   );
   const [saving, setSaving] = useState<Record<number, boolean>>({});
 
-  const handleSave = async (id: number) => {
+  const handleSave = async (id: number, explicitValue?: string) => {
+    const value = explicitValue ?? values[id] ?? '';
     setSaving((prev) => ({ ...prev, [id]: true }));
     try {
       await productApi.patchCatalogCategory(id, {
-        default_margin_pct: values[id] === '' ? null : values[id],
+        default_margin_pct: value === '' ? null : value,
       });
       await onSaved();
       toast.success('Наценка сохранена');
@@ -248,83 +268,165 @@ function MarginEditor({
     }
   };
 
-  const rows = search
-    ? categories
-        .filter((c) => c.name.toLowerCase().includes(search.toLowerCase()))
-        .map((c) => ({ category: c, depth: 0 }))
-    : buildCategoryTree(categories);
+  const byId = new Map(categories.map((category) => [category.id, category]));
+  const currentParent = parentId === null ? null : byId.get(parentId) ?? null;
+  const currentPath = currentParent ? catalogCategoryPath(currentParent, byId) : [];
+  const categoryIdsWithChildren = new Set(
+    categories.map((category) => category.parent).filter((id): id is number => id !== null),
+  );
+  const normalizedSearch = search.trim().toLocaleLowerCase('ru-RU');
+  const rows = categories
+    .filter((category) => {
+      const visibleParent = category.parent !== null && byId.has(category.parent)
+        ? category.parent
+        : null;
+      return visibleParent === parentId;
+    })
+    .filter((category) => (
+      !normalizedSearch
+      || category.name.toLocaleLowerCase('ru-RU').includes(normalizedSearch)
+      || category.path_label.toLocaleLowerCase('ru-RU').includes(normalizedSearch)
+    ))
+    .sort((left, right) => left.name.localeCompare(right.name, 'ru-RU'));
 
   return (
     <div className="space-y-4">
-      <Input
-        placeholder="Поиск по категориям..."
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        className="max-w-sm"
-      />
+      <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-xs text-muted-foreground">
+        <p className="font-medium text-foreground">Наценки Avito для организации</p>
+        <p className="mt-1">
+          Пустое значение наследует наценку ближайшего родительского раздела.
+          Цены товара и настройки других маркетплейсов не меняются.
+        </p>
+      </div>
+
+      <nav aria-label="Путь категории наценок Avito" className="flex flex-wrap items-center gap-1 text-xs">
+        <Button
+          type="button"
+          size="sm"
+          variant={parentId === null ? 'secondary' : 'ghost'}
+          onClick={() => { setParentId(null); setSearch(''); }}
+        >
+          Все категории
+        </Button>
+        {currentPath.map((item, index) => (
+          <div key={item.id} className="flex items-center gap-1">
+            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+            <Button
+              type="button"
+              size="sm"
+              variant={index === currentPath.length - 1 ? 'secondary' : 'ghost'}
+              onClick={() => { setParentId(item.id); setSearch(''); }}
+            >
+              {item.name}
+            </Button>
+          </div>
+        ))}
+      </nav>
+
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          aria-label="Фильтр текущего раздела наценок Avito"
+          placeholder="Фильтр в текущем разделе"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          className="pl-9"
+        />
+      </div>
       {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          {search ? 'Ничего не найдено' : 'Категории не найдены.'}
+        <p className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+          {search ? 'В этом разделе ничего не найдено.' : 'В разделе нет вложенных категорий.'}
         </p>
       ) : (
         <div className="space-y-2">
-          {rows.map(({ category, depth }) => (
+          {rows.map((category) => {
+            const hasChildren = categoryIdsWithChildren.has(category.id);
+            return (
             <div
               key={category.id}
-              style={depth ? { marginLeft: depth * 20 } : undefined}
-              className={`flex flex-col gap-3 rounded-lg border p-3 md:flex-row md:items-center md:justify-between${
-                depth ? ' border-l-2 border-l-primary/40 bg-muted/30' : ''
-              }`}
+              className="flex flex-col gap-3 rounded-lg border bg-background p-3 md:flex-row md:items-center md:justify-between"
             >
               <div className="flex min-w-0 items-center gap-3">
-                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-md border bg-muted">
-                  {category.default_image_url ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={category.default_image_url} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-[10px] text-muted-foreground">
-                      Нет фото
-                    </div>
-                  )}
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-md border bg-muted/60">
+                  {hasChildren
+                    ? <Folder className="h-5 w-5 text-blue-500" />
+                    : <Tag className="h-5 w-5 text-violet-500" />}
                 </div>
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-medium">{category.name}</p>
-                  {category.root_domain_name && (
-                    <p className="text-xs text-muted-foreground">{category.root_domain_name}</p>
-                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="break-words font-medium">{category.name}</p>
+                    <Badge variant="outline">Правило Avito</Badge>
+                  </div>
+                  <p className="mt-0.5 break-words text-xs text-muted-foreground">
+                    {category.path_label || category.path.join(' → ') || category.name}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Итог: {category.effective_margin_pct}%
+                    {category.margin_inherited_from_name
+                      ? ` · от «${category.margin_inherited_from_name}»`
+                      : category.default_margin_pct == null
+                        ? ' · без наценки'
+                        : ' · собственная'}
+                  </p>
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="flex w-full flex-col gap-2 md:w-auto md:min-w-[520px] md:flex-row md:items-center md:justify-end">
+                {hasChildren && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => { setParentId(category.id); setSearch(''); }}
+                  >
+                    Внутрь <ChevronRight className="ml-1 h-3.5 w-3.5" />
+                  </Button>
+                )}
+                <div className="flex items-center gap-1">
                 <Input
                   value={values[category.id] ?? ''}
                   onChange={(e) => setValues((prev) => ({ ...prev, [category.id]: e.target.value }))}
                   inputMode="decimal"
                   placeholder="Наследовать"
-                  className="h-8 w-24 text-sm"
+                  aria-label={`Наценка Avito: ${category.name}`}
+                  className="w-32"
                 />
                 <span className="text-sm text-muted-foreground">%</span>
+                </div>
+                {category.default_margin_pct !== null && (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={saving[category.id]}
+                    onClick={() => {
+                      setValues((current) => ({ ...current, [category.id]: '' }));
+                      void handleSave(category.id, '');
+                    }}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    <span className="sr-only">Наследовать наценку</span>
+                  </Button>
+                )}
                 <Button
                   size="sm"
-                  variant="outline"
-                  className="h-8"
                   disabled={saving[category.id]}
                   onClick={() => handleSave(category.id)}
                 >
-                  {saving[category.id] ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Сохранить'}
+                  {saving[category.id]
+                    ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+                    : <CheckCircle2 className="mr-1 h-3.5 w-3.5" />}
+                  {saving[category.id] ? 'Сохраняем…' : 'Сохранить'}
                 </Button>
               </div>
-              <p className="text-xs text-muted-foreground md:w-56 md:text-right">
-                Итог: {category.effective_margin_pct}%
-                {category.margin_inherited_from_name
-                  ? ` · от «${category.margin_inherited_from_name}»`
-                  : category.default_margin_pct == null
-                    ? ' · без наценки'
-                    : ' · собственная'}
-              </p>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
+      <p className="text-[11px] text-muted-foreground">
+        Показано {rows.length} элементов текущего раздела. Наценки Avito остаются
+        общими для организации и не смешиваются с правилами кабинетов Ozon.
+      </p>
     </div>
   );
 }

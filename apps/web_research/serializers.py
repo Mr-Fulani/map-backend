@@ -211,7 +211,7 @@ class MarketFreshnessSerializer(serializers.Serializer):
 
 
 class ListingMarketComparisonSerializer(serializers.Serializer):
-    listing_id = serializers.IntegerField(min_value=1)
+    listing_id = serializers.IntegerField(min_value=1, allow_null=True)
     product_id = serializers.IntegerField(min_value=1)
     base_price = serializers.DecimalField(max_digits=12, decimal_places=2)
     listing_price = serializers.DecimalField(max_digits=12, decimal_places=2)

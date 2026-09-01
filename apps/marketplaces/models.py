@@ -749,6 +749,22 @@ class OzonOfferDraft(TimestampedModel):
         blank=True,
         verbose_name='Безопасное автозаполнение Ozon',
     )
+    margin_pct = models.DecimalField(
+        max_digits=7,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name='Индивидуальная наценка товара Ozon, %',
+        help_text='Пустое значение наследует правило выбранной категории Ozon.',
+    )
+    price_override = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name='Индивидуальная цена товара Ozon',
+        help_text='Точная цена выбранного товара и кабинета Ozon.',
+    )
 
     class Meta:
         verbose_name = 'Черновик товара Ozon'
@@ -761,6 +777,27 @@ class OzonOfferDraft(TimestampedModel):
             models.UniqueConstraint(
                 fields=['account', 'offer_id'],
                 name='mkt_oz_offer_identity_uniq',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(margin_pct__isnull=True)
+                    | models.Q(margin_pct__gt=-100)
+                ),
+                name='mkt_oz_offer_margin_positive',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(price_override__isnull=True)
+                    | models.Q(price_override__gt=0)
+                ),
+                name='mkt_oz_offer_price_positive',
+            ),
+            models.CheckConstraint(
+                condition=(
+                    models.Q(margin_pct__isnull=True)
+                    | models.Q(price_override__isnull=True)
+                ),
+                name='mkt_oz_offer_one_price_mode',
             ),
         ]
         indexes = [
