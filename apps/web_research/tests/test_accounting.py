@@ -1,5 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from io import StringIO
 from threading import Event
 from types import SimpleNamespace
@@ -11,6 +11,7 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import close_old_connections, transaction
 from django.db.models.deletion import ProtectedError
+from django.utils import timezone as django_timezone
 from django.utils.timezone import now
 
 from apps.products.models import Product
@@ -405,6 +406,41 @@ def test_connection_and_global_limits_count_every_actual_provider_call(settings)
     fourth = make_workflow(tenant, key='four', domain='product:four')
     with pytest.raises(WebSearchLimitExceeded):
         execute_call(fourth, provider_id='tavily')
+
+
+@pytest.mark.django_db
+def test_monthly_limit_uses_application_month_at_utc_boundary(settings):
+    settings.WEB_SEARCH_GLOBAL_REQUESTS_PER_MINUTE = 100
+    settings.WEB_SEARCH_GLOBAL_MONTHLY_REQUEST_LIMIT = 100
+    settings.BRAVE_SEARCH_GLOBAL_MONTHLY_REQUEST_LIMIT = 100
+    tenant = make_tenant('search-local-month-boundary')
+    connection = WebSearchConnection.objects.create(
+        provider_id='brave',
+        display_name='Brave',
+        requests_per_minute=100,
+        monthly_request_limit=1,
+    )
+    # 31 August in UTC is already 1 September in the application's Moscow
+    # timezone. Quota queries must use the same timezone conversion as Django's
+    # created_at year/month lookups.
+    current = datetime(2026, 8, 31, 21, 30, tzinfo=timezone.utc)
+
+    with django_timezone.override('Europe/Moscow'), patch(
+        'apps.web_research.accounting.now', return_value=current,
+    ):
+        first = make_workflow(
+            tenant, key='boundary-one', domain='product:boundary-one',
+        )
+        execution = execute_call(first, connection=connection)
+        WebSearchAttempt.objects.filter(pk=execution.attempt_id).update(
+            created_at=current,
+        )
+
+        second = make_workflow(
+            tenant, key='boundary-two', domain='product:boundary-two',
+        )
+        with pytest.raises(WebSearchLimitExceeded):
+            execute_call(second, connection=connection)
 
 
 @pytest.mark.django_db

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from datetime import timedelta
 
-from django.utils.timezone import now
+from django.utils.timezone import localtime, now
 
 from apps.web_research.models import WebSearchAttempt, WebSearchConnection
 from apps.web_research.providers.base import BaseWebSearchProvider
@@ -35,9 +35,10 @@ def _within_limits(connection: WebSearchConnection) -> bool:
             return False
     if connection.monthly_request_limit:
         current = now()
+        local_current = localtime(current)
         monthly = attempts.filter(
-            created_at__year=current.year,
-            created_at__month=current.month,
+            created_at__year=local_current.year,
+            created_at__month=local_current.month,
         ).count()
         if monthly >= connection.monthly_request_limit:
             return False

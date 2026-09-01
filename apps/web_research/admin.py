@@ -289,10 +289,12 @@ class WebSearchConnectionAdmin(ModelAdmin):
 
     @admin.display(description='Запросов за месяц')
     def monthly_usage(self, obj):
-        from django.utils.timezone import now
+        from django.utils.timezone import localtime, now
         current = now()
+        local_current = localtime(current)
         used = obj.attempts.filter(
-            created_at__year=current.year, created_at__month=current.month,
+            created_at__year=local_current.year,
+            created_at__month=local_current.month,
         ).exclude(
             Q(status=WebSearchAttempt.Status.SKIPPED)
             | Q(

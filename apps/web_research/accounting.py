@@ -14,7 +14,7 @@ from django.conf import settings
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import IntegrityError, transaction
 from django.db.models import Q
-from django.utils.timezone import now
+from django.utils.timezone import localtime, now
 
 from apps.datasources.encryption import decrypt, encrypt
 from apps.tenants.models import Tenant
@@ -469,6 +469,7 @@ def reserve_web_search_attempt(
         )
 
     current = now()
+    local_current = localtime(current)
     all_counted = _counted_attempts()
     counted = all_counted.filter(provider_id=normalized_provider)
     global_minute_limit = settings.WEB_SEARCH_GLOBAL_REQUESTS_PER_MINUTE
@@ -478,14 +479,14 @@ def reserve_web_search_attempt(
         raise WebSearchLimitExceeded(normalized_provider)
     platform_monthly_limit = settings.WEB_SEARCH_GLOBAL_MONTHLY_REQUEST_LIMIT
     if platform_monthly_limit and all_counted.filter(
-        created_at__year=current.year,
-        created_at__month=current.month,
+        created_at__year=local_current.year,
+        created_at__month=local_current.month,
     ).count() >= platform_monthly_limit:
         raise WebSearchLimitExceeded(normalized_provider)
     provider_monthly_limit = _provider_monthly_limit(normalized_provider)
     if provider_monthly_limit and counted.filter(
-        created_at__year=current.year,
-        created_at__month=current.month,
+        created_at__year=local_current.year,
+        created_at__month=local_current.month,
     ).count() >= provider_monthly_limit:
         raise WebSearchLimitExceeded(normalized_provider)
 
@@ -502,8 +503,8 @@ def reserve_web_search_attempt(
         ).count() >= locked_connection.requests_per_minute:
             raise WebSearchLimitExceeded(normalized_provider)
         if locked_connection.monthly_request_limit and connection_attempts.filter(
-            created_at__year=current.year,
-            created_at__month=current.month,
+            created_at__year=local_current.year,
+            created_at__month=local_current.month,
         ).count() >= locked_connection.monthly_request_limit:
             raise WebSearchLimitExceeded(normalized_provider)
 
