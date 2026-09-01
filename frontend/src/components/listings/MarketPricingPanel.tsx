@@ -42,7 +42,7 @@ interface CatalogOffer {
   quantity: number | null;
   checked_at: string | null;
   url: string;
-  difference_from_listing: Difference | null;
+  difference_from_reference: Difference | null;
   difference_from_base: Difference | null;
   message: string;
 }
@@ -78,7 +78,7 @@ interface InternetOffer {
   captured_at: string;
   expires_at: string;
   difference_from_base: Difference | null;
-  difference_from_listing: Difference | null;
+  difference_from_reference: Difference | null;
 }
 
 interface ResearchRun {
@@ -98,7 +98,8 @@ interface Comparison {
   listing_id: number | null;
   product_id: number;
   base_price: string;
-  listing_price: string;
+  reference_price: string;
+  catalog_offers_applicable: boolean;
   catalog_offers: CatalogOffer[];
   internet_offers: InternetOffer[];
   statistics: {
@@ -107,8 +108,8 @@ interface Comparison {
     maximum: string | null;
     verified_offer_count: number;
     available_seller_count: number;
-    listing_vs_median: Difference | null;
-    listing_vs_base: Difference | null;
+    reference_vs_median: Difference | null;
+    reference_vs_base: Difference | null;
     median_vs_base: Difference | null;
   };
   region: { preset: string; label: string; country_codes: string[] };
@@ -464,7 +465,7 @@ export default function MarketPricingPanel({
     );
   }
 
-  const difference = comparison.statistics.listing_vs_median;
+  const difference = comparison.statistics.reference_vs_median;
   const differenceTone = difference?.direction === 'below' ? 'positive' : difference?.direction === 'above' ? 'warning' : 'neutral';
   const visibleOffers = expanded ? filtered : filtered.slice(0, 6);
 
@@ -516,9 +517,9 @@ export default function MarketPricingPanel({
           <SummaryCard label="Наша базовая цена товара" value={rubles(comparison.base_price)} />
           <SummaryCard
             label={`Цена для ${channelLabel}`}
-            value={rubles(comparison.listing_price)}
-            hint={comparisonSentence(comparison.statistics.listing_vs_base, 'нашей базовой цены')}
-            tone={comparison.statistics.listing_vs_base?.direction === 'above' ? 'warning' : 'positive'}
+            value={rubles(comparison.reference_price)}
+            hint={comparisonSentence(comparison.statistics.reference_vs_base, 'нашей базовой цены')}
+            tone={comparison.statistics.reference_vs_base?.direction === 'above' ? 'warning' : 'positive'}
           />
           <SummaryCard label="Самая низкая подтверждённая цена" value={rubles(comparison.statistics.minimum)} />
           <SummaryCard
@@ -540,27 +541,29 @@ export default function MarketPricingPanel({
         </p>
       </section>
 
-      <section className="space-y-3">
-        <div><h3 className="text-sm font-medium">Каталоги запчастей</h3><p className="text-xs text-muted-foreground">Последние проверки Tachka, Rossko и Euroauto</p></div>
-        <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
-          {comparison.catalog_offers.map((offer) => (
-            <article key={offer.source_id} className="rounded-xl border bg-card p-4">
-              <div className="flex items-start justify-between gap-2"><p className="font-medium">{offer.source_label}</p><Badge variant="outline">{offer.availability_label}</Badge></div>
-              <p className="mt-3 text-xl font-semibold tabular-nums">{offer.price_is_from && <span className="mr-1 text-xs font-normal text-muted-foreground">от</span>}{offer.price ? `${Number(offer.price).toLocaleString('ru-RU')} ${offer.currency === 'RUB' ? '₽' : offer.currency}` : '—'}</p>
-              <div className="mt-2 grid gap-1.5">
-                <ComparisonLine difference={offer.difference_from_base} reference="нашей базовой цены" />
-                <ComparisonLine difference={offer.difference_from_listing} reference={`цены ${channelLabel}`} />
-              </div>
-              <div className="mt-3 space-y-1 text-xs text-muted-foreground">
-                {offer.quantity !== null && <p>Количество: {offer.quantity}</p>}
-                <p>Проверено: {dateTime(offer.checked_at)}</p>
-                {offer.message && <p className="text-amber-700 dark:text-amber-300">{offer.message}</p>}
-              </div>
-              {offer.url && <a href={offer.url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs text-primary hover:underline">Источник <ExternalLink className="h-3 w-3" /></a>}
-            </article>
-          ))}
-        </div>
-      </section>
+      {comparison.catalog_offers_applicable && (
+        <section className="space-y-3">
+          <div><h3 className="text-sm font-medium">Каталоги запчастей</h3><p className="text-xs text-muted-foreground">Последние проверки Tachka, Rossko и Euroauto</p></div>
+          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
+            {comparison.catalog_offers.map((offer) => (
+              <article key={offer.source_id} className="rounded-xl border bg-card p-4">
+                <div className="flex items-start justify-between gap-2"><p className="font-medium">{offer.source_label}</p><Badge variant="outline">{offer.availability_label}</Badge></div>
+                <p className="mt-3 text-xl font-semibold tabular-nums">{offer.price_is_from && <span className="mr-1 text-xs font-normal text-muted-foreground">от</span>}{offer.price ? `${Number(offer.price).toLocaleString('ru-RU')} ${offer.currency === 'RUB' ? '₽' : offer.currency}` : '—'}</p>
+                <div className="mt-2 grid gap-1.5">
+                  <ComparisonLine difference={offer.difference_from_base} reference="нашей базовой цены" />
+                  <ComparisonLine difference={offer.difference_from_reference} reference={`цены ${channelLabel}`} />
+                </div>
+                <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                  {offer.quantity !== null && <p>Количество: {offer.quantity}</p>}
+                  <p>Проверено: {dateTime(offer.checked_at)}</p>
+                  {offer.message && <p className="text-amber-700 dark:text-amber-300">{offer.message}</p>}
+                </div>
+                {offer.url && <a href={offer.url} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1 text-xs text-primary hover:underline">Источник <ExternalLink className="h-3 w-3" /></a>}
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="space-y-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -598,7 +601,7 @@ export default function MarketPricingPanel({
                 <div className="mt-3 flex flex-wrap items-end justify-between gap-2"><div><p className="text-xl font-semibold tabular-nums">{offer.is_price_from && <span className="mr-1 text-xs font-normal text-muted-foreground">от</span>}{Number(offer.price).toLocaleString('ru-RU')} {offer.currency === 'RUB' ? '₽' : offer.currency}</p>{offer.currency !== 'RUB' && <p className="text-xs text-muted-foreground">{offer.normalized_price ? `≈ ${rubles(offer.normalized_price)}` : 'Конвертация недоступна'}</p>}</div><Badge variant="outline">{offer.availability_label}</Badge></div>
                 <div className="mt-2 grid gap-1.5">
                   <ComparisonLine difference={offer.difference_from_base} reference="нашей базовой цены" />
-                  <ComparisonLine difference={offer.difference_from_listing} reference={`цены ${channelLabel}`} />
+                  <ComparisonLine difference={offer.difference_from_reference} reference={`цены ${channelLabel}`} />
                 </div>
                 <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1 text-xs [&_dd]:min-w-0 [&_dd]:break-words"><dt className="text-muted-foreground">Состояние</dt><dd>{offer.condition_label}</dd><dt className="text-muted-foreground">Точность</dt><dd>{Math.round(offer.match_confidence * 100)}%</dd><dt className="text-muted-foreground">Найдено по</dt><dd className="truncate" title={offer.matched_code || offer.article}>{offer.matched_code || offer.article || 'не подтверждено'}</dd><dt className="text-muted-foreground">Проверено</dt><dd>{dateTime(offer.captured_at)}</dd>{offer.quantity !== null && <><dt className="text-muted-foreground">Количество</dt><dd>{offer.quantity}</dd></>}{offer.delivery_text && <><dt className="text-muted-foreground">Доставка</dt><dd>{offer.delivery_text}</dd></>}</dl>
                 {offer.match_reasons.length > 0 && <p className="mt-3 line-clamp-2 text-xs text-muted-foreground">{offer.match_reasons.join(' · ')}</p>}

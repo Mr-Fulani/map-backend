@@ -2,7 +2,12 @@ from decimal import Decimal
 
 from django.utils.timezone import now
 
-from apps.products.models import ProductParseJob
+from apps.products.models import (
+    ProductCatalogClassification,
+    ProductParseJob,
+    ReviewStatus,
+)
+from apps.products.services import ProductEnrichmentService
 from apps.web_research.models import CompetitorOffer, WebResearchRun
 from apps.web_research.search_context import get_tenant_research_settings
 from apps.web_research.serializers import CompetitorOfferSerializer, WebResearchRunSerializer
@@ -27,7 +32,38 @@ def _difference(subject: Decimal | None, reference: Decimal | None):
     }
 
 
-def catalog_offers(product, *, listing_price: Decimal | None = None) -> list[dict]:
+def auto_parts_catalog_applicable(product) -> bool:
+    """Resolve auto-parts UI eligibility without classifying or mutating the product."""
+    category = product.catalog_category
+    if category is not None:
+        root_domain = category.root_domain
+        if root_domain is not None:
+            return bool(root_domain.supports_auto_parts_enrichment)
+        if category.domain != category.Domain.UNKNOWN:
+            return category.domain == category.Domain.AUTO_PARTS
+
+    try:
+        classification = product.catalog_classification
+    except ProductCatalogClassification.DoesNotExist:
+        classification = None
+    if classification is not None:
+        if classification.review_status == ReviewStatus.REJECTED:
+            return False
+        return (
+            classification.domain == ProductCatalogClassification.Domain.AUTO_PARTS
+            and classification.confidence >= 0.7
+            and (
+                classification.review_status == ReviewStatus.APPROVED
+                or not classification.needs_review
+            )
+        )
+
+    if ProductEnrichmentService.tenant_requires_product_auto_parts_check(product.tenant):
+        return False
+    return ProductEnrichmentService.tenant_supports_auto_parts_enrichment(product.tenant)
+
+
+def catalog_offers(product, *, reference_price: Decimal | None = None) -> list[dict]:
     latest = {}
     jobs = ProductParseJob.objects.filter(
         tenant=product.tenant,
@@ -62,7 +98,10 @@ def catalog_offers(product, *, listing_price: Decimal | None = None) -> list[dic
             ) if latest_job else None,
             'url': latest_job.source_url if latest_job else '',
             'difference_from_listing': _difference(
-                latest_job.source_price if latest_job else None, listing_price,
+                latest_job.source_price if latest_job else None, reference_price,
+            ),
+            'difference_from_reference': _difference(
+                latest_job.source_price if latest_job else None, reference_price,
             ),
             'difference_from_base': _difference(
                 latest_job.source_price if latest_job else None, product.price,
@@ -86,7 +125,7 @@ def fresh_offer_queryset(product):
     ).select_related('evidence', 'run')
 
 
-def verified_statistics(product, *, listing_price: Decimal | None = None) -> dict:
+def verified_statistics(product, *, reference_price: Decimal | None = None) -> dict:
     offers = fresh_offer_queryset(product).filter(
         review_status=CompetitorOffer.ReviewStatus.VERIFIED,
         match_type__in=[CompetitorOffer.MatchType.EXACT, CompetitorOffer.MatchType.CROSS],
@@ -112,8 +151,10 @@ def verified_statistics(product, *, listing_price: Decimal | None = None) -> dic
         'maximum': _money(prices[-1]) if prices else None,
         'verified_offer_count': len(prices),
         'available_seller_count': sellers,
-        'listing_vs_median': _difference(listing_price, median),
-        'listing_vs_base': _difference(listing_price, product.price),
+        'listing_vs_median': _difference(reference_price, median),
+        'listing_vs_base': _difference(reference_price, product.price),
+        'reference_vs_median': _difference(reference_price, median),
+        'reference_vs_base': _difference(reference_price, product.price),
         'median_vs_base': _difference(median, product.price),
     }
 
@@ -165,6 +206,11 @@ def product_market_comparison(
         payload['difference_from_listing'] = _difference(
             comparable_price, reference_price,
         )
+        payload['difference_from_reference'] = _difference(
+            comparable_price, reference_price,
+        )
+
+    catalog_applicable = auto_parts_catalog_applicable(product)
 
     return {
         'listing_id': listing_id,
@@ -173,9 +219,15 @@ def product_market_comparison(
         # Keep the legacy response key so existing clients remain compatible.
         # In product-scoped consumers this is the selected channel's reference price.
         'listing_price': _money(reference_price),
-        'catalog_offers': catalog_offers(product, listing_price=reference_price),
+        'reference_price': _money(reference_price),
+        'catalog_offers_applicable': catalog_applicable,
+        'catalog_offers': (
+            catalog_offers(product, reference_price=reference_price)
+            if catalog_applicable
+            else []
+        ),
         'internet_offers': internet_offers,
-        'statistics': verified_statistics(product, listing_price=reference_price),
+        'statistics': verified_statistics(product, reference_price=reference_price),
         'region': {
             'preset': settings.region_preset,
             'label': settings.get_region_preset_display(),

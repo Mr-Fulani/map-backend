@@ -155,6 +155,7 @@ class CatalogMarketOfferSerializer(serializers.Serializer):
     checked_at = serializers.DateTimeField(allow_null=True)
     url = serializers.URLField(allow_blank=True)
     difference_from_listing = MarketPriceDifferenceSerializer(allow_null=True)
+    difference_from_reference = MarketPriceDifferenceSerializer(allow_null=True)
     difference_from_base = MarketPriceDifferenceSerializer(allow_null=True)
     message = serializers.CharField(allow_blank=True)
 
@@ -166,11 +167,13 @@ class MarketCompetitorOfferSerializer(CompetitorOfferSerializer):
     review_status = serializers.CharField()
     difference_from_base = MarketPriceDifferenceSerializer(allow_null=True)
     difference_from_listing = MarketPriceDifferenceSerializer(allow_null=True)
+    difference_from_reference = MarketPriceDifferenceSerializer(allow_null=True)
 
     class Meta(CompetitorOfferSerializer.Meta):
         fields = CompetitorOfferSerializer.Meta.fields + [
             'difference_from_base',
             'difference_from_listing',
+            'difference_from_reference',
         ]
 
 
@@ -194,6 +197,8 @@ class MarketStatisticsSerializer(serializers.Serializer):
     available_seller_count = serializers.IntegerField(min_value=0)
     listing_vs_median = MarketPriceDifferenceSerializer(allow_null=True)
     listing_vs_base = MarketPriceDifferenceSerializer(allow_null=True)
+    reference_vs_median = MarketPriceDifferenceSerializer(allow_null=True)
+    reference_vs_base = MarketPriceDifferenceSerializer(allow_null=True)
     median_vs_base = MarketPriceDifferenceSerializer(allow_null=True)
 
 
@@ -215,6 +220,8 @@ class ListingMarketComparisonSerializer(serializers.Serializer):
     product_id = serializers.IntegerField(min_value=1)
     base_price = serializers.DecimalField(max_digits=12, decimal_places=2)
     listing_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    reference_price = serializers.DecimalField(max_digits=12, decimal_places=2)
+    catalog_offers_applicable = serializers.BooleanField()
     catalog_offers = CatalogMarketOfferSerializer(many=True)
     internet_offers = MarketCompetitorOfferSerializer(many=True)
     statistics = MarketStatisticsSerializer()

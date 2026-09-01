@@ -626,6 +626,15 @@ def test_offer_margin_override_is_account_scoped_and_can_restore_inheritance():
     tenant, key = _tenant('ozon-offer-margin-override')
     account = _account(tenant, 'client-offer-margin-override')
     product = _product(tenant)
+    avito_account = _account(tenant, 'avito-offer-margin-override', marketplace='avito')
+    avito_listing = Listing.objects.create(
+        tenant=tenant,
+        product=product,
+        account=avito_account,
+        title=product.name,
+        price_on_listing=Decimal('1350.00'),
+        margin_pct=Decimal('35.00'),
+    )
     tree = _catalog(account)
     OzonCategoryPolicy.objects.create(
         tenant=tenant,
@@ -661,6 +670,15 @@ def test_offer_margin_override_is_account_scoped_and_can_restore_inheritance():
     assert exact_data['draft']['margin_pct'] is None
     assert exact_data['pricing']['margin_source'] == 'offer_price'
     assert exact_data['pricing']['final_price'] == '1035.11'
+    conflicting = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'margin_pct': '10.00',
+        'price_override': '1100.00',
+    })
+    assert conflicting.status_code == 400
+    draft = OzonOfferDraft.objects.get(account=account, product=product)
+    assert draft.margin_pct is None
+    assert draft.price_override == Decimal('1035.11')
     inherited = _request(client, key, 'patch', product, {
         'account_id': account.pk,
         'margin_pct': None,
@@ -673,7 +691,11 @@ def test_offer_margin_override_is_account_scoped_and_can_restore_inheritance():
     assert inherited_data['pricing']['margin_override'] is None
     assert inherited_data['pricing']['effective_margin_pct'] == '12.50'
     assert inherited_data['pricing']['final_price'] == '1125.00'
-    assert Listing.objects.count() == MarketplaceFeedRun.objects.count() == 0
+    avito_listing.refresh_from_db()
+    assert avito_listing.price_on_listing == Decimal('1350.00')
+    assert avito_listing.margin_pct == Decimal('35.00')
+    assert Listing.objects.count() == 1
+    assert MarketplaceFeedRun.objects.count() == 0
 
 
 @pytest.mark.django_db

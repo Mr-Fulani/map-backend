@@ -46,6 +46,12 @@ import {
   type OzonOfferAttribute,
   type OzonOfferPreparation,
 } from '@/lib/ozon-offer-preparation';
+import {
+  ozonMarginFromPrice,
+  ozonPriceFromMargin,
+  ozonPricingPayload,
+  type OzonPricingMode,
+} from '@/lib/ozon-offer-pricing';
 
 interface AccountOption {
   id: number;
@@ -119,7 +125,7 @@ OzonOfferPreparationCardProps
   const [dictionaryResults, setDictionaryResults] = useState<Record<string, OzonDictionaryValue[]>>({});
   const [marginOverride, setMarginOverride] = useState('');
   const [priceDraft, setPriceDraft] = useState('');
-  const [pricingMode, setPricingMode] = useState<'inherited' | 'margin' | 'price'>('inherited');
+  const [pricingMode, setPricingMode] = useState<OzonPricingMode>('inherited');
   const accountId = ozonAccounts.some((account) => account.id === accountChoiceId)
     ? accountChoiceId
     : ozonAccounts.length === 1 ? ozonAccounts[0].id : null;
@@ -250,20 +256,9 @@ OzonOfferPreparationCardProps
   }
 
   async function saveAttributes(): Promise<boolean> {
-    const normalizedMargin = marginOverride.trim().replace(',', '.');
-    if (
-      normalizedMargin !== ''
-      && (!Number.isFinite(Number(normalizedMargin)) || Number(normalizedMargin) <= -100)
-    ) {
-      toast.error('Наценка Ozon должна быть числом больше −100%.');
-      return false;
-    }
-    const normalizedPrice = priceDraft.trim().replace(',', '.');
-    if (
-      pricingMode === 'price'
-      && (!Number.isFinite(Number(normalizedPrice)) || Number(normalizedPrice) <= 0)
-    ) {
-      toast.error('Цена Ozon должна быть числом больше нуля.');
+    const pricing = ozonPricingPayload(pricingMode, marginOverride, priceDraft);
+    if (!pricing.ok) {
+      toast.error(pricing.message);
       return false;
     }
     const invalid = ozonAttributesValidationErrors(attributes);
@@ -273,8 +268,7 @@ OzonOfferPreparationCardProps
     }
     const next = await updateOffer({
       attributes: ozonAttributesPayload(attributes),
-      margin_pct: pricingMode === 'margin' ? normalizedMargin : null,
-      price_override: pricingMode === 'price' ? normalizedPrice : null,
+      ...pricing.payload,
     }, 'attributes');
     if (!next) return false;
     if (next.preflight.errors.length > 0) {
@@ -288,19 +282,14 @@ OzonOfferPreparationCardProps
   }
 
   function applyMarketPrice(price: string): boolean {
-    const basePrice = Number(preparation?.pricing?.base_price);
+    const margin = ozonMarginFromPrice(preparation?.pricing?.base_price ?? '', price);
     const selectedPrice = Number(price);
-    if (
-      !Number.isFinite(basePrice)
-      || basePrice <= 0
-      || !Number.isFinite(selectedPrice)
-      || selectedPrice <= 0
-    ) {
+    if (margin === null || !Number.isFinite(selectedPrice)) {
       toast.error('Не удалось рассчитать наценку по выбранной цене.');
       return false;
     }
     setPriceDraft(selectedPrice.toFixed(2));
-    setMarginOverride((((selectedPrice / basePrice) - 1) * 100).toFixed(2));
+    setMarginOverride(margin);
     setPricingMode('price');
     return true;
   }
@@ -308,33 +297,19 @@ OzonOfferPreparationCardProps
   useImperativeHandle(ref, () => ({ saveAttributes, applyMarketPrice }));
 
   async function savePricing() {
-    const normalizedMargin = marginOverride.trim().replace(',', '.');
-    if (
-      normalizedMargin !== ''
-      && (!Number.isFinite(Number(normalizedMargin)) || Number(normalizedMargin) <= -100)
-    ) {
-      toast.error('Наценка Ozon должна быть числом больше −100%.');
+    const pricing = ozonPricingPayload(pricingMode, marginOverride, priceDraft);
+    if (!pricing.ok) {
+      toast.error(pricing.message);
       return;
     }
-    const normalizedPrice = priceDraft.trim().replace(',', '.');
-    if (
-      pricingMode === 'price'
-      && (!Number.isFinite(Number(normalizedPrice)) || Number(normalizedPrice) <= 0)
-    ) {
-      toast.error('Цена Ozon должна быть числом больше нуля.');
-      return;
-    }
-    const next = await updateOffer({
-      margin_pct: pricingMode === 'margin' ? normalizedMargin : null,
-      price_override: pricingMode === 'price' ? normalizedPrice : null,
-    }, 'pricing');
+    const next = await updateOffer({ ...pricing.payload }, 'pricing');
     if (next) toast.success('Цена Ozon сохранена только для выбранного кабинета.');
   }
 
   function updateMargin(nextMargin: string) {
     setMarginOverride(nextMargin);
     const basePrice = Number(preparation?.pricing?.base_price);
-    const normalized = nextMargin.trim().replace(',', '.');
+    const normalized = nextMargin.trim();
     if (normalized === '') {
       setPricingMode('inherited');
       setPriceDraft(preparation?.pricing?.policy.effective_margin_pct
@@ -345,20 +320,15 @@ OzonOfferPreparationCardProps
       return;
     }
     setPricingMode('margin');
-    const margin = Number(normalized);
-    if (Number.isFinite(basePrice) && Number.isFinite(margin)) {
-      setPriceDraft((basePrice * (1 + margin / 100)).toFixed(2));
-    }
+    const nextPrice = ozonPriceFromMargin(String(basePrice), normalized);
+    if (nextPrice !== null) setPriceDraft(nextPrice);
   }
 
   function updatePrice(nextPrice: string) {
     setPriceDraft(nextPrice);
     setPricingMode('price');
-    const basePrice = Number(preparation?.pricing?.base_price);
-    const normalized = Number(nextPrice.trim().replace(',', '.'));
-    if (Number.isFinite(basePrice) && basePrice > 0 && Number.isFinite(normalized)) {
-      setMarginOverride((((normalized / basePrice) - 1) * 100).toFixed(2));
-    }
+    const margin = ozonMarginFromPrice(preparation?.pricing?.base_price ?? '', nextPrice);
+    if (margin !== null) setMarginOverride(margin);
   }
 
   async function autofillOffer(successMessage = 'Данные Ozon подготовлены для проверки.') {

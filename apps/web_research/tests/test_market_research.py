@@ -12,7 +12,11 @@ from django.utils.timezone import now
 
 from apps.core.models import BackgroundJobDispatch, PaidIngressIntent
 from apps.marketplaces.models import Listing, MarketplaceAccount
-from apps.products.models import Product
+from apps.products.models import (
+    Product,
+    ProductCatalogClassification,
+    ReviewStatus,
+)
 from apps.tenants.models import TenantUser
 from apps.tenants.services import TenantService
 from apps.tenants.tests.auth import (
@@ -308,6 +312,15 @@ def test_product_market_comparison_is_channel_neutral_and_tenant_scoped():
     tenant_b, _ = make_tenant('product-market-b')
     product_a = make_product(tenant_a)
     product_b = make_product(tenant_b)
+    ProductCatalogClassification.objects.create(
+        tenant=tenant_a,
+        product=product_a,
+        domain=ProductCatalogClassification.Domain.AUTO_PARTS,
+        confidence=0.99,
+        source=ProductCatalogClassification.Source.MANUAL,
+        needs_review=False,
+        review_status=ReviewStatus.APPROVED,
+    )
     owner_client = make_owner_client(tenant_a)
 
     response = owner_client.get(
@@ -327,13 +340,38 @@ def test_product_market_comparison_is_channel_neutral_and_tenant_scoped():
     assert data['listing_id'] is None
     assert data['product_id'] == product_a.pk
     assert data['listing_price'] == '21000.00'
+    assert data['reference_price'] == '21000.00'
+    assert data['catalog_offers_applicable'] is True
+    assert len(data['catalog_offers']) == 3
     assert data['statistics']['listing_vs_base']['percent'] == '16.7'
+    assert data['statistics']['reference_vs_base']['percent'] == '16.7'
     assert foreign.status_code == 404
     assert invalid.status_code == 400
 
     direct = product_market_comparison(product_a, reference_price=Decimal('21000'))
     assert direct['listing_id'] is None
     assert direct['listing_price'] == '21000.00'
+    assert direct['reference_price'] == '21000.00'
+
+
+@pytest.mark.django_db
+def test_product_market_comparison_hides_auto_parts_catalogs_for_apparel():
+    tenant, _ = make_tenant('product-market-apparel')
+    product = make_product(tenant, article='APPAREL-1')
+    ProductCatalogClassification.objects.create(
+        tenant=tenant,
+        product=product,
+        domain=ProductCatalogClassification.Domain.APPAREL,
+        confidence=0.99,
+        source=ProductCatalogClassification.Source.MANUAL,
+        needs_review=False,
+        review_status=ReviewStatus.APPROVED,
+    )
+
+    comparison = product_market_comparison(product)
+
+    assert comparison['catalog_offers_applicable'] is False
+    assert comparison['catalog_offers'] == []
 
 
 @pytest.mark.django_db

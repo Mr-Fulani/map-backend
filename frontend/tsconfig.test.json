@@ -20,6 +20,7 @@
     "src/lib/marketplace-account-types.ts",
     "src/lib/ozon-account-presentation.ts",
     "src/lib/ozon-category-policy-ui.ts",
+    "src/lib/ozon-offer-pricing.ts",
     "src/lib/product-physical-profile.ts",
     "tests/**/*.ts"
   ],

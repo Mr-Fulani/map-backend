@@ -159,9 +159,30 @@ def test_market_research_schema_is_structured_and_paginated(api_schema):
     comparison = _resolve(api_schema, comparison_response['properties']['data'])
     assert set(comparison['properties']) == {
         'listing_id', 'product_id', 'base_price', 'listing_price',
+        'reference_price', 'catalog_offers_applicable',
         'catalog_offers', 'internet_offers', 'statistics', 'region',
         'freshness', 'active_run', 'latest_run', 'warnings',
     }
+
+    product_comparison_response = _success_schema(
+        api_schema,
+        '/api/v1/products/{product_pk}/market-comparison/',
+    )
+    product_comparison = _resolve(
+        api_schema,
+        product_comparison_response['properties']['data'],
+    )
+    assert set(product_comparison['properties']) == set(comparison['properties'])
+    product_comparison_parameters = {
+        item['name']
+        for item in api_schema['paths'][
+            '/api/v1/products/{product_pk}/market-comparison/'
+        ]['get']['parameters']
+    }
+    assert 'reference_price' in product_comparison_parameters
+
+    statistics = _resolve(api_schema, comparison['properties']['statistics'])
+    assert {'reference_vs_median', 'reference_vs_base'} <= set(statistics['properties'])
 
     for path_value in (
         '/api/v1/web-research/runs/',

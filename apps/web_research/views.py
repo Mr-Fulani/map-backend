@@ -836,7 +836,11 @@ class ProductMarketComparisonView(APIView):
         query = ProductMarketComparisonQuerySerializer(data=request.query_params)
         query.is_valid(raise_exception=True)
         product = get_object_or_404(
-            Product.objects.select_related('tenant'),
+            Product.objects.select_related(
+                'tenant',
+                'catalog_category__root_domain',
+                'catalog_classification',
+            ),
             pk=product_pk,
             tenant=request.tenant,
         )
