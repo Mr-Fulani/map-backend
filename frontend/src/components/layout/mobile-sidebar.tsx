@@ -19,6 +19,7 @@ import {
   Images,
   Zap,
   Globe2,
+  ShoppingBag,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -26,6 +27,7 @@ const navItems = [
   { title: 'Дашборд', href: '/dashboard', icon: LayoutDashboard },
   { title: 'Товары', href: '/dashboard/products', icon: Package },
   { title: 'Листинги', href: '/dashboard/listings', icon: ListOrdered },
+  { title: 'Заказы', href: '/dashboard/orders', icon: ShoppingBag },
   { title: 'Проверка', href: '/dashboard/review', icon: ClipboardCheck },
   { title: 'Интернет-поиск', href: '/dashboard/research', icon: Globe2 },
   { title: 'Медиа', href: '/dashboard/media', icon: Images },

@@ -218,6 +218,24 @@ def test_commerce_methods_use_exact_price_and_stock_contracts():
     assert session.calls[1][1]['json'] == {'stocks': [stock]}
 
 
+@override_settings(OZON_API_RESPONSE_MAX_BYTES=100_000, OZON_API_TIMEOUT_SECONDS=2)
+def test_fbs_order_list_uses_bounded_read_contract():
+    session = FakeSession([FakeResponse(200, {'result': {
+        'postings': [{'posting_number': '1'}], 'has_next': False,
+    }})])
+    client = OzonSellerClient(client_id='cid', api_key='key', session=session)
+    postings, has_next = client.list_fbs_postings(
+        since='2026-09-01T00:00:00+00:00', to='2026-09-02T00:00:00+00:00',
+    )
+    assert postings == [{'posting_number': '1'}]
+    assert has_next is False
+    assert session.calls[0][0].endswith('/v3/posting/fbs/list')
+    assert session.calls[0][1]['json']['limit'] == 100
+    assert session.calls[0][1]['json']['with'] == {
+        'analytics_data': False, 'barcodes': False, 'financial_data': False,
+    }
+
+
 @override_settings(
     OZON_API_RESPONSE_MAX_BYTES=100_000,
     OZON_CATALOG_RESPONSE_MAX_BYTES=250_000,

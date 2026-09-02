@@ -352,6 +352,29 @@ class OzonSellerClient:
         payload = self._post('/v2/products/stocks', {'stocks': stocks})
         return _result_items(payload, label='остатков')
 
+    def list_fbs_postings(
+        self, *, since: str, to: str, limit: int = 100, offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Read one bounded page of FBS postings without customer PII expansion."""
+        if limit < 1 or limit > 100 or offset < 0 or offset > 10_000:
+            raise ValueError('Invalid Ozon FBS page bounds.')
+        payload = self._post('/v3/posting/fbs/list', {
+            'dir': 'ASC',
+            'filter': {'since': since, 'to': to},
+            'limit': limit,
+            'offset': offset,
+            'with': {'analytics_data': False, 'barcodes': False, 'financial_data': False},
+        })
+        result = payload.get('result')
+        if not isinstance(result, Mapping):
+            raise OzonAPIError('invalid_response', 'Ozon вернул некорректный список FBS-заказов.')
+        postings = result.get('postings')
+        if not isinstance(postings, list) or len(postings) > limit:
+            raise OzonAPIError('invalid_response', 'Ozon вернул некорректный список FBS-заказов.')
+        if any(not isinstance(item, Mapping) for item in postings):
+            raise OzonAPIError('invalid_response', 'Ozon вернул некорректный FBS-заказ.')
+        return [dict(item) for item in postings], bool(result.get('has_next'))
+
     def _post(
         self,
         path: str,

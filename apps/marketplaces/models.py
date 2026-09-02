@@ -980,6 +980,34 @@ class OzonOperation(TimestampedModel):
         return f'Ozon operation {self.kind} / {self.id}'
 
 
+class OzonFbsPosting(TimestampedModel):
+    """Tenant/account-scoped local projection of an Ozon FBS order."""
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.PROTECT, related_name='ozon_fbs_postings',
+    )
+    account = models.ForeignKey(
+        MarketplaceAccount, on_delete=models.PROTECT, related_name='ozon_fbs_postings',
+    )
+    posting_number = models.CharField(max_length=100)
+    status = models.CharField(max_length=100, blank=True)
+    substatus = models.CharField(max_length=100, blank=True)
+    in_process_at = models.DateTimeField(null=True, blank=True)
+    shipment_date = models.DateTimeField(null=True, blank=True)
+    warehouse_id = models.CharField(max_length=100, blank=True)
+    products = models.JSONField(default=list, blank=True)
+    provider_updated_at = models.DateTimeField(null=True, blank=True)
+    last_synced_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=['account', 'posting_number'], name='mkt_oz_fbs_posting_account_uniq',
+        )]
+        indexes = [models.Index(
+            fields=['tenant', 'account', '-in_process_at'], name='mkt_oz_fbs_tenant_idx',
+        )]
+
+
 class MarketplaceFeedRun(TimestampedModel):
     """Durable, provider-neutral ownership record for one feed generation.
 

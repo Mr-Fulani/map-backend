@@ -1268,6 +1268,8 @@ export const accountApi = {
   patch: (id: number, data: Record<string, unknown>) => api.patch(`/accounts/${id}/`, data),
   delete: (id: number) => api.delete(`/accounts/${id}/`),
   checkAutoload: (id: number) => api.get(`/accounts/${id}/autoload-status/`),
+  getOzonFbsOrders: (id: number) => api.get(`/accounts/${id}/ozon-fbs-orders/`),
+  syncOzonFbsOrders: (id: number) => api.post(`/accounts/${id}/ozon-fbs-orders/`, {}),
   retryAutoload: (id: number) => api.post(`/accounts/${id}/autoload-status/`),
   listPlacementAddresses: (params?: Record<string, unknown>) =>
     api.get('/accounts/placement-addresses/', { params }),
