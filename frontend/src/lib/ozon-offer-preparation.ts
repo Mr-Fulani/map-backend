@@ -67,8 +67,17 @@ export interface OzonOperationPresentation {
   kind: string;
   state: OzonOperationState;
   provider_task_id: string | null;
-  errors: Array<{ code: string; message: string }>;
+  errors: Array<{
+    code: string;
+    message: string;
+    provider_code?: string;
+    field?: string;
+    attribute_id?: number | null;
+  }>;
   attempt_count: number;
+  reconcile_count: number;
+  last_reconciled_at: string | null;
+  next_reconcile_at: string | null;
   retry_after_at: string | null;
   completed_at: string | null;
   created_at: string;
@@ -137,7 +146,32 @@ const ACTIVE_OZON_OPERATION_STATES = new Set<OzonOperationState>([
 export function ozonPublicationDisabled(preparation: OzonOfferPreparation | null): boolean {
   if (!preparation?.preflight.ready || !preparation.publication.write_enabled) return true;
   const state = preparation.publication.latest_operation?.state;
+  return state
+    ? ACTIVE_OZON_OPERATION_STATES.has(state) || ['partial', 'manual_review'].includes(state)
+    : false;
+}
+
+export function ozonCanReconcile(preparation: OzonOfferPreparation | null): boolean {
+  const state = preparation?.publication.latest_operation?.state;
   return state ? ACTIVE_OZON_OPERATION_STATES.has(state) : false;
+}
+
+export function ozonPublicationActionLabel(preparation: OzonOfferPreparation | null): string {
+  const state = preparation?.publication.latest_operation?.state;
+  if (state === 'failed') return 'Исправил, отправить повторно';
+  if (state === 'succeeded') return 'Отправить обновление в Ozon';
+  return 'Отправить в Ozon';
+}
+
+export function ozonPublicationStatusLabel(preparation: OzonOfferPreparation | null): string {
+  const state = preparation?.publication.latest_operation?.state;
+  if (!state) return 'Не отправлялась';
+  if (state === 'queued' || state === 'sending') return 'Отправляется';
+  if (state === 'outcome_unknown') return 'Ответ нужно сверить';
+  if (state === 'reconciling') return 'Проверяется в Ozon';
+  if (state === 'succeeded') return 'Опубликована';
+  if (state === 'failed') return 'Ozon отклонил карточку';
+  return 'Нужна ручная проверка';
 }
 
 export function ozonPublicationMessage(preparation: OzonOfferPreparation | null): string {

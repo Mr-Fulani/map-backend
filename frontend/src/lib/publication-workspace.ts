@@ -86,6 +86,35 @@ export function ozonTargetState(
       prepared: false,
     };
   }
+  const operationState = preparation.publication.latest_operation?.state;
+  if (operationState === 'succeeded') {
+    return {
+      label: 'Опубликован',
+      tone: 'published',
+      issueCount: 0,
+      prepared: true,
+    };
+  }
+  if (operationState === 'failed' || operationState === 'manual_review' || operationState === 'partial') {
+    const operationIssues = preparation.publication.latest_operation?.errors.length ?? 0;
+    return {
+      label: operationIssues > 0 ? `Ozon: исправить ${operationIssues}` : 'Нужна проверка Ozon',
+      tone: 'warning',
+      issueCount: operationIssues,
+      prepared: true,
+    };
+  }
+  if (
+    operationState
+    && ['queued', 'sending', 'outcome_unknown', 'reconciling'].includes(operationState)
+  ) {
+    return {
+      label: operationState === 'outcome_unknown' ? 'Нужно сверить' : 'Проверяется Ozon',
+      tone: 'neutral',
+      issueCount: 0,
+      prepared: true,
+    };
+  }
   const issueCount = preparation.preflight.errors.length;
   if (issueCount > 0) {
     return {
@@ -104,7 +133,7 @@ export function ozonTargetState(
     };
   }
   return {
-    label: 'Готов к будущей отправке',
+    label: 'Готов к отправке',
     tone: 'ready',
     issueCount: 0,
     prepared: true,

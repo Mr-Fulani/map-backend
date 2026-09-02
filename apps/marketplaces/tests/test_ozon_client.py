@@ -253,6 +253,66 @@ def test_product_import_rejects_empty_or_oversized_local_batches():
     OZON_API_MAX_PAGES=3,
     OZON_API_TIMEOUT_SECONDS=2,
 )
+def test_product_reconciliation_reads_task_and_exact_offer_projection():
+    session = FakeSession([
+        FakeResponse(200, {'result': {
+            'items': [{'offer_id': 'map-1', 'status': 'imported', 'errors': []}],
+        }}),
+        FakeResponse(200, {'items': [{
+            'id': 77,
+            'offer_id': 'map-1',
+            'statuses': {'moderate_status': 'approved'},
+        }]}),
+    ])
+    client = OzonSellerClient(client_id='cid', api_key='secret', session=session)
+
+    task = client.get_product_import_info('task-1')
+    product = client.get_product_info_by_offer_id('map-1')
+
+    assert task['items'][0]['status'] == 'imported'
+    assert product and product['id'] == 77
+    assert [call[0] for call in session.calls] == [
+        'https://api-seller.ozon.ru/v1/product/import/info',
+        'https://api-seller.ozon.ru/v3/product/info/list',
+    ]
+    assert session.calls[0][1]['json'] == {'task_id': 'task-1'}
+    assert session.calls[1][1]['json'] == {
+        'offer_id': ['map-1'],
+        'product_id': [],
+        'sku': [],
+    }
+
+
+@override_settings(
+    OZON_API_RESPONSE_MAX_BYTES=100_000,
+    OZON_API_MAX_PAGES=3,
+    OZON_API_TIMEOUT_SECONDS=2,
+)
+def test_product_projection_requires_one_exact_offer_match():
+    missing = OzonSellerClient(
+        client_id='cid',
+        api_key='secret',
+        session=FakeSession([FakeResponse(200, {'items': []})]),
+    )
+    duplicate = OzonSellerClient(
+        client_id='cid',
+        api_key='secret',
+        session=FakeSession([FakeResponse(200, {'items': [
+            {'offer_id': 'map-1'},
+            {'offer_id': 'map-1'},
+        ]})]),
+    )
+
+    assert missing.get_product_info_by_offer_id('map-1') is None
+    with pytest.raises(OzonAPIError, match='несколько товаров'):
+        duplicate.get_product_info_by_offer_id('map-1')
+
+
+@override_settings(
+    OZON_API_RESPONSE_MAX_BYTES=100_000,
+    OZON_API_MAX_PAGES=3,
+    OZON_API_TIMEOUT_SECONDS=2,
+)
 def test_rate_limit_is_normalized_without_secret_or_response_body():
     session = FakeSession([
         FakeResponse(

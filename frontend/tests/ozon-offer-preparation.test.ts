@@ -5,8 +5,11 @@ import {
   isOzonBooleanAttribute,
   ozonAttributesValidationErrors,
   ozonAttributesPayload,
+  ozonCanReconcile,
+  ozonPublicationActionLabel,
   ozonPublicationDisabled,
   ozonPublicationMessage,
+  ozonPublicationStatusLabel,
   replaceOzonAttributeValue,
   type OzonOfferAttribute,
   type OzonOfferPreparation,
@@ -145,6 +148,9 @@ test('blocks duplicate Ozon send while an outcome is active or unknown', () => {
     provider_task_id: null,
     errors: [],
     attempt_count: 1,
+    reconcile_count: 0,
+    last_reconciled_at: null,
+    next_reconcile_at: null,
     retry_after_at: null,
     completed_at: null,
     created_at: '2026-09-02T10:00:00Z',
@@ -152,6 +158,32 @@ test('blocks duplicate Ozon send while an outcome is active or unknown', () => {
   });
 
   assert.equal(ozonPublicationDisabled(unknown), true);
+  assert.equal(ozonCanReconcile(unknown), true);
+  assert.equal(ozonPublicationStatusLabel(unknown), 'Ответ нужно сверить');
   assert.match(ozonPublicationMessage(unknown), /Не отправляйте повторно/);
   assert.equal(ozonPublicationDisabled(publicationPreparation(null)), false);
+});
+
+test('Ozon retry copy is explicit only after a terminal rejection', () => {
+  const failed = publicationPreparation({
+    id: 'operation-2',
+    kind: 'product_import',
+    state: 'failed',
+    provider_task_id: 'task-2',
+    errors: [{ code: 'import_failed', message: 'Исправьте обязательное поле.' }],
+    attempt_count: 1,
+    reconcile_count: 1,
+    last_reconciled_at: '2026-09-02T10:01:00Z',
+    next_reconcile_at: null,
+    retry_after_at: null,
+    completed_at: '2026-09-02T10:01:00Z',
+    created_at: '2026-09-02T10:00:00Z',
+    updated_at: '2026-09-02T10:01:00Z',
+  });
+
+  assert.equal(ozonCanReconcile(failed), false);
+  assert.equal(ozonPublicationDisabled(failed), false);
+  assert.equal(ozonPublicationStatusLabel(failed), 'Ozon отклонил карточку');
+  assert.equal(ozonPublicationActionLabel(failed), 'Исправил, отправить повторно');
+  assert.equal(ozonPublicationMessage(failed), 'Исправьте обязательное поле.');
 });

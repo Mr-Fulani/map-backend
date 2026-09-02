@@ -16,6 +16,10 @@ from apps.marketplaces.ozon_publication import (
     OzonPublicationError,
     request_product_import,
 )
+from apps.marketplaces.ozon_reconciliation import (
+    OzonReconciliationError,
+    reconcile_product_import,
+)
 from apps.products.models import Product
 from apps.tenants.api_views import CatalogAPIView as APIView
 
@@ -223,3 +227,40 @@ class ProductOzonOfferPublishView(APIView):
             'data': offer_presentation(product, account),
             'operation_id': str(operation.pk),
         }, status=status.HTTP_202_ACCEPTED)
+
+
+@extend_schema(tags=['Products'])
+class ProductOzonOfferReconcileView(APIView):
+    """Read-only refresh of one exact Ozon import/moderation state."""
+
+    api_key_enabled = True
+    api_key_scopes = {'POST': {'catalog:read'}}
+
+    @extend_schema(
+        operation_id='product_ozon_offer_reconcile',
+        request=OzonOfferAccountQuerySerializer,
+        responses=OZON_OFFER_RESPONSE,
+    )
+    def post(self, request, pk):
+        serializer = OzonOfferAccountQuerySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product = Product.objects.filter(pk=pk, tenant=request.tenant).first()
+        account = MarketplaceAccount.objects.filter(
+            pk=serializer.validated_data['account_id'],
+            tenant=request.tenant,
+            marketplace=MarketplaceAccount.MARKETPLACE_OZON,
+        ).first()
+        if product is None or account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        try:
+            operation = reconcile_product_import(product, account)
+        except OzonReconciliationError as exc:
+            return Response(
+                {'status': 'error', 'code': exc.code, 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({
+            'status': 'ok',
+            'data': offer_presentation(product, account),
+            'operation_id': str(operation.pk),
+        })

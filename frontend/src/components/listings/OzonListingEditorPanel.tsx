@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState, type RefObject } from 'react';
-import { Images, Loader2, Pencil, RefreshCw, Save, Send } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Images, Loader2, Pencil, RefreshCw, Save, Send } from 'lucide-react';
 
 import {
   OzonOfferPreparationCard,
@@ -13,8 +13,11 @@ import { Button } from '@/components/ui/button';
 import { SheetHeader } from '@/components/ui/sheet';
 import type { OzonOfferPreparation } from '@/lib/ozon-offer-preparation';
 import {
+  ozonCanReconcile,
+  ozonPublicationActionLabel,
   ozonPublicationDisabled,
   ozonPublicationMessage,
+  ozonPublicationStatusLabel,
 } from '@/lib/ozon-offer-preparation';
 
 export interface OzonEditorProduct {
@@ -50,11 +53,12 @@ interface Props {
   preparation: OzonOfferPreparation | null;
   images: OzonEditorImage[];
   preparationRef: RefObject<OzonOfferPreparationCardHandle | null>;
-  footerAction: 'save' | 'regenerate' | 'publish' | null;
+  footerAction: 'save' | 'regenerate' | 'publish' | 'reconcile' | null;
   onPreparationChange: (preparation: OzonOfferPreparation | null) => void;
   onSave: () => void;
   onRegenerate: () => void;
   onPublish: () => void;
+  onReconcile: () => void;
 }
 
 function rubles(value: string): string {
@@ -81,6 +85,7 @@ export function OzonListingEditorPanel({
   onSave,
   onRegenerate,
   onPublish,
+  onReconcile,
 }: Props) {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const activeImage = images[activeImageIndex] ?? null;
@@ -154,6 +159,70 @@ export function OzonListingEditorPanel({
         характеристики сохраняются отдельно и не меняют объявление Avito.
       </div>
 
+      {preparation?.publication.latest_operation && (
+        <div className={`rounded-lg border p-3 ${
+          preparation.publication.latest_operation.state === 'succeeded'
+            ? 'border-emerald-500/30 bg-emerald-500/5'
+            : preparation.publication.latest_operation.state === 'failed'
+              ? 'border-destructive/40 bg-destructive/5'
+              : 'border-blue-500/30 bg-blue-500/5'
+        }`}
+        >
+          <div className="flex items-start gap-2">
+            {preparation.publication.latest_operation.state === 'succeeded'
+              ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />}
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                {ozonPublicationStatusLabel(preparation)}
+              </p>
+              {preparation.publication.provider_status && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Статус Ozon: {preparation.publication.provider_status}
+                  {preparation.publication.moderation_status
+                    ? ` · Модерация: ${preparation.publication.moderation_status}`
+                    : ''}
+                </p>
+              )}
+              {preparation.publication.latest_operation.errors.map((error, index) => (
+                <div
+                  key={`${error.code}:${error.attribute_id ?? ''}:${index}`}
+                  className="mt-2 rounded-md border bg-background p-2 text-xs"
+                >
+                  <p className="font-medium text-destructive">{error.message}</p>
+                  {(error.field || error.attribute_id || error.provider_code) && (
+                    <p className="mt-1 text-muted-foreground">
+                      {[
+                        error.field,
+                        error.attribute_id ? `характеристика ${error.attribute_id}` : '',
+                        error.provider_code,
+                      ].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+          {ozonCanReconcile(preparation) && (
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3 w-full"
+              onClick={onReconcile}
+              disabled={footerAction !== null}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${
+                footerAction === 'reconcile' ? 'animate-spin' : ''
+              }`}
+              />
+              {footerAction === 'reconcile'
+                ? 'Проверяем в Ozon...'
+                : 'Проверить статус в Ozon'}
+            </Button>
+          )}
+        </div>
+      )}
+
       <OzonOfferPreparationCard
         ref={preparationRef}
         key={`${product.id}:${account.id}`}
@@ -210,7 +279,9 @@ export function OzonListingEditorPanel({
           {footerAction === 'publish'
             ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             : <Send className="mr-2 h-4 w-4" />}
-          {footerAction === 'publish' ? 'Отправляем безопасно...' : 'Отправить в Ozon'}
+          {footerAction === 'publish'
+            ? 'Отправляем безопасно...'
+            : ozonPublicationActionLabel(preparation)}
         </Button>
         <p className={`rounded-md border p-2.5 text-xs ${
           preparation?.preflight.ready

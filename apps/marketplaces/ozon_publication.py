@@ -141,6 +141,9 @@ def operation_presentation(operation: OzonOperation | None) -> dict[str, Any] | 
         'provider_task_id': operation.provider_task_id or None,
         'errors': operation.errors if isinstance(operation.errors, list) else [],
         'attempt_count': operation.attempt_count,
+        'reconcile_count': operation.reconcile_count,
+        'last_reconciled_at': operation.last_reconciled_at,
+        'next_reconcile_at': operation.next_reconcile_at,
         'retry_after_at': operation.retry_after_at,
         'completed_at': operation.completed_at,
         'created_at': operation.created_at,
@@ -234,7 +237,47 @@ def request_product_import(
         ).order_by('-created_at').first()
         if active is not None:
             return active
+        latest = OzonOperation.objects.filter(
+            offer=draft,
+            kind=OzonOperation.Kind.PRODUCT_IMPORT,
+        ).order_by('-created_at').first()
+        if latest is not None and latest.state in {
+            OzonOperation.State.PARTIAL,
+            OzonOperation.State.MANUAL_REVIEW,
+        }:
+            raise OzonPublicationError(
+                'manual_review_required',
+                'Сначала завершите ручную проверку предыдущей операции Ozon.',
+            )
+        if (
+            latest is not None
+            and latest.retry_after_at is not None
+            and latest.retry_after_at > timezone.now()
+        ):
+            raise OzonPublicationError(
+                'retry_later',
+                'Ozon ограничил частоту запросов. Повторите после времени, указанного в карточке.',
+            )
         item = build_product_import_item(locked_product, locked_account, draft)
+        request_sha256 = _request_digest(item)
+        if (
+            latest is not None
+            and latest.state == OzonOperation.State.FAILED
+            and latest.request_sha256 == request_sha256
+            and any(
+                isinstance(error, Mapping)
+                and error.get('code') in {
+                    'import_failed',
+                    'moderation_rejected',
+                    'request_rejected',
+                }
+                for error in latest.errors
+            )
+        ):
+            raise OzonPublicationError(
+                'correction_required',
+                'Ozon уже отклонил эту версию карточки. Исправьте указанные поля и сохраните изменения.',
+            )
         try:
             with transaction.atomic():
                 operation = OzonOperation.objects.create(
@@ -243,7 +286,7 @@ def request_product_import(
                     offer=draft,
                     kind=OzonOperation.Kind.PRODUCT_IMPORT,
                     idempotency_key=normalized_key,
-                    request_sha256=_request_digest(item),
+                    request_sha256=request_sha256,
                     request_summary={
                         'offer_id': draft.offer_id,
                         'description_category_id': draft.description_category_id,
@@ -265,7 +308,8 @@ def request_product_import(
                 )
             return raced
         draft.publication_status = 'queued'
-        draft.save(update_fields=['publication_status', 'updated_at'])
+        draft.provider_errors = []
+        draft.save(update_fields=['publication_status', 'provider_errors', 'updated_at'])
 
     return _submit_product_import(operation.pk, item=item)
 

@@ -161,7 +161,9 @@ export default function PublicationWorkspaceDrawer({
   const [loadError, setLoadError] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [preparingAccountId, setPreparingAccountId] = useState<number | null>(null);
-  const [ozonFooterAction, setOzonFooterAction] = useState<'save' | 'regenerate' | 'publish' | null>(null);
+  const [ozonFooterAction, setOzonFooterAction] = useState<
+    'save' | 'regenerate' | 'publish' | 'reconcile' | null
+  >(null);
   const [ozonPanel, setOzonPanel] = useState<'preparation' | 'pricing'>('preparation');
   const ozonPreparationRef = useRef<OzonOfferPreparationCardHandle>(null);
   const open = productId !== null;
@@ -341,6 +343,31 @@ export default function PublicationWorkspaceDrawer({
     }
   }
 
+  async function reconcileProductInOzon() {
+    if (!product || !selectedAccount || selectedAccount.marketplace !== 'ozon') return;
+    setOzonFooterAction('reconcile');
+    try {
+      const response = await productApi.reconcileOzonOffer(product.id, selectedAccount.id);
+      const preparation = envelopeData<OzonOfferPreparation>(response.data);
+      handleOzonPreparationChange(preparation);
+      const state = preparation.publication.latest_operation?.state;
+      if (state === 'succeeded') {
+        toast.success('Ozon подтвердил публикацию карточки.');
+      } else if (state === 'failed') {
+        toast.error('Ozon отклонил карточку. Исправьте указанные поля.');
+      } else {
+        toast.info('Статус обновлён. Ozon ещё обрабатывает карточку.');
+      }
+    } catch (error: unknown) {
+      const message = (
+        error as { response?: { data?: { message?: string } } }
+      ).response?.data?.message;
+      toast.error(message ?? 'Не удалось проверить статус карточки Ozon.');
+    } finally {
+      setOzonFooterAction(null);
+    }
+  }
+
   return (
     <Sheet open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <SheetContent
@@ -442,6 +469,7 @@ export default function PublicationWorkspaceDrawer({
                   onSave={() => void saveOzonPreparation()}
                   onRegenerate={() => void regenerateProductForOzon()}
                   onPublish={() => void publishProductToOzon()}
+                  onReconcile={() => void reconcileProductInOzon()}
                 />
               </section>
             </div>

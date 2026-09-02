@@ -183,3 +183,75 @@ test('Ozon target does not infer readiness from an empty error list', () => {
     prepared: true,
   });
 });
+
+function publishedOzonPreparation(
+  state: 'succeeded' | 'failed',
+): OzonOfferPreparation {
+  return {
+    account: { id: 17, name: 'Ozon status', marketplace: 'ozon' },
+    draft: {
+      id: 5,
+      offer_id: 'map-offer-status',
+      category: null,
+      attribute_schema_revision: '',
+      margin_pct: null,
+      price_override: null,
+      updated_at: '2026-09-02T00:00:00Z',
+    },
+    attributes: [],
+    schema: null,
+    pricing: null,
+    autofill: {
+      status: 'not_started',
+      updated_at: null,
+      moderated_at: null,
+      applied_count: 0,
+      preserved_count: 0,
+      fields: {},
+      recommendations: [],
+    },
+    preflight: { ready: true, errors: [], recommendations: [] },
+    publication: {
+      write_enabled: true,
+      status: state === 'succeeded' ? 'published' : 'moderation_failed',
+      provider_product_id: 71,
+      provider_sku: 801,
+      provider_status: state,
+      moderation_status: state === 'succeeded' ? 'approved' : 'declined',
+      provider_errors: [],
+      last_provider_sync_at: '2026-09-02T00:01:00Z',
+      latest_operation: {
+        id: 'operation-status',
+        kind: 'product_import',
+        state,
+        provider_task_id: 'task-status',
+        errors: state === 'failed'
+          ? [{ code: 'moderation_rejected', message: 'Исправьте фото.' }]
+          : [],
+        attempt_count: 1,
+        reconcile_count: 1,
+        last_reconciled_at: '2026-09-02T00:01:00Z',
+        next_reconcile_at: null,
+        retry_after_at: null,
+        completed_at: '2026-09-02T00:01:00Z',
+        created_at: '2026-09-02T00:00:00Z',
+        updated_at: '2026-09-02T00:01:00Z',
+      },
+    },
+  };
+}
+
+test('Ozon channel badge reflects provider moderation independently from Avito', () => {
+  assert.deepEqual(ozonTargetState(publishedOzonPreparation('succeeded')), {
+    label: 'Опубликован',
+    tone: 'published',
+    issueCount: 0,
+    prepared: true,
+  });
+  assert.deepEqual(ozonTargetState(publishedOzonPreparation('failed')), {
+    label: 'Ozon: исправить 1',
+    tone: 'warning',
+    issueCount: 1,
+    prepared: true,
+  });
+});

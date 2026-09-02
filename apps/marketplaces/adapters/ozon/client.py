@@ -282,6 +282,60 @@ class OzonSellerClient:
             )
         return task_id
 
+    def get_product_import_info(self, task_id: str) -> dict[str, Any]:
+        """Return one bounded import-task result for reconciliation."""
+
+        normalized_task_id = str(task_id or '').strip()
+        if not normalized_task_id or len(normalized_task_id) > 100:
+            raise ValueError('A valid Ozon import task ID is required.')
+        payload = self._post('/v1/product/import/info', {'task_id': normalized_task_id})
+        result = payload.get('result')
+        if not isinstance(result, Mapping):
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректный результат импорта товара.',
+            )
+        items = result.get('items')
+        if not isinstance(items, list) or len(items) > 100:
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректный список результатов импорта.',
+            )
+        return dict(result)
+
+    def get_product_info_by_offer_id(self, offer_id: str) -> dict[str, Any] | None:
+        """Read the exact account-scoped offer projection from Ozon."""
+
+        normalized_offer_id = str(offer_id or '').strip()
+        if not normalized_offer_id or len(normalized_offer_id) > 100:
+            raise ValueError('A valid Ozon offer ID is required.')
+        payload = self._post('/v3/product/info/list', {
+            'offer_id': [normalized_offer_id],
+            'product_id': [],
+            'sku': [],
+        })
+        result = payload.get('result')
+        items = payload.get('items')
+        if items is None and isinstance(result, Mapping):
+            items = result.get('items')
+        if not isinstance(items, list) or len(items) > 100:
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректный список товаров.',
+            )
+        matches = [
+            dict(item)
+            for item in items
+            if isinstance(item, Mapping)
+            and str(item.get('offer_id') or '').strip() == normalized_offer_id
+        ]
+        if len(matches) > 1:
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул несколько товаров для одного Offer ID.',
+            )
+        return matches[0] if matches else None
+
     def _post(
         self,
         path: str,

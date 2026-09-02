@@ -919,7 +919,10 @@ class OzonOperation(TimestampedModel):
     errors = models.JSONField(default=list, blank=True)
     provider_task_id = models.CharField(max_length=100, blank=True)
     attempt_count = models.PositiveSmallIntegerField(default=0)
+    reconcile_count = models.PositiveSmallIntegerField(default=0)
     last_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_reconciled_at = models.DateTimeField(null=True, blank=True)
+    next_reconcile_at = models.DateTimeField(null=True, blank=True)
     retry_after_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
@@ -934,6 +937,10 @@ class OzonOperation(TimestampedModel):
             models.CheckConstraint(
                 condition=models.Q(attempt_count__lte=100),
                 name='mkt_oz_operation_attempt_bound',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(reconcile_count__lte=100),
+                name='mkt_oz_operation_reconcile_bound',
             ),
         ]
         indexes = [
