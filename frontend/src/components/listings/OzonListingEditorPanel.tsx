@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState, type RefObject } from 'react';
-import { AlertCircle, CheckCircle2, Images, Loader2, Pencil, RefreshCw, Save, Send } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Images, Loader2, Pencil, RefreshCw, Save, Send, Warehouse } from 'lucide-react';
 
 import {
   OzonOfferPreparationCard,
@@ -53,12 +53,13 @@ interface Props {
   preparation: OzonOfferPreparation | null;
   images: OzonEditorImage[];
   preparationRef: RefObject<OzonOfferPreparationCardHandle | null>;
-  footerAction: 'save' | 'regenerate' | 'publish' | 'reconcile' | null;
+  footerAction: 'save' | 'regenerate' | 'publish' | 'reconcile' | 'commerce' | null;
   onPreparationChange: (preparation: OzonOfferPreparation | null) => void;
   onSave: () => void;
   onRegenerate: () => void;
   onPublish: () => void;
   onReconcile: () => void;
+  onSyncCommerce: () => void;
 }
 
 function rubles(value: string): string {
@@ -86,6 +87,7 @@ export function OzonListingEditorPanel({
   onRegenerate,
   onPublish,
   onReconcile,
+  onSyncCommerce,
 }: Props) {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const activeImage = images[activeImageIndex] ?? null;
@@ -232,6 +234,51 @@ export function OzonListingEditorPanel({
         showAccountSelector={false}
         embedded
       />
+
+      {preparation?.publication.status === 'published' && (
+        <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 p-4">
+          <div className="flex items-start gap-2">
+            <Warehouse className="mt-0.5 h-4 w-4 text-violet-600" />
+            <div>
+              <p className="text-sm font-medium">Цена и остаток Ozon</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Склад: {preparation.commerce.warehouse_name || preparation.commerce.warehouse_id || 'не выбран'}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md border bg-background p-2">
+              <p className="text-muted-foreground">Цена MAP</p>
+              <p className="mt-1 font-medium">{preparation.commerce.desired_price ? rubles(preparation.commerce.desired_price) : '—'}</p>
+              <p className="mt-1 text-muted-foreground">В Ozon: {preparation.commerce.last_synced_price ? rubles(preparation.commerce.last_synced_price) : 'не подтверждена'}</p>
+            </div>
+            <div className="rounded-md border bg-background p-2">
+              <p className="text-muted-foreground">Остаток MAP</p>
+              <p className="mt-1 font-medium">{preparation.commerce.desired_stock} шт.</p>
+              <p className="mt-1 text-muted-foreground">В Ozon: {preparation.commerce.last_synced_stock ?? 'не подтверждён'}</p>
+            </div>
+          </div>
+          {[preparation.commerce.price_operation, preparation.commerce.stock_operation]
+            .filter((operation) => operation && ['failed', 'manual_review', 'outcome_unknown'].includes(operation.state))
+            .map((operation) => (
+              <p key={operation!.id} className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+                {operation!.errors[0]?.message || 'Результат Ozon требует ручной проверки.'}
+              </p>
+            ))}
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 w-full"
+            onClick={onSyncCommerce}
+            disabled={footerAction !== null || !preparation.commerce.can_sync}
+          >
+            {footerAction === 'commerce'
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              : <RefreshCw className="mr-2 h-4 w-4" />}
+            {footerAction === 'commerce' ? 'Синхронизируем...' : 'Синхронизировать цену и остаток'}
+          </Button>
+        </div>
+      )}
 
       <details className="rounded-lg border bg-muted/20 p-3">
         <summary className="cursor-pointer text-sm font-medium">Общие данные после обогащения</summary>

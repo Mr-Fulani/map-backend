@@ -200,6 +200,24 @@ def test_catalog_methods_use_only_read_only_description_category_endpoints():
     }
 
 
+@override_settings(OZON_API_RESPONSE_MAX_BYTES=100_000, OZON_API_TIMEOUT_SECONDS=2)
+def test_commerce_methods_use_exact_price_and_stock_contracts():
+    session = FakeSession([
+        FakeResponse(200, {'result': [{'offer_id': 'map-1', 'updated': True}]}),
+        FakeResponse(200, {'result': [{'offer_id': 'map-1', 'warehouse_id': 42, 'updated': True}]}),
+    ])
+    client = OzonSellerClient(client_id='cid', api_key='key', session=session)
+    price = {'offer_id': 'map-1', 'product_id': 7, 'price': '1000.00'}
+    stock = {'offer_id': 'map-1', 'product_id': 7, 'warehouse_id': 42, 'stock': 2}
+
+    assert client.update_prices([price])[0]['updated'] is True
+    assert client.update_stocks([stock])[0]['updated'] is True
+    assert session.calls[0][0].endswith('/v1/product/import/prices')
+    assert session.calls[0][1]['json'] == {'prices': [price]}
+    assert session.calls[1][0].endswith('/v2/products/stocks')
+    assert session.calls[1][1]['json'] == {'stocks': [stock]}
+
+
 @override_settings(
     OZON_API_RESPONSE_MAX_BYTES=100_000,
     OZON_CATALOG_RESPONSE_MAX_BYTES=250_000,

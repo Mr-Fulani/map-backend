@@ -134,6 +134,20 @@ export interface OzonOfferPreparation {
     last_provider_sync_at: string | null;
     latest_operation: OzonOperationPresentation | null;
   };
+  commerce: {
+    can_sync: boolean;
+    desired_price: string | null;
+    desired_stock: number;
+    warehouse_id: string;
+    warehouse_name: string;
+    last_synced_price: string | null;
+    last_price_sync_at: string | null;
+    last_synced_stock: number | null;
+    last_stock_sync_at: string | null;
+    last_stock_warehouse_id: string;
+    price_operation: OzonOperationPresentation | null;
+    stock_operation: OzonOperationPresentation | null;
+  };
 }
 
 const ACTIVE_OZON_OPERATION_STATES = new Set<OzonOperationState>([

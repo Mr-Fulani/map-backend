@@ -1128,6 +1128,11 @@ export const productApi = {
     }),
   reconcileOzonOffer: (id: number, accountId: number) =>
     api.post(`/products/${id}/ozon-offer/reconcile/`, { account_id: accountId }),
+  syncOzonCommerce: (id: number, accountId: number, idempotencyKey: string) =>
+    api.post(`/products/${id}/ozon-offer/sync-commerce/`, {
+      account_id: accountId,
+      idempotency_key: idempotencyKey,
+    }),
   brandOptions: (productId: number, q = '') =>
     api.get('/products/brand-options/', { params: { product_id: productId, q } }),
   publish: (id: number, accountIds: number[]) => (

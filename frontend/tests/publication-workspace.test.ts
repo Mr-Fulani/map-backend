@@ -123,6 +123,12 @@ test('Ozon target reports exact account draft readiness', () => {
       last_provider_sync_at: null,
       latest_operation: null,
     },
+    commerce: {
+      can_sync: false, desired_price: null, desired_stock: 0,
+      warehouse_id: '', warehouse_name: '', last_synced_price: null,
+      last_price_sync_at: null, last_synced_stock: null, last_stock_sync_at: null,
+      last_stock_warehouse_id: '', price_operation: null, stock_operation: null,
+    },
   } satisfies OzonOfferPreparation;
   assert.deepEqual(ozonTargetState(preparation), {
     label: 'Нужно исправить: 1',
@@ -173,6 +179,12 @@ test('Ozon target does not infer readiness from an empty error list', () => {
       provider_errors: [],
       last_provider_sync_at: null,
       latest_operation: null,
+    },
+    commerce: {
+      can_sync: false, desired_price: null, desired_stock: 0,
+      warehouse_id: '', warehouse_name: '', last_synced_price: null,
+      last_price_sync_at: null, last_synced_stock: null, last_stock_sync_at: null,
+      last_stock_warehouse_id: '', price_operation: null, stock_operation: null,
     },
   } satisfies OzonOfferPreparation;
 
@@ -237,6 +249,12 @@ function publishedOzonPreparation(
         created_at: '2026-09-02T00:00:00Z',
         updated_at: '2026-09-02T00:01:00Z',
       },
+    },
+    commerce: {
+      can_sync: state === 'succeeded', desired_price: '1000.00', desired_stock: 2,
+      warehouse_id: '42', warehouse_name: 'Основной', last_synced_price: null,
+      last_price_sync_at: null, last_synced_stock: null, last_stock_sync_at: null,
+      last_stock_warehouse_id: '', price_operation: null, stock_operation: null,
     },
   };
 }

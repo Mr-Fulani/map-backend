@@ -137,6 +137,12 @@ function publicationPreparation(
       last_provider_sync_at: null,
       latest_operation: state,
     },
+    commerce: {
+      can_sync: false, desired_price: null, desired_stock: 0,
+      warehouse_id: '', warehouse_name: '', last_synced_price: null,
+      last_price_sync_at: null, last_synced_stock: null, last_stock_sync_at: null,
+      last_stock_warehouse_id: '', price_operation: null, stock_operation: null,
+    },
   };
 }
 

@@ -162,7 +162,7 @@ export default function PublicationWorkspaceDrawer({
   const [reloadToken, setReloadToken] = useState(0);
   const [preparingAccountId, setPreparingAccountId] = useState<number | null>(null);
   const [ozonFooterAction, setOzonFooterAction] = useState<
-    'save' | 'regenerate' | 'publish' | 'reconcile' | null
+    'save' | 'regenerate' | 'publish' | 'reconcile' | 'commerce' | null
   >(null);
   const [ozonPanel, setOzonPanel] = useState<'preparation' | 'pricing'>('preparation');
   const ozonPreparationRef = useRef<OzonOfferPreparationCardHandle>(null);
@@ -368,6 +368,37 @@ export default function PublicationWorkspaceDrawer({
     }
   }
 
+  async function syncOzonCommerce() {
+    if (!product || !selectedAccount || selectedAccount.marketplace !== 'ozon') return;
+    if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
+      toast.error('Браузер не поддерживает безопасный идентификатор синхронизации.');
+      return;
+    }
+    setOzonFooterAction('commerce');
+    try {
+      const response = await productApi.syncOzonCommerce(
+        product.id,
+        selectedAccount.id,
+        crypto.randomUUID(),
+      );
+      const preparation = envelopeData<OzonOfferPreparation>(response.data);
+      handleOzonPreparationChange(preparation);
+      const operations = [preparation.commerce.price_operation, preparation.commerce.stock_operation];
+      if (operations.some((operation) => operation?.state === 'outcome_unknown')) {
+        toast.warning('Ozon мог принять изменение. MAP не будет повторять его вслепую.');
+      } else if (operations.some((operation) => operation && operation.state !== 'succeeded')) {
+        toast.error('Ozon отклонил часть данных. Подробности показаны в карточке.');
+      } else {
+        toast.success('Цена и остаток подтверждены Ozon.');
+      }
+    } catch (error: unknown) {
+      const message = (error as { response?: { data?: { message?: string } } }).response?.data?.message;
+      toast.error(message ?? 'Не удалось синхронизировать цену и остаток Ozon.');
+    } finally {
+      setOzonFooterAction(null);
+    }
+  }
+
   return (
     <Sheet open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <SheetContent
@@ -470,6 +501,7 @@ export default function PublicationWorkspaceDrawer({
                   onRegenerate={() => void regenerateProductForOzon()}
                   onPublish={() => void publishProductToOzon()}
                   onReconcile={() => void reconcileProductInOzon()}
+                  onSyncCommerce={() => void syncOzonCommerce()}
                 />
               </section>
             </div>

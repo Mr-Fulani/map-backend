@@ -1,6 +1,7 @@
 from django.urls import path
 
 from apps.marketplaces.ozon_offer_views import (
+    ProductOzonOfferCommerceSyncView,
     ProductOzonOfferPublishView,
     ProductOzonOfferReconcileView,
     ProductOzonOfferView,
@@ -95,6 +96,11 @@ urlpatterns = [
         '<int:pk>/ozon-offer/publish/',
         ProductOzonOfferPublishView.as_view(),
         name='product-ozon-offer-publish',
+    ),
+    path(
+        '<int:pk>/ozon-offer/sync-commerce/',
+        ProductOzonOfferCommerceSyncView.as_view(),
+        name='product-ozon-offer-sync-commerce',
     ),
     path(
         '<int:pk>/ozon-offer/reconcile/',

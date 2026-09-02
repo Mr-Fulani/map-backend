@@ -336,6 +336,22 @@ class OzonSellerClient:
             )
         return matches[0] if matches else None
 
+    def update_prices(self, prices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Update up to 100 prices and return the bounded item results."""
+
+        if not prices or len(prices) > 100:
+            raise ValueError('Ozon price update accepts from 1 to 100 items.')
+        payload = self._post('/v1/product/import/prices', {'prices': prices})
+        return _result_items(payload, label='цен')
+
+    def update_stocks(self, stocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Update up to 100 FBS stock rows and return bounded item results."""
+
+        if not stocks or len(stocks) > 100:
+            raise ValueError('Ozon stock update accepts from 1 to 100 items.')
+        payload = self._post('/v2/products/stocks', {'stocks': stocks})
+        return _result_items(payload, label='остатков')
+
     def _post(
         self,
         path: str,
@@ -403,6 +419,18 @@ class OzonSellerClient:
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _result_items(payload: Mapping[str, Any], *, label: str) -> list[dict[str, Any]]:
+    raw_items = payload.get('result')
+    if isinstance(raw_items, Mapping):
+        raw_items = raw_items.get('items')
+    if not isinstance(raw_items, list) or len(raw_items) > 100:
+        raise OzonAPIError(
+            'invalid_response',
+            f'Ozon вернул некорректный результат обновления {label}.',
+        )
+    return [dict(item) for item in raw_items if isinstance(item, Mapping)]
 
 
 def _first_text(value: Mapping[str, Any], *keys: str) -> str:

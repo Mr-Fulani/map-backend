@@ -815,6 +815,28 @@ class OzonOfferDraft(TimestampedModel):
         editable=False,
         verbose_name='Последняя сверка с Ozon',
     )
+    last_synced_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Последняя подтверждённая цена Ozon',
+    )
+    last_price_sync_at = models.DateTimeField(null=True, blank=True, editable=False)
+    last_synced_stock = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Последний подтверждённый остаток Ozon',
+    )
+    last_stock_sync_at = models.DateTimeField(null=True, blank=True, editable=False)
+    last_stock_warehouse_id = models.CharField(
+        max_length=100,
+        blank=True,
+        editable=False,
+        verbose_name='Склад последней синхронизации остатка Ozon',
+    )
 
     class Meta:
         verbose_name = 'Черновик товара Ozon'

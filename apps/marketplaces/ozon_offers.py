@@ -414,6 +414,7 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
     from apps.marketplaces.ozon_rollout import ozon_product_write_enabled_for_account
 
     latest_operation = latest_offer_operation(draft)
+    from apps.marketplaces.ozon_commerce import commerce_presentation
     return {
         'account': {'id': account.pk, 'name': account.name, 'marketplace': 'ozon'},
         'draft': None if draft is None else {
@@ -458,6 +459,7 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
             ),
             'latest_operation': operation_presentation(latest_operation),
         },
+        'commerce': commerce_presentation(product, account, draft, pricing),
     }
 
 

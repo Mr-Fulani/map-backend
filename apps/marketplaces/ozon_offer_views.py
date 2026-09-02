@@ -7,6 +7,7 @@ from rest_framework.response import Response
 
 from apps.marketplaces.models import MarketplaceAccount
 from apps.marketplaces.ozon_autofill import OzonAutofillError, autofill_ozon_offer
+from apps.marketplaces.ozon_commerce import OzonCommerceError, sync_offer_commerce
 from apps.marketplaces.ozon_offers import (
     OzonOfferError,
     offer_presentation,
@@ -80,6 +81,10 @@ class OzonOfferUpdateSerializer(serializers.Serializer):
 class OzonOfferPublishSerializer(serializers.Serializer):
     account_id = serializers.IntegerField(min_value=1)
     idempotency_key = serializers.UUIDField()
+
+
+class OzonOfferCommerceSerializer(OzonOfferPublishSerializer):
+    pass
 
 
 OZON_OFFER_RESPONSE = inline_serializer(
@@ -264,3 +269,47 @@ class ProductOzonOfferReconcileView(APIView):
             'data': offer_presentation(product, account),
             'operation_id': str(operation.pk),
         })
+
+
+@extend_schema(tags=['Products'])
+class ProductOzonOfferCommerceSyncView(APIView):
+    """Manual price and exact single-warehouse stock synchronization."""
+
+    api_key_enabled = True
+    api_key_scopes = {'POST': {'catalog:write'}}
+
+    @extend_schema(
+        operation_id='product_ozon_offer_sync_commerce',
+        request=OzonOfferCommerceSerializer,
+        responses=OZON_OFFER_RESPONSE,
+    )
+    def post(self, request, pk):
+        serializer = OzonOfferCommerceSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product = Product.objects.filter(pk=pk, tenant=request.tenant).first()
+        account = MarketplaceAccount.objects.filter(
+            pk=serializer.validated_data['account_id'],
+            tenant=request.tenant,
+            marketplace=MarketplaceAccount.MARKETPLACE_OZON,
+        ).first()
+        if product is None or account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        try:
+            price_operation, stock_operation = sync_offer_commerce(
+                product,
+                account,
+                idempotency_key=str(serializer.validated_data['idempotency_key']),
+            )
+        except OzonCommerceError as exc:
+            return Response(
+                {'status': 'error', 'code': exc.code, 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({
+            'status': 'ok',
+            'data': offer_presentation(product, account),
+            'operation_ids': {
+                'price': str(price_operation.pk) if price_operation is not None else None,
+                'stock': str(stock_operation.pk) if stock_operation is not None else None,
+            },
+        }, status=status.HTTP_202_ACCEPTED)
