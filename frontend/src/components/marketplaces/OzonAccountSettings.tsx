@@ -67,7 +67,7 @@ export function OzonAccountSettings({
 
   async function updateAutomation(
     account: MarketplaceAccount,
-    field: 'commerce_auto_sync_enabled' | 'orders_auto_sync_enabled',
+    field: 'product_write_enabled' | 'commerce_auto_sync_enabled' | 'orders_auto_sync_enabled',
     value: boolean,
   ) {
     if (!account.ozon_profile || !canManage) return;
@@ -75,6 +75,7 @@ export function OzonAccountSettings({
     try {
       const response = await accountApi.updateOzonAutomation(account.id, { [field]: value });
       const flags = response.data.data as {
+        product_write_enabled: boolean;
         commerce_auto_sync_enabled: boolean;
         orders_auto_sync_enabled: boolean;
       };
@@ -82,7 +83,11 @@ export function OzonAccountSettings({
         ...account,
         ozon_profile: { ...account.ozon_profile, ...flags },
       });
-      toast.success('Автоматизация кабинета обновлена.');
+      toast.success(
+        field === 'product_write_enabled'
+          ? (value ? 'Ручная публикация Ozon разрешена.' : 'Публикация Ozon выключена.')
+          : 'Автоматизация кабинета обновлена.',
+      );
     } catch (error: unknown) {
       const message = (error as { response?: { data?: { message?: string } } }).response?.data?.message;
       toast.error(message ?? 'Не удалось изменить автоматизацию Ozon.');
@@ -371,6 +376,34 @@ export function OzonAccountSettings({
                       <p className="text-xs text-muted-foreground md:col-span-2">
                         Проверено: {safeDate(profile.last_checked_at)}
                       </p>
+                    </div>
+                  )}
+
+                  {profile && (
+                    <div className="space-y-3 rounded-md border border-blue-500/20 bg-blue-500/5 p-3">
+                      <div>
+                        <p className="text-sm font-medium">Ручная публикация товаров</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Разрешает кнопки отправки, цены и остатка только для этого кабинета.
+                          Каждый запуск по-прежнему выполняется вручную.
+                        </p>
+                      </div>
+                      <label className="flex items-center justify-between gap-3 text-sm">
+                        <span>Разрешить запись в Ozon</span>
+                        <Switch
+                          checked={profile.product_write_enabled}
+                          disabled={!canManage || savingAutomation === account.id}
+                          onCheckedChange={(value) => void updateAutomation(
+                            account, 'product_write_enabled', value,
+                          )}
+                        />
+                      </label>
+                      {!profile.api_methods.includes('/v3/product/import') && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                          Текущий ключ read-only. Нужен новый ключ с ролью Product и методом
+                          {' '}/v3/product/import.
+                        </p>
+                      )}
                     </div>
                   )}
 

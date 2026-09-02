@@ -176,7 +176,13 @@ class OzonAccountConnectionService:
             account.save(update_fields=('name', 'credentials_enc', 'updated_at'))
             profile, _ = OzonAccountProfile.objects.update_or_create(
                 account=account,
-                defaults=cls._profile_defaults(snapshot),
+                defaults={
+                    **cls._profile_defaults(snapshot),
+                    # Every credential rotation closes mutations until the
+                    # tenant explicitly reviews the new key's provider roles.
+                    'product_write_enabled': False,
+                    'commerce_auto_sync_enabled': False,
+                },
             )
             account.ozon_profile = profile
         return account
