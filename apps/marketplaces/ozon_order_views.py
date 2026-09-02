@@ -1,5 +1,6 @@
 from rest_framework import serializers, status
 from rest_framework.response import Response
+from drf_spectacular.utils import extend_schema
 
 from apps.marketplaces.models import MarketplaceAccount, OzonFbsPosting
 from apps.marketplaces.ozon_orders import OzonOrderSyncError, sync_fbs_orders
@@ -11,6 +12,7 @@ class OzonAutomationSerializer(serializers.Serializer):
     orders_auto_sync_enabled = serializers.BooleanField(required=False)
 
 
+@extend_schema(tags=['Accounts'])
 class OzonFbsOrdersView(APIView):
     api_key_enabled = True
     api_key_scopes = {'GET': {'catalog:read'}, 'POST': {'catalog:read'}}
@@ -46,6 +48,7 @@ class OzonFbsOrdersView(APIView):
         return Response({'status': 'ok', 'data': {'imported': imported}})
 
 
+@extend_schema(tags=['Accounts'])
 class OzonAutomationView(APIView):
     """Explicit account-scoped automation switches; both default to off."""
 
