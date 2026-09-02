@@ -351,7 +351,14 @@ class ProductOzonOfferBulkView(APIView):
             )
         }
         if len(products) != len(data['product_ids']):
-            return Response({'status': 'error', 'code': 'product_not_found', 'message': 'Часть товаров недоступна этому тенанту.'}, status=400)
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'product_not_found',
+                    'message': 'Часть товаров недоступна этому тенанту.',
+                },
+                status=400,
+            )
         base_key = str(data['idempotency_key'])
         results = []
         for product_id in data['product_ids']:

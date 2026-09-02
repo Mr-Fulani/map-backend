@@ -78,7 +78,14 @@ class OzonAutomationView(APIView):
             return Response(status=404)
         profile = account.ozon_profile
         if serializer.validated_data.get('commerce_auto_sync_enabled') and not profile.product_write_enabled:
-            return Response({'status': 'error', 'code': 'write_disabled', 'message': 'Сначала разрешите запись товаров для этого кабинета.'}, status=400)
+            return Response(
+                {
+                    'status': 'error',
+                    'code': 'write_disabled',
+                    'message': 'Сначала разрешите запись товаров для этого кабинета.',
+                },
+                status=400,
+            )
         update_fields = []
         for field, value in serializer.validated_data.items():
             setattr(profile, field, value)

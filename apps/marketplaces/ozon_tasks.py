@@ -43,9 +43,13 @@ def sync_enabled_ozon_commerce():
     checked = 0
     for draft in drafts:
         try:
+            operation_key = uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f'ozon-commerce:{draft.pk}:{timezone.now():%Y%m%d%H%M}',
+            )
             sync_offer_commerce(
                 draft.product, draft.account,
-                idempotency_key=str(uuid.uuid5(uuid.NAMESPACE_URL, f'ozon-commerce:{draft.pk}:{timezone.now():%Y%m%d%H%M}')),
+                idempotency_key=str(operation_key),
             )
             checked += 1
         except OzonCommerceError:

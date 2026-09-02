@@ -6,7 +6,7 @@ from django.core.management import call_command
 from django.test import Client
 from django_celery_beat.models import PeriodicTask
 
-from apps.marketplaces.models import OzonOfferDraft, OzonOperation
+from apps.marketplaces.models import OzonOperation
 from apps.marketplaces.ozon_tasks import (
     sync_enabled_ozon_commerce, sync_enabled_ozon_orders,
 )
@@ -65,7 +65,10 @@ def test_bulk_publish_is_bounded_and_keeps_per_product_operations(settings):
     draft.save(update_fields=['publication_status', 'provider_product_id', 'updated_at'])
     with (
         patch('apps.marketplaces.ozon_publication._public_image_url', return_value='https://cdn.example.test/x.jpg'),
-        patch('apps.marketplaces.ozon_publication.OzonSellerClient.import_products', return_value='task-bulk') as provider,
+        patch(
+            'apps.marketplaces.ozon_publication.OzonSellerClient.import_products',
+            return_value='task-bulk',
+        ) as provider,
     ):
         response = client.post(
             '/api/v1/products/ozon-offers/bulk/',
@@ -90,4 +93,5 @@ def test_ozon_periodic_jobs_are_registered_without_changing_avito_jobs():
         'sync_enabled_ozon_orders',
     }
     assert set(PeriodicTask.objects.filter(name__in=expected).values_list('name', flat=True)) == expected
-    assert PeriodicTask.objects.get(name='check_moderation_status').task == 'apps.marketplaces.tasks.check_moderation_status'
+    avito_task = PeriodicTask.objects.get(name='check_moderation_status')
+    assert avito_task.task == 'apps.marketplaces.tasks.check_moderation_status'
