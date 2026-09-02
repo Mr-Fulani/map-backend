@@ -20,6 +20,7 @@ def test_automation_defaults_off_and_is_exact_account_scoped(settings):
     account = _account(tenant, 'ozon-auto-client')
     client = Client()
     profile = account.ozon_profile
+    assert profile.product_write_enabled is False
     assert profile.commerce_auto_sync_enabled is False
     assert profile.orders_auto_sync_enabled is False
 
@@ -32,6 +33,53 @@ def test_automation_defaults_off_and_is_exact_account_scoped(settings):
     profile.refresh_from_db()
     assert profile.orders_auto_sync_enabled is True
     assert profile.commerce_auto_sync_enabled is False
+
+
+@pytest.mark.django_db
+def test_manual_write_requires_provider_method_and_disabling_it_closes_commerce(settings):
+    tenant, key = _tenant('ozon-manual-write')
+    account = _account(tenant, 'ozon-manual-write-client')
+    settings.OZON_ACCOUNT_CONNECTION_ENABLED = True
+    settings.OZON_ACCOUNT_CONNECTION_TENANT_SLUGS = (tenant.slug,)
+    settings.OZON_ACCOUNT_CONNECTION_CLIENT_IDS = (account.external_id,)
+    client = Client()
+
+    denied = client.patch(
+        f'/api/v1/accounts/{account.pk}/ozon-automation/',
+        {'product_write_enabled': True}, content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {key}',
+    )
+    assert denied.status_code == 400
+    assert denied.json()['code'] == 'product_write_permission_missing'
+
+    profile = account.ozon_profile
+    profile.api_methods = ['/v3/product/import']
+    profile.save(update_fields=['api_methods', 'updated_at'])
+    enabled = client.patch(
+        f'/api/v1/accounts/{account.pk}/ozon-automation/',
+        {'product_write_enabled': True}, content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {key}',
+    )
+    assert enabled.status_code == 200
+    assert enabled.json()['data']['product_write_enabled'] is True
+
+    commerce = client.patch(
+        f'/api/v1/accounts/{account.pk}/ozon-automation/',
+        {'commerce_auto_sync_enabled': True}, content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {key}',
+    )
+    assert commerce.status_code == 200
+    disabled = client.patch(
+        f'/api/v1/accounts/{account.pk}/ozon-automation/',
+        {'product_write_enabled': False}, content_type='application/json',
+        HTTP_AUTHORIZATION=f'Bearer {key}',
+    )
+    assert disabled.status_code == 200
+    assert disabled.json()['data'] == {
+        'product_write_enabled': False,
+        'commerce_auto_sync_enabled': False,
+        'orders_auto_sync_enabled': False,
+    }
 
 
 @pytest.mark.django_db

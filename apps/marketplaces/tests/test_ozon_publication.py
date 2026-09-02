@@ -29,7 +29,8 @@ def _enable_write(settings, tenant, account):
     settings.OZON_ACCOUNT_CONNECTION_CLIENT_IDS = (account.external_id,)
     profile = account.ozon_profile
     profile.product_write_enabled = True
-    profile.save(update_fields=['product_write_enabled', 'updated_at'])
+    profile.api_methods = ['/v3/product/import']
+    profile.save(update_fields=['product_write_enabled', 'api_methods', 'updated_at'])
 
 
 def _publish(client, key, product, account, idempotency_key=None):

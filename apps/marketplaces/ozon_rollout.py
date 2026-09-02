@@ -3,6 +3,9 @@
 from django.conf import settings
 
 
+OZON_PRODUCT_IMPORT_METHOD = '/v3/product/import'
+
+
 def _safe_string_allowlist(setting_name: str, *, max_length: int) -> frozenset[str]:
     values = getattr(settings, setting_name, ())
     if not isinstance(values, (tuple, list, frozenset, set)):
@@ -59,4 +62,7 @@ def ozon_product_write_enabled_for_account(account) -> bool:
         profile = account.ozon_profile
     except (AttributeError, OzonAccountProfile.DoesNotExist):
         return False
-    return profile.product_write_enabled is True
+    return (
+        profile.product_write_enabled is True
+        and OZON_PRODUCT_IMPORT_METHOD in profile.api_methods
+    )

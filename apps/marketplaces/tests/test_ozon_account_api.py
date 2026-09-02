@@ -61,6 +61,7 @@ def snapshot(*warehouses: OzonWarehouse) -> OzonConnectionSnapshot:
         currency='RUB',
         roles=('Product API', 'FBS'),
         warehouses=warehouses,
+        api_methods=('/v3/product/import',),
     )
 
 
@@ -226,12 +227,13 @@ def test_create_ozon_account_encrypts_api_key_and_returns_safe_profile():
         'seller_name': 'Alfa Seller',
         'currency': 'RUB',
         'roles': ['Product API', 'FBS'],
-        'api_methods': [],
+        'api_methods': ['/v3/product/import'],
         'api_key_expires_at': None,
         'warehouse_count': 1,
         'selected_warehouse_id': 'warehouse-1',
         'selected_warehouse_name': 'Основной склад',
         'last_checked_at': body['ozon_profile']['last_checked_at'],
+        'product_write_enabled': False,
         'commerce_auto_sync_enabled': False,
         'orders_auto_sync_enabled': False,
     }
@@ -383,6 +385,37 @@ def test_rotating_ozon_key_requires_same_client_id_and_is_atomic():
     assert rotated.status_code == 200
     account = MarketplaceAccount.objects.get(pk=account_id, tenant=tenant)
     assert decrypt(bytes(account.credentials_enc))['api_key'] == 'new-key'
+
+
+@pytest.mark.django_db
+@override_settings(OZON_ACCOUNT_CONNECTION_ENABLED=True)
+def test_rotating_ozon_key_closes_product_and_commerce_writes():
+    tenant, token = make_tenant('ozon-rotate')
+    verified = snapshot(OzonWarehouse('warehouse-1', 'Основной'))
+    with patch(OZON_VERIFY, return_value=verified):
+        created = Client().post(
+            '/api/v1/accounts/', ozon_payload(api_key='old-key'),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+        account = MarketplaceAccount.objects.get(pk=created.json()['id'])
+        profile = account.ozon_profile
+        profile.product_write_enabled = True
+        profile.commerce_auto_sync_enabled = True
+        profile.save(update_fields=[
+            'product_write_enabled', 'commerce_auto_sync_enabled', 'updated_at',
+        ])
+        rotated = Client().put(
+            f'/api/v1/accounts/{account.pk}/',
+            ozon_payload(api_key='new-key'),
+            content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {token}',
+        )
+
+    assert rotated.status_code == 200
+    profile.refresh_from_db()
+    assert profile.product_write_enabled is False
+    assert profile.commerce_auto_sync_enabled is False
 
 
 @pytest.mark.django_db

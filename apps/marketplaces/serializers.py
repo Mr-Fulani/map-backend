@@ -254,6 +254,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
                 'selected_warehouse_id': serializers.CharField(read_only=True),
                 'selected_warehouse_name': serializers.CharField(read_only=True),
                 'last_checked_at': serializers.DateTimeField(read_only=True),
+                'product_write_enabled': serializers.BooleanField(read_only=True),
                 'commerce_auto_sync_enabled': serializers.BooleanField(read_only=True),
                 'orders_auto_sync_enabled': serializers.BooleanField(read_only=True),
             },
@@ -279,6 +280,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
             'selected_warehouse_id': profile.selected_warehouse_id,
             'selected_warehouse_name': profile.selected_warehouse_name,
             'last_checked_at': profile.last_checked_at,
+            'product_write_enabled': profile.product_write_enabled,
             'commerce_auto_sync_enabled': profile.commerce_auto_sync_enabled,
             'orders_auto_sync_enabled': profile.orders_auto_sync_enabled,
         }

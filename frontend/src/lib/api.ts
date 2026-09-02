@@ -1283,7 +1283,11 @@ export const accountApi = {
   syncOzonFbsOrders: (id: number) => api.post(`/accounts/${id}/ozon-fbs-orders/`, {}),
   updateOzonAutomation: (
     id: number,
-    data: { commerce_auto_sync_enabled?: boolean; orders_auto_sync_enabled?: boolean },
+    data: {
+      product_write_enabled?: boolean;
+      commerce_auto_sync_enabled?: boolean;
+      orders_auto_sync_enabled?: boolean;
+    },
   ) => api.patch(`/accounts/${id}/ozon-automation/`, data),
   retryAutoload: (id: number) => api.post(`/accounts/${id}/autoload-status/`),
   listPlacementAddresses: (params?: Record<string, unknown>) =>
