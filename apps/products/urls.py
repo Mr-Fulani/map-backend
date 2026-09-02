@@ -1,6 +1,9 @@
 from django.urls import path
 
-from apps.marketplaces.ozon_offer_views import ProductOzonOfferView
+from apps.marketplaces.ozon_offer_views import (
+    ProductOzonOfferPublishView,
+    ProductOzonOfferView,
+)
 
 from apps.products.views import (
     ProductArchiveView, ProductBulkActionDetailView, ProductBulkActionView,
@@ -86,6 +89,11 @@ urlpatterns = [
         '<int:pk>/ozon-offer/',
         ProductOzonOfferView.as_view(),
         name='product-ozon-offer',
+    ),
+    path(
+        '<int:pk>/ozon-offer/publish/',
+        ProductOzonOfferPublishView.as_view(),
+        name='product-ozon-offer-publish',
     ),
     path('<int:pk>/fitments/', ProductFitmentsView.as_view(), name='product-fitments'),
     path(

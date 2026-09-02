@@ -12,6 +12,10 @@ from apps.marketplaces.ozon_offers import (
     offer_presentation,
     update_offer_draft,
 )
+from apps.marketplaces.ozon_publication import (
+    OzonPublicationError,
+    request_product_import,
+)
 from apps.products.models import Product
 from apps.tenants.api_views import CatalogAPIView as APIView
 
@@ -67,6 +71,11 @@ class OzonOfferUpdateSerializer(serializers.Serializer):
                 'Передайте либо индивидуальную наценку, либо точную цену Ozon.',
             )
         return attrs
+
+
+class OzonOfferPublishSerializer(serializers.Serializer):
+    account_id = serializers.IntegerField(min_value=1)
+    idempotency_key = serializers.UUIDField()
 
 
 OZON_OFFER_RESPONSE = inline_serializer(
@@ -173,3 +182,44 @@ class ProductOzonOfferView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         return Response({'status': 'ok', 'data': offer_presentation(product, account)})
+
+
+@extend_schema(tags=['Products'])
+class ProductOzonOfferPublishView(APIView):
+    """Manual single-offer Ozon write with durable idempotency evidence."""
+
+    api_key_enabled = True
+    api_key_scopes = {'POST': {'catalog:write'}}
+
+    @extend_schema(
+        operation_id='product_ozon_offer_publish',
+        request=OzonOfferPublishSerializer,
+        responses=OZON_OFFER_RESPONSE,
+    )
+    def post(self, request, pk):
+        serializer = OzonOfferPublishSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product = Product.objects.filter(pk=pk, tenant=request.tenant).first()
+        account = MarketplaceAccount.objects.filter(
+            pk=serializer.validated_data['account_id'],
+            tenant=request.tenant,
+            marketplace=MarketplaceAccount.MARKETPLACE_OZON,
+        ).first()
+        if product is None or account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        try:
+            operation = request_product_import(
+                product,
+                account,
+                idempotency_key=str(serializer.validated_data['idempotency_key']),
+            )
+        except OzonPublicationError as exc:
+            return Response(
+                {'status': 'error', 'code': exc.code, 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({
+            'status': 'ok',
+            'data': offer_presentation(product, account),
+            'operation_id': str(operation.pk),
+        }, status=status.HTTP_202_ACCEPTED)

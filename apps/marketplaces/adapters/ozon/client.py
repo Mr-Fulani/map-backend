@@ -46,7 +46,7 @@ class OzonConnectionSnapshot:
 
 
 class OzonSellerClient:
-    """Bounded read-only client for Ozon account and catalog metadata."""
+    """Bounded Ozon client; mutations are exposed as explicit methods."""
 
     def __init__(
         self,
@@ -264,6 +264,24 @@ class OzonSellerClient:
             )
         return result
 
+    def import_products(self, items: list[dict[str, Any]]) -> str:
+        """Create/update at most 100 products and return the provider task ID."""
+
+        if not items or len(items) > 100:
+            raise ValueError('Ozon product import accepts from 1 to 100 items.')
+        payload = self._post('/v3/product/import', {'items': items})
+        result = payload.get('result')
+        task_id = payload.get('task_id')
+        if task_id is None and isinstance(result, Mapping):
+            task_id = result.get('task_id')
+        task_id = str(task_id or '').strip()
+        if not task_id or len(task_id) > 100:
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon не вернул идентификатор задачи импорта.',
+            )
+        return task_id
+
     def _post(
         self,
         path: str,
@@ -312,7 +330,7 @@ class OzonSellerClient:
         if status_code < 200 or status_code >= 300:
             raise OzonAPIError(
                 'request_rejected',
-                'Ozon отклонил read-only запрос.',
+                'Ozon отклонил запрос.',
             )
         try:
             data = response.json()

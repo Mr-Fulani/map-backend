@@ -1121,6 +1121,11 @@ export const productApi = {
     api.patch(`/products/${id}/ozon-offer/`, data),
   autofillOzonOffer: (id: number, accountId: number) =>
     api.post(`/products/${id}/ozon-offer/`, { account_id: accountId }),
+  publishOzonOffer: (id: number, accountId: number, idempotencyKey: string) =>
+    api.post(`/products/${id}/ozon-offer/publish/`, {
+      account_id: accountId,
+      idempotency_key: idempotencyKey,
+    }),
   brandOptions: (productId: number, q = '') =>
     api.get('/products/brand-options/', { params: { product_id: productId, q } }),
   publish: (id: number, accountIds: number[]) => (

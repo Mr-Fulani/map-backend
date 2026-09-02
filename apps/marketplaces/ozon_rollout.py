@@ -1,4 +1,4 @@
-"""Fail-closed admission for the read-only Ozon account canary."""
+"""Fail-closed admission for Ozon account and mutation canaries."""
 
 from django.conf import settings
 
@@ -43,3 +43,20 @@ def ozon_connection_enabled_for_account(tenant, client_id: object) -> bool:
         ozon_connection_enabled_for_tenant(tenant)
         and normalized_client_id in client_ids
     )
+
+
+def ozon_product_write_enabled_for_account(account) -> bool:
+    """Require both the existing exact-account gate and a DB kill switch."""
+
+    from apps.marketplaces.models import OzonAccountProfile
+
+    if not ozon_connection_enabled_for_account(
+        getattr(account, 'tenant', None),
+        getattr(account, 'external_id', ''),
+    ):
+        return False
+    try:
+        profile = account.ozon_profile
+    except (AttributeError, OzonAccountProfile.DoesNotExist):
+        return False
+    return profile.product_write_enabled is True

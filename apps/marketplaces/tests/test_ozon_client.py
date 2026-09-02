@@ -226,6 +226,33 @@ def test_catalog_methods_reject_non_list_results():
     OZON_API_MAX_PAGES=3,
     OZON_API_TIMEOUT_SECONDS=2,
 )
+def test_product_import_uses_current_endpoint_and_returns_task_id():
+    session = FakeSession([FakeResponse(200, {'result': {'task_id': 731}})])
+    item = {'offer_id': 'map-offer-1', 'name': 'Тестовый товар'}
+
+    task_id = OzonSellerClient(
+        client_id='cid', api_key='secret', session=session,
+    ).import_products([item])
+
+    assert task_id == '731'
+    assert session.calls[0][0] == 'https://api-seller.ozon.ru/v3/product/import'
+    assert session.calls[0][1]['json'] == {'items': [item]}
+
+
+def test_product_import_rejects_empty_or_oversized_local_batches():
+    client = OzonSellerClient(client_id='cid', api_key='secret', session=FakeSession([]))
+
+    with pytest.raises(ValueError, match='1 to 100'):
+        client.import_products([])
+    with pytest.raises(ValueError, match='1 to 100'):
+        client.import_products([{'offer_id': str(index)} for index in range(101)])
+
+
+@override_settings(
+    OZON_API_RESPONSE_MAX_BYTES=100_000,
+    OZON_API_MAX_PAGES=3,
+    OZON_API_TIMEOUT_SECONDS=2,
+)
 def test_rate_limit_is_normalized_without_secret_or_response_body():
     session = FakeSession([
         FakeResponse(

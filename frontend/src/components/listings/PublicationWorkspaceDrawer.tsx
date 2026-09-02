@@ -161,7 +161,7 @@ export default function PublicationWorkspaceDrawer({
   const [loadError, setLoadError] = useState(false);
   const [reloadToken, setReloadToken] = useState(0);
   const [preparingAccountId, setPreparingAccountId] = useState<number | null>(null);
-  const [ozonFooterAction, setOzonFooterAction] = useState<'save' | 'regenerate' | null>(null);
+  const [ozonFooterAction, setOzonFooterAction] = useState<'save' | 'regenerate' | 'publish' | null>(null);
   const [ozonPanel, setOzonPanel] = useState<'preparation' | 'pricing'>('preparation');
   const ozonPreparationRef = useRef<OzonOfferPreparationCardHandle>(null);
   const open = productId !== null;
@@ -307,6 +307,40 @@ export default function PublicationWorkspaceDrawer({
     }
   }
 
+  async function publishProductToOzon() {
+    if (!product || !selectedAccount || selectedAccount.marketplace !== 'ozon') return;
+    if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
+      toast.error('Браузер не поддерживает безопасный идентификатор отправки.');
+      return;
+    }
+    setOzonFooterAction('publish');
+    try {
+      const response = await productApi.publishOzonOffer(
+        product.id,
+        selectedAccount.id,
+        crypto.randomUUID(),
+      );
+      const preparation = envelopeData<OzonOfferPreparation>(response.data);
+      handleOzonPreparationChange(preparation);
+      const state = preparation.publication.latest_operation?.state;
+      if (state === 'reconciling') {
+        toast.success('Ozon принял карточку. MAP сохранит и проверит результат задачи.');
+      } else if (state === 'outcome_unknown') {
+        toast.warning('Ответ Ozon не подтверждён. Не повторяйте отправку до сверки MAP.');
+      } else {
+        const message = preparation.publication.latest_operation?.errors[0]?.message;
+        toast.error(message ?? 'Ozon не принял карточку. Проверьте сообщение в дровере.');
+      }
+    } catch (error: unknown) {
+      const message = (
+        error as { response?: { data?: { message?: string } } }
+      ).response?.data?.message;
+      toast.error(message ?? 'Не удалось отправить карточку Ozon. Повтор не выполнен автоматически.');
+    } finally {
+      setOzonFooterAction(null);
+    }
+  }
+
   return (
     <Sheet open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <SheetContent
@@ -407,6 +441,7 @@ export default function PublicationWorkspaceDrawer({
                   onPreparationChange={handleOzonPreparationChange}
                   onSave={() => void saveOzonPreparation()}
                   onRegenerate={() => void regenerateProductForOzon()}
+                  onPublish={() => void publishProductToOzon()}
                 />
               </section>
             </div>

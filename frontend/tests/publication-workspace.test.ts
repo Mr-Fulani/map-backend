@@ -112,6 +112,17 @@ test('Ozon target reports exact account draft readiness', () => {
       ],
       recommendations: [],
     },
+    publication: {
+      write_enabled: false,
+      status: 'local_draft',
+      provider_product_id: null,
+      provider_sku: null,
+      provider_status: '',
+      moderation_status: '',
+      provider_errors: [],
+      last_provider_sync_at: null,
+      latest_operation: null,
+    },
   } satisfies OzonOfferPreparation;
   assert.deepEqual(ozonTargetState(preparation), {
     label: 'Нужно исправить: 1',
@@ -151,6 +162,17 @@ test('Ozon target does not infer readiness from an empty error list', () => {
       ready: false,
       errors: [],
       recommendations: [],
+    },
+    publication: {
+      write_enabled: false,
+      status: 'local_draft',
+      provider_product_id: null,
+      provider_sku: null,
+      provider_status: '',
+      moderation_status: '',
+      provider_errors: [],
+      last_provider_sync_at: null,
+      latest_operation: null,
     },
   } satisfies OzonOfferPreparation;
 

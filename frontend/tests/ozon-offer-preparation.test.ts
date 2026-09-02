@@ -5,8 +5,12 @@ import {
   isOzonBooleanAttribute,
   ozonAttributesValidationErrors,
   ozonAttributesPayload,
+  ozonPublicationDisabled,
+  ozonPublicationMessage,
   replaceOzonAttributeValue,
   type OzonOfferAttribute,
+  type OzonOfferPreparation,
+  type OzonOperationPresentation,
 } from '../src/lib/ozon-offer-preparation';
 
 
@@ -98,4 +102,56 @@ test('recognizes boolean Ozon attributes and rejects arbitrary text', () => {
     complex_id: 0,
     values: [{ value: 'false', dictionary_value_id: 0 }],
   }]);
+});
+
+function publicationPreparation(
+  state: OzonOperationPresentation | null,
+): OzonOfferPreparation {
+  return {
+    account: { id: 5, name: 'AlfaPro Ozon', marketplace: 'ozon' },
+    draft: null,
+    attributes: [],
+    schema: null,
+    pricing: null,
+    autofill: {
+      status: 'not_started',
+      updated_at: null,
+      moderated_at: null,
+      applied_count: 0,
+      preserved_count: 0,
+      fields: {},
+      recommendations: [],
+    },
+    preflight: { ready: true, errors: [], recommendations: [] },
+    publication: {
+      write_enabled: true,
+      status: 'local_draft',
+      provider_product_id: null,
+      provider_sku: null,
+      provider_status: '',
+      moderation_status: '',
+      provider_errors: [],
+      last_provider_sync_at: null,
+      latest_operation: state,
+    },
+  };
+}
+
+test('blocks duplicate Ozon send while an outcome is active or unknown', () => {
+  const unknown = publicationPreparation({
+    id: 'operation-1',
+    kind: 'product_import',
+    state: 'outcome_unknown',
+    provider_task_id: null,
+    errors: [],
+    attempt_count: 1,
+    retry_after_at: null,
+    completed_at: null,
+    created_at: '2026-09-02T10:00:00Z',
+    updated_at: '2026-09-02T10:00:01Z',
+  });
+
+  assert.equal(ozonPublicationDisabled(unknown), true);
+  assert.match(ozonPublicationMessage(unknown), /Не отправляйте повторно/);
+  assert.equal(ozonPublicationDisabled(publicationPreparation(null)), false);
 });

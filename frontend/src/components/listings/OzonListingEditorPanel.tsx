@@ -12,6 +12,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SheetHeader } from '@/components/ui/sheet';
 import type { OzonOfferPreparation } from '@/lib/ozon-offer-preparation';
+import {
+  ozonPublicationDisabled,
+  ozonPublicationMessage,
+} from '@/lib/ozon-offer-preparation';
 
 export interface OzonEditorProduct {
   id: number;
@@ -46,10 +50,11 @@ interface Props {
   preparation: OzonOfferPreparation | null;
   images: OzonEditorImage[];
   preparationRef: RefObject<OzonOfferPreparationCardHandle | null>;
-  footerAction: 'save' | 'regenerate' | null;
+  footerAction: 'save' | 'regenerate' | 'publish' | null;
   onPreparationChange: (preparation: OzonOfferPreparation | null) => void;
   onSave: () => void;
   onRegenerate: () => void;
+  onPublish: () => void;
 }
 
 function rubles(value: string): string {
@@ -75,6 +80,7 @@ export function OzonListingEditorPanel({
   onPreparationChange,
   onSave,
   onRegenerate,
+  onPublish,
 }: Props) {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const activeImage = images[activeImageIndex] ?? null;
@@ -195,9 +201,16 @@ export function OzonListingEditorPanel({
             : <Save className="mr-2 h-4 w-4" />}
           {footerAction === 'save' ? 'Проверяем и сохраняем...' : 'Проверить и сохранить'}
         </Button>
-        <Button type="button" className="w-full" disabled>
-          <Send className="mr-2 h-4 w-4" />
-          Отправить в Ozon
+        <Button
+          type="button"
+          className="w-full"
+          onClick={onPublish}
+          disabled={footerAction !== null || ozonPublicationDisabled(preparation)}
+        >
+          {footerAction === 'publish'
+            ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            : <Send className="mr-2 h-4 w-4" />}
+          {footerAction === 'publish' ? 'Отправляем безопасно...' : 'Отправить в Ozon'}
         </Button>
         <p className={`rounded-md border p-2.5 text-xs ${
           preparation?.preflight.ready
@@ -205,9 +218,7 @@ export function OzonListingEditorPanel({
             : 'border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100'
         }`}
         >
-          {preparation?.preflight.ready
-            ? 'Карточка готова. Отправка станет доступна на этапе подключения безопасной публикации через Ozon Seller API.'
-            : `Сначала исправьте обязательные поля: ${preparation?.preflight.errors.length ?? 0}. Затем MAP разрешит отправку, когда будет подключена публикация Ozon.`}
+          {ozonPublicationMessage(preparation)}
         </p>
         <Button
           type="button"
