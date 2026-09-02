@@ -232,6 +232,8 @@ def test_create_ozon_account_encrypts_api_key_and_returns_safe_profile():
         'selected_warehouse_id': 'warehouse-1',
         'selected_warehouse_name': 'Основной склад',
         'last_checked_at': body['ozon_profile']['last_checked_at'],
+        'commerce_auto_sync_enabled': False,
+        'orders_auto_sync_enabled': False,
     }
     assert 'api_key' not in body
     assert 'client_id' not in body

@@ -52,6 +52,38 @@ export interface OzonAutofillState {
   recommendations: OzonAutofillRecommendation[];
 }
 
+export type OzonOperationState =
+  | 'queued'
+  | 'sending'
+  | 'outcome_unknown'
+  | 'reconciling'
+  | 'succeeded'
+  | 'partial'
+  | 'failed'
+  | 'manual_review';
+
+export interface OzonOperationPresentation {
+  id: string;
+  kind: string;
+  state: OzonOperationState;
+  provider_task_id: string | null;
+  errors: Array<{
+    code: string;
+    message: string;
+    provider_code?: string;
+    field?: string;
+    attribute_id?: number | null;
+  }>;
+  attempt_count: number;
+  reconcile_count: number;
+  last_reconciled_at: string | null;
+  next_reconcile_at: string | null;
+  retry_after_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface OzonOfferPreparation {
   account: { id: number; name: string; marketplace: 'ozon' };
   draft: null | {
@@ -91,6 +123,98 @@ export interface OzonOfferPreparation {
     errors: OzonPreflightIssue[];
     recommendations: OzonPreflightIssue[];
   };
+  publication: {
+    write_enabled: boolean;
+    status: string;
+    provider_product_id: number | null;
+    provider_sku: number | null;
+    provider_status: string;
+    moderation_status: string;
+    provider_errors: Array<{ code?: string; message?: string }>;
+    last_provider_sync_at: string | null;
+    latest_operation: OzonOperationPresentation | null;
+  };
+  commerce: {
+    can_sync: boolean;
+    desired_price: string | null;
+    desired_stock: number;
+    warehouse_id: string;
+    warehouse_name: string;
+    last_synced_price: string | null;
+    last_price_sync_at: string | null;
+    last_synced_stock: number | null;
+    last_stock_sync_at: string | null;
+    last_stock_warehouse_id: string;
+    price_operation: OzonOperationPresentation | null;
+    stock_operation: OzonOperationPresentation | null;
+  };
+}
+
+const ACTIVE_OZON_OPERATION_STATES = new Set<OzonOperationState>([
+  'queued',
+  'sending',
+  'outcome_unknown',
+  'reconciling',
+]);
+
+export function ozonPublicationDisabled(preparation: OzonOfferPreparation | null): boolean {
+  if (!preparation?.preflight.ready || !preparation.publication.write_enabled) return true;
+  const state = preparation.publication.latest_operation?.state;
+  return state
+    ? ACTIVE_OZON_OPERATION_STATES.has(state) || ['partial', 'manual_review'].includes(state)
+    : false;
+}
+
+export function ozonCanReconcile(preparation: OzonOfferPreparation | null): boolean {
+  const state = preparation?.publication.latest_operation?.state;
+  return state ? ACTIVE_OZON_OPERATION_STATES.has(state) : false;
+}
+
+export function ozonPublicationActionLabel(preparation: OzonOfferPreparation | null): string {
+  const state = preparation?.publication.latest_operation?.state;
+  if (state === 'failed') return 'Исправил, отправить повторно';
+  if (state === 'succeeded') return 'Отправить обновление в Ozon';
+  return 'Отправить в Ozon';
+}
+
+export function ozonPublicationStatusLabel(preparation: OzonOfferPreparation | null): string {
+  const state = preparation?.publication.latest_operation?.state;
+  if (!state) return 'Не отправлялась';
+  if (state === 'queued' || state === 'sending') return 'Отправляется';
+  if (state === 'outcome_unknown') return 'Ответ нужно сверить';
+  if (state === 'reconciling') return 'Проверяется в Ozon';
+  if (state === 'succeeded') return 'Опубликована';
+  if (state === 'failed') return 'Ozon отклонил карточку';
+  return 'Нужна ручная проверка';
+}
+
+export function ozonPublicationMessage(preparation: OzonOfferPreparation | null): string {
+  if (!preparation) return 'Откройте и подготовьте карточку Ozon.';
+  if (!preparation.preflight.ready) {
+    return `Сначала исправьте обязательные поля: ${preparation.preflight.errors.length}.`;
+  }
+  if (!preparation.publication.write_enabled) {
+    return 'Карточка готова, но отправка для этого кабинета пока закрыта безопасным rollout.';
+  }
+  const operation = preparation.publication.latest_operation;
+  if (!operation) return 'Карточка готова к ручной отправке в Ozon.';
+  if (operation.state === 'outcome_unknown') {
+    return 'Ozon мог получить карточку. Не отправляйте повторно — MAP сначала сверит результат.';
+  }
+  if (operation.state === 'reconciling') {
+    return `Ozon принял задачу ${operation.provider_task_id ?? ''}. MAP ожидает результат проверки.`;
+  }
+  if (operation.state === 'sending' || operation.state === 'queued') {
+    return 'Отправка уже выполняется. Повторный запрос не нужен.';
+  }
+  if (operation.state === 'succeeded') return 'Карточка опубликована и сверена с Ozon.';
+  if (operation.state === 'partial' || operation.state === 'manual_review') {
+    return 'Нужна ручная проверка результата Ozon перед повторной отправкой.';
+  }
+  if (operation.state === 'failed') {
+    return operation.errors[0]?.message ?? 'Ozon отклонил отправку. Исправьте ошибку и повторите.';
+  }
+  return 'Карточка готова к ручной отправке в Ozon.';
 }
 
 export function ozonAttributeIdentity(attribute: Pick<OzonOfferAttribute, 'id' | 'complex_id'>) {

@@ -46,7 +46,7 @@ class OzonConnectionSnapshot:
 
 
 class OzonSellerClient:
-    """Bounded read-only client for Ozon account and catalog metadata."""
+    """Bounded Ozon client; mutations are exposed as explicit methods."""
 
     def __init__(
         self,
@@ -264,6 +264,117 @@ class OzonSellerClient:
             )
         return result
 
+    def import_products(self, items: list[dict[str, Any]]) -> str:
+        """Create/update at most 100 products and return the provider task ID."""
+
+        if not items or len(items) > 100:
+            raise ValueError('Ozon product import accepts from 1 to 100 items.')
+        payload = self._post('/v3/product/import', {'items': items})
+        result = payload.get('result')
+        task_id = payload.get('task_id')
+        if task_id is None and isinstance(result, Mapping):
+            task_id = result.get('task_id')
+        task_id = str(task_id or '').strip()
+        if not task_id or len(task_id) > 100:
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon не вернул идентификатор задачи импорта.',
+            )
+        return task_id
+
+    def get_product_import_info(self, task_id: str) -> dict[str, Any]:
+        """Return one bounded import-task result for reconciliation."""
+
+        normalized_task_id = str(task_id or '').strip()
+        if not normalized_task_id or len(normalized_task_id) > 100:
+            raise ValueError('A valid Ozon import task ID is required.')
+        payload = self._post('/v1/product/import/info', {'task_id': normalized_task_id})
+        result = payload.get('result')
+        if not isinstance(result, Mapping):
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректный результат импорта товара.',
+            )
+        items = result.get('items')
+        if not isinstance(items, list) or len(items) > 100:
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректный список результатов импорта.',
+            )
+        return dict(result)
+
+    def get_product_info_by_offer_id(self, offer_id: str) -> dict[str, Any] | None:
+        """Read the exact account-scoped offer projection from Ozon."""
+
+        normalized_offer_id = str(offer_id or '').strip()
+        if not normalized_offer_id or len(normalized_offer_id) > 100:
+            raise ValueError('A valid Ozon offer ID is required.')
+        payload = self._post('/v3/product/info/list', {
+            'offer_id': [normalized_offer_id],
+            'product_id': [],
+            'sku': [],
+        })
+        result = payload.get('result')
+        items = payload.get('items')
+        if items is None and isinstance(result, Mapping):
+            items = result.get('items')
+        if not isinstance(items, list) or len(items) > 100:
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректный список товаров.',
+            )
+        matches = [
+            dict(item)
+            for item in items
+            if isinstance(item, Mapping)
+            and str(item.get('offer_id') or '').strip() == normalized_offer_id
+        ]
+        if len(matches) > 1:
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул несколько товаров для одного Offer ID.',
+            )
+        return matches[0] if matches else None
+
+    def update_prices(self, prices: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Update up to 100 prices and return the bounded item results."""
+
+        if not prices or len(prices) > 100:
+            raise ValueError('Ozon price update accepts from 1 to 100 items.')
+        payload = self._post('/v1/product/import/prices', {'prices': prices})
+        return _result_items(payload, label='цен')
+
+    def update_stocks(self, stocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Update up to 100 FBS stock rows and return bounded item results."""
+
+        if not stocks or len(stocks) > 100:
+            raise ValueError('Ozon stock update accepts from 1 to 100 items.')
+        payload = self._post('/v2/products/stocks', {'stocks': stocks})
+        return _result_items(payload, label='остатков')
+
+    def list_fbs_postings(
+        self, *, since: str, to: str, limit: int = 100, offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        """Read one bounded page of FBS postings without customer PII expansion."""
+        if limit < 1 or limit > 100 or offset < 0 or offset > 10_000:
+            raise ValueError('Invalid Ozon FBS page bounds.')
+        payload = self._post('/v3/posting/fbs/list', {
+            'dir': 'ASC',
+            'filter': {'since': since, 'to': to},
+            'limit': limit,
+            'offset': offset,
+            'with': {'analytics_data': False, 'barcodes': False, 'financial_data': False},
+        })
+        result = payload.get('result')
+        if not isinstance(result, Mapping):
+            raise OzonAPIError('invalid_response', 'Ozon вернул некорректный список FBS-заказов.')
+        postings = result.get('postings')
+        if not isinstance(postings, list) or len(postings) > limit:
+            raise OzonAPIError('invalid_response', 'Ozon вернул некорректный список FBS-заказов.')
+        if any(not isinstance(item, Mapping) for item in postings):
+            raise OzonAPIError('invalid_response', 'Ozon вернул некорректный FBS-заказ.')
+        return [dict(item) for item in postings], bool(result.get('has_next'))
+
     def _post(
         self,
         path: str,
@@ -312,7 +423,7 @@ class OzonSellerClient:
         if status_code < 200 or status_code >= 300:
             raise OzonAPIError(
                 'request_rejected',
-                'Ozon отклонил read-only запрос.',
+                'Ozon отклонил запрос.',
             )
         try:
             data = response.json()
@@ -331,6 +442,18 @@ class OzonSellerClient:
 
 def _mapping(value: Any) -> Mapping[str, Any]:
     return value if isinstance(value, Mapping) else {}
+
+
+def _result_items(payload: Mapping[str, Any], *, label: str) -> list[dict[str, Any]]:
+    raw_items = payload.get('result')
+    if isinstance(raw_items, Mapping):
+        raw_items = raw_items.get('items')
+    if not isinstance(raw_items, list) or len(raw_items) > 100:
+        raise OzonAPIError(
+            'invalid_response',
+            f'Ozon вернул некорректный результат обновления {label}.',
+        )
+    return [dict(item) for item in raw_items if isinstance(item, Mapping)]
 
 
 def _first_text(value: Mapping[str, Any], *keys: str) -> str:

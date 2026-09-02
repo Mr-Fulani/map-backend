@@ -200,6 +200,42 @@ def test_catalog_methods_use_only_read_only_description_category_endpoints():
     }
 
 
+@override_settings(OZON_API_RESPONSE_MAX_BYTES=100_000, OZON_API_TIMEOUT_SECONDS=2)
+def test_commerce_methods_use_exact_price_and_stock_contracts():
+    session = FakeSession([
+        FakeResponse(200, {'result': [{'offer_id': 'map-1', 'updated': True}]}),
+        FakeResponse(200, {'result': [{'offer_id': 'map-1', 'warehouse_id': 42, 'updated': True}]}),
+    ])
+    client = OzonSellerClient(client_id='cid', api_key='key', session=session)
+    price = {'offer_id': 'map-1', 'product_id': 7, 'price': '1000.00'}
+    stock = {'offer_id': 'map-1', 'product_id': 7, 'warehouse_id': 42, 'stock': 2}
+
+    assert client.update_prices([price])[0]['updated'] is True
+    assert client.update_stocks([stock])[0]['updated'] is True
+    assert session.calls[0][0].endswith('/v1/product/import/prices')
+    assert session.calls[0][1]['json'] == {'prices': [price]}
+    assert session.calls[1][0].endswith('/v2/products/stocks')
+    assert session.calls[1][1]['json'] == {'stocks': [stock]}
+
+
+@override_settings(OZON_API_RESPONSE_MAX_BYTES=100_000, OZON_API_TIMEOUT_SECONDS=2)
+def test_fbs_order_list_uses_bounded_read_contract():
+    session = FakeSession([FakeResponse(200, {'result': {
+        'postings': [{'posting_number': '1'}], 'has_next': False,
+    }})])
+    client = OzonSellerClient(client_id='cid', api_key='key', session=session)
+    postings, has_next = client.list_fbs_postings(
+        since='2026-09-01T00:00:00+00:00', to='2026-09-02T00:00:00+00:00',
+    )
+    assert postings == [{'posting_number': '1'}]
+    assert has_next is False
+    assert session.calls[0][0].endswith('/v3/posting/fbs/list')
+    assert session.calls[0][1]['json']['limit'] == 100
+    assert session.calls[0][1]['json']['with'] == {
+        'analytics_data': False, 'barcodes': False, 'financial_data': False,
+    }
+
+
 @override_settings(
     OZON_API_RESPONSE_MAX_BYTES=100_000,
     OZON_CATALOG_RESPONSE_MAX_BYTES=250_000,
@@ -219,6 +255,93 @@ def test_catalog_methods_reject_non_list_results():
         ).get_description_category_tree()
 
     assert raised.value.code == 'invalid_response'
+
+
+@override_settings(
+    OZON_API_RESPONSE_MAX_BYTES=100_000,
+    OZON_API_MAX_PAGES=3,
+    OZON_API_TIMEOUT_SECONDS=2,
+)
+def test_product_import_uses_current_endpoint_and_returns_task_id():
+    session = FakeSession([FakeResponse(200, {'result': {'task_id': 731}})])
+    item = {'offer_id': 'map-offer-1', 'name': 'Тестовый товар'}
+
+    task_id = OzonSellerClient(
+        client_id='cid', api_key='secret', session=session,
+    ).import_products([item])
+
+    assert task_id == '731'
+    assert session.calls[0][0] == 'https://api-seller.ozon.ru/v3/product/import'
+    assert session.calls[0][1]['json'] == {'items': [item]}
+
+
+def test_product_import_rejects_empty_or_oversized_local_batches():
+    client = OzonSellerClient(client_id='cid', api_key='secret', session=FakeSession([]))
+
+    with pytest.raises(ValueError, match='1 to 100'):
+        client.import_products([])
+    with pytest.raises(ValueError, match='1 to 100'):
+        client.import_products([{'offer_id': str(index)} for index in range(101)])
+
+
+@override_settings(
+    OZON_API_RESPONSE_MAX_BYTES=100_000,
+    OZON_API_MAX_PAGES=3,
+    OZON_API_TIMEOUT_SECONDS=2,
+)
+def test_product_reconciliation_reads_task_and_exact_offer_projection():
+    session = FakeSession([
+        FakeResponse(200, {'result': {
+            'items': [{'offer_id': 'map-1', 'status': 'imported', 'errors': []}],
+        }}),
+        FakeResponse(200, {'items': [{
+            'id': 77,
+            'offer_id': 'map-1',
+            'statuses': {'moderate_status': 'approved'},
+        }]}),
+    ])
+    client = OzonSellerClient(client_id='cid', api_key='secret', session=session)
+
+    task = client.get_product_import_info('task-1')
+    product = client.get_product_info_by_offer_id('map-1')
+
+    assert task['items'][0]['status'] == 'imported'
+    assert product and product['id'] == 77
+    assert [call[0] for call in session.calls] == [
+        'https://api-seller.ozon.ru/v1/product/import/info',
+        'https://api-seller.ozon.ru/v3/product/info/list',
+    ]
+    assert session.calls[0][1]['json'] == {'task_id': 'task-1'}
+    assert session.calls[1][1]['json'] == {
+        'offer_id': ['map-1'],
+        'product_id': [],
+        'sku': [],
+    }
+
+
+@override_settings(
+    OZON_API_RESPONSE_MAX_BYTES=100_000,
+    OZON_API_MAX_PAGES=3,
+    OZON_API_TIMEOUT_SECONDS=2,
+)
+def test_product_projection_requires_one_exact_offer_match():
+    missing = OzonSellerClient(
+        client_id='cid',
+        api_key='secret',
+        session=FakeSession([FakeResponse(200, {'items': []})]),
+    )
+    duplicate = OzonSellerClient(
+        client_id='cid',
+        api_key='secret',
+        session=FakeSession([FakeResponse(200, {'items': [
+            {'offer_id': 'map-1'},
+            {'offer_id': 'map-1'},
+        ]})]),
+    )
+
+    assert missing.get_product_info_by_offer_id('map-1') is None
+    with pytest.raises(OzonAPIError, match='несколько товаров'):
+        duplicate.get_product_info_by_offer_id('map-1')
 
 
 @override_settings(

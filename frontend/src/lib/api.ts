@@ -1121,6 +1121,29 @@ export const productApi = {
     api.patch(`/products/${id}/ozon-offer/`, data),
   autofillOzonOffer: (id: number, accountId: number) =>
     api.post(`/products/${id}/ozon-offer/`, { account_id: accountId }),
+  publishOzonOffer: (id: number, accountId: number, idempotencyKey: string) =>
+    api.post(`/products/${id}/ozon-offer/publish/`, {
+      account_id: accountId,
+      idempotency_key: idempotencyKey,
+    }),
+  reconcileOzonOffer: (id: number, accountId: number) =>
+    api.post(`/products/${id}/ozon-offer/reconcile/`, { account_id: accountId }),
+  syncOzonCommerce: (id: number, accountId: number, idempotencyKey: string) =>
+    api.post(`/products/${id}/ozon-offer/sync-commerce/`, {
+      account_id: accountId,
+      idempotency_key: idempotencyKey,
+    }),
+  bulkOzonOffers: (
+    accountId: number,
+    productIds: number[],
+    action: 'publish' | 'sync_commerce',
+    idempotencyKey: string,
+  ) => api.post('/products/ozon-offers/bulk/', {
+    account_id: accountId,
+    product_ids: productIds,
+    action,
+    idempotency_key: idempotencyKey,
+  }),
   brandOptions: (productId: number, q = '') =>
     api.get('/products/brand-options/', { params: { product_id: productId, q } }),
   publish: (id: number, accountIds: number[]) => (
@@ -1256,6 +1279,12 @@ export const accountApi = {
   patch: (id: number, data: Record<string, unknown>) => api.patch(`/accounts/${id}/`, data),
   delete: (id: number) => api.delete(`/accounts/${id}/`),
   checkAutoload: (id: number) => api.get(`/accounts/${id}/autoload-status/`),
+  getOzonFbsOrders: (id: number) => api.get(`/accounts/${id}/ozon-fbs-orders/`),
+  syncOzonFbsOrders: (id: number) => api.post(`/accounts/${id}/ozon-fbs-orders/`, {}),
+  updateOzonAutomation: (
+    id: number,
+    data: { commerce_auto_sync_enabled?: boolean; orders_auto_sync_enabled?: boolean },
+  ) => api.patch(`/accounts/${id}/ozon-automation/`, data),
   retryAutoload: (id: number) => api.post(`/accounts/${id}/autoload-status/`),
   listPlacementAddresses: (params?: Record<string, unknown>) =>
     api.get('/accounts/placement-addresses/', { params }),

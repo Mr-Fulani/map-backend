@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useState, type RefObject } from 'react';
-import { Images, Loader2, Pencil, RefreshCw, Save, Send } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Images, Loader2, Pencil, RefreshCw, Save, Send, Warehouse } from 'lucide-react';
 
 import {
   OzonOfferPreparationCard,
@@ -12,6 +12,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { SheetHeader } from '@/components/ui/sheet';
 import type { OzonOfferPreparation } from '@/lib/ozon-offer-preparation';
+import {
+  ozonCanReconcile,
+  ozonPublicationActionLabel,
+  ozonPublicationDisabled,
+  ozonPublicationMessage,
+  ozonPublicationStatusLabel,
+} from '@/lib/ozon-offer-preparation';
 
 export interface OzonEditorProduct {
   id: number;
@@ -46,10 +53,13 @@ interface Props {
   preparation: OzonOfferPreparation | null;
   images: OzonEditorImage[];
   preparationRef: RefObject<OzonOfferPreparationCardHandle | null>;
-  footerAction: 'save' | 'regenerate' | null;
+  footerAction: 'save' | 'regenerate' | 'publish' | 'reconcile' | 'commerce' | null;
   onPreparationChange: (preparation: OzonOfferPreparation | null) => void;
   onSave: () => void;
   onRegenerate: () => void;
+  onPublish: () => void;
+  onReconcile: () => void;
+  onSyncCommerce: () => void;
 }
 
 function rubles(value: string): string {
@@ -75,6 +85,9 @@ export function OzonListingEditorPanel({
   onPreparationChange,
   onSave,
   onRegenerate,
+  onPublish,
+  onReconcile,
+  onSyncCommerce,
 }: Props) {
   const [activeImageIndex, setActiveImageIndex] = useState(0);
   const activeImage = images[activeImageIndex] ?? null;
@@ -148,6 +161,70 @@ export function OzonListingEditorPanel({
         характеристики сохраняются отдельно и не меняют объявление Avito.
       </div>
 
+      {preparation?.publication.latest_operation && (
+        <div className={`rounded-lg border p-3 ${
+          preparation.publication.latest_operation.state === 'succeeded'
+            ? 'border-emerald-500/30 bg-emerald-500/5'
+            : preparation.publication.latest_operation.state === 'failed'
+              ? 'border-destructive/40 bg-destructive/5'
+              : 'border-blue-500/30 bg-blue-500/5'
+        }`}
+        >
+          <div className="flex items-start gap-2">
+            {preparation.publication.latest_operation.state === 'succeeded'
+              ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+              : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />}
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                {ozonPublicationStatusLabel(preparation)}
+              </p>
+              {preparation.publication.provider_status && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Статус Ozon: {preparation.publication.provider_status}
+                  {preparation.publication.moderation_status
+                    ? ` · Модерация: ${preparation.publication.moderation_status}`
+                    : ''}
+                </p>
+              )}
+              {preparation.publication.latest_operation.errors.map((error, index) => (
+                <div
+                  key={`${error.code}:${error.attribute_id ?? ''}:${index}`}
+                  className="mt-2 rounded-md border bg-background p-2 text-xs"
+                >
+                  <p className="font-medium text-destructive">{error.message}</p>
+                  {(error.field || error.attribute_id || error.provider_code) && (
+                    <p className="mt-1 text-muted-foreground">
+                      {[
+                        error.field,
+                        error.attribute_id ? `характеристика ${error.attribute_id}` : '',
+                        error.provider_code,
+                      ].filter(Boolean).join(' · ')}
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+          {ozonCanReconcile(preparation) && (
+            <Button
+              type="button"
+              variant="outline"
+              className="mt-3 w-full"
+              onClick={onReconcile}
+              disabled={footerAction !== null}
+            >
+              <RefreshCw className={`mr-2 h-4 w-4 ${
+                footerAction === 'reconcile' ? 'animate-spin' : ''
+              }`}
+              />
+              {footerAction === 'reconcile'
+                ? 'Проверяем в Ozon...'
+                : 'Проверить статус в Ozon'}
+            </Button>
+          )}
+        </div>
+      )}
+
       <OzonOfferPreparationCard
         ref={preparationRef}
         key={`${product.id}:${account.id}`}
@@ -157,6 +234,51 @@ export function OzonListingEditorPanel({
         showAccountSelector={false}
         embedded
       />
+
+      {preparation?.publication.status === 'published' && (
+        <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 p-4">
+          <div className="flex items-start gap-2">
+            <Warehouse className="mt-0.5 h-4 w-4 text-violet-600" />
+            <div>
+              <p className="text-sm font-medium">Цена и остаток Ozon</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Склад: {preparation.commerce.warehouse_name || preparation.commerce.warehouse_id || 'не выбран'}
+              </p>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+            <div className="rounded-md border bg-background p-2">
+              <p className="text-muted-foreground">Цена MAP</p>
+              <p className="mt-1 font-medium">{preparation.commerce.desired_price ? rubles(preparation.commerce.desired_price) : '—'}</p>
+              <p className="mt-1 text-muted-foreground">В Ozon: {preparation.commerce.last_synced_price ? rubles(preparation.commerce.last_synced_price) : 'не подтверждена'}</p>
+            </div>
+            <div className="rounded-md border bg-background p-2">
+              <p className="text-muted-foreground">Остаток MAP</p>
+              <p className="mt-1 font-medium">{preparation.commerce.desired_stock} шт.</p>
+              <p className="mt-1 text-muted-foreground">В Ozon: {preparation.commerce.last_synced_stock ?? 'не подтверждён'}</p>
+            </div>
+          </div>
+          {[preparation.commerce.price_operation, preparation.commerce.stock_operation]
+            .filter((operation) => operation && ['failed', 'manual_review', 'outcome_unknown'].includes(operation.state))
+            .map((operation) => (
+              <p key={operation!.id} className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-xs">
+                {operation!.errors[0]?.message || 'Результат Ozon требует ручной проверки.'}
+              </p>
+            ))}
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 w-full"
+            onClick={onSyncCommerce}
+            disabled={footerAction !== null || !preparation.commerce.can_sync}
+          >
+            {footerAction === 'commerce'
+              ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              : <RefreshCw className="mr-2 h-4 w-4" />}
+            {footerAction === 'commerce' ? 'Синхронизируем...' : 'Синхронизировать цену и остаток'}
+          </Button>
+        </div>
+      )}
 
       <details className="rounded-lg border bg-muted/20 p-3">
         <summary className="cursor-pointer text-sm font-medium">Общие данные после обогащения</summary>
@@ -195,9 +317,18 @@ export function OzonListingEditorPanel({
             : <Save className="mr-2 h-4 w-4" />}
           {footerAction === 'save' ? 'Проверяем и сохраняем...' : 'Проверить и сохранить'}
         </Button>
-        <Button type="button" className="w-full" disabled>
-          <Send className="mr-2 h-4 w-4" />
-          Отправить в Ozon
+        <Button
+          type="button"
+          className="w-full"
+          onClick={onPublish}
+          disabled={footerAction !== null || ozonPublicationDisabled(preparation)}
+        >
+          {footerAction === 'publish'
+            ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            : <Send className="mr-2 h-4 w-4" />}
+          {footerAction === 'publish'
+            ? 'Отправляем безопасно...'
+            : ozonPublicationActionLabel(preparation)}
         </Button>
         <p className={`rounded-md border p-2.5 text-xs ${
           preparation?.preflight.ready
@@ -205,9 +336,7 @@ export function OzonListingEditorPanel({
             : 'border-amber-500/40 bg-amber-500/10 text-amber-950 dark:text-amber-100'
         }`}
         >
-          {preparation?.preflight.ready
-            ? 'Карточка готова. Отправка станет доступна на этапе подключения безопасной публикации через Ozon Seller API.'
-            : `Сначала исправьте обязательные поля: ${preparation?.preflight.errors.length ?? 0}. Затем MAP разрешит отправку, когда будет подключена публикация Ozon.`}
+          {ozonPublicationMessage(preparation)}
         </p>
         <Button
           type="button"

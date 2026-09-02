@@ -15,6 +15,7 @@ from apps.marketplaces.ozon_catalog_views import (
     OzonCatalogTypesView,
     OzonCatalogView,
 )
+from apps.marketplaces.ozon_order_views import OzonAutomationView, OzonFbsOrdersView
 
 urlpatterns = [
     path('', MarketplaceAccountListView.as_view(), name='account-list'),
@@ -30,6 +31,8 @@ urlpatterns = [
         name='placement-address-detail',
     ),
     path('<int:pk>/', MarketplaceAccountDetailView.as_view(), name='account-detail'),
+    path('<int:pk>/ozon-fbs-orders/', OzonFbsOrdersView.as_view(), name='account-ozon-fbs-orders'),
+    path('<int:pk>/ozon-automation/', OzonAutomationView.as_view(), name='account-ozon-automation'),
     path(
         '<int:pk>/ozon-catalog/',
         OzonCatalogView.as_view(),

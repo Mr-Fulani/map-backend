@@ -466,6 +466,7 @@ CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
 # Единственный источник расписания — management command setup_periodic_tasks.
 # Смешивание beat_schedule и DatabaseScheduler создавало дубли одних и тех же задач.
 CELERY_BEAT_SCHEDULE: dict[str, dict] = {}
+CELERY_IMPORTS = ('apps.marketplaces.ozon_tasks',)
 CELERY_TASK_TRACK_STARTED = True
 CELERY_TASK_TIME_LIMIT = 3600
 CELERY_TASK_SOFT_TIME_LIMIT = 3300

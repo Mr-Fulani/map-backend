@@ -5,8 +5,15 @@ import {
   isOzonBooleanAttribute,
   ozonAttributesValidationErrors,
   ozonAttributesPayload,
+  ozonCanReconcile,
+  ozonPublicationActionLabel,
+  ozonPublicationDisabled,
+  ozonPublicationMessage,
+  ozonPublicationStatusLabel,
   replaceOzonAttributeValue,
   type OzonOfferAttribute,
+  type OzonOfferPreparation,
+  type OzonOperationPresentation,
 } from '../src/lib/ozon-offer-preparation';
 
 
@@ -98,4 +105,91 @@ test('recognizes boolean Ozon attributes and rejects arbitrary text', () => {
     complex_id: 0,
     values: [{ value: 'false', dictionary_value_id: 0 }],
   }]);
+});
+
+function publicationPreparation(
+  state: OzonOperationPresentation | null,
+): OzonOfferPreparation {
+  return {
+    account: { id: 5, name: 'AlfaPro Ozon', marketplace: 'ozon' },
+    draft: null,
+    attributes: [],
+    schema: null,
+    pricing: null,
+    autofill: {
+      status: 'not_started',
+      updated_at: null,
+      moderated_at: null,
+      applied_count: 0,
+      preserved_count: 0,
+      fields: {},
+      recommendations: [],
+    },
+    preflight: { ready: true, errors: [], recommendations: [] },
+    publication: {
+      write_enabled: true,
+      status: 'local_draft',
+      provider_product_id: null,
+      provider_sku: null,
+      provider_status: '',
+      moderation_status: '',
+      provider_errors: [],
+      last_provider_sync_at: null,
+      latest_operation: state,
+    },
+    commerce: {
+      can_sync: false, desired_price: null, desired_stock: 0,
+      warehouse_id: '', warehouse_name: '', last_synced_price: null,
+      last_price_sync_at: null, last_synced_stock: null, last_stock_sync_at: null,
+      last_stock_warehouse_id: '', price_operation: null, stock_operation: null,
+    },
+  };
+}
+
+test('blocks duplicate Ozon send while an outcome is active or unknown', () => {
+  const unknown = publicationPreparation({
+    id: 'operation-1',
+    kind: 'product_import',
+    state: 'outcome_unknown',
+    provider_task_id: null,
+    errors: [],
+    attempt_count: 1,
+    reconcile_count: 0,
+    last_reconciled_at: null,
+    next_reconcile_at: null,
+    retry_after_at: null,
+    completed_at: null,
+    created_at: '2026-09-02T10:00:00Z',
+    updated_at: '2026-09-02T10:00:01Z',
+  });
+
+  assert.equal(ozonPublicationDisabled(unknown), true);
+  assert.equal(ozonCanReconcile(unknown), true);
+  assert.equal(ozonPublicationStatusLabel(unknown), 'Ответ нужно сверить');
+  assert.match(ozonPublicationMessage(unknown), /Не отправляйте повторно/);
+  assert.equal(ozonPublicationDisabled(publicationPreparation(null)), false);
+});
+
+test('Ozon retry copy is explicit only after a terminal rejection', () => {
+  const failed = publicationPreparation({
+    id: 'operation-2',
+    kind: 'product_import',
+    state: 'failed',
+    provider_task_id: 'task-2',
+    errors: [{ code: 'import_failed', message: 'Исправьте обязательное поле.' }],
+    attempt_count: 1,
+    reconcile_count: 1,
+    last_reconciled_at: '2026-09-02T10:01:00Z',
+    next_reconcile_at: null,
+    retry_after_at: null,
+    completed_at: '2026-09-02T10:01:00Z',
+    created_at: '2026-09-02T10:00:00Z',
+    updated_at: '2026-09-02T10:01:00Z',
+  });
+
+  assert.equal(ozonCanReconcile(failed), false);
+  assert.equal(ozonPublicationDisabled(failed), false);
+  assert.equal(ozonPublicationStatusLabel(failed), 'Ozon отклонил карточку');
+  assert.equal(ozonPublicationActionLabel(failed), 'Исправил, отправить повторно');
+  assert.equal(ozonPublicationMessage(failed), 'Исправьте обязательное поле.');
 });

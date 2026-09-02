@@ -371,8 +371,17 @@ def _preflight(
             'После применения наценки цена Ozon должна быть больше нуля. '
             'Исправьте цену в карточке или наценку категории выбранного кабинета.',
         ))
-    if not product.images.exclude(status=ProductImage.Status.REJECTED).exists():
-        errors.append(_issue('image_missing', 'images', 'Фотографии', 'Добавьте хотя бы одну фотографию.'))
+    if not product.images.filter(status__in=(
+        ProductImage.Status.AUTO_APPROVED,
+        ProductImage.Status.MANUALLY_SET,
+        ProductImage.Status.IMPORTED,
+    )).exists():
+        errors.append(_issue(
+            'image_missing',
+            'images',
+            'Фотографии',
+            'Добавьте или одобрите хотя бы одну фотографию.',
+        ))
     if not (product.description_ai or '').strip():
         recommendations.append(_issue(
             'description_recommended', 'description', 'Описание',
@@ -398,6 +407,14 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
         draft.type_id if draft else None,
     )
     pricing = _offer_pricing(product, account, draft)
+    from apps.marketplaces.ozon_publication import (
+        latest_offer_operation,
+        operation_presentation,
+    )
+    from apps.marketplaces.ozon_rollout import ozon_product_write_enabled_for_account
+
+    latest_operation = latest_offer_operation(draft)
+    from apps.marketplaces.ozon_commerce import commerce_presentation
     return {
         'account': {'id': account.pk, 'name': account.name, 'marketplace': 'ozon'},
         'draft': None if draft is None else {
@@ -429,6 +446,20 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
         'pricing': pricing,
         'autofill': _autofill_presentation(draft),
         'preflight': _preflight(product, account, draft, schema, pricing),
+        'publication': {
+            'write_enabled': ozon_product_write_enabled_for_account(account),
+            'status': draft.publication_status if draft is not None else 'not_prepared',
+            'provider_product_id': draft.provider_product_id if draft is not None else None,
+            'provider_sku': draft.provider_sku if draft is not None else None,
+            'provider_status': draft.provider_status if draft is not None else '',
+            'moderation_status': draft.moderation_status if draft is not None else '',
+            'provider_errors': draft.provider_errors if draft is not None else [],
+            'last_provider_sync_at': (
+                draft.last_provider_sync_at if draft is not None else None
+            ),
+            'latest_operation': operation_presentation(latest_operation),
+        },
+        'commerce': commerce_presentation(product, account, draft, pricing),
     }
 
 

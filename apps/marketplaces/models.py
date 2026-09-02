@@ -390,6 +390,22 @@ class OzonAccountProfile(TimestampedModel):
         blank=True,
         verbose_name='Название выбранного склада',
     )
+    product_write_enabled = models.BooleanField(
+        default=False,
+        verbose_name='Разрешена запись товаров Ozon',
+        help_text=(
+            'Account-scoped kill switch. Включается только после отдельного '
+            'write-canary и не влияет на Avito.'
+        ),
+    )
+    commerce_auto_sync_enabled = models.BooleanField(
+        default=False,
+        verbose_name='Автосинхронизация цен и остатков Ozon',
+    )
+    orders_auto_sync_enabled = models.BooleanField(
+        default=False,
+        verbose_name='Автосинхронизация FBS-заказов Ozon',
+    )
     last_checked_at = models.DateTimeField(verbose_name='Подключение проверено')
 
     class Meta:
@@ -765,6 +781,70 @@ class OzonOfferDraft(TimestampedModel):
         verbose_name='Индивидуальная цена товара Ozon',
         help_text='Точная цена выбранного товара и кабинета Ozon.',
     )
+    publication_status = models.CharField(
+        max_length=32,
+        default='local_draft',
+        editable=False,
+        verbose_name='Состояние публикации Ozon',
+    )
+    provider_product_id = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Product ID Ozon',
+    )
+    provider_sku = models.PositiveBigIntegerField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='SKU Ozon',
+    )
+    provider_status = models.CharField(
+        max_length=100,
+        blank=True,
+        editable=False,
+        verbose_name='Статус товара в Ozon',
+    )
+    moderation_status = models.CharField(
+        max_length=100,
+        blank=True,
+        editable=False,
+        verbose_name='Статус модерации Ozon',
+    )
+    provider_errors = models.JSONField(
+        default=list,
+        blank=True,
+        editable=False,
+        verbose_name='Последние ошибки Ozon',
+    )
+    last_provider_sync_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Последняя сверка с Ozon',
+    )
+    last_synced_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Последняя подтверждённая цена Ozon',
+    )
+    last_price_sync_at = models.DateTimeField(null=True, blank=True, editable=False)
+    last_synced_stock = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Последний подтверждённый остаток Ozon',
+    )
+    last_stock_sync_at = models.DateTimeField(null=True, blank=True, editable=False)
+    last_stock_warehouse_id = models.CharField(
+        max_length=100,
+        blank=True,
+        editable=False,
+        verbose_name='Склад последней синхронизации остатка Ozon',
+    )
 
     class Meta:
         verbose_name = 'Черновик товара Ozon'
@@ -809,6 +889,131 @@ class OzonOfferDraft(TimestampedModel):
 
     def __str__(self):
         return f'Ozon offer {self.offer_id} / product {self.product_id}'
+
+
+class OzonOperation(TimestampedModel):
+    """Durable account-scoped evidence for one Ozon provider mutation."""
+
+    class Kind(models.TextChoices):
+        PRODUCT_IMPORT = 'product_import', 'Создание или обновление товара'
+        PRICE_UPDATE = 'price_update', 'Обновление цены'
+        STOCK_UPDATE = 'stock_update', 'Обновление остатка'
+        ARCHIVE = 'archive', 'Архивирование товара'
+
+    class State(models.TextChoices):
+        QUEUED = 'queued', 'В очереди'
+        SENDING = 'sending', 'Отправляется'
+        OUTCOME_UNKNOWN = 'outcome_unknown', 'Результат неизвестен'
+        RECONCILING = 'reconciling', 'Сверяется с Ozon'
+        SUCCEEDED = 'succeeded', 'Завершено'
+        PARTIAL = 'partial', 'Завершено частично'
+        FAILED = 'failed', 'Ошибка'
+        MANUAL_REVIEW = 'manual_review', 'Требуется проверка'
+
+    ACTIVE_STATES = frozenset({
+        State.QUEUED,
+        State.SENDING,
+        State.OUTCOME_UNKNOWN,
+        State.RECONCILING,
+    })
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    tenant = models.ForeignKey(
+        Tenant,
+        on_delete=models.PROTECT,
+        related_name='ozon_operations',
+        verbose_name='Тенант',
+    )
+    account = models.ForeignKey(
+        MarketplaceAccount,
+        on_delete=models.PROTECT,
+        related_name='ozon_operations',
+        verbose_name='Аккаунт Ozon',
+    )
+    offer = models.ForeignKey(
+        OzonOfferDraft,
+        on_delete=models.PROTECT,
+        related_name='operations',
+        verbose_name='Черновик товара Ozon',
+    )
+    kind = models.CharField(max_length=32, choices=Kind.choices)
+    state = models.CharField(
+        max_length=32,
+        choices=State.choices,
+        default=State.QUEUED,
+    )
+    idempotency_key = models.CharField(max_length=100)
+    request_sha256 = models.CharField(max_length=64)
+    request_summary = models.JSONField(default=dict, blank=True)
+    response_summary = models.JSONField(default=dict, blank=True)
+    errors = models.JSONField(default=list, blank=True)
+    provider_task_id = models.CharField(max_length=100, blank=True)
+    attempt_count = models.PositiveSmallIntegerField(default=0)
+    reconcile_count = models.PositiveSmallIntegerField(default=0)
+    last_attempt_at = models.DateTimeField(null=True, blank=True)
+    last_reconciled_at = models.DateTimeField(null=True, blank=True)
+    next_reconcile_at = models.DateTimeField(null=True, blank=True)
+    retry_after_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        verbose_name = 'Операция Ozon'
+        verbose_name_plural = 'Операции Ozon'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['account', 'idempotency_key'],
+                name='mkt_oz_operation_idempotency_uniq',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(attempt_count__lte=100),
+                name='mkt_oz_operation_attempt_bound',
+            ),
+            models.CheckConstraint(
+                condition=models.Q(reconcile_count__lte=100),
+                name='mkt_oz_operation_reconcile_bound',
+            ),
+        ]
+        indexes = [
+            models.Index(
+                fields=['account', 'state', '-created_at'],
+                name='mkt_oz_operation_state_idx',
+            ),
+            models.Index(
+                fields=['offer', 'kind', '-created_at'],
+                name='mkt_oz_operation_offer_idx',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Ozon operation {self.kind} / {self.id}'
+
+
+class OzonFbsPosting(TimestampedModel):
+    """Tenant/account-scoped local projection of an Ozon FBS order."""
+
+    tenant = models.ForeignKey(
+        Tenant, on_delete=models.PROTECT, related_name='ozon_fbs_postings',
+    )
+    account = models.ForeignKey(
+        MarketplaceAccount, on_delete=models.PROTECT, related_name='ozon_fbs_postings',
+    )
+    posting_number = models.CharField(max_length=100)
+    status = models.CharField(max_length=100, blank=True)
+    substatus = models.CharField(max_length=100, blank=True)
+    in_process_at = models.DateTimeField(null=True, blank=True)
+    shipment_date = models.DateTimeField(null=True, blank=True)
+    warehouse_id = models.CharField(max_length=100, blank=True)
+    products = models.JSONField(default=list, blank=True)
+    provider_updated_at = models.DateTimeField(null=True, blank=True)
+    last_synced_at = models.DateTimeField()
+
+    class Meta:
+        constraints = [models.UniqueConstraint(
+            fields=['account', 'posting_number'], name='mkt_oz_fbs_posting_account_uniq',
+        )]
+        indexes = [models.Index(
+            fields=['tenant', 'account', '-in_process_at'], name='mkt_oz_fbs_tenant_idx',
+        )]
 
 
 class MarketplaceFeedRun(TimestampedModel):

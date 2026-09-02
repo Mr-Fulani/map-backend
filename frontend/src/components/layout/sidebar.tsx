@@ -22,6 +22,7 @@ import {
   ChevronRight,
   Zap,
   Globe2,
+  ShoppingBag,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -47,6 +48,11 @@ const navItems = [
     title: 'Листинги',
     href: '/dashboard/listings',
     icon: ListOrdered,
+  },
+  {
+    title: 'Заказы',
+    href: '/dashboard/orders',
+    icon: ShoppingBag,
   },
   {
     title: 'Проверка',

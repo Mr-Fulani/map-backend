@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
+import { Switch } from '@/components/ui/switch';
 import { OzonCatalogStatus } from '@/components/marketplaces/OzonCatalogStatus';
 import { accountApi } from '@/lib/api';
 import type { MarketplaceAccount } from '@/lib/marketplace-account-types';
@@ -62,6 +63,33 @@ export function OzonAccountSettings({
   const [creating, setCreating] = useState(false);
   const [rotatingAccountId, setRotatingAccountId] = useState<number | null>(null);
   const [showRotationFor, setShowRotationFor] = useState<number | null>(null);
+  const [savingAutomation, setSavingAutomation] = useState<number | null>(null);
+
+  async function updateAutomation(
+    account: MarketplaceAccount,
+    field: 'commerce_auto_sync_enabled' | 'orders_auto_sync_enabled',
+    value: boolean,
+  ) {
+    if (!account.ozon_profile || !canManage) return;
+    setSavingAutomation(account.id);
+    try {
+      const response = await accountApi.updateOzonAutomation(account.id, { [field]: value });
+      const flags = response.data.data as {
+        commerce_auto_sync_enabled: boolean;
+        orders_auto_sync_enabled: boolean;
+      };
+      onAccountUpsert({
+        ...account,
+        ozon_profile: { ...account.ozon_profile, ...flags },
+      });
+      toast.success('Автоматизация кабинета обновлена.');
+    } catch (error: unknown) {
+      const message = (error as { response?: { data?: { message?: string } } }).response?.data?.message;
+      toast.error(message ?? 'Не удалось изменить автоматизацию Ozon.');
+    } finally {
+      setSavingAutomation(null);
+    }
+  }
 
   async function createAccount(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -343,6 +371,37 @@ export function OzonAccountSettings({
                       <p className="text-xs text-muted-foreground md:col-span-2">
                         Проверено: {safeDate(profile.last_checked_at)}
                       </p>
+                    </div>
+                  )}
+
+                  {profile && (
+                    <div className="space-y-3 rounded-md border border-violet-500/20 bg-violet-500/5 p-3">
+                      <div>
+                        <p className="text-sm font-medium">Автоматизация Ozon</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Действует только на этот кабинет. Для нового кабинета всегда выключена.
+                        </p>
+                      </div>
+                      <label className="flex items-center justify-between gap-3 text-sm">
+                        <span>Цены и остаток одного склада</span>
+                        <Switch
+                          checked={profile.commerce_auto_sync_enabled}
+                          disabled={!canManage || savingAutomation === account.id}
+                          onCheckedChange={(value) => void updateAutomation(
+                            account, 'commerce_auto_sync_enabled', value,
+                          )}
+                        />
+                      </label>
+                      <label className="flex items-center justify-between gap-3 text-sm">
+                        <span>Получение FBS-заказов</span>
+                        <Switch
+                          checked={profile.orders_auto_sync_enabled}
+                          disabled={!canManage || savingAutomation === account.id}
+                          onCheckedChange={(value) => void updateAutomation(
+                            account, 'orders_auto_sync_enabled', value,
+                          )}
+                        />
+                      </label>
                     </div>
                   )}
 

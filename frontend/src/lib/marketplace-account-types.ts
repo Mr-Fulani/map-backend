@@ -42,6 +42,8 @@ export interface OzonAccountProfile {
   selected_warehouse_id: string;
   selected_warehouse_name: string;
   last_checked_at: string;
+  commerce_auto_sync_enabled: boolean;
+  orders_auto_sync_enabled: boolean;
 }
 
 export interface OzonCatalogTreeMetadata {
