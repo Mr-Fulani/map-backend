@@ -36,8 +36,6 @@ class OzonFbsOrdersView(APIView):
         } for row in rows]})
 
     def post(self, request, pk):
-        serializer = serializers.Serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
         account = self._account(request, pk)
         if account is None:
             return Response(status=status.HTTP_404_NOT_FOUND)

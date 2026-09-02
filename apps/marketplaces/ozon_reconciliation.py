@@ -263,7 +263,10 @@ def _persist_product_projection(
     operation_id,
     item: Mapping[str, Any],
 ) -> OzonOperation:
-    statuses = item.get('statuses') if isinstance(item.get('statuses'), Mapping) else {}
+    raw_statuses = item.get('statuses')
+    statuses: Mapping[str, Any] = (
+        raw_statuses if isinstance(raw_statuses, Mapping) else {}
+    )
     provider_status = _safe_text(
         statuses.get('status') or statuses.get('status_name'),
         limit=100,
@@ -401,9 +404,10 @@ def reconcile_product_import(
         except OzonAPIError as exc:
             return _persist_transient_error(operation.pk, exc)
         raw_items = result.get('items')
+        task_items = raw_items if isinstance(raw_items, list) else []
         item = next((
             candidate
-            for candidate in raw_items
+            for candidate in task_items
             if isinstance(candidate, Mapping)
             and str(candidate.get('offer_id') or '').strip() == operation.offer.offer_id
         ), None)
