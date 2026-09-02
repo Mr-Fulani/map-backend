@@ -1,6 +1,6 @@
 from rest_framework import serializers, status
 from rest_framework.response import Response
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, inline_serializer
 
 from apps.marketplaces.models import MarketplaceAccount, OzonFbsPosting
 from apps.marketplaces.ozon_orders import OzonOrderSyncError, sync_fbs_orders
@@ -10,6 +10,34 @@ from apps.tenants.api_views import CatalogAPIView as APIView
 class OzonAutomationSerializer(serializers.Serializer):
     commerce_auto_sync_enabled = serializers.BooleanField(required=False)
     orders_auto_sync_enabled = serializers.BooleanField(required=False)
+
+
+OZON_FBS_ORDERS_RESPONSE = inline_serializer(
+    name='OzonFbsOrdersResponse',
+    fields={
+        'status': serializers.CharField(read_only=True),
+        'data': serializers.ListField(
+            child=serializers.DictField(read_only=True),
+            read_only=True,
+        ),
+    },
+)
+
+OZON_FBS_ORDER_SYNC_RESPONSE = inline_serializer(
+    name='OzonFbsOrderSyncResponse',
+    fields={
+        'status': serializers.CharField(read_only=True),
+        'data': serializers.DictField(read_only=True),
+    },
+)
+
+OZON_AUTOMATION_RESPONSE = inline_serializer(
+    name='OzonAutomationResponse',
+    fields={
+        'status': serializers.CharField(read_only=True),
+        'data': OzonAutomationSerializer(read_only=True),
+    },
+)
 
 
 @extend_schema(tags=['Accounts'])
@@ -22,6 +50,10 @@ class OzonFbsOrdersView(APIView):
             pk=pk, tenant=request.tenant, marketplace='ozon', is_active=True,
         ).first()
 
+    @extend_schema(
+        operation_id='ozon_fbs_orders_list',
+        responses=OZON_FBS_ORDERS_RESPONSE,
+    )
     def get(self, request, pk):
         account = self._account(request, pk)
         if account is None:
@@ -35,6 +67,11 @@ class OzonFbsOrdersView(APIView):
             'last_synced_at': row.last_synced_at,
         } for row in rows]})
 
+    @extend_schema(
+        operation_id='ozon_fbs_orders_sync',
+        request=None,
+        responses=OZON_FBS_ORDER_SYNC_RESPONSE,
+    )
     def post(self, request, pk):
         account = self._account(request, pk)
         if account is None:
@@ -58,6 +95,10 @@ class OzonAutomationView(APIView):
             pk=pk, tenant=request.tenant, marketplace='ozon', is_active=True,
         ).first()
 
+    @extend_schema(
+        operation_id='ozon_automation_retrieve',
+        responses=OZON_AUTOMATION_RESPONSE,
+    )
     def get(self, request, pk):
         account = self._account(request, pk)
         if account is None:
@@ -68,6 +109,11 @@ class OzonAutomationView(APIView):
             'orders_auto_sync_enabled': profile.orders_auto_sync_enabled,
         }})
 
+    @extend_schema(
+        operation_id='ozon_automation_update',
+        request=OzonAutomationSerializer,
+        responses=OZON_AUTOMATION_RESPONSE,
+    )
     def patch(self, request, pk):
         serializer = OzonAutomationSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

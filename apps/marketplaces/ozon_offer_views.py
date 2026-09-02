@@ -109,6 +109,17 @@ OZON_OFFER_RESPONSE = inline_serializer(
     },
 )
 
+OZON_OFFER_BULK_RESPONSE = inline_serializer(
+    name='OzonOfferBulkResponse',
+    fields={
+        'status': serializers.CharField(read_only=True),
+        'data': serializers.ListField(
+            child=serializers.DictField(read_only=True),
+            read_only=True,
+        ),
+    },
+)
+
 
 @extend_schema(tags=['Products'])
 class ProductOzonOfferView(APIView):
@@ -336,6 +347,11 @@ class ProductOzonOfferBulkView(APIView):
     api_key_enabled = True
     api_key_scopes = {'POST': {'catalog:write'}}
 
+    @extend_schema(
+        operation_id='product_ozon_offer_bulk',
+        request=OzonOfferBulkSerializer,
+        responses=OZON_OFFER_BULK_RESPONSE,
+    )
     def post(self, request):
         serializer = OzonOfferBulkSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
