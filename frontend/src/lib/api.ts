@@ -1133,6 +1133,17 @@ export const productApi = {
       account_id: accountId,
       idempotency_key: idempotencyKey,
     }),
+  bulkOzonOffers: (
+    accountId: number,
+    productIds: number[],
+    action: 'publish' | 'sync_commerce',
+    idempotencyKey: string,
+  ) => api.post('/products/ozon-offers/bulk/', {
+    account_id: accountId,
+    product_ids: productIds,
+    action,
+    idempotency_key: idempotencyKey,
+  }),
   brandOptions: (productId: number, q = '') =>
     api.get('/products/brand-options/', { params: { product_id: productId, q } }),
   publish: (id: number, accountIds: number[]) => (
@@ -1270,6 +1281,10 @@ export const accountApi = {
   checkAutoload: (id: number) => api.get(`/accounts/${id}/autoload-status/`),
   getOzonFbsOrders: (id: number) => api.get(`/accounts/${id}/ozon-fbs-orders/`),
   syncOzonFbsOrders: (id: number) => api.post(`/accounts/${id}/ozon-fbs-orders/`, {}),
+  updateOzonAutomation: (
+    id: number,
+    data: { commerce_auto_sync_enabled?: boolean; orders_auto_sync_enabled?: boolean },
+  ) => api.patch(`/accounts/${id}/ozon-automation/`, data),
   retryAutoload: (id: number) => api.post(`/accounts/${id}/autoload-status/`),
   listPlacementAddresses: (params?: Record<string, unknown>) =>
     api.get('/accounts/placement-addresses/', { params }),

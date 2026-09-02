@@ -23,6 +23,8 @@ const connectedProfile: OzonAccountProfile = {
   selected_warehouse_id: 'warehouse-1',
   selected_warehouse_name: 'Основной',
   last_checked_at: '2026-08-29T12:00:00Z',
+  commerce_auto_sync_enabled: false,
+  orders_auto_sync_enabled: false,
 };
 
 test('Ozon connection presentation keeps warehouse states provider-specific', () => {

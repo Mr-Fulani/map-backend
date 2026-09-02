@@ -398,6 +398,14 @@ class OzonAccountProfile(TimestampedModel):
             'write-canary и не влияет на Avito.'
         ),
     )
+    commerce_auto_sync_enabled = models.BooleanField(
+        default=False,
+        verbose_name='Автосинхронизация цен и остатков Ozon',
+    )
+    orders_auto_sync_enabled = models.BooleanField(
+        default=False,
+        verbose_name='Автосинхронизация FBS-заказов Ozon',
+    )
     last_checked_at = models.DateTimeField(verbose_name='Подключение проверено')
 
     class Meta:

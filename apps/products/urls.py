@@ -2,6 +2,7 @@ from django.urls import path
 
 from apps.marketplaces.ozon_offer_views import (
     ProductOzonOfferCommerceSyncView,
+    ProductOzonOfferBulkView,
     ProductOzonOfferPublishView,
     ProductOzonOfferReconcileView,
     ProductOzonOfferView,
@@ -24,6 +25,7 @@ from apps.products.views import (
 )
 
 urlpatterns = [
+    path('ozon-offers/bulk/', ProductOzonOfferBulkView.as_view(), name='product-ozon-offer-bulk'),
     path('', ProductListView.as_view(), name='product-list'),
     path('search/', ProductSearchView.as_view(), name='product-search'),
     path('brand-options/', ProductBrandOptionsView.as_view(), name='product-brand-options'),

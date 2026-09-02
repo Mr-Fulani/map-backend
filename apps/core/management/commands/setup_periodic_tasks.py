@@ -49,6 +49,25 @@ class Command(BaseCommand):
 
         tasks = [
             {
+                'name': 'reconcile_due_ozon_imports',
+                'task': 'apps.marketplaces.ozon_tasks.reconcile_due_ozon_imports',
+                'schedule': every_1m,
+                'queue': 'sync_import',
+                'expire_seconds': 50,
+            },
+            {
+                'name': 'sync_enabled_ozon_commerce',
+                'task': 'apps.marketplaces.ozon_tasks.sync_enabled_ozon_commerce',
+                'schedule': every_5m,
+                'queue': 'sync_import',
+            },
+            {
+                'name': 'sync_enabled_ozon_orders',
+                'task': 'apps.marketplaces.ozon_tasks.sync_enabled_ozon_orders',
+                'schedule': every_5m,
+                'queue': 'sync_import',
+            },
+            {
                 'name': 'collect_celery_observability',
                 'task': 'apps.core.tasks.collect_celery_observability',
                 'schedule': collector_every_60s,

@@ -87,6 +87,20 @@ class OzonOfferCommerceSerializer(OzonOfferPublishSerializer):
     pass
 
 
+class OzonOfferBulkSerializer(serializers.Serializer):
+    account_id = serializers.IntegerField(min_value=1)
+    product_ids = serializers.ListField(
+        child=serializers.IntegerField(min_value=1), min_length=1, max_length=25,
+    )
+    action = serializers.ChoiceField(choices=['publish', 'sync_commerce'])
+    idempotency_key = serializers.UUIDField()
+
+    def validate_product_ids(self, value):
+        if len(value) != len(set(value)):
+            raise serializers.ValidationError('Товары не должны повторяться.')
+        return value
+
+
 OZON_OFFER_RESPONSE = inline_serializer(
     name='OzonOfferPreparationResponse',
     fields={
@@ -313,3 +327,47 @@ class ProductOzonOfferCommerceSyncView(APIView):
                 'stock': str(stock_operation.pk) if stock_operation is not None else None,
             },
         }, status=status.HTTP_202_ACCEPTED)
+
+
+@extend_schema(tags=['Products'])
+class ProductOzonOfferBulkView(APIView):
+    """Bounded exact-account batch; each product retains its own durable operation."""
+
+    api_key_enabled = True
+    api_key_scopes = {'POST': {'catalog:write'}}
+
+    def post(self, request):
+        serializer = OzonOfferBulkSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        account = MarketplaceAccount.objects.filter(
+            pk=data['account_id'], tenant=request.tenant, marketplace='ozon', is_active=True,
+        ).first()
+        if account is None:
+            return Response(status=404)
+        products = {
+            product.pk: product for product in Product.objects.filter(
+                pk__in=data['product_ids'], tenant=request.tenant,
+            )
+        }
+        if len(products) != len(data['product_ids']):
+            return Response({'status': 'error', 'code': 'product_not_found', 'message': 'Часть товаров недоступна этому тенанту.'}, status=400)
+        base_key = str(data['idempotency_key'])
+        results = []
+        for product_id in data['product_ids']:
+            product = products[product_id]
+            try:
+                if data['action'] == 'publish':
+                    operation = request_product_import(
+                        product, account, idempotency_key=f'{base_key}:{product_id}',
+                    )
+                    operation_ids = [str(operation.pk)]
+                else:
+                    price, stock = sync_offer_commerce(
+                        product, account, idempotency_key=f'{base_key}:{product_id}',
+                    )
+                    operation_ids = [str(item.pk) for item in (price, stock) if item]
+                results.append({'product_id': product_id, 'status': 'accepted', 'operation_ids': operation_ids})
+            except (OzonPublicationError, OzonCommerceError) as exc:
+                results.append({'product_id': product_id, 'status': 'rejected', 'code': exc.code, 'message': str(exc)})
+        return Response({'status': 'ok', 'data': results}, status=202)
