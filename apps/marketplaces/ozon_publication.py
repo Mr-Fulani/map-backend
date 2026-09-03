@@ -154,7 +154,9 @@ def operation_presentation(operation: OzonOperation | None) -> dict[str, Any] | 
 def latest_offer_operation(draft: OzonOfferDraft | None) -> OzonOperation | None:
     if draft is None or draft.pk is None:
         return None
-    return draft.operations.order_by('-created_at').first()
+    return draft.operations.filter(
+        kind=OzonOperation.Kind.PRODUCT_IMPORT,
+    ).order_by('-created_at').first()
 
 
 def _validated_credentials(account: MarketplaceAccount) -> tuple[str, str]:

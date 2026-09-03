@@ -1,8 +1,10 @@
+from datetime import timedelta
 from unittest.mock import patch
 import uuid
 
 import pytest
 from django.test import Client
+from django.utils import timezone
 
 from apps.marketplaces.adapters.ozon.client import OzonAPIError
 from apps.marketplaces.models import Listing, OzonOfferDraft, OzonOperation
@@ -110,3 +112,70 @@ def test_ambiguous_price_response_is_not_retried_blindly(settings):
     assert operation.state == OzonOperation.State.OUTCOME_UNKNOWN
     assert operation.attempt_count == 1
     price_call.assert_called_once()
+
+
+@pytest.mark.django_db
+def test_ambiguous_stock_can_be_retried_manually_without_hiding_publication(settings):
+    tenant, key, account, product, draft, client = _setup(
+        settings, 'ozon-commerce-stock-retry',
+    )
+    published_operation = OzonOperation.objects.create(
+        tenant=tenant,
+        account=account,
+        offer=draft,
+        kind=OzonOperation.Kind.PRODUCT_IMPORT,
+        state=OzonOperation.State.SUCCEEDED,
+        idempotency_key='published-product-import',
+        request_sha256='a' * 64,
+        provider_task_id='task-published',
+        completed_at=timezone.now(),
+    )
+    failure = OzonAPIError('connection_error', 'Не удалось связаться с Ozon Seller API.')
+    stock_result = [{
+        'offer_id': draft.offer_id,
+        'product_id': 731,
+        'warehouse_id': 42,
+        'updated': True,
+        'errors': [],
+    }]
+
+    with (
+        patch(PRICE_CALL, return_value=[{
+            'offer_id': draft.offer_id,
+            'product_id': 731,
+            'updated': True,
+            'errors': [],
+        }]) as price_call,
+        patch(STOCK_CALL, side_effect=[failure, stock_result]) as stock_call,
+    ):
+        first = _sync(client, key, product, account, uuid.uuid4())
+        assert first.status_code == 202
+        assert first.json()['data']['publication']['latest_operation']['id'] == str(
+            published_operation.pk,
+        )
+        unknown = OzonOperation.objects.get(kind=OzonOperation.Kind.STOCK_UPDATE)
+        assert unknown.state == OzonOperation.State.OUTCOME_UNKNOWN
+
+        too_soon = _sync(client, key, product, account, uuid.uuid4())
+        assert too_soon.status_code == 400
+        assert too_soon.json()['code'] == 'stock_cooldown'
+        assert stock_call.call_count == 1
+
+        unknown.last_attempt_at = timezone.now() - timedelta(seconds=31)
+        unknown.save(update_fields=['last_attempt_at', 'updated_at'])
+
+        second = _sync(client, key, product, account, uuid.uuid4())
+
+    assert second.status_code == 202
+    assert second.json()['data']['publication']['latest_operation']['id'] == str(
+        published_operation.pk,
+    )
+    assert second.json()['data']['commerce']['last_synced_stock'] == product.stock_qty
+    assert list(OzonOperation.objects.filter(
+        kind=OzonOperation.Kind.STOCK_UPDATE,
+    ).order_by('created_at').values_list('state', flat=True)) == [
+        OzonOperation.State.OUTCOME_UNKNOWN,
+        OzonOperation.State.SUCCEEDED,
+    ]
+    price_call.assert_called_once()
+    assert stock_call.call_count == 2

@@ -135,10 +135,25 @@ def _existing_or_active(
                 'Идентификатор синхронизации уже использован для другой операции.',
             )
         return existing
+    blocking = OzonOperation.objects.filter(
+        offer=draft,
+        kind=kind,
+        state__in=(
+            OzonOperation.ACTIVE_STATES
+            - {OzonOperation.State.OUTCOME_UNKNOWN}
+        ),
+    ).order_by('-created_at').first()
+    if blocking is not None:
+        return blocking
+
+    # A repeated request with the same idempotency key still returns the
+    # unknown operation above. A new, explicit request may retry these
+    # set-value mutations after the provider and local rate guards allow it.
     return OzonOperation.objects.filter(
         offer=draft,
         kind=kind,
-        state__in=OzonOperation.ACTIVE_STATES,
+        state=OzonOperation.State.OUTCOME_UNKNOWN,
+        retry_after_at__gt=timezone.now(),
     ).order_by('-created_at').first()
 
 
