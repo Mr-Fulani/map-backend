@@ -83,6 +83,8 @@ class ChannelListingListView(ListingsAPIView):
         )
         paginator = MapPagination()
         page = paginator.paginate_queryset(keys, request)
+        if page is None:
+            page = []
         data = hydrate_channel_rows(
             request.tenant,
             page,
