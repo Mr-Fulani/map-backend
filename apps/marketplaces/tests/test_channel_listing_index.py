@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -136,7 +136,7 @@ def test_published_ozon_offer_is_an_active_channel_row():
     assert row['provider_sku'] == 5692456653
     assert row['provider_product_id'] == 123456
     assert row['external_url'] == 'https://www.ozon.ru/product/5692456653/'
-    assert row['last_sync_at'].startswith(synced_at.isoformat()[:19])
+    assert datetime.fromisoformat(row['last_sync_at']) == synced_at
     assert row['lifecycle_actions_blocked'] is True
     assert row['can_publish'] is False
     assert row['can_check_provider_status'] is False
