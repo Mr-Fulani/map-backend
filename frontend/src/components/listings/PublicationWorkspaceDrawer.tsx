@@ -75,6 +75,7 @@ interface Props {
   selectedAccountId: number | null;
   onSelectedAccountChange: (accountId: number) => void;
   onOpenAvitoListing: (listingId: number) => void;
+  onChannelChanged: () => Promise<void>;
   onClose: () => void;
 }
 
@@ -150,6 +151,7 @@ export default function PublicationWorkspaceDrawer({
   selectedAccountId,
   onSelectedAccountChange,
   onOpenAvitoListing,
+  onChannelChanged,
   onClose,
 }: Props) {
   const [product, setProduct] = useState<WorkspaceProduct | null>(null);
@@ -324,6 +326,7 @@ export default function PublicationWorkspaceDrawer({
       );
       const preparation = envelopeData<OzonOfferPreparation>(response.data);
       handleOzonPreparationChange(preparation);
+      await onChannelChanged();
       const state = preparation.publication.latest_operation?.state;
       if (state === 'reconciling') {
         toast.success('Ozon принял карточку. MAP сохранит и проверит результат задачи.');
@@ -350,6 +353,7 @@ export default function PublicationWorkspaceDrawer({
       const response = await productApi.reconcileOzonOffer(product.id, selectedAccount.id);
       const preparation = envelopeData<OzonOfferPreparation>(response.data);
       handleOzonPreparationChange(preparation);
+      await onChannelChanged();
       const state = preparation.publication.latest_operation?.state;
       if (state === 'succeeded') {
         toast.success('Ozon подтвердил публикацию карточки.');
@@ -383,6 +387,7 @@ export default function PublicationWorkspaceDrawer({
       );
       const preparation = envelopeData<OzonOfferPreparation>(response.data);
       handleOzonPreparationChange(preparation);
+      await onChannelChanged();
       const operations = [preparation.commerce.price_operation, preparation.commerce.stock_operation];
       if (operations.some((operation) => operation?.state === 'outcome_unknown')) {
         toast.warning('Ozon мог принять изменение. MAP не будет повторять его вслепую.');

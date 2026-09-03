@@ -41,3 +41,15 @@ test('marketplace settings and Ozon editors stay outside the large page shells',
   assert.match(ozonPreparation, /<OzonOfferPricingEditor/);
   assert.match(ozonPreparation, /<OzonOfferAttributeEditor/);
 });
+
+test('successful Ozon lifecycle changes refresh the provider-neutral listing index', () => {
+  const listingsPage = source('src/app/dashboard/listings/page.tsx');
+  const workspace = source('src/components/listings/PublicationWorkspaceDrawer.tsx');
+
+  assert.match(listingsPage, /<PublicationWorkspaceDrawer[\s\S]*onChannelChanged=\{load\}/);
+  assert.equal(
+    workspace.match(/await onChannelChanged\(\);/g)?.length,
+    3,
+    'publish, reconcile and commerce sync must each refresh the channel row',
+  );
+});
