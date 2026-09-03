@@ -9,6 +9,13 @@ import {
   dashboardPositiveIdParam,
   dashboardQueryHref,
 } from '@/lib/dashboard-query';
+import {
+  hasLegacyListingActions,
+  listingChannelDrawerHref,
+  listingChannelKey,
+  type LegacyListingChannel,
+  type ListingChannel,
+} from '@/lib/listing-channels';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -31,38 +38,6 @@ import MarketplaceAccountFilter, {
 } from '@/components/marketplaces/MarketplaceAccountFilter';
 import { toast } from 'sonner';
 
-interface Listing {
-  id: number;
-  status: string;
-  status_display: string;
-  status_explanation: string;
-  delivery_stage: string;
-  delivery_retry_at: string | null;
-  delivery_retry_reason: string;
-  provider_submission_started: boolean;
-  lifecycle_actions_blocked: boolean;
-  can_check_avito_status: boolean;
-  can_check_provider_status: boolean;
-  can_publish: boolean;
-  rejection_ready_to_retry: boolean;
-  product_article: string;
-  product_name: string;
-  account_name: string;
-  marketplace: string;
-  marketplace_label: string;
-  title: string;
-  price_on_listing: string;
-  external_url: string;
-  rejection_reason: string;
-  retry_count: number;
-  published_at: string | null;
-  last_sync_at: string | null;
-  remote_status: string | null;
-  remote_status_checked_at: string | null;
-  next_status_check_at: string | null;
-  created_at: string;
-}
-
 function avitoCheckedLabel(value: string): string {
   return new Date(value).toLocaleString('ru-RU', {
     day: '2-digit',
@@ -73,7 +48,7 @@ function avitoCheckedLabel(value: string): string {
   });
 }
 
-function providerCheckedAt(listing: Listing): string | null {
+function providerCheckedAt(listing: ListingChannel): string | null {
   return listing.remote_status_checked_at;
 }
 
@@ -158,7 +133,7 @@ export default function ListingsPage() {
   const accountId = dashboardPositiveIdParam(searchParams.get('account'));
   const statusFilter = urlStatus;
   const page = urlPage;
-  const [listings, setListings] = useState<Listing[]>([]);
+  const [listings, setListings] = useState<ListingChannel[]>([]);
   const [meta, setMeta] = useState<Meta | null>(null);
   const [loading, setLoading] = useState(true);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -170,7 +145,7 @@ export default function ListingsPage() {
   const [bulkManagerName, setBulkManagerName] = useState('');
   const [bulkContactPhone, setBulkContactPhone] = useState('');
   const [bulkSaving, setBulkSaving] = useState(false);
-  const [rowActionId, setRowActionId] = useState<number | null>(null);
+  const [rowActionKey, setRowActionKey] = useState<string | null>(null);
   const requestedPanel = searchParams.get('panel') === 'pricing' ? 'pricing' : 'listing';
   const listingParam = Number(searchParams.get('listing'));
   const selectedId = Number.isInteger(listingParam) && listingParam > 0 ? listingParam : null;
@@ -184,6 +159,13 @@ export default function ListingsPage() {
     next.delete('product');
     next.delete('target');
     router.replace(`${pathname}?${next}`, { scroll: false });
+  }, [pathname, router, searchParams]);
+
+  const openChannel = useCallback((channel: ListingChannel) => {
+    router.replace(
+      listingChannelDrawerHref(pathname, searchParams.toString(), channel),
+      { scroll: false },
+    );
   }, [pathname, router, searchParams]);
 
   const openProductWorkspace = useCallback((productId: number, targetId?: number) => {
@@ -223,7 +205,7 @@ export default function ListingsPage() {
       if (statusFilter) params.status = statusFilter;
       if (marketplace) params.marketplace = marketplace;
       if (accountId) params.account = accountId;
-      const res = await listingApi.list(params);
+      const res = await listingApi.listChannels(params);
       setListings(res.data.data);
       setMeta(res.data.meta);
     } catch {
@@ -240,7 +222,7 @@ export default function ListingsPage() {
     if (marketplace) params.marketplace = marketplace;
     if (accountId) params.account = accountId;
 
-    listingApi.list(params)
+    listingApi.listChannels(params)
       .then((response) => {
         if (!active) return;
         setListings(response.data.data);
@@ -283,7 +265,7 @@ export default function ListingsPage() {
     if (accountId) params.account = accountId;
 
     const timer = window.setInterval(() => {
-      listingApi.list(params)
+      listingApi.listChannels(params)
         .then((response) => {
           if (!active) return;
           setListings(response.data.data);
@@ -308,7 +290,10 @@ export default function ListingsPage() {
   const visiblePlacementAddresses = placementAddresses.filter((address) => (
     bulkAccountId && address.account === Number(bulkAccountId)
   ));
-  const selectedBulkAccount = accounts.find((account) => account.id === Number(bulkAccountId));
+  const legacyBulkAccounts = accounts.filter((account) => account.marketplace === 'avito');
+  const selectedBulkAccount = legacyBulkAccounts.find(
+    (account) => account.id === Number(bulkAccountId),
+  );
   const bulkCapabilitySupported = Boolean(selectedBulkAccount && (
     bulkAction === 'publish'
       ? selectedBulkAccount.provider_capabilities.publication
@@ -377,22 +362,23 @@ export default function ListingsPage() {
   }
 
   async function runListingAction(
-    listing: Listing,
+    listing: LegacyListingChannel,
     action: 'publish' | 'archive' | 'delete' | 'checkStatus',
   ) {
-    setRowActionId(listing.id);
+    const actionKey = listingChannelKey(listing);
+    setRowActionKey(actionKey);
     try {
       if (action === 'publish') {
-        await listingApi.publish(listing.id);
+        await listingApi.publish(listing.resource_id);
         toast.success('Публикация поставлена в очередь');
       } else if (action === 'archive') {
-        await listingApi.archive(listing.id);
+        await listingApi.archive(listing.resource_id);
         toast.success('Снятие с публикации поставлено в очередь');
       } else if (action === 'delete') {
-        await listingApi.delete(listing.id);
+        await listingApi.delete(listing.resource_id);
         toast.success('Удаление поставлено в очередь');
       } else {
-        await listingApi.checkStatus(listing.id);
+        await listingApi.checkStatus(listing.resource_id);
         toast.success(
           `Запросили актуальный статус у ${marketplaceDisplayName(listing.marketplace)}. `
           + 'Результат обновится автоматически.',
@@ -406,10 +392,10 @@ export default function ListingsPage() {
         detail?: string;
       } } })
         ?.response?.data;
-      if (message?.code === 'listing_validation_error') openDrawer(listing.id);
+      if (message?.code === 'listing_validation_error') openDrawer(listing.resource_id);
       toast.error(message?.message || message?.detail || 'Не удалось выполнить действие');
     } finally {
-      setRowActionId(null);
+      setRowActionKey(null);
     }
   }
 
@@ -458,10 +444,11 @@ export default function ListingsPage() {
         className="max-w-2xl"
       />
 
-      <div className="rounded-lg border p-3">
+      {marketplace !== 'ozon' && (
+        <div className="rounded-lg border p-3">
         <div className="mb-3 flex items-center gap-2">
           <MapPin className="h-4 w-4 text-muted-foreground" />
-          <p className="text-sm font-medium">Массовые действия с листингами</p>
+          <p className="text-sm font-medium">Массовые действия Avito</p>
         </div>
         <div className="grid gap-2 lg:grid-cols-3">
           <select
@@ -491,7 +478,7 @@ export default function ListingsPage() {
             className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm"
           >
             <option value="">Выберите конкретный аккаунт</option>
-            {accounts.map((account) => {
+            {legacyBulkAccounts.map((account) => {
               const supported = bulkAction === 'publish'
                 ? account.provider_capabilities.publication
                 : bulkAction === 'update_placement'
@@ -580,7 +567,8 @@ export default function ListingsPage() {
             Выполнить
           </Button>
         </div>
-      </div>
+        </div>
+      )}
 
       {/* Таблица */}
       <div className="grid gap-3 lg:hidden">
@@ -606,9 +594,9 @@ export default function ListingsPage() {
             )
             : listings.map((l) => (
               <div
-                key={l.id}
+                key={listingChannelKey(l)}
                 className="rounded-lg border bg-card p-3"
-                onClick={() => openDrawer(l.id)}
+                onClick={() => openChannel(l)}
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
@@ -634,6 +622,9 @@ export default function ListingsPage() {
                     )}
                     <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                       <span className="font-mono">{l.product_article}</span>
+                      {l.resource_kind === 'ozon_offer' && l.provider_sku && (
+                        <span>SKU Ozon: {l.provider_sku}</span>
+                      )}
                       {l.account_name && <span className="break-words">{l.account_name}</span>}
                       <span>{Number(l.price_on_listing).toLocaleString('ru-RU')} ₽</span>
                     </div>
@@ -660,7 +651,18 @@ export default function ListingsPage() {
                     )}
                   </div>
                   <div className="flex shrink-0 flex-col gap-1" onClick={(e) => e.stopPropagation()}>
-                    {l.external_url && (
+                    {!hasLegacyListingActions(l) && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-8 px-2"
+                        title={`Открыть карточку ${l.marketplace_label}`}
+                        onClick={() => openChannel(l)}
+                      >
+                        Открыть <ChevronRight className="ml-1 h-4 w-4" />
+                      </Button>
+                    )}
+                    {hasLegacyListingActions(l) && l.external_url && (
                       <a
                         href={l.external_url}
                         target="_blank"
@@ -671,21 +673,21 @@ export default function ListingsPage() {
                         <ExternalLink className="h-4 w-4" />
                       </a>
                     )}
-                    {l.can_publish && (
+                    {hasLegacyListingActions(l) && l.can_publish && (
                       <Button
                         size="sm"
                         variant="ghost"
                         className="h-8 w-8 p-0"
                         title={l.rejection_ready_to_retry ? 'Отправить исправленную версию' : (l.delivery_stage === 'delivery_failed' ? 'Исправить и отправить снова' : 'Опубликовать')}
                         onClick={() => runListingAction(l, 'publish')}
-                        disabled={rowActionId === l.id}
+                        disabled={rowActionKey === listingChannelKey(l)}
                       >
-                        {rowActionId === l.id
+                        {rowActionKey === listingChannelKey(l)
                           ? <Loader2 className="h-4 w-4 animate-spin" />
                           : <Send className="h-4 w-4" />}
                       </Button>
                     )}
-                    {['active', 'pending'].includes(l.status) && (
+                    {hasLegacyListingActions(l) && ['active', 'pending'].includes(l.status) && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -694,28 +696,28 @@ export default function ListingsPage() {
                           ? `Сначала нужно подтвердить результат предыдущей отправки ${l.marketplace_label}`
                           : 'В архив'}
                         onClick={() => runListingAction(l, 'archive')}
-                        disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
+                        disabled={rowActionKey === listingChannelKey(l) || l.lifecycle_actions_blocked}
                       >
-                        {rowActionId === l.id
+                        {rowActionKey === listingChannelKey(l)
                           ? <Loader2 className="h-4 w-4 animate-spin" />
                           : <Archive className="h-4 w-4" />}
                       </Button>
                     )}
-                    {l.can_check_provider_status && (
+                    {hasLegacyListingActions(l) && l.can_check_provider_status && (
                       <Button
                         size="sm"
                         variant="ghost"
                         className="h-8 w-8 p-0"
                         title={`Проверить статус ${l.marketplace_label}`}
                         onClick={() => runListingAction(l, 'checkStatus')}
-                        disabled={rowActionId === l.id}
+                        disabled={rowActionKey === listingChannelKey(l)}
                       >
-                        {rowActionId === l.id
+                        {rowActionKey === listingChannelKey(l)
                           ? <Loader2 className="h-4 w-4 animate-spin" />
                           : <RefreshCw className="h-4 w-4" />}
                       </Button>
                     )}
-                    {l.status !== 'deleted' && (
+                    {hasLegacyListingActions(l) && l.status !== 'deleted' && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -724,9 +726,9 @@ export default function ListingsPage() {
                           ? `Сначала нужно подтвердить результат предыдущей отправки ${l.marketplace_label}`
                           : 'Удалить'}
                         onClick={() => runListingAction(l, 'delete')}
-                        disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
+                        disabled={rowActionKey === listingChannelKey(l) || l.lifecycle_actions_blocked}
                       >
-                        {rowActionId === l.id
+                        {rowActionKey === listingChannelKey(l)
                           ? <Loader2 className="h-4 w-4 animate-spin" />
                           : <Trash2 className="h-4 w-4" />}
                       </Button>
@@ -772,9 +774,9 @@ export default function ListingsPage() {
                 )
                 : listings.map((l) => (
                   <tr
-                    key={l.id}
+                    key={listingChannelKey(l)}
                     className="border-b transition-colors hover:bg-muted/30 cursor-pointer"
-                    onClick={() => openDrawer(l.id)}
+                    onClick={() => openChannel(l)}
                   >
                     <td className="px-4 py-3">
                       <Badge variant={l.rejection_ready_to_retry ? 'secondary' : (l.delivery_stage === 'delivery_failed' ? 'destructive' : (STATUS_VARIANT[l.status] ?? 'outline'))}>
@@ -800,7 +802,14 @@ export default function ListingsPage() {
                         </p>
                       )}
                     </td>
-                    <td className="px-4 py-3 font-mono text-xs">{l.product_article}</td>
+                    <td className="px-4 py-3 font-mono text-xs">
+                      <span className="block">{l.product_article}</span>
+                      {l.resource_kind === 'ozon_offer' && l.provider_sku && (
+                        <span className="mt-1 block font-sans text-[11px] text-muted-foreground">
+                          SKU Ozon: {l.provider_sku}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <p className="line-clamp-1">{l.title || l.product_name}</p>
                       {l.status_explanation && (
@@ -829,7 +838,18 @@ export default function ListingsPage() {
                     </td>
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
-                        {l.external_url && (
+                        {!hasLegacyListingActions(l) && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 px-2"
+                            title={`Открыть карточку ${l.marketplace_label}`}
+                            onClick={() => openChannel(l)}
+                          >
+                            Открыть <ChevronRight className="ml-1 h-4 w-4" />
+                          </Button>
+                        )}
+                        {hasLegacyListingActions(l) && l.external_url && (
                           <a
                             href={l.external_url}
                             target="_blank"
@@ -840,21 +860,21 @@ export default function ListingsPage() {
                             <ExternalLink className="h-4 w-4" />
                           </a>
                         )}
-                        {l.can_publish && (
+                        {hasLegacyListingActions(l) && l.can_publish && (
                           <Button
                             size="sm"
                             variant="ghost"
                             className="h-8 w-8 p-0"
                             title={l.rejection_ready_to_retry ? 'Отправить исправленную версию' : (l.delivery_stage === 'delivery_failed' ? 'Исправить и отправить снова' : 'Опубликовать')}
                             onClick={() => runListingAction(l, 'publish')}
-                            disabled={rowActionId === l.id}
+                            disabled={rowActionKey === listingChannelKey(l)}
                           >
-                            {rowActionId === l.id
+                            {rowActionKey === listingChannelKey(l)
                               ? <Loader2 className="h-4 w-4 animate-spin" />
                               : <Send className="h-4 w-4" />}
                           </Button>
                         )}
-                        {['active', 'pending'].includes(l.status) && (
+                        {hasLegacyListingActions(l) && ['active', 'pending'].includes(l.status) && (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -863,28 +883,28 @@ export default function ListingsPage() {
                               ? `Сначала нужно подтвердить результат предыдущей отправки ${l.marketplace_label}`
                               : 'В архив'}
                             onClick={() => runListingAction(l, 'archive')}
-                            disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
+                            disabled={rowActionKey === listingChannelKey(l) || l.lifecycle_actions_blocked}
                           >
-                            {rowActionId === l.id
+                            {rowActionKey === listingChannelKey(l)
                               ? <Loader2 className="h-4 w-4 animate-spin" />
                               : <Archive className="h-4 w-4" />}
                           </Button>
                         )}
-                        {l.can_check_provider_status && (
+                        {hasLegacyListingActions(l) && l.can_check_provider_status && (
                           <Button
                             size="sm"
                             variant="ghost"
                             className="h-8 w-8 p-0"
                             title={`Проверить статус ${l.marketplace_label}`}
                             onClick={() => runListingAction(l, 'checkStatus')}
-                            disabled={rowActionId === l.id}
+                            disabled={rowActionKey === listingChannelKey(l)}
                           >
-                            {rowActionId === l.id
+                            {rowActionKey === listingChannelKey(l)
                               ? <Loader2 className="h-4 w-4 animate-spin" />
                               : <RefreshCw className="h-4 w-4" />}
                           </Button>
                         )}
-                        {l.status !== 'deleted' && (
+                        {hasLegacyListingActions(l) && l.status !== 'deleted' && (
                           <Button
                             size="sm"
                             variant="ghost"
@@ -893,9 +913,9 @@ export default function ListingsPage() {
                               ? `Сначала нужно подтвердить результат предыдущей отправки ${l.marketplace_label}`
                               : 'Удалить'}
                             onClick={() => runListingAction(l, 'delete')}
-                            disabled={rowActionId === l.id || l.lifecycle_actions_blocked}
+                            disabled={rowActionKey === listingChannelKey(l) || l.lifecycle_actions_blocked}
                           >
-                            {rowActionId === l.id
+                            {rowActionKey === listingChannelKey(l)
                               ? <Loader2 className="h-4 w-4 animate-spin" />
                               : <Trash2 className="h-4 w-4" />}
                           </Button>
@@ -957,6 +977,7 @@ export default function ListingsPage() {
         selectedAccountId={workspaceTargetId}
         onSelectedAccountChange={selectWorkspaceTarget}
         onOpenAvitoListing={openDrawer}
+        onChannelChanged={load}
         onClose={closeProductWorkspace}
       />
     </div>

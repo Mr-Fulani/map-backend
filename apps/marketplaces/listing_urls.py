@@ -1,5 +1,6 @@
 from django.urls import path
 
+from apps.marketplaces.channel_listing_views import ChannelListingListView
 from apps.marketplaces.views import (
     ListingApproveView,
     ListingArchiveView,
@@ -16,6 +17,7 @@ from apps.marketplaces.views import (
 
 urlpatterns = [
     path('', ListingListView.as_view(), name='listing-list'),
+    path('channels/', ChannelListingListView.as_view(), name='listing-channel-list'),
     path('bulk-actions/', ListingBulkActionView.as_view(), name='listing-bulk-actions'),
     path('bulk-placement/', ListingBulkPlacementView.as_view(), name='listing-bulk-placement'),
     path('<int:pk>/', ListingDetailView.as_view(), name='listing-detail'),

@@ -1359,6 +1359,7 @@ export const categoryApi = {
 // Listings
 export const listingApi = {
   list: (params?: Record<string, unknown>) => api.get('/listings/', { params }),
+  listChannels: (params?: Record<string, unknown>) => api.get('/listings/channels/', { params }),
   get: (id: number) => api.get(`/listings/${id}/`),
   marketComparison: (id: number) => api.get(`/listings/${id}/market-comparison/`),
   approve: (id: number) => api.post(`/listings/${id}/approve/`),
