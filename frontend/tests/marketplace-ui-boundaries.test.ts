@@ -53,3 +53,25 @@ test('successful Ozon lifecycle changes refresh the provider-neutral listing ind
     'publish, reconcile and commerce sync must each refresh the channel row',
   );
 });
+
+test('publication workspace uses one bounded snapshot and loads only the selected Ozon card', () => {
+  const workspace = source('src/components/listings/PublicationWorkspaceDrawer.tsx');
+  const editor = source('src/components/listings/OzonListingEditorPanel.tsx');
+
+  assert.match(workspace, /listingApi\.workspace\(requestedProductId\)/);
+  assert.doesNotMatch(workspace, /product\.listing_options\.map/);
+  assert.doesNotMatch(workspace, /ozonAccounts\.map[\s\S]*getOzonOffer/);
+  assert.match(editor, /<OzonOfferPreparationCard/);
+});
+
+test('Ozon drawer mirrors Avito navigation cues without entering Avito publication code', () => {
+  const editor = source('src/components/listings/OzonListingEditorPanel.tsx');
+  const preparation = source('src/components/products/OzonOfferPreparation.tsx');
+
+  assert.match(editor, /sticky bottom-0/);
+  assert.match(editor, /Нажмите на пункт — MAP прокрутит к нужному разделу/);
+  assert.match(editor, /Общие для Avito, Ozon и следующих площадок/);
+  assert.match(editor, /Сохранить характеристики и проверить/);
+  assert.match(preparation, /focusField/);
+  assert.doesNotMatch(preparation, /getOzonCatalogTreeLevel\(accountId, \[\]\)/);
+});

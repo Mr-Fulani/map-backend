@@ -69,6 +69,7 @@ function treeOptionValue(option: OzonCatalogTreeOption): string {
 export interface OzonOfferPreparationCardHandle {
   saveAttributes: () => Promise<boolean>;
   applyMarketPrice: (price: string) => boolean;
+  focusField: (field: string) => boolean;
 }
 
 interface OzonOfferPreparationCardProps {
@@ -97,6 +98,7 @@ OzonOfferPreparationCardProps
   );
   const [accountChoiceId, setAccountChoiceId] = useState<number | null>(null);
   const [preparation, setPreparation] = useState<OzonOfferPreparation | null>(null);
+  const [loadError, setLoadError] = useState(false);
   const [attributes, setAttributes] = useState<OzonOfferAttribute[]>([]);
   const [loadedAccountId, setLoadedAccountId] = useState<number | null>(null);
   const [action, setAction] = useState('');
@@ -114,6 +116,7 @@ OzonOfferPreparationCardProps
     ? accountChoiceId
     : ozonAccounts.length === 1 ? ozonAccounts[0].id : null;
   const categoryTreeRequestRef = useRef(0);
+  const rootRef = useRef<HTMLDivElement>(null);
   const loading = Boolean(accountId && loadedAccountId !== accountId);
 
   const applyPreparation = useCallback((next: OzonOfferPreparation | null) => {
@@ -152,12 +155,15 @@ OzonOfferPreparationCardProps
   }, []);
 
   const loadPreparation = useCallback(async (selectedAccountId: number) => {
+    setLoadError(false);
+    setLoadedAccountId(null);
     try {
       const response = await productApi.getOzonOffer(productId, selectedAccountId);
       const next = envelopeData<OzonOfferPreparation>(response.data);
       applyPreparation(next);
     } catch {
       applyPreparation(null);
+      setLoadError(true);
       toast.error('Не удалось прочитать подготовку товара для Ozon.');
     } finally {
       setLoadedAccountId(selectedAccountId);
@@ -185,6 +191,7 @@ OzonOfferPreparationCardProps
   useEffect(() => {
     if (!accountId) return undefined;
     let active = true;
+    setLoadError(false);
     productApi.getOzonOffer(productId, accountId)
       .then((response) => {
         if (!active) return;
@@ -194,6 +201,7 @@ OzonOfferPreparationCardProps
       .catch(() => {
         if (!active) return;
         applyPreparation(null);
+        setLoadError(true);
         toast.error('Не удалось прочитать подготовку товара для Ozon.');
       })
       .finally(() => {
@@ -201,25 +209,6 @@ OzonOfferPreparationCardProps
       });
     return () => { active = false; };
   }, [accountId, applyPreparation, productId, refreshToken]);
-
-  useEffect(() => {
-    if (!accountId) return;
-    let active = true;
-    categoryTreeRequestRef.current += 1;
-    accountApi.getOzonCatalogTreeLevel(accountId, [])
-      .then((response) => {
-        if (!active) return;
-        setCategoryTreeLevel(envelopeData<OzonCatalogTreeLevel>(response.data));
-        setCategoryTreeLoading(false);
-      })
-      .catch(() => {
-        if (!active) return;
-        setCategoryTreeLevel(null);
-        setCategoryTreeLoading(false);
-        toast.error('Не удалось открыть локальное дерево категорий Ozon.');
-      });
-    return () => { active = false; };
-  }, [accountId]);
 
   async function updateOffer(payload: Record<string, unknown>, actionName: string) {
     if (!accountId) return;
@@ -278,7 +267,29 @@ OzonOfferPreparationCardProps
     return true;
   }
 
-  useImperativeHandle(ref, () => ({ saveAttributes, applyMarketPrice }));
+  function focusField(field: string): boolean {
+    const exactField = field.startsWith('attribute:') ? field : null;
+    const section = field === 'category'
+      ? 'category'
+      : field === 'price'
+        ? 'pricing'
+        : field === 'attributes' || exactField
+          ? 'attributes'
+          : null;
+    if (!section) return false;
+    const selector = exactField
+      ? `[data-ozon-field="${exactField}"]`
+      : `[data-ozon-section="${section}"]`;
+    const target = rootRef.current?.querySelector<HTMLElement>(selector);
+    if (!target) return false;
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.querySelector<HTMLElement>('input, button, [role="combobox"]')?.focus({
+      preventScroll: true,
+    });
+    return true;
+  }
+
+  useImperativeHandle(ref, () => ({ saveAttributes, applyMarketPrice, focusField }));
 
   async function savePricing() {
     const pricing = ozonPricingPayload(pricingMode, marginOverride, priceDraft);
@@ -465,6 +476,7 @@ OzonOfferPreparationCardProps
   );
 
   return (
+    <div ref={rootRef}>
     <Card className={embedded ? 'border-0 bg-transparent shadow-none' : undefined}>
       <CardHeader className={`space-y-2 ${embedded ? 'px-0 pt-0' : ''}`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -514,6 +526,22 @@ OzonOfferPreparationCardProps
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" /> Загружаем подготовку…
           </div>
+        ) : loadError ? (
+          <div className="space-y-3 rounded-md border border-destructive/30 bg-destructive/5 p-4">
+            <p className="text-sm font-medium text-destructive">
+              Не удалось загрузить карточку этого кабинета Ozon.
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Остальные кабинеты продолжают работать независимо.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => accountId && loadPreparation(accountId)}
+            >
+              Повторить загрузку
+            </Button>
+          </div>
         ) : accountId && preparation && !preparation.draft ? (
           <div className="space-y-3 rounded-md border bg-muted/20 p-4">
             <div>
@@ -547,10 +575,15 @@ OzonOfferPreparationCardProps
               </div>
             </div>
 
-            <div className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
-              Служебный код карточки: <span className="font-mono">{preparation.draft.offer_id}</span>.
-              Он создаётся один раз и не меняется при переименовании кабинета.
-            </div>
+            <details className="rounded-md border bg-muted/20 p-3 text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">
+                Технические данные карточки
+              </summary>
+              <p className="mt-2">
+                Служебный код: <span className="font-mono">{preparation.draft.offer_id}</span>.
+                Он создаётся один раз и не меняется при переименовании кабинета.
+              </p>
+            </details>
 
             <div className="space-y-3 rounded-md border border-blue-500/20 bg-blue-500/5 p-3">
               <div className="flex flex-wrap items-start justify-between gap-3">
@@ -620,7 +653,23 @@ OzonOfferPreparationCardProps
                 ))}
             </div>
 
-            <div className="space-y-3">
+            {preparation.pricing && (
+              <div data-ozon-section="pricing">
+                <OzonOfferPricingEditor
+                  accountId={accountId}
+                  pricing={preparation.pricing}
+                  mode={pricingMode}
+                  margin={marginOverride}
+                  price={priceDraft}
+                  saving={action === 'pricing'}
+                  onMarginChange={updateMargin}
+                  onPriceChange={updatePrice}
+                  onSave={() => void savePricing()}
+                />
+              </div>
+            )}
+
+            <div className="space-y-3" data-ozon-section="category">
               <div>
                 <p className="text-sm font-medium">Категория Ozon</p>
                 <p className="text-xs text-muted-foreground">
@@ -754,22 +803,8 @@ OzonOfferPreparationCardProps
               </details>
             </div>
 
-            {preparation.pricing && (
-              <OzonOfferPricingEditor
-                accountId={accountId}
-                pricing={preparation.pricing}
-                mode={pricingMode}
-                margin={marginOverride}
-                price={priceDraft}
-                saving={action === 'pricing'}
-                onMarginChange={updateMargin}
-                onPriceChange={updatePrice}
-                onSave={() => void savePricing()}
-              />
-            )}
-
             {preparation.draft.category && (
-              <div className="space-y-3">
+              <div className="space-y-3" data-ozon-section="attributes">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <p className="text-sm font-medium">Характеристики Ozon</p>
@@ -797,8 +832,11 @@ OzonOfferPreparationCardProps
                     && (item.complex_id ?? 0) === attribute.complex_id
                   ));
                   return (
-                    <OzonOfferAttributeEditor
+                    <div
                       key={key}
+                      data-ozon-field={`attribute:${attribute.complex_id}:${attribute.id}`}
+                    >
+                    <OzonOfferAttributeEditor
                       attribute={attribute}
                       autofill={autofill}
                       recommendation={recommendation}
@@ -817,6 +855,7 @@ OzonOfferPreparationCardProps
                         value,
                       ))}
                     />
+                    </div>
                   );
                 })}
 
@@ -844,7 +883,7 @@ OzonOfferPreparationCardProps
               </div>
             )}
 
-            <div className="space-y-2">
+            <div className="space-y-2" data-ozon-section="readiness">
               <p className="text-sm font-medium">Проверка готовности</p>
               {preparation.preflight.ready ? (
                 <div className="flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-3 text-sm text-emerald-950 dark:text-emerald-100">
@@ -868,5 +907,6 @@ OzonOfferPreparationCardProps
         ) : null}
       </CardContent>
     </Card>
+    </div>
   );
 });

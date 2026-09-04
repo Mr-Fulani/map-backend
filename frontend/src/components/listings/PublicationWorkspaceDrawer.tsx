@@ -22,14 +22,16 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { accountApi, imageApi, listingApi, productApi } from '@/lib/api';
+import { listingApi, productApi } from '@/lib/api';
 import type { OzonOfferPreparation } from '@/lib/ozon-offer-preparation';
 import {
   avitoTargetState,
+  ozonSummaryTargetState,
   ozonTargetState,
   publicationWorkspaceView,
   type PublicationTargetState,
   type PublicationWorkspaceListing,
+  type OzonWorkspaceSummary,
 } from '@/lib/publication-workspace';
 
 interface WorkspaceAccount {
@@ -38,10 +40,6 @@ interface WorkspaceAccount {
   marketplace: string;
   marketplace_label: string;
   is_active: boolean;
-}
-
-interface ProductListingOption {
-  id: number;
 }
 
 interface WorkspaceProduct {
@@ -53,7 +51,6 @@ interface WorkspaceProduct {
   stock_qty: number;
   title_ai: string;
   description_ai: string;
-  listing_options: ProductListingOption[];
 }
 
 interface WorkspaceImage {
@@ -65,10 +62,7 @@ interface WorkspaceImage {
   thumb_url: string;
 }
 
-interface AvitoListingDetail extends PublicationWorkspaceListing {
-  account_name: string;
-  product_id: number;
-}
+type AvitoListingDetail = PublicationWorkspaceListing;
 
 interface Props {
   productId: number | null;
@@ -88,62 +82,45 @@ interface WorkspaceSnapshot {
   accounts: WorkspaceAccount[];
   images: WorkspaceImage[];
   avitoListings: Record<number, AvitoListingDetail>;
-  ozonPreparations: Record<number, OzonOfferPreparation>;
+  ozonSummaries: Record<number, OzonWorkspaceSummary>;
+}
+
+interface WorkspaceResponse {
+  product: WorkspaceProduct;
+  accounts: WorkspaceAccount[];
+  images: WorkspaceImage[];
+  avito_listings: AvitoListingDetail[];
+  ozon_drafts: OzonWorkspaceSummary[];
 }
 
 async function fetchPublicationWorkspace(
   requestedProductId: number,
 ): Promise<WorkspaceSnapshot> {
-  const [productResponse, accountsResponse, imagesResponse] = await Promise.all([
-    productApi.get(requestedProductId),
-    accountApi.list(),
-    imageApi.list(requestedProductId).catch(() => null),
-  ]);
-  const product = envelopeData<WorkspaceProduct>(productResponse.data);
-  const accountResults = (
-    accountsResponse.data.data ?? accountsResponse.data
-  ) as WorkspaceAccount[];
-  const accounts = accountResults.filter((account) => (
-    account.is_active && ['avito', 'ozon'].includes(account.marketplace)
-  ));
-  const images = (imagesResponse
-    ? envelopeData<WorkspaceImage[]>(imagesResponse.data)
-    : [])
+  const response = await listingApi.workspace(requestedProductId);
+  const data = envelopeData<WorkspaceResponse>(response.data);
+  const images = data.images
     .slice()
     .sort((left, right) => (
       Number(right.is_primary) - Number(left.is_primary)
       || left.position - right.position
       || left.id - right.id
     ));
-  const listingResponses = await Promise.all(
-    product.listing_options.map((option) => (
-      listingApi.get(option.id).then((response) => (
-        envelopeData<AvitoListingDetail>(response.data)
-      ))
-    )),
-  );
   const avitoListings: Record<number, AvitoListingDetail> = {};
-  listingResponses.forEach((listing) => {
-    if (listing.product_id === requestedProductId) {
-      avitoListings[listing.account_id] = listing;
-    }
+  data.avito_listings.forEach((listing) => {
+    avitoListings[listing.account_id] = listing;
   });
-  const ozonAccounts = accounts.filter((account) => account.marketplace === 'ozon');
-  const ozonResponses = await Promise.all(
-    ozonAccounts.map((account) => (
-      productApi.getOzonOffer(requestedProductId, account.id)
-        .then((response) => ({
-          accountId: account.id,
-          preparation: envelopeData<OzonOfferPreparation>(response.data),
-        }))
-    )),
-  );
-  const ozonPreparations: Record<number, OzonOfferPreparation> = {};
-  ozonResponses.forEach((result) => {
-    ozonPreparations[result.accountId] = result.preparation;
+  const ozonSummaries: Record<number, OzonWorkspaceSummary> = {};
+  data.ozon_drafts.forEach((summary) => {
+    ozonSummaries[summary.account_id] = summary;
   });
 
-  return { product, accounts, images, avitoListings, ozonPreparations };
+  return {
+    product: data.product,
+    accounts: data.accounts,
+    images,
+    avitoListings,
+    ozonSummaries,
+  };
 }
 
 export default function PublicationWorkspaceDrawer({
@@ -158,6 +135,7 @@ export default function PublicationWorkspaceDrawer({
   const [accounts, setAccounts] = useState<WorkspaceAccount[]>([]);
   const [images, setImages] = useState<WorkspaceImage[]>([]);
   const [avitoListings, setAvitoListings] = useState<Record<number, AvitoListingDetail>>({});
+  const [ozonSummaries, setOzonSummaries] = useState<Record<number, OzonWorkspaceSummary>>({});
   const [ozonPreparations, setOzonPreparations] = useState<Record<number, OzonOfferPreparation>>({});
   const [loading, setLoading] = useState(productId !== null);
   const [loadError, setLoadError] = useState(false);
@@ -181,7 +159,8 @@ export default function PublicationWorkspaceDrawer({
         setImages(snapshot.images);
         setOzonPanel('preparation');
         setAvitoListings(snapshot.avitoListings);
-        setOzonPreparations(snapshot.ozonPreparations);
+        setOzonSummaries(snapshot.ozonSummaries);
+        setOzonPreparations({});
         setLoadError(false);
       })
       .catch(() => {
@@ -190,6 +169,7 @@ export default function PublicationWorkspaceDrawer({
         setAccounts([]);
         setImages([]);
         setAvitoListings({});
+        setOzonSummaries({});
         setOzonPreparations({});
         setLoadError(true);
         toast.error('Не удалось открыть каналы публикации товара.');
@@ -229,9 +209,11 @@ export default function PublicationWorkspaceDrawer({
       account.id,
       account.marketplace === 'avito'
         ? avitoTargetState(avitoListings[account.id] ?? null)
-        : ozonTargetState(ozonPreparations[account.id] ?? null),
+        : ozonPreparations[account.id]
+          ? ozonTargetState(ozonPreparations[account.id])
+          : ozonSummaryTargetState(ozonSummaries[account.id] ?? null),
     ]))
-  ), [accounts, avitoListings, ozonPreparations]);
+  ), [accounts, avitoListings, ozonPreparations, ozonSummaries]);
 
   useEffect(() => {
     if (selectedView.kind !== 'avito_listing') return;
@@ -495,9 +477,11 @@ export default function PublicationWorkspaceDrawer({
                 className={`${ozonPanel === 'preparation' ? 'block' : 'hidden'} min-h-0 min-w-0 max-w-full overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-gutter:stable] xl:block`}
               >
                 <OzonListingEditorPanel
+                  key={`${product.id}:${selectedAccount.id}`}
                   product={product}
                   account={selectedAccount}
                   preparation={selectedOzonPreparation}
+                  summary={ozonSummaries[selectedAccount.id] ?? null}
                   images={images}
                   preparationRef={ozonPreparationRef}
                   footerAction={ozonFooterAction}
@@ -507,6 +491,7 @@ export default function PublicationWorkspaceDrawer({
                   onPublish={() => void publishProductToOzon()}
                   onReconcile={() => void reconcileProductInOzon()}
                   onSyncCommerce={() => void syncOzonCommerce()}
+                  onReload={retryWorkspace}
                 />
               </section>
             </div>
