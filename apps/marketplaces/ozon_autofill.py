@@ -70,14 +70,16 @@ def _enrichment_candidates(product: Product) -> dict[str, dict[str, Any]]:
 
     candidates: dict[str, list[dict[str, Any]]] = {}
     seen: set[tuple[str, str]] = set()
-    for item in product.attributes.order_by('-pk').values(
+    for attribute_item in product.attributes.order_by('-pk').values(
         'source_id', 'raw_name', 'name', 'value',
     ):
-        name = str(item['raw_name'] or item['name'] or '').strip()
+        name = str(
+            attribute_item['raw_name'] or attribute_item['name'] or ''
+        ).strip()
         normalized_name = _normalized(name)
-        source_id = str(item['source_id'] or '')
+        source_id = str(attribute_item['source_id'] or '')
         identity = (source_id, normalized_name)
-        value = str(item['value'] or '').strip()
+        value = str(attribute_item['value'] or '').strip()
         if not normalized_name or not value or identity in seen:
             continue
         seen.add(identity)
@@ -86,23 +88,23 @@ def _enrichment_candidates(product: Product) -> dict[str, dict[str, Any]]:
             'source_id': source_id,
             'approved': False,
         })
-    for item in product.enrichment_facts.filter(
+    for fact_item in product.enrichment_facts.filter(
         fact_type=ProductEnrichmentFact.FactType.TECHNICAL,
     ).exclude(review_status=ReviewStatus.REJECTED).order_by('-pk').values(
         'source_id', 'name', 'value', 'review_status',
     ):
-        name = str(item['name'] or '').strip()
+        name = str(fact_item['name'] or '').strip()
         normalized_name = _normalized(name)
-        source_id = str(item['source_id'] or '')
+        source_id = str(fact_item['source_id'] or '')
         identity = (source_id, normalized_name)
-        value = str(item['value'] or '').strip()
+        value = str(fact_item['value'] or '').strip()
         if not normalized_name or not value or identity in seen:
             continue
         seen.add(identity)
         candidates.setdefault(normalized_name, []).append({
             'value': value,
             'source_id': source_id,
-            'approved': item['review_status'] == ReviewStatus.APPROVED,
+            'approved': fact_item['review_status'] == ReviewStatus.APPROVED,
         })
 
     result: dict[str, dict[str, Any]] = {}

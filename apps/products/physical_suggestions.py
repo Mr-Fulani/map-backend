@@ -168,7 +168,7 @@ def _combined_dimensions_mm(
         for value in values
     ):
         return None
-    return values
+    return values[0], values[1], values[2]
 
 
 def extract_physical_suggestions(
@@ -183,19 +183,19 @@ def extract_physical_suggestions(
         if label in _COMBINED_DIMENSION_ALIASES:
             dimensions = _combined_dimensions_mm(raw_name, raw_value)
             if dimensions is not None:
-                for field, parsed in zip((
+                for dimension_field, combined_dimension in zip((
                     ProductPhysicalSuggestion.Field.LENGTH_MM,
                     ProductPhysicalSuggestion.Field.WIDTH_MM,
                     ProductPhysicalSuggestion.Field.HEIGHT_MM,
                 ), dimensions, strict=True):
-                    if priorities.get(field, -1) <= 3:
-                        result[field] = PhysicalSuggestionCandidate(
-                            field=field,
-                            value=_canonical_decimal(parsed),
+                    if priorities.get(dimension_field, -1) <= 3:
+                        result[dimension_field] = PhysicalSuggestionCandidate(
+                            field=dimension_field,
+                            value=_canonical_decimal(combined_dimension),
                             raw_name=(raw_name or '')[:150],
                             raw_value=str(raw_value or ''),
                         )
-                        priorities[field] = 3
+                        priorities[dimension_field] = 3
             continue
         field = next(
             (candidate for candidate, aliases in _LABEL_ALIASES.items() if label in aliases),
@@ -213,11 +213,17 @@ def extract_physical_suggestions(
         if field == ProductPhysicalSuggestion.Field.BARCODE:
             value = _barcode(raw_value)
         elif field == ProductPhysicalSuggestion.Field.WEIGHT_G:
-            parsed = _weight_g(raw_name, raw_value)
-            value = _canonical_decimal(parsed) if parsed is not None else None
+            parsed_weight = _weight_g(raw_name, raw_value)
+            value = (
+                _canonical_decimal(parsed_weight)
+                if parsed_weight is not None else None
+            )
         else:
-            parsed = _dimension_mm(raw_name, raw_value)
-            value = _canonical_decimal(parsed) if parsed is not None else None
+            single_dimension = _dimension_mm(raw_name, raw_value)
+            value = (
+                _canonical_decimal(single_dimension)
+                if single_dimension is not None else None
+            )
         if value is not None:
             result[field] = PhysicalSuggestionCandidate(
                 field=field,
