@@ -33,6 +33,15 @@ class OzonPublicationError(RuntimeError):
         self.code = code
 
 
+def ozon_barcode_generation_enabled_for_account(account) -> bool:
+    """Require product writes plus the exact barcode endpoint permission."""
+
+    return (
+        ozon_product_write_enabled_for_account(account)
+        and '/v1/barcode/generate' in account.ozon_profile.api_methods
+    )
+
+
 def _public_image_url(image) -> str:
     key = get_product_image_delivery_key(image)
     cdn = str(getattr(settings, 'YC_CDN_DOMAIN', '') or '').strip().strip('/')
@@ -63,6 +72,20 @@ def _vat_value(value: Any) -> str | None:
     return format(normalized.normalize(), 'f')
 
 
+def provider_barcodes_from_item(item: Mapping[str, Any]) -> list[str]:
+    raw = item.get('barcodes')
+    candidates = raw if isinstance(raw, list) else []
+    legacy = item.get('barcode')
+    if isinstance(legacy, str) and legacy.strip():
+        candidates = [legacy, *candidates]
+    barcodes: list[str] = []
+    for value in candidates[:50]:
+        barcode = str(value or '').strip()
+        if barcode and len(barcode) <= 100 and barcode not in barcodes:
+            barcodes.append(barcode)
+    return barcodes
+
+
 def build_product_import_item(
     product: Product,
     account: MarketplaceAccount,
@@ -91,24 +114,23 @@ def build_product_import_item(
             'Для отправки в Ozon нужна хотя бы одна доступная HTTPS-фотография.',
         )
 
-    def fact(name: str) -> Any:
+    def required_fact(name: str) -> Any:
         value = physical[name]['effective_value']
         if value in (None, ''):
             raise OzonPublicationError(
                 'physical_fact_missing',
-                'Заполните размеры, вес и штрихкод перед отправкой в Ozon.',
+                'Заполните размеры и вес упаковки перед отправкой в Ozon.',
             )
         return value
 
     profile = OzonAccountProfile.objects.filter(account=account).first()
     item: dict[str, Any] = {
         'attributes': draft.attributes,
-        'barcode': str(fact('barcode')),
         'currency_code': (profile.currency if profile and profile.currency else 'RUB')[:10],
-        'depth': _positive_integer(fact('length_mm'), 'Длина'),
+        'depth': _positive_integer(required_fact('length_mm'), 'Длина'),
         'description_category_id': draft.description_category_id,
         'dimension_unit': 'mm',
-        'height': _positive_integer(fact('height_mm'), 'Высота'),
+        'height': _positive_integer(required_fact('height_mm'), 'Высота'),
         'images': images,
         'name': (product.title_ai or product.name).strip()[:500],
         'description': (product.description_ai or '').strip()[:6000],
@@ -116,10 +138,13 @@ def build_product_import_item(
         'price': str(pricing['final_price']),
         'primary_image': images[0],
         'type_id': draft.type_id,
-        'weight': _positive_integer(fact('weight_g'), 'Вес'),
+        'weight': _positive_integer(required_fact('weight_g'), 'Вес'),
         'weight_unit': 'g',
-        'width': _positive_integer(fact('width_mm'), 'Ширина'),
+        'width': _positive_integer(required_fact('width_mm'), 'Ширина'),
     }
+    barcode = str(physical['barcode']['effective_value'] or '').strip()
+    if barcode:
+        item['barcode'] = barcode
     vat = _vat_value(physical['vat_rate']['effective_value'])
     if vat is not None:
         item['vat'] = vat
@@ -191,6 +216,134 @@ def _require_write_admission(account: MarketplaceAccount) -> None:
         raise OzonPublicationError('account_not_ready', 'Сначала проверьте подключение Ozon.') from exc
     if profile.connection_status != OzonAccountProfile.ConnectionStatus.CONNECTED:
         raise OzonPublicationError('account_not_ready', 'Сначала проверьте подключение Ozon.')
+
+
+def request_product_barcode_generation(
+    product: Product,
+    account: MarketplaceAccount,
+) -> OzonOfferDraft:
+    """Generate an account-scoped Ozon barcode without inventing a GTIN in MAP."""
+
+    now = timezone.now()
+    with transaction.atomic():
+        locked_account = MarketplaceAccount.objects.select_for_update().select_related(
+            'tenant',
+        ).get(pk=account.pk, tenant=product.tenant)
+        _require_write_admission(locked_account)
+        if not ozon_barcode_generation_enabled_for_account(locked_account):
+            raise OzonPublicationError(
+                'barcode_generation_disabled',
+                'API-ключ Ozon не разрешает создание штрихкодов. '
+                'Переподключите ключ с правом /v1/barcode/generate.',
+            )
+        locked_product = Product.objects.select_for_update().get(
+            pk=product.pk,
+            tenant=product.tenant,
+        )
+        draft = OzonOfferDraft.objects.select_for_update().filter(
+            tenant=product.tenant,
+            product=locked_product,
+            account=locked_account,
+        ).first()
+        if draft is None or draft.provider_product_id is None:
+            raise OzonPublicationError(
+                'provider_product_missing',
+                'Сначала отправьте карточку и дождитесь Product ID от Ozon.',
+            )
+        if draft.provider_barcodes:
+            return draft
+        common_barcode = str(
+            physical_profile_presentation(locked_product)['facts']['barcode'][
+                'effective_value'
+            ] or '',
+        ).strip()
+        if common_barcode:
+            raise OzonPublicationError(
+                'barcode_already_available',
+                'У товара уже есть штрихкод из 1С или MAP. Отправьте обновление карточки в Ozon.',
+            )
+        should_generate = draft.barcode_generation_status in {
+            OzonOfferDraft.BarcodeGenerationStatus.NOT_REQUESTED,
+            OzonOfferDraft.BarcodeGenerationStatus.FAILED,
+        }
+        if draft.barcode_generation_status == OzonOfferDraft.BarcodeGenerationStatus.REQUESTING:
+            if (
+                draft.barcode_generation_requested_at is not None
+                and draft.barcode_generation_requested_at > now - timedelta(minutes=2)
+            ):
+                return draft
+            should_generate = False
+            draft.barcode_generation_status = (
+                OzonOfferDraft.BarcodeGenerationStatus.OUTCOME_UNKNOWN
+            )
+        if should_generate:
+            draft.barcode_generation_status = OzonOfferDraft.BarcodeGenerationStatus.REQUESTING
+            draft.barcode_generation_error = ''
+            draft.barcode_generation_requested_at = now
+            draft.save(update_fields=[
+                'barcode_generation_status',
+                'barcode_generation_error',
+                'barcode_generation_requested_at',
+                'updated_at',
+            ])
+        product_id = draft.provider_product_id
+        draft_id = draft.pk
+        client_id, api_key = _validated_credentials(locked_account)
+
+    client = OzonSellerClient(client_id=client_id, api_key=api_key)
+    generation_error: OzonAPIError | None = None
+    provider_errors: list[dict[str, Any]] = []
+    if should_generate:
+        try:
+            provider_errors = client.generate_barcodes([product_id])
+        except OzonAPIError as exc:
+            generation_error = exc
+
+    product_item: dict[str, Any] | None = None
+    try:
+        product_item = client.get_product_info_by_offer_id(draft.offer_id)
+    except OzonAPIError:
+        product_item = None
+    barcodes = provider_barcodes_from_item(product_item or {})
+
+    with transaction.atomic():
+        draft = OzonOfferDraft.objects.select_for_update().get(
+            pk=draft_id,
+            tenant=product.tenant,
+            account=account,
+        )
+        if draft.provider_product_id != product_id:
+            raise OzonPublicationError(
+                'provider_product_changed',
+                'Product ID Ozon изменился во время запроса. Обновите карточку.',
+            )
+        if barcodes:
+            draft.provider_barcodes = barcodes
+            draft.barcode_generation_status = OzonOfferDraft.BarcodeGenerationStatus.READY
+            draft.barcode_generation_error = ''
+        elif provider_errors:
+            draft.barcode_generation_status = OzonOfferDraft.BarcodeGenerationStatus.FAILED
+            draft.barcode_generation_error = (
+                'Ozon не создал штрихкод для текущего состояния товара. '
+                'Проверьте статус карточки и повторите после исправления.'
+            )
+        elif generation_error is not None:
+            draft.barcode_generation_status = (
+                OzonOfferDraft.BarcodeGenerationStatus.OUTCOME_UNKNOWN
+                if generation_error.code in {'connection_error', 'provider_unavailable'}
+                else OzonOfferDraft.BarcodeGenerationStatus.FAILED
+            )
+            draft.barcode_generation_error = str(generation_error)[:500]
+        elif should_generate:
+            draft.barcode_generation_status = OzonOfferDraft.BarcodeGenerationStatus.REQUESTED
+            draft.barcode_generation_error = ''
+        draft.save(update_fields=[
+            'provider_barcodes',
+            'barcode_generation_status',
+            'barcode_generation_error',
+            'updated_at',
+        ])
+        return draft
 
 
 def request_product_import(

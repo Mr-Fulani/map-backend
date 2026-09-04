@@ -13,11 +13,15 @@ from apps.marketplaces.models import (
     OzonOfferDraft,
 )
 from apps.marketplaces.ozon_catalog import OzonCatalogError, OzonCatalogService
-from apps.products.models import Product
+from apps.products.models import Product, ProductEnrichmentFact, ReviewStatus
 from apps.products.physical_profiles import physical_profile_presentation
+from apps.products.physical_suggestions import (
+    refresh_physical_suggestions_from_stored_facts,
+    source_label,
+)
 
 
-AUTOFILL_VERSION = 1
+AUTOFILL_VERSION = 2
 
 
 class OzonAutofillError(Exception):
@@ -61,7 +65,76 @@ def _field_kind(name: str) -> str:
     return 'unknown'
 
 
-def _candidate(product: Product, draft: OzonOfferDraft, kind: str) -> dict[str, Any] | None:
+def _enrichment_candidates(product: Product) -> dict[str, dict[str, Any]]:
+    """Return only unambiguous exact-label facts; never fuzzy-map Ozon fields."""
+
+    candidates: dict[str, list[dict[str, Any]]] = {}
+    seen: set[tuple[str, str]] = set()
+    for item in product.attributes.order_by('-pk').values(
+        'source_id', 'raw_name', 'name', 'value',
+    ):
+        name = str(item['raw_name'] or item['name'] or '').strip()
+        normalized_name = _normalized(name)
+        source_id = str(item['source_id'] or '')
+        identity = (source_id, normalized_name)
+        value = str(item['value'] or '').strip()
+        if not normalized_name or not value or identity in seen:
+            continue
+        seen.add(identity)
+        candidates.setdefault(normalized_name, []).append({
+            'value': value,
+            'source_id': source_id,
+            'approved': False,
+        })
+    for item in product.enrichment_facts.filter(
+        fact_type=ProductEnrichmentFact.FactType.TECHNICAL,
+    ).exclude(review_status=ReviewStatus.REJECTED).order_by('-pk').values(
+        'source_id', 'name', 'value', 'review_status',
+    ):
+        name = str(item['name'] or '').strip()
+        normalized_name = _normalized(name)
+        source_id = str(item['source_id'] or '')
+        identity = (source_id, normalized_name)
+        value = str(item['value'] or '').strip()
+        if not normalized_name or not value or identity in seen:
+            continue
+        seen.add(identity)
+        candidates.setdefault(normalized_name, []).append({
+            'value': value,
+            'source_id': source_id,
+            'approved': item['review_status'] == ReviewStatus.APPROVED,
+        })
+
+    result: dict[str, dict[str, Any]] = {}
+    for name, matches in candidates.items():
+        values = {_normalized(item['value']) for item in matches}
+        if len(values) != 1:
+            continue
+        labels = list(dict.fromkeys(source_label(item['source_id']) for item in matches))
+        approved = any(item['approved'] for item in matches)
+        result[name] = {
+            'value': matches[0]['value'],
+            'source': 'product.enrichment.exact_label',
+            'source_label': ', '.join(labels)[:200] or 'Обогащение товара',
+            'confidence': 1.0 if approved else 0.75,
+            'requires_review': not approved,
+            'message': (
+                'Значение уже подтверждено Тенантом в фактах товара.'
+                if approved else
+                'MAP нашёл это значение по точному названию характеристики. '
+                'Проверьте его перед отправкой.'
+            ),
+        }
+    return result
+
+
+def _candidate(
+    product: Product,
+    draft: OzonOfferDraft,
+    kind: str,
+    attribute_name: str,
+    enrichment_candidates: Mapping[str, dict[str, Any]],
+) -> dict[str, Any] | None:
     if kind == 'brand' and (product.brand or '').strip():
         return {
             'value': product.brand.strip(),
@@ -110,7 +183,7 @@ def _candidate(product: Product, draft: OzonOfferDraft, kind: str) -> dict[str, 
                 'source_label': 'Подтверждённый штрихкод товара',
                 'confidence': 1.0,
             }
-    return None
+    return enrichment_candidates.get(_normalized(attribute_name))
 
 
 def _selected_by_identity(draft: OzonOfferDraft) -> dict[tuple[int, int], list[dict[str, Any]]]:
@@ -315,6 +388,7 @@ def autofill_ozon_offer(
             'Товар и кабинет Ozon должны принадлежать одному тенанту.',
         )
 
+    refresh_physical_suggestions_from_stored_facts(product)
     draft, _created = OzonOfferDraft.objects.get_or_create(
         tenant=product.tenant,
         product=product,
@@ -378,6 +452,7 @@ def autofill_ozon_offer(
 
     product.refresh_from_db()
     draft.refresh_from_db()
+    enrichment_candidates = _enrichment_candidates(product)
     selected = _selected_by_identity(draft)
     previous_fields = (
         draft.autofill.get('fields', {})
@@ -421,9 +496,19 @@ def autofill_ozon_offer(
                     }]
 
         previous = previous_fields.get(key) if isinstance(previous_fields, Mapping) else None
-        previous_was_auto = isinstance(previous, Mapping) and previous.get('state') == 'auto_filled'
-        kind = _field_kind(str(attribute.get('name') or ''))
-        candidate = _candidate(product, draft, kind)
+        previous_was_auto = (
+            isinstance(previous, Mapping)
+            and previous.get('state') in {'auto_filled', 'suggested'}
+        )
+        attribute_name = str(attribute.get('name') or '')
+        kind = _field_kind(attribute_name)
+        candidate = _candidate(
+            product,
+            draft,
+            kind,
+            attribute_name,
+            enrichment_candidates,
+        )
 
         if preserved_values and not previous_was_auto:
             prepared.append({
@@ -469,8 +554,9 @@ def autofill_ozon_offer(
                     'values': [candidate_value],
                 })
                 applied_count += 1
+                requires_review = bool(candidate.get('requires_review'))
                 fields[key] = {
-                    'state': 'auto_filled',
+                    'state': 'suggested' if requires_review else 'auto_filled',
                     'source': candidate['source'],
                     'source_label': candidate['source_label'],
                     'confidence': candidate['confidence'],
@@ -479,6 +565,14 @@ def autofill_ozon_offer(
                         'Значение подтверждено данными товара и справочником Ozon.',
                     ),
                 }
+                if requires_review:
+                    recommendations.append(_recommendation(
+                        'enrichment_fact_confirmation_required',
+                        attribute,
+                        'MAP подставил найденное значение. Проверьте его и нажмите '
+                        '«Сохранить характеристики и проверить».',
+                        candidate=candidate['value'],
+                    ))
                 continue
             recommendations.append(_recommendation(
                 'dictionary_match_needs_review',

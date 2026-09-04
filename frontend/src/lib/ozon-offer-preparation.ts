@@ -1,4 +1,5 @@
 import type { OzonCategoryPolicyState } from './marketplace-account-types';
+import type { ProductPhysicalProfile } from './product-physical-profile';
 
 export interface OzonOfferValue {
   value: string;
@@ -28,6 +29,7 @@ export interface OzonPreflightIssue {
 export interface OzonAutofillField {
   state:
     | 'auto_filled'
+    | 'suggested'
     | 'kept_manual'
     | 'kept_previous'
     | 'tenant_confirmed'
@@ -123,6 +125,7 @@ export interface OzonOfferPreparation {
     policy: OzonCategoryPolicyState;
   };
   autofill: OzonAutofillState;
+  physical_profile?: ProductPhysicalProfile;
   preflight: {
     ready: boolean;
     errors: OzonPreflightIssue[];
@@ -137,6 +140,20 @@ export interface OzonOfferPreparation {
     moderation_status: string;
     provider_errors: Array<{ code?: string; message?: string }>;
     last_provider_sync_at: string | null;
+    barcode?: {
+      common_value: string | null;
+      provider_values: string[];
+      generation_status:
+        | 'not_requested'
+        | 'requesting'
+        | 'requested'
+        | 'ready'
+        | 'failed'
+        | 'outcome_unknown';
+      generation_error: string;
+      generation_enabled: boolean;
+      can_generate: boolean;
+    };
     latest_operation: OzonOperationPresentation | null;
   };
   commerce: {
@@ -273,7 +290,7 @@ export function ozonAttributeGuidance(
       owner: 'map',
       ownerLabel: 'MAP заполняет при точном совпадении',
       source: 'Бренд товара и официальный справочник значений Ozon.',
-      note: 'Если MAP не нашёл единственное совпадение, выберите бренд из справочника и проверьте написание.',
+      note: 'Если точного бренда нет, не выбирайте похожий. Для действительно безымянного товара выберите «Нет бренда», иначе подайте заявку на бренд в Ozon.',
     };
   }
   if (name.includes('партномер') || name.includes('артикул производителя')) {

@@ -13,6 +13,7 @@ from apps.products.models import (
 from apps.products.physical_profiles import (
     MAX_PHYSICAL_DECIMAL, VAT_RATES, normalize_vat_rate, physical_profile_presentation,
 )
+from apps.products.physical_suggestions import valid_gtin
 
 
 class ProductImageSerializer(serializers.ModelSerializer):
@@ -225,7 +226,12 @@ class ProductPhysicalProfileUpdateSerializer(serializers.Serializer):
     def validate_barcode(self, value: str) -> str:
         if any(ord(char) < 32 for char in value):
             raise serializers.ValidationError('Штрихкод содержит недопустимые символы.')
-        return value.strip()
+        normalized = value.strip()
+        if normalized and not valid_gtin(normalized):
+            raise serializers.ValidationError(
+                'Введите корректный EAN-8, UPC-A, EAN-13 или GTIN-14 либо оставьте поле пустым.',
+            )
+        return normalized
 
     def validate_vat_rate(self, value: Decimal | None) -> Decimal | None:
         if value is None:

@@ -150,7 +150,7 @@ export default function PublicationWorkspaceDrawer({
   const [reloadToken, setReloadToken] = useState(0);
   const [preparingAccountId, setPreparingAccountId] = useState<number | null>(null);
   const [ozonFooterAction, setOzonFooterAction] = useState<
-    'save' | 'regenerate' | 'publish' | 'reconcile' | 'commerce' | null
+    'save' | 'regenerate' | 'publish' | 'reconcile' | 'commerce' | 'barcode' | null
   >(null);
   const [mediaAction, setMediaAction] = useState<ProductMediaAction>(null);
   const [ozonPreparationRefreshToken, setOzonPreparationRefreshToken] = useState(0);
@@ -472,6 +472,32 @@ export default function PublicationWorkspaceDrawer({
     }
   }
 
+  async function generateOzonBarcode() {
+    if (!product || !selectedAccount || selectedAccount.marketplace !== 'ozon') return;
+    setOzonFooterAction('barcode');
+    try {
+      const response = await productApi.generateOzonBarcode(product.id, selectedAccount.id);
+      const preparation = envelopeData<OzonOfferPreparation>(response.data);
+      handleOzonPreparationChange(preparation);
+      const barcode = preparation.publication.barcode;
+      if (!barcode) throw new Error('Missing Ozon barcode state');
+      if (barcode.provider_values.length > 0) {
+        toast.success('Ozon создал штрихкод. MAP сохранил его для этого кабинета.');
+      } else if (barcode.generation_status === 'requested') {
+        toast.info('Ozon принял запрос. Нажмите «Проверить результат» через несколько секунд.');
+      } else {
+        toast.warning(barcode.generation_error || 'Результат создания штрихкода нужно проверить.');
+      }
+    } catch (error: unknown) {
+      const message = (
+        error as { response?: { data?: { message?: string } } }
+      ).response?.data?.message;
+      toast.error(message ?? 'Не удалось создать штрихкод Ozon.');
+    } finally {
+      setOzonFooterAction(null);
+    }
+  }
+
   return (
     <Sheet open={open} onOpenChange={(nextOpen) => { if (!nextOpen) onClose(); }}>
       <SheetContent
@@ -587,6 +613,7 @@ export default function PublicationWorkspaceDrawer({
                   onPublish={() => void publishProductToOzon()}
                   onReconcile={() => void reconcileProductInOzon()}
                   onSyncCommerce={() => void syncOzonCommerce()}
+                  onGenerateBarcode={() => void generateOzonBarcode()}
                   onReload={retryWorkspace}
                 />
               </section>

@@ -20,6 +20,7 @@ from apps.marketplaces.ozon_category_policies import (
 )
 from apps.products.models import Product, ProductImage
 from apps.products.physical_profiles import physical_profile_presentation
+from apps.products.physical_suggestions import valid_gtin
 
 
 class OzonOfferError(RuntimeError):
@@ -388,6 +389,7 @@ def _preflight(
     draft: OzonOfferDraft | None,
     schema: OzonCategoryAttributeSnapshot | None,
     pricing: dict[str, Any] | None,
+    physical: dict[str, Any],
 ) -> dict[str, Any]:
     errors: list[dict[str, str]] = []
     recommendations: list[dict[str, str]] = []
@@ -458,6 +460,12 @@ def _preflight(
                     'Схема характеристик обновилась — проверьте значения.',
                 ))
             selected = _selected_by_identity(draft)
+            autofill_fields = (
+                draft.autofill.get('fields', {})
+                if isinstance(draft.autofill, Mapping)
+                and isinstance(draft.autofill.get('fields'), Mapping)
+                else {}
+            )
             for attribute in schema.attributes:
                 identity = (
                     attribute['attribute_complex_id'],
@@ -483,12 +491,33 @@ def _preflight(
                         attribute['name'],
                         value_error,
                     ))
+                    continue
+                autofill_field = autofill_fields.get(f'{identity[0]}:{identity[1]}')
+                if (
+                    selected_values
+                    and isinstance(autofill_field, Mapping)
+                    and autofill_field.get('state') == 'suggested'
+                ):
+                    errors.append(_issue(
+                        'suggested_attribute_needs_confirmation',
+                        f'attribute:{identity[0]}:{identity[1]}',
+                        attribute['name'],
+                        'MAP нашёл значение в обогащении. Проверьте его и сохраните '
+                        'характеристики перед отправкой.',
+                    ))
 
     recommendations.extend(_semantic_quality_recommendations(product, draft, schema))
 
-    physical = physical_profile_presentation(product)
     for field in physical['missing_fields']:
-        if field == 'vat_rate':
+        if field == 'barcode':
+            recommendations.append(_issue(
+                'barcode_generated_after_import',
+                'physical:barcode',
+                PHYSICAL_LABELS[field],
+                'Штрихкод не нужен для создания карточки. После получения Product ID '
+                'MAP сможет запросить отдельный штрихкод Ozon.',
+            ))
+        elif field == 'vat_rate':
             recommendations.append(_issue(
                 'vat_recommended',
                 'physical:vat_rate',
@@ -501,10 +530,17 @@ def _preflight(
                 'physical_fact_missing', f'physical:{field}', PHYSICAL_LABELS[field],
                 PHYSICAL_SOURCE_GUIDANCE[field],
             ))
+    barcode = str(physical['facts']['barcode']['effective_value'] or '').strip()
+    if barcode and not valid_gtin(barcode):
+        errors.append(_issue(
+            'barcode_invalid',
+            'physical:barcode',
+            PHYSICAL_LABELS['barcode'],
+            'Штрихкод не прошёл проверку EAN/GTIN. Исправьте его или очистите: '
+            'без кода MAP создаст карточку, а затем сможет запросить код Ozon.',
+        ))
     if not (product.title_ai or product.name).strip():
         errors.append(_issue('name_missing', 'name', 'Название', 'У товара нет названия.'))
-    if not (product.brand or '').strip():
-        errors.append(_issue('brand_missing', 'brand', 'Бренд', 'Укажите бренд товара.'))
     if Decimal(product.price) <= 0:
         errors.append(_issue('price_missing', 'price', 'Цена', 'Цена должна быть больше нуля.'))
     elif pricing is not None and Decimal(pricing['final_price']) <= 0:
@@ -551,14 +587,34 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
         draft.type_id if draft else None,
     )
     pricing = _offer_pricing(product, account, draft)
+    physical_profile = physical_profile_presentation(product)
     from apps.marketplaces.ozon_publication import (
         latest_offer_operation,
         operation_presentation,
+        ozon_barcode_generation_enabled_for_account,
     )
     from apps.marketplaces.ozon_rollout import ozon_product_write_enabled_for_account
 
     latest_operation = latest_offer_operation(draft)
     from apps.marketplaces.ozon_commerce import commerce_presentation
+    common_barcode = str(
+        physical_profile['facts']['barcode']['effective_value'] or '',
+    ).strip()
+    provider_barcodes = [
+        str(value).strip()[:100]
+        for value in (draft.provider_barcodes if draft is not None else [])
+        if str(value).strip()
+    ][:50]
+    barcode_generation_enabled = ozon_barcode_generation_enabled_for_account(account)
+    barcode_can_generate = bool(
+        draft is not None
+        and draft.provider_product_id is not None
+        and not provider_barcodes
+        and not common_barcode
+        and barcode_generation_enabled
+        and draft.barcode_generation_status
+        != OzonOfferDraft.BarcodeGenerationStatus.REQUESTING
+    )
     return {
         'account': {'id': account.pk, 'name': account.name, 'marketplace': 'ozon'},
         'draft': None if draft is None else {
@@ -589,7 +645,15 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
         },
         'pricing': pricing,
         'autofill': _autofill_presentation(draft),
-        'preflight': _preflight(product, account, draft, schema, pricing),
+        'physical_profile': physical_profile,
+        'preflight': _preflight(
+            product,
+            account,
+            draft,
+            schema,
+            pricing,
+            physical_profile,
+        ),
         'publication': {
             'write_enabled': ozon_product_write_enabled_for_account(account),
             'status': draft.publication_status if draft is not None else 'not_prepared',
@@ -601,6 +665,19 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
             'last_provider_sync_at': (
                 draft.last_provider_sync_at if draft is not None else None
             ),
+            'barcode': {
+                'common_value': common_barcode or None,
+                'provider_values': provider_barcodes,
+                'generation_status': (
+                    draft.barcode_generation_status
+                    if draft is not None else 'not_requested'
+                ),
+                'generation_error': (
+                    draft.barcode_generation_error if draft is not None else ''
+                ),
+                'generation_enabled': barcode_generation_enabled,
+                'can_generate': barcode_can_generate,
+            },
             'latest_operation': operation_presentation(latest_operation),
         },
         'commerce': commerce_presentation(product, account, draft, pricing),

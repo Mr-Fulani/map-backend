@@ -705,6 +705,14 @@ def new_ozon_offer_id() -> str:
 class OzonOfferDraft(TimestampedModel):
     """Local account-scoped Ozon preparation; never enters Avito Listing."""
 
+    class BarcodeGenerationStatus(models.TextChoices):
+        NOT_REQUESTED = 'not_requested', 'Не запрошен'
+        REQUESTING = 'requesting', 'Запрашивается'
+        REQUESTED = 'requested', 'Запрошен, ожидается в Ozon'
+        READY = 'ready', 'Готов'
+        FAILED = 'failed', 'Ошибка'
+        OUTCOME_UNKNOWN = 'outcome_unknown', 'Результат неизвестен'
+
     tenant = models.ForeignKey(
         Tenant,
         on_delete=models.CASCADE,
@@ -798,6 +806,31 @@ class OzonOfferDraft(TimestampedModel):
         blank=True,
         editable=False,
         verbose_name='SKU Ozon',
+    )
+    provider_barcodes = models.JSONField(
+        default=list,
+        blank=True,
+        editable=False,
+        verbose_name='Штрихкоды товара в Ozon',
+    )
+    barcode_generation_status = models.CharField(
+        max_length=32,
+        choices=BarcodeGenerationStatus.choices,
+        default=BarcodeGenerationStatus.NOT_REQUESTED,
+        editable=False,
+        verbose_name='Состояние создания штрихкода Ozon',
+    )
+    barcode_generation_error = models.CharField(
+        max_length=500,
+        blank=True,
+        editable=False,
+        verbose_name='Ошибка создания штрихкода Ozon',
+    )
+    barcode_generation_requested_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        verbose_name='Создание штрихкода Ozon запрошено',
     )
     provider_status = models.CharField(
         max_length=100,

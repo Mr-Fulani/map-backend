@@ -97,6 +97,8 @@ test('Ozon drawer mirrors Avito navigation cues without entering Avito publicati
   assert.match(editor, /Заголовок и описание заполняет обогащение/);
   assert.match(editor, /onSaveBrand/);
   assert.match(editor, /Сохранить характеристики и проверить/);
+  assert.match(editor, /data-testid="ozon-barcode-workflow"/);
+  assert.match(editor, /Создать штрихкод Ozon/);
   assert.match(editor, /showPricing={false}/);
   assert.match(editor, /showReadinessSummary={false}/);
   assert.match(preparation, /focusField/);

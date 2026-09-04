@@ -90,7 +90,7 @@ test('keeps MAP fallback separate while displaying a valid 1C value', () => {
 
 test('converts user-facing cm and kg back to canonical API units', () => {
   const payload = physicalDraftToApiPayload({
-    barcode: '  4601234567890 ',
+    barcode: '  4650252914394 ',
     length_mm: '25,5',
     width_mm: '12',
     height_mm: '',
@@ -98,7 +98,7 @@ test('converts user-facing cm and kg back to canonical API units', () => {
     vat_rate: '7',
   });
   assert.deepEqual(payload, {
-    barcode: '4601234567890',
+    barcode: '4650252914394',
     length_mm: '255',
     width_mm: '120',
     height_mm: null,
@@ -119,11 +119,18 @@ test('rejects unsupported VAT before sending the request', () => {
     }),
     /НДС/,
   );
+  assert.throws(
+    () => physicalDraftToApiPayload({
+      barcode: '12345678', length_mm: '', width_mm: '', height_mm: '',
+      weight_g: '', vat_rate: '',
+    }),
+    /EAN\/GTIN/,
+  );
 });
 
 test('physical fields tell the tenant where to get authoritative values', () => {
-  assert.match(PRODUCT_PHYSICAL_GUIDANCE.barcode.source, /упаковке/);
-  assert.match(PRODUCT_PHYSICAL_GUIDANCE.barcode.warning, /Не придумывайте/);
+  assert.match(PRODUCT_PHYSICAL_GUIDANCE.barcode.source, /с упаковки/);
+  assert.match(PRODUCT_PHYSICAL_GUIDANCE.barcode.warning, /оставьте поле пустым/);
   assert.match(PRODUCT_PHYSICAL_GUIDANCE.length_mm.warning, /размер упаковки/);
   assert.match(PRODUCT_PHYSICAL_GUIDANCE.weight_g.source, /вместе с упаковкой/);
   assert.match(PRODUCT_PHYSICAL_GUIDANCE.vat_rate.source, /бухгалтера/);

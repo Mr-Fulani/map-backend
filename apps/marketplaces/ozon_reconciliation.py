@@ -17,6 +17,7 @@ from apps.marketplaces.models import (
 from apps.marketplaces.ozon_publication import (
     OzonPublicationError,
     _validated_credentials,
+    provider_barcodes_from_item,
 )
 from apps.marketplaces.ozon_rollout import ozon_connection_enabled_for_account
 from apps.products.models import Product
@@ -275,6 +276,7 @@ def _persist_product_projection(
     validation_status = _normalized_status(statuses.get('validation_status'))
     normalized_provider = _normalized_status(provider_status)
     normalized_moderation = _normalized_status(moderation_status)
+    provider_barcodes = provider_barcodes_from_item(item)
     raw_errors = item.get('errors')
     has_errors = isinstance(raw_errors, list) and bool(raw_errors)
     rejected = (
@@ -308,6 +310,10 @@ def _persist_product_projection(
         draft.provider_sku = _positive_int(
             item.get('sku') or item.get('sku_fbs') or item.get('sku_fbo'),
         )
+        if provider_barcodes:
+            draft.provider_barcodes = provider_barcodes
+            draft.barcode_generation_status = OzonOfferDraft.BarcodeGenerationStatus.READY
+            draft.barcode_generation_error = ''
         draft.provider_status = provider_status
         draft.moderation_status = moderation_status
         draft.provider_errors = []
@@ -342,7 +348,8 @@ def _persist_product_projection(
         draft.save(update_fields=[
             'provider_product_id', 'provider_sku', 'provider_status',
             'moderation_status', 'provider_errors', 'last_provider_sync_at',
-            'publication_status', 'updated_at',
+            'publication_status', 'provider_barcodes',
+            'barcode_generation_status', 'barcode_generation_error', 'updated_at',
         ])
         return operation
 

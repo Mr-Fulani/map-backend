@@ -15,6 +15,7 @@ from apps.marketplaces.ozon_offers import (
 )
 from apps.marketplaces.ozon_publication import (
     OzonPublicationError,
+    request_product_barcode_generation,
     request_product_import,
 )
 from apps.marketplaces.ozon_reconciliation import (
@@ -256,6 +257,42 @@ class ProductOzonOfferPublishView(APIView):
             'status': 'ok',
             'data': offer_presentation(product, account),
             'operation_id': str(operation.pk),
+        }, status=status.HTTP_202_ACCEPTED)
+
+
+@extend_schema(tags=['Products'])
+class ProductOzonOfferBarcodeView(APIView):
+    """Create or safely re-check an Ozon-generated barcode for one offer."""
+
+    api_key_enabled = True
+    api_key_scopes = {'POST': {'catalog:write'}}
+
+    @extend_schema(
+        operation_id='product_ozon_offer_generate_barcode',
+        request=OzonOfferAccountQuerySerializer,
+        responses=OZON_OFFER_RESPONSE,
+    )
+    def post(self, request, pk):
+        serializer = OzonOfferAccountQuerySerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product = Product.objects.filter(pk=pk, tenant=request.tenant).first()
+        account = MarketplaceAccount.objects.filter(
+            pk=serializer.validated_data['account_id'],
+            tenant=request.tenant,
+            marketplace=MarketplaceAccount.MARKETPLACE_OZON,
+        ).first()
+        if product is None or account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        try:
+            request_product_barcode_generation(product, account)
+        except OzonPublicationError as exc:
+            return Response(
+                {'status': 'error', 'code': exc.code, 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({
+            'status': 'ok',
+            'data': offer_presentation(product, account),
         }, status=status.HTTP_202_ACCEPTED)
 
 
