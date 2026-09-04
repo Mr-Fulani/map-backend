@@ -8,6 +8,7 @@ from django.utils import timezone
 
 from apps.marketplaces.adapters.ozon.client import OzonAPIError
 from apps.marketplaces.models import OzonOfferDraft, OzonOperation
+from apps.marketplaces.ozon_reconciliation import reconcile_product_import
 from apps.marketplaces.tests.test_ozon_offers import (
     _account,
     _catalog,
@@ -101,6 +102,115 @@ def test_import_and_moderation_success_are_projected_to_offer(settings):
     assert data['latest_operation']['reconcile_count'] == 1
     task_info.assert_called_once_with('task-1')
     product_info.assert_called_once_with(draft.offer_id)
+
+
+@pytest.mark.django_db
+def test_approved_product_image_errors_are_nonblocking_deduplicated_warnings(settings):
+    _, key, account, product, client = _setup_sent_offer(
+        settings,
+        'ozon-reconcile-approved-image-warning',
+    )
+    draft = OzonOfferDraft.objects.get(product=product, account=account)
+    with (
+        patch(TASK_INFO, return_value={'items': [{
+            'offer_id': draft.offer_id,
+            'status': 'imported',
+            'errors': [],
+        }]}),
+        patch(PRODUCT_INFO, return_value={
+            'id': 3177,
+            'sku': 5003177,
+            'offer_id': draft.offer_id,
+            'errors': [{
+                'code': 'pics_invalid_dimensions',
+                'field': 'pictures',
+                'description': 'Invalid image dimensions',
+            }, {
+                'code': 'some_image_failed',
+                'field': 'pictures',
+                'description': 'Some image failed',
+            }],
+            'statuses': {
+                'status': 'price_sent',
+                'moderate_status': 'approved',
+                'validation_status': 'success',
+            },
+        }),
+    ):
+        response = _reconcile(client, key, product, account)
+
+    assert response.status_code == 200
+    publication = response.json()['data']['publication']
+    assert publication['status'] == 'published'
+    assert publication['provider_product_id'] == 3177
+    assert publication['provider_sku'] == 5003177
+    assert publication['latest_operation']['state'] == 'succeeded'
+    assert publication['latest_operation']['errors'] == []
+    assert publication['provider_errors'] == [{
+        'code': 'provider_warning',
+        'provider_code': 'pics_invalid_dimensions',
+        'field': 'pictures',
+        'attribute_id': None,
+        'message': (
+            'Ozon принял карточку, но отклонил одно или несколько изображений. '
+            'Проверьте требования к фотографиям.'
+        ),
+        'severity': 'warning',
+        'blocking': False,
+    }]
+
+
+@pytest.mark.django_db
+def test_manual_refresh_can_heal_terminal_product_projection(settings):
+    _, key, account, product, client = _setup_sent_offer(
+        settings,
+        'ozon-reconcile-terminal-refresh',
+    )
+    draft = OzonOfferDraft.objects.get(product=product, account=account)
+    operation = OzonOperation.objects.get()
+    operation.state = OzonOperation.State.FAILED
+    operation.errors = [{'code': 'moderation_rejected', 'message': 'Старая ошибка.'}]
+    operation.completed_at = timezone.now()
+    operation.next_reconcile_at = None
+    operation.save(update_fields=['state', 'errors', 'completed_at', 'next_reconcile_at'])
+    draft.publication_status = 'moderation_failed'
+    draft.provider_errors = operation.errors
+    draft.save(update_fields=['publication_status', 'provider_errors'])
+
+    # Background reconciliation never reopens terminal work on its own.
+    with (patch(TASK_INFO) as task_info, patch(PRODUCT_INFO) as product_info):
+        unchanged = reconcile_product_import(product, account)
+    assert unchanged.state == OzonOperation.State.FAILED
+    task_info.assert_not_called()
+    product_info.assert_not_called()
+
+    with (
+        patch(TASK_INFO, return_value={'items': [{
+            'offer_id': draft.offer_id,
+            'status': 'imported',
+            'errors': [],
+        }]}),
+        patch(PRODUCT_INFO, return_value={
+            'id': 88,
+            'sku': 99,
+            'offer_id': draft.offer_id,
+            'errors': [],
+            'statuses': {
+                'status': 'processed',
+                'moderate_status': 'approved',
+                'validation_status': 'success',
+            },
+        }),
+    ):
+        refreshed = _reconcile(client, key, product, account)
+
+    assert refreshed.status_code == 200
+    publication = refreshed.json()['data']['publication']
+    assert publication['status'] == 'published'
+    assert publication['provider_product_id'] == 88
+    assert publication['provider_sku'] == 99
+    assert publication['provider_errors'] == []
+    assert publication['latest_operation']['state'] == 'succeeded'
 
 
 @pytest.mark.django_db

@@ -12,6 +12,7 @@ import {
   ozonPublicationDisabled,
   ozonPublicationMessage,
   ozonPublicationStatusLabel,
+  ozonProviderWarnings,
   replaceOzonAttributeValue,
   type OzonOfferAttribute,
   type OzonOfferPreparation,
@@ -209,11 +210,43 @@ test('Ozon retry copy is explicit only after a terminal rejection', () => {
     updated_at: '2026-09-02T10:01:00Z',
   });
 
-  assert.equal(ozonCanReconcile(failed), false);
+  assert.equal(ozonCanReconcile(failed), true);
   assert.equal(ozonPublicationDisabled(failed), false);
   assert.equal(ozonPublicationStatusLabel(failed), 'Ozon отклонил карточку');
   assert.equal(ozonPublicationActionLabel(failed), 'Исправил, отправить повторно');
   assert.equal(ozonPublicationMessage(failed), 'Исправьте обязательное поле.');
+});
+
+test('approved Ozon provider warnings stay non-blocking and refreshable', () => {
+  const approved = publicationPreparation({
+    id: 'operation-approved-warning',
+    kind: 'product_import',
+    state: 'succeeded',
+    provider_task_id: 'task-approved',
+    errors: [],
+    attempt_count: 1,
+    reconcile_count: 1,
+    last_reconciled_at: '2026-09-05T10:01:00Z',
+    next_reconcile_at: null,
+    retry_after_at: null,
+    completed_at: '2026-09-05T10:01:00Z',
+    created_at: '2026-09-05T10:00:00Z',
+    updated_at: '2026-09-05T10:01:00Z',
+  });
+  approved.publication.status = 'published';
+  approved.publication.provider_errors = [{
+    code: 'provider_warning',
+    provider_code: 'pics_invalid_dimensions',
+    field: 'pictures',
+    message: 'Ozon принял карточку, но отклонил изображение.',
+    severity: 'warning',
+    blocking: false,
+  }];
+
+  assert.equal(ozonPublicationDisabled(approved), false);
+  assert.equal(ozonCanReconcile(approved), true);
+  assert.equal(ozonPublicationStatusLabel(approved), 'Опубликована');
+  assert.equal(ozonProviderWarnings(approved).length, 1);
 });
 
 test('archived Ozon offer is not mistaken for a published card', () => {

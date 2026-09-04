@@ -27,7 +27,10 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 import { imageApi, listingApi, productApi } from '@/lib/api';
-import type { OzonOfferPreparation } from '@/lib/ozon-offer-preparation';
+import {
+  ozonProviderWarnings,
+  type OzonOfferPreparation,
+} from '@/lib/ozon-offer-preparation';
 import type { ProductPhysicalProfile } from '@/lib/product-physical-profile';
 import {
   avitoTargetState,
@@ -458,7 +461,11 @@ export default function PublicationWorkspaceDrawer({
       await onChannelChanged();
       const state = preparation.publication.latest_operation?.state;
       if (state === 'succeeded') {
-        toast.success('Ozon подтвердил публикацию карточки.');
+        if (ozonProviderWarnings(preparation).length > 0) {
+          toast.warning('Ozon подтвердил карточку, но есть данные для проверки.');
+        } else {
+          toast.success('Ozon подтвердил публикацию карточки.');
+        }
       } else if (state === 'failed') {
         toast.error('Ozon отклонил карточку. Исправьте указанные поля.');
       } else {

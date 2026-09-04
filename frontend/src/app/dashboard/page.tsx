@@ -275,9 +275,11 @@ function AnalyticsWidget({
           <div>
             <CardTitle role="heading" aria-level={2} className="flex items-center gap-2 text-lg">
               <BarChart3 className="h-5 w-5" />
-              Результат за 30 дней
+              Результат Avito за 30 дней
             </CardTitle>
-            <CardDescription className="mt-1">Уникальные и все просмотры, контакты по объявлениям.</CardDescription>
+            <CardDescription className="mt-1">
+              Просмотры и контакты Avito. Статистика Ozon пока не подключена.
+            </CardDescription>
           </div>
           <Button asChild size="sm" variant="ghost">
             <Link href="/dashboard/analytics">Вся аналитика <ArrowRight className="h-4 w-4" /></Link>
@@ -369,8 +371,8 @@ function FunnelWidget({
 }) {
   const items = funnel ? [
     { label: 'Товары в каталоге', value: funnel.products, href: '/dashboard/products', icon: Package },
-    { label: 'Всего объявлений', value: funnel.listings, href: '/dashboard/listings', icon: ListOrdered },
-    { label: 'Активные в MAP', value: funnel.active_listings, href: '/dashboard/listings?status=active', icon: ListOrdered },
+    { label: 'Карточки на площадках', value: funnel.listings, href: '/dashboard/listings', icon: ListOrdered },
+    { label: 'Подтверждены площадками', value: funnel.active_listings, href: '/dashboard/listings?status=active', icon: ListOrdered },
     { label: 'В очереди', value: funnel.queued_listings, href: '/dashboard/listings?status=queued', icon: Clock3 },
     { label: 'Отправка на площадку', value: funnel.pending_listings, href: '/dashboard/listings?status=pending', icon: Clock3 },
     { label: 'Требуют проверки', value: funnel.requires_review_listings, href: '/dashboard/listings?status=requires_review', icon: ListChecks },
@@ -385,8 +387,8 @@ function FunnelWidget({
           Каталог и публикация
         </CardTitle>
         <CardDescription>
-          Счётчики MAP по всем аккаунтам. В списке активных объявлений показаны
-          маркетплейс, аккаунт и время последней provider-проверки.
+          Единые счётчики Avito и Ozon по всем активным кабинетам. Черновики
+          подготовки Ozon не считаются листингами до первой отправки.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -505,6 +507,15 @@ function SourcesWidget({
               <Store className="h-5 w-5 text-muted-foreground" />
               <span className="min-w-0 flex-1 text-sm">Аккаунты Avito</span>
               <span className="font-semibold">{marketplaces.avito_total.toLocaleString('ru-RU')}</span>
+              <ArrowRight className="h-4 w-4 text-muted-foreground" />
+            </Link>
+            <Link
+              href="/dashboard/settings#marketplaces"
+              className="flex items-center gap-3 rounded-lg border p-3 transition-colors hover:bg-muted/50"
+            >
+              <Store className="h-5 w-5 text-muted-foreground" />
+              <span className="min-w-0 flex-1 text-sm">Аккаунты Ozon</span>
+              <span className="font-semibold">{marketplaces.ozon_total.toLocaleString('ru-RU')}</span>
               <ArrowRight className="h-4 w-4 text-muted-foreground" />
             </Link>
             {marketplaces.avito_truncated && (
@@ -654,7 +665,7 @@ function ResourcesWidget({
           <SectionUnavailable onRetry={onRetry} />
         ) : (
           <div className="space-y-5">
-            <UsageRow label="Активные объявления" used={usage.listings?.used} limit={usage.listings?.limit} />
+            <UsageRow label="Активные объявления тарифа Avito" used={usage.listings?.used} limit={usage.listings?.limit} />
             <UsageRow label="Товары в каталоге" used={usage.sku?.used} limit={usage.sku?.limit} />
             <div className="rounded-lg border bg-muted/30 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">

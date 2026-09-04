@@ -154,6 +154,7 @@ class DashboardAvitoAccountSerializer(serializers.Serializer):
 
 class DashboardMarketplacesSerializer(serializers.Serializer):
     avito_total = serializers.IntegerField()
+    ozon_total = serializers.IntegerField()
     avito_truncated = serializers.BooleanField()
     avito = DashboardAvitoAccountSerializer(many=True)
 

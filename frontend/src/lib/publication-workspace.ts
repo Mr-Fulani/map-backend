@@ -20,6 +20,7 @@ export interface OzonWorkspaceSummary {
   provider_status: string;
   moderation_status: string;
   provider_error_count: number;
+  provider_warning_count: number;
   last_provider_sync_at: string | null;
   external_url: string;
 }
@@ -120,7 +121,9 @@ export function ozonSummaryTargetState(
   }
   if (status === 'published') {
     return {
-      label: 'Опубликован',
+      label: summary.provider_warning_count > 0
+        ? `Опубликован · проверить: ${summary.provider_warning_count}`
+        : 'Опубликован',
       tone: 'published',
       issueCount: 0,
       prepared: true,
