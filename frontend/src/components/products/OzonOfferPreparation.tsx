@@ -78,6 +78,9 @@ interface OzonOfferPreparationCardProps {
   onPreparationChange?: (preparation: OzonOfferPreparation | null) => void;
   showAccountSelector?: boolean;
   embedded?: boolean;
+  showPricing?: boolean;
+  showReadinessSummary?: boolean;
+  title?: string;
   refreshToken?: string | number;
 }
 
@@ -90,6 +93,9 @@ OzonOfferPreparationCardProps
   onPreparationChange,
   showAccountSelector = true,
   embedded = false,
+  showPricing = true,
+  showReadinessSummary = true,
+  title = 'Подготовка карточки Ozon',
   refreshToken = 0,
 }, ref) {
   const ozonAccounts = useMemo(
@@ -229,10 +235,17 @@ OzonOfferPreparationCardProps
   }
 
   async function saveAttributes(): Promise<boolean> {
-    const pricing = ozonPricingPayload(pricingMode, marginOverride, priceDraft);
-    if (!pricing.ok) {
-      toast.error(pricing.message);
-      return false;
+    let pricingPayload: {
+      margin_pct?: string | null;
+      price_override?: string | null;
+    } = {};
+    if (showPricing) {
+      const pricing = ozonPricingPayload(pricingMode, marginOverride, priceDraft);
+      if (!pricing.ok) {
+        toast.error(pricing.message);
+        return false;
+      }
+      pricingPayload = pricing.payload;
     }
     const invalid = ozonAttributesValidationErrors(attributes);
     if (invalid.length > 0) {
@@ -241,7 +254,7 @@ OzonOfferPreparationCardProps
     }
     const next = await updateOffer({
       attributes: ozonAttributesPayload(attributes),
-      ...pricing.payload,
+      ...pricingPayload,
     }, 'attributes');
     if (!next) return false;
     if (next.preflight.errors.length > 0) {
@@ -480,8 +493,8 @@ OzonOfferPreparationCardProps
     <Card className={embedded ? 'border-0 bg-transparent shadow-none' : undefined}>
       <CardHeader className={`space-y-2 ${embedded ? 'px-0 pt-0' : ''}`}>
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <CardTitle className="text-base">Подготовка карточки Ozon</CardTitle>
-          {preparation && (
+          <CardTitle className="text-base">{title}</CardTitle>
+          {preparation && showReadinessSummary && (
             <Badge
               variant="outline"
               className={preparation.preflight.ready
@@ -497,7 +510,7 @@ OzonOfferPreparationCardProps
         <p className="text-sm leading-relaxed text-muted-foreground">
           {showAccountSelector
             ? 'Выберите конкретный кабинет Ozon. Категории и характеристики Ozon хранятся отдельно и не меняют категории, наценки или объявления Avito.'
-            : 'Это данные выбранного выше кабинета Ozon. Они не меняют категории, наценки или объявления Avito.'}
+            : 'Здесь заполняются только категория и характеристики Ozon. Жёлтые поля требуют действия, зелёные уже готовы. Данные Avito не изменяются.'}
         </p>
       </CardHeader>
       <CardContent className={`space-y-5 ${embedded ? 'px-0 pb-0' : ''}`}>
@@ -653,7 +666,7 @@ OzonOfferPreparationCardProps
                 ))}
             </div>
 
-            {preparation.pricing && (
+            {showPricing && preparation.pricing && (
               <div data-ozon-section="pricing">
                 <OzonOfferPricingEditor
                   accountId={accountId}
@@ -685,7 +698,12 @@ OzonOfferPreparationCardProps
                   </div>
                 </div>
               )}
-              <div className="space-y-3 rounded-md border p-3">
+              <div className={`space-y-3 rounded-md border border-l-4 p-3 ${
+                preparation.draft.category
+                  ? 'border-emerald-500/35 bg-emerald-500/5'
+                  : 'border-amber-500/50 bg-amber-500/5'
+              }`}
+              >
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
                     <p className="flex items-center gap-2 text-sm font-medium">
@@ -695,17 +713,27 @@ OzonOfferPreparationCardProps
                       Открывайте разделы по очереди и выберите конечный тип товара.
                     </p>
                   </div>
-                  {(categoryTreeLevel?.path.length ?? 0) > 0 && (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={openPreviousTreeLevel}
-                      disabled={categoryTreeLoading}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className={preparation.draft.category
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
+                        : 'border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100'}
                     >
-                      <ArrowLeft className="mr-1.5 h-4 w-4" /> Назад
-                    </Button>
-                  )}
+                      {preparation.draft.category ? 'Готово · выбрана' : 'Нужно выбрать'}
+                    </Badge>
+                    {(categoryTreeLevel?.path.length ?? 0) > 0 && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        onClick={openPreviousTreeLevel}
+                        disabled={categoryTreeLoading}
+                      >
+                        <ArrowLeft className="mr-1.5 h-4 w-4" /> Назад
+                      </Button>
+                    )}
+                  </div>
                 </div>
                 {(categoryTreeLevel?.path.length ?? 0) > 0 && (
                   <p className="text-xs leading-relaxed text-muted-foreground">
@@ -883,6 +911,7 @@ OzonOfferPreparationCardProps
               </div>
             )}
 
+            {showReadinessSummary && (
             <div className="space-y-2" data-ozon-section="readiness">
               <p className="text-sm font-medium">Проверка готовности</p>
               {preparation.preflight.ready ? (
@@ -903,6 +932,7 @@ OzonOfferPreparationCardProps
                 </div>
               ))}
             </div>
+            )}
           </>
         ) : null}
       </CardContent>

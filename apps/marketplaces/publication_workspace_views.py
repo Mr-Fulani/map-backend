@@ -13,6 +13,7 @@ from apps.marketplaces.listing_delivery import listing_publication_available
 from apps.marketplaces.models import Listing, MarketplaceAccount, OzonOfferDraft
 from apps.marketplaces.serializers import ListingSerializer, marketplace_label
 from apps.products.models import Product
+from apps.products.physical_profiles import physical_profile_presentation
 from apps.tenants.api_views import ListingsAPIView
 
 
@@ -135,6 +136,7 @@ def publication_workspace_snapshot(request, product: Product) -> dict:
             'stock_qty': product.stock_qty,
             'title_ai': product.title_ai,
             'description_ai': product.description_ai,
+            'physical_profile': physical_profile_presentation(product),
         },
         'accounts': [_account_row(account) for account in accounts],
         'images': ProductImageSerializer(
@@ -158,7 +160,11 @@ class PublicationWorkspaceView(ListingsAPIView):
         responses=PUBLICATION_WORKSPACE_RESPONSE,
     )
     def get(self, request, product_pk):
-        product = Product.objects.filter(
+        product = Product.objects.select_related(
+            'physical_profile',
+        ).prefetch_related(
+            'physical_suggestions',
+        ).filter(
             pk=product_pk,
             tenant=request.tenant,
         ).first()
