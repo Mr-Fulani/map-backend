@@ -67,11 +67,59 @@ test('publication workspace uses one bounded snapshot and loads only the selecte
 test('Ozon drawer mirrors Avito navigation cues without entering Avito publication code', () => {
   const editor = source('src/components/listings/OzonListingEditorPanel.tsx');
   const preparation = source('src/components/products/OzonOfferPreparation.tsx');
+  const media = source('src/components/listings/ProductMediaManager.tsx');
+  const pricing = source('src/components/listings/OzonListingPriceEditor.tsx');
+  const physical = source('src/components/listings/ProductPhysicalProfileEditor.tsx');
 
   assert.match(editor, /sticky bottom-0/);
   assert.match(editor, /Нажмите на пункт — MAP прокрутит к нужному разделу/);
-  assert.match(editor, /Общие для Avito, Ozon и следующих площадок/);
+  assert.match(media, /Одни и те же фотографии используются в Avito, Ozon/);
+  assert.match(media, /Загрузить фото/);
+  assert.match(media, /Одобрить/);
+  assert.match(media, /Отклонить/);
+  assert.match(media, /Сделать главным/);
+  assert.match(media, /Удалить эту фотографию/);
+  assert.match(pricing, /Кабинет Ozon/);
+  assert.match(pricing, /Наценка Ozon/);
+  assert.match(pricing, /Цена объявления Ozon/);
+  assert.match(pricing, /Если рассчитанная цена подходит, ничего менять не нужно/);
+  assert.match(pricing, /aria-invalid/);
+  assert.match(physical, /Упаковка и налог/);
+  assert.match(physical, /productApi\.updatePhysicalProfile/);
+  assert.match(physical, /Принять значение/);
+  assert.match(editor, /Заголовок и описание заполняет обогащение/);
+  assert.match(editor, /onSaveBrand/);
   assert.match(editor, /Сохранить характеристики и проверить/);
+  assert.match(editor, /showPricing={false}/);
+  assert.match(editor, /showReadinessSummary={false}/);
   assert.match(preparation, /focusField/);
   assert.doesNotMatch(preparation, /getOzonCatalogTreeLevel\(accountId, \[\]\)/);
+});
+
+test('Ozon editable column follows the same user order as Avito', () => {
+  const editor = source('src/components/listings/OzonListingEditorPanel.tsx');
+  const media = editor.indexOf('<ProductMediaManager');
+  const commonData = editor.indexOf('data-testid="ozon-common-product-section"');
+  const pricing = editor.lastIndexOf('<OzonListingPriceEditor');
+  const physical = editor.lastIndexOf('<ProductPhysicalProfileEditor');
+  const providerFields = editor.lastIndexOf('<OzonOfferPreparationCard');
+  const actions = editor.indexOf('Действия с карточкой Ozon');
+
+  assert.ok(media >= 0, 'media moderation must be available inside the Ozon drawer');
+  assert.ok(commonData > media, 'common enriched data must follow media');
+  assert.ok(pricing > commonData, 'account and price must follow common data');
+  assert.ok(physical > pricing, 'packaging fields must remain visible after price');
+  assert.ok(providerFields > physical, 'Ozon category and attributes must follow common facts');
+  assert.ok(actions > providerFields, 'save and publication actions must remain last');
+});
+
+test('Ozon media actions use the existing tenant-scoped image API', () => {
+  const workspace = source('src/components/listings/PublicationWorkspaceDrawer.tsx');
+
+  assert.match(workspace, /imageApi\.upload\(product\.id, file\)/);
+  assert.match(workspace, /imageApi\.approve\(product\.id, imageId\)/);
+  assert.match(workspace, /imageApi\.reject\(product\.id, imageId\)/);
+  assert.match(workspace, /imageApi\.setPrimary\(product\.id, imageId\)/);
+  assert.match(workspace, /imageApi\.delete\(product\.id, imageId\)/);
+  assert.match(workspace, /<BarChart3[^>]*\/> Цены/);
 });

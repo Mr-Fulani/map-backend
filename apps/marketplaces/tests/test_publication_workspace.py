@@ -88,7 +88,11 @@ def test_workspace_returns_local_channel_summaries_without_credentials():
 
     assert response.status_code == 200
     data = response.json()['data']
-    assert data['product'] == {
+    physical_profile = data['product']['physical_profile']
+    assert physical_profile['missing_fields'] == [
+        'barcode', 'length_mm', 'width_mm', 'height_mm', 'weight_g', 'vat_rate',
+    ]
+    assert {key: value for key, value in data['product'].items() if key != 'physical_profile'} == {
         'id': product.pk,
         'article': product.article,
         'name': product.name,

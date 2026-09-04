@@ -12,7 +12,11 @@ import { toast } from 'sonner';
 
 import { MarketplaceChannelSwitcher } from '@/components/listings/MarketplaceChannelSwitcher';
 import MarketPricingPanel from '@/components/listings/MarketPricingPanel';
-import { OzonListingEditorPanel } from '@/components/listings/OzonListingEditorPanel';
+import {
+  OzonListingEditorPanel,
+  type OzonListingEditorPanelHandle,
+} from '@/components/listings/OzonListingEditorPanel';
+import type { ProductMediaAction } from '@/components/listings/ProductMediaManager';
 import type { OzonOfferPreparationCardHandle } from '@/components/products/OzonOfferPreparation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -22,8 +26,9 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet';
-import { listingApi, productApi } from '@/lib/api';
+import { imageApi, listingApi, productApi } from '@/lib/api';
 import type { OzonOfferPreparation } from '@/lib/ozon-offer-preparation';
+import type { ProductPhysicalProfile } from '@/lib/product-physical-profile';
 import {
   avitoTargetState,
   ozonSummaryTargetState,
@@ -51,6 +56,7 @@ interface WorkspaceProduct {
   stock_qty: number;
   title_ai: string;
   description_ai: string;
+  physical_profile: ProductPhysicalProfile;
 }
 
 interface WorkspaceImage {
@@ -93,18 +99,20 @@ interface WorkspaceResponse {
   ozon_drafts: OzonWorkspaceSummary[];
 }
 
+function orderedImages(images: WorkspaceImage[]): WorkspaceImage[] {
+  return images.slice().sort((left, right) => (
+    Number(right.is_primary) - Number(left.is_primary)
+    || left.position - right.position
+    || left.id - right.id
+  ));
+}
+
 async function fetchPublicationWorkspace(
   requestedProductId: number,
 ): Promise<WorkspaceSnapshot> {
   const response = await listingApi.workspace(requestedProductId);
   const data = envelopeData<WorkspaceResponse>(response.data);
-  const images = data.images
-    .slice()
-    .sort((left, right) => (
-      Number(right.is_primary) - Number(left.is_primary)
-      || left.position - right.position
-      || left.id - right.id
-    ));
+  const images = orderedImages(data.images);
   const avitoListings: Record<number, AvitoListingDetail> = {};
   data.avito_listings.forEach((listing) => {
     avitoListings[listing.account_id] = listing;
@@ -144,8 +152,11 @@ export default function PublicationWorkspaceDrawer({
   const [ozonFooterAction, setOzonFooterAction] = useState<
     'save' | 'regenerate' | 'publish' | 'reconcile' | 'commerce' | null
   >(null);
+  const [mediaAction, setMediaAction] = useState<ProductMediaAction>(null);
+  const [ozonPreparationRefreshToken, setOzonPreparationRefreshToken] = useState(0);
   const [ozonPanel, setOzonPanel] = useState<'preparation' | 'pricing'>('preparation');
   const ozonPreparationRef = useRef<OzonOfferPreparationCardHandle>(null);
+  const ozonEditorRef = useRef<OzonListingEditorPanelHandle>(null);
   const open = productId !== null;
 
   useEffect(() => {
@@ -158,6 +169,7 @@ export default function PublicationWorkspaceDrawer({
         setAccounts(snapshot.accounts);
         setImages(snapshot.images);
         setOzonPanel('preparation');
+        setOzonPreparationRefreshToken(0);
         setAvitoListings(snapshot.avitoListings);
         setOzonSummaries(snapshot.ozonSummaries);
         setOzonPreparations({});
@@ -270,9 +282,83 @@ export default function PublicationWorkspaceDrawer({
   }
 
   function applyOzonMarketPrice(price: string) {
-    if (ozonPreparationRef.current?.applyMarketPrice(price)) {
+    if (ozonEditorRef.current?.applyMarketPrice(price)) {
       setOzonPanel('preparation');
     }
+  }
+
+  async function refreshProductImages(requestedProductId: number) {
+    const response = await imageApi.list(requestedProductId);
+    setImages(orderedImages(envelopeData<WorkspaceImage[]>(response.data)));
+  }
+
+  async function uploadProductImage(file: File) {
+    if (!product) return;
+    setMediaAction('upload');
+    try {
+      await imageApi.upload(product.id, file);
+      await refreshProductImages(product.id);
+      setOzonPreparationRefreshToken((current) => current + 1);
+      toast.success('Фото загружено и добавлено в общий товар.');
+    } catch {
+      toast.error('Не удалось загрузить фото.');
+    } finally {
+      setMediaAction(null);
+    }
+  }
+
+  async function changeProductImage(
+    imageId: number,
+    action: 'approve' | 'reject' | 'primary' | 'delete',
+  ): Promise<boolean> {
+    if (!product) return false;
+    setMediaAction(imageId);
+    try {
+      if (action === 'approve') await imageApi.approve(product.id, imageId);
+      else if (action === 'reject') await imageApi.reject(product.id, imageId);
+      else if (action === 'primary') await imageApi.setPrimary(product.id, imageId);
+      else await imageApi.delete(product.id, imageId);
+      await refreshProductImages(product.id);
+      setOzonPreparationRefreshToken((current) => current + 1);
+      toast.success(
+        action === 'approve'
+          ? 'Фото одобрено.'
+          : action === 'reject'
+            ? 'Фото отклонено.'
+            : action === 'primary'
+              ? 'Главное фото изменено.'
+              : 'Фото удалено из общего товара.',
+      );
+      return true;
+    } catch {
+      toast.error('Не удалось изменить фотографию.');
+      return false;
+    } finally {
+      setMediaAction(null);
+    }
+  }
+
+  async function saveProductBrand(brand: string): Promise<boolean> {
+    if (!product) return false;
+    try {
+      const response = await productApi.updateBrand(product.id, brand.trim());
+      const updatedBrand = (response.data.data as { brand?: string }).brand ?? brand.trim();
+      setProduct((current) => current ? { ...current, brand: updatedBrand || null } : current);
+      setOzonPreparationRefreshToken((current) => current + 1);
+      toast.success('Бренд сохранён в общем товаре.');
+      return true;
+    } catch (error: unknown) {
+      const message = (
+        error as { response?: { data?: { message?: string } } }
+      ).response?.data?.message;
+      toast.error(message ?? 'Не удалось сохранить бренд.');
+      return false;
+    }
+  }
+
+  function updatePhysicalProfile(profile: ProductPhysicalProfile) {
+    setProduct((current) => current ? { ...current, physical_profile: profile } : current);
+    setOzonPreparationRefreshToken((current) => current + 1);
   }
 
   async function regenerateProductForOzon() {
@@ -445,7 +531,7 @@ export default function PublicationWorkspaceDrawer({
                   onClick={() => setOzonPanel('pricing')}
                   className={`flex h-9 min-w-0 items-center justify-center gap-1 rounded-md text-xs font-medium transition-colors sm:gap-2 sm:text-sm ${ozonPanel === 'pricing' ? 'bg-background shadow-sm' : 'text-muted-foreground'}`}
                 >
-                  <BarChart3 className="h-4 w-4" /> Рынок
+                  <BarChart3 className="h-4 w-4" /> Цены
                 </button>
               </div>
             </div>
@@ -477,15 +563,25 @@ export default function PublicationWorkspaceDrawer({
                 className={`${ozonPanel === 'preparation' ? 'block' : 'hidden'} min-h-0 min-w-0 max-w-full overflow-x-hidden overflow-y-auto overscroll-contain [scrollbar-gutter:stable] xl:block`}
               >
                 <OzonListingEditorPanel
+                  ref={ozonEditorRef}
                   key={`${product.id}:${selectedAccount.id}`}
                   product={product}
                   account={selectedAccount}
                   preparation={selectedOzonPreparation}
                   summary={ozonSummaries[selectedAccount.id] ?? null}
                   images={images}
+                  mediaAction={mediaAction}
+                  preparationRefreshToken={ozonPreparationRefreshToken}
                   preparationRef={ozonPreparationRef}
                   footerAction={ozonFooterAction}
                   onPreparationChange={handleOzonPreparationChange}
+                  onUploadImage={uploadProductImage}
+                  onApproveImage={async (imageId) => { await changeProductImage(imageId, 'approve'); }}
+                  onRejectImage={async (imageId) => { await changeProductImage(imageId, 'reject'); }}
+                  onSetPrimaryImage={async (imageId) => { await changeProductImage(imageId, 'primary'); }}
+                  onDeleteImage={(imageId) => changeProductImage(imageId, 'delete')}
+                  onSaveBrand={saveProductBrand}
+                  onPhysicalProfileChange={updatePhysicalProfile}
                   onSave={() => void saveOzonPreparation()}
                   onRegenerate={() => void regenerateProductForOzon()}
                   onPublish={() => void publishProductToOzon()}

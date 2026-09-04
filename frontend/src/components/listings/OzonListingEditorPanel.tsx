@@ -1,14 +1,20 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useRef, useState, type RefObject } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 import {
   AlertCircle,
   CheckCircle2,
   ExternalLink,
-  Images,
   Loader2,
-  Pencil,
   RefreshCw,
   Save,
   Send,
@@ -16,11 +22,24 @@ import {
 } from 'lucide-react';
 
 import {
+  OzonListingPriceEditor,
+  type OzonListingPriceEditorHandle,
+} from '@/components/listings/OzonListingPriceEditor';
+import {
+  ProductMediaManager,
+  type ProductMediaAction,
+} from '@/components/listings/ProductMediaManager';
+import {
+  ProductPhysicalProfileEditor,
+  type ProductPhysicalProfileEditorHandle,
+} from '@/components/listings/ProductPhysicalProfileEditor';
+import {
   OzonOfferPreparationCard,
   type OzonOfferPreparationCardHandle,
 } from '@/components/products/OzonOfferPreparation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { SheetHeader } from '@/components/ui/sheet';
 import type { OzonOfferPreparation, OzonPreflightIssue } from '@/lib/ozon-offer-preparation';
 import {
@@ -31,6 +50,7 @@ import {
   ozonPublicationStatusLabel,
 } from '@/lib/ozon-offer-preparation';
 import type { OzonWorkspaceSummary } from '@/lib/publication-workspace';
+import type { ProductPhysicalProfile } from '@/lib/product-physical-profile';
 
 export interface OzonEditorProduct {
   id: number;
@@ -41,6 +61,7 @@ export interface OzonEditorProduct {
   stock_qty: number;
   title_ai: string;
   description_ai: string;
+  physical_profile: ProductPhysicalProfile;
 }
 
 export interface OzonEditorImage {
@@ -65,9 +86,18 @@ interface Props {
   preparation: OzonOfferPreparation | null;
   summary: OzonWorkspaceSummary | null;
   images: OzonEditorImage[];
+  mediaAction: ProductMediaAction;
+  preparationRefreshToken: number;
   preparationRef: RefObject<OzonOfferPreparationCardHandle | null>;
   footerAction: 'save' | 'regenerate' | 'publish' | 'reconcile' | 'commerce' | null;
   onPreparationChange: (preparation: OzonOfferPreparation | null) => void;
+  onUploadImage: (file: File) => Promise<void>;
+  onApproveImage: (imageId: number) => Promise<void>;
+  onRejectImage: (imageId: number) => Promise<void>;
+  onSetPrimaryImage: (imageId: number) => Promise<void>;
+  onDeleteImage: (imageId: number) => Promise<boolean>;
+  onSaveBrand: (brand: string) => Promise<boolean>;
+  onPhysicalProfileChange: (profile: ProductPhysicalProfile) => void;
   onSave: () => void;
   onRegenerate: () => void;
   onPublish: () => void;
@@ -76,17 +106,15 @@ interface Props {
   onReload: () => void;
 }
 
+export interface OzonListingEditorPanelHandle {
+  applyMarketPrice: (price: string) => boolean;
+}
+
 function rubles(value: string): string {
   return `${Number(value).toLocaleString('ru-RU', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })} ₽`;
-}
-
-function imageStatusLabel(status: string): string {
-  if (['auto_approved', 'manually_set', 'imported'].includes(status)) return 'Одобрено';
-  if (status === 'rejected') return 'Отклонено';
-  return 'На проверке';
 }
 
 function localStatusLabel(summary: OzonWorkspaceSummary | null): string {
@@ -111,28 +139,42 @@ function formatDateTime(value: string | null | undefined): string {
   }).format(new Date(value));
 }
 
-export function OzonListingEditorPanel({
+export const OzonListingEditorPanel = forwardRef<
+OzonListingEditorPanelHandle,
+Props
+>(function OzonListingEditorPanel({
   product,
   account,
   preparation,
   summary,
   images,
+  mediaAction,
+  preparationRefreshToken,
   preparationRef,
   footerAction,
   onPreparationChange,
+  onUploadImage,
+  onApproveImage,
+  onRejectImage,
+  onSetPrimaryImage,
+  onDeleteImage,
+  onSaveBrand,
+  onPhysicalProfileChange,
   onSave,
   onRegenerate,
   onPublish,
   onReconcile,
   onSyncCommerce,
   onReload,
-}: Props) {
-  const [activeImageIndex, setActiveImageIndex] = useState(0);
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
+}, ref) {
   const imagesSectionRef = useRef<HTMLDivElement>(null);
   const commonDataRef = useRef<HTMLDivElement>(null);
-  const displayedImageIndex = Math.min(activeImageIndex, Math.max(images.length - 1, 0));
-  const activeImage = images[displayedImageIndex] ?? null;
+  const priceSectionRef = useRef<HTMLDivElement>(null);
+  const physicalProfileRef = useRef<ProductPhysicalProfileEditorHandle>(null);
+  const priceEditorRef = useRef<OzonListingPriceEditorHandle>(null);
+  const [editingBrand, setEditingBrand] = useState(false);
+  const [brandValue, setBrandValue] = useState(product.brand ?? '');
+  const [savingBrand, setSavingBrand] = useState(false);
   const publication = preparation?.publication;
   const providerSku = publication?.provider_sku ?? summary?.provider_sku ?? null;
   const externalUrl = providerSku
@@ -145,15 +187,45 @@ export function OzonListingEditorPanel({
     || summary?.publication_status === 'published';
   const blockingIssues = preparation?.preflight.errors ?? [];
   const recommendations = preparation?.preflight.recommendations ?? [];
+  const commonBlockers = blockingIssues.filter((issue) => (
+    ['name', 'brand', 'description', 'stock'].includes(issue.field)
+  ));
+  const commonRecommendations = recommendations.filter((issue) => (
+    ['name', 'brand', 'description', 'stock'].includes(issue.field)
+  ));
+
+  useEffect(() => {
+    setBrandValue(product.brand ?? '');
+    setEditingBrand(false);
+  }, [product.brand]);
+
+  useImperativeHandle(ref, () => ({
+    applyMarketPrice: (price: string) => priceEditorRef.current?.applyMarketPrice(price) ?? false,
+  }));
 
   const operationErrors = useMemo(() => (
     preparation?.publication.latest_operation?.errors ?? []
   ), [preparation]);
 
   function scrollToIssue(field: string) {
+    if (field === 'price') {
+      priceSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      priceEditorRef.current?.focus();
+      return;
+    }
+    if (physicalProfileRef.current?.focusField(field)) return;
     if (preparationRef.current?.focusField(field)) return;
     const target = field === 'images' ? imagesSectionRef.current : commonDataRef.current;
     target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  async function saveBrand() {
+    setSavingBrand(true);
+    try {
+      if (await onSaveBrand(brandValue)) setEditingBrand(false);
+    } finally {
+      setSavingBrand(false);
+    }
   }
 
   function issueButton(issue: OzonPreflightIssue) {
@@ -167,6 +239,76 @@ export function OzonListingEditorPanel({
         <span className="font-medium text-amber-950 dark:text-amber-100">{issue.label}</span>
         <span className="mt-0.5 block text-muted-foreground">{issue.message}</span>
       </button>
+    );
+  }
+
+  function publicationOperationStatus() {
+    const operation = preparation?.publication.latest_operation;
+    if (!operation || !preparation) return null;
+    return (
+      <div className={`rounded-lg border p-3 ${
+        operation.state === 'succeeded'
+          ? 'border-emerald-500/30 bg-emerald-500/5'
+          : operation.state === 'failed'
+            ? 'border-destructive/40 bg-destructive/5'
+            : 'border-blue-500/30 bg-blue-500/5'
+      }`}
+      >
+        <div className="flex items-start gap-2">
+          {operation.state === 'succeeded'
+            ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+            : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />}
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-medium">{ozonPublicationStatusLabel(preparation)}</p>
+            {preparation.publication.provider_status && (
+              <p className="mt-1 text-xs text-muted-foreground">
+                Статус Ozon: {preparation.publication.provider_status}
+                {preparation.publication.moderation_status
+                  ? ` · Модерация: ${preparation.publication.moderation_status}`
+                  : ''}
+              </p>
+            )}
+            {operationErrors.map((error, index) => (
+              <button
+                key={`${error.code}:${error.attribute_id ?? ''}:${index}`}
+                type="button"
+                onClick={() => scrollToIssue(
+                  error.field || (error.attribute_id ? 'attributes' : 'readiness'),
+                )}
+                className="mt-2 w-full rounded-md border bg-background p-2 text-left text-xs hover:bg-muted/50"
+              >
+                <p className="font-medium text-destructive">{error.message}</p>
+                {(error.field || error.attribute_id || error.provider_code) && (
+                  <p className="mt-1 text-muted-foreground">
+                    {[
+                      error.field,
+                      error.attribute_id ? `характеристика ${error.attribute_id}` : '',
+                      error.provider_code,
+                    ].filter(Boolean).join(' · ')}
+                  </p>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+        {ozonCanReconcile(preparation) && (
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-3 w-full"
+            onClick={onReconcile}
+            disabled={footerAction !== null}
+          >
+            <RefreshCw className={`mr-2 h-4 w-4 ${
+              footerAction === 'reconcile' ? 'animate-spin' : ''
+            }`}
+            />
+            {footerAction === 'reconcile'
+              ? 'Проверяем в Ozon...'
+              : 'Проверить статус в Ozon'}
+          </Button>
+        )}
+      </div>
     );
   }
 
@@ -227,6 +369,8 @@ export function OzonListingEditorPanel({
         </div>
       </div>
 
+      {publicationOperationStatus()}
+
       {preparation && (blockingIssues.length > 0 || recommendations.length > 0) && (
         <div className={`space-y-2 rounded-lg border p-3 ${
           blockingIssues.length > 0
@@ -250,7 +394,12 @@ export function OzonListingEditorPanel({
             </div>
           </div>
           {blockingIssues.map(issueButton)}
-          {blockingIssues.length === 0 && recommendations.map((issue) => (
+          {recommendations.length > 0 && (
+            <p className="pt-1 text-xs font-medium text-blue-900 dark:text-blue-100">
+              Рекомендации — отправку не блокируют
+            </p>
+          )}
+          {recommendations.map((issue) => (
             <button
               key={`${issue.code}:${issue.field}`}
               type="button"
@@ -264,170 +413,181 @@ export function OzonListingEditorPanel({
         </div>
       )}
 
-      <div ref={imagesSectionRef} className="space-y-2 rounded-lg border p-3">
-        <div className="flex items-center justify-between gap-3">
+      <div ref={imagesSectionRef}>
+        <ProductMediaManager
+          images={images}
+          action={mediaAction}
+          onUpload={onUploadImage}
+          onApprove={onApproveImage}
+          onReject={onRejectImage}
+          onSetPrimary={onSetPrimaryImage}
+          onDelete={onDeleteImage}
+        />
+      </div>
+
+      <div
+        ref={commonDataRef}
+        data-testid="ozon-common-product-section"
+        className={`space-y-4 rounded-lg border border-l-4 p-4 ${
+          commonBlockers.length > 0
+            ? 'border-amber-500/50 bg-amber-500/5'
+            : commonRecommendations.length > 0
+              ? 'border-blue-500/40 bg-blue-500/5'
+              : 'border-emerald-500/35 bg-emerald-500/5'
+        }`}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-2">
           <div>
-            <p className="text-sm font-medium">Фотографии товара</p>
-            <p className="text-xs text-muted-foreground">Общие для Avito, Ozon и следующих площадок.</p>
+            <p className="text-sm font-medium">2. Общие данные товара</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Заголовок и описание заполняет обогащение — их нужно проверить. Бренд можно
+              исправить здесь. Эти данные общие для всех площадок.
+            </p>
           </div>
-          <Badge variant="outline">{images.length}</Badge>
+          <Badge
+            variant="outline"
+            className={commonBlockers.length > 0
+              ? 'border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100'
+              : commonRecommendations.length > 0
+                ? 'border-blue-500/40 bg-blue-500/10 text-blue-900 dark:text-blue-100'
+                : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'}
+          >
+            {commonBlockers.length > 0
+              ? `Нужно заполнить: ${commonBlockers.length}`
+              : commonRecommendations.length > 0
+                ? `Проверить: ${commonRecommendations.length}`
+                : 'Готово'}
+          </Badge>
         </div>
-        <button
-          type="button"
-          disabled={!activeImage?.url}
-          onClick={() => activeImage?.url && setPreviewImage(activeImage.url)}
-          className="relative flex aspect-[4/3] w-full items-center justify-center overflow-hidden rounded-lg border bg-muted disabled:cursor-default"
-        >
-          {activeImage?.url ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={activeImage.url} alt="" className="h-full w-full object-contain" />
-          ) : (
-            <div className="text-center text-sm text-muted-foreground">
-              <Images className="mx-auto mb-2 h-7 w-7" />
-              У товара пока нет фотографий
-            </div>
-          )}
-        </button>
-        {images.length > 0 && (
-          <div className="flex gap-2 overflow-x-auto pb-1">
-            {images.map((image, index) => (
-              <button
-                key={image.id}
-                type="button"
-                title={imageStatusLabel(image.status)}
-                onClick={() => setActiveImageIndex(index)}
-                className={`h-14 w-14 shrink-0 overflow-hidden rounded-md border bg-muted ${
-                  index === displayedImageIndex ? 'ring-2 ring-primary' : ''
-                }`}
-              >
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={image.thumb_url || image.url} alt="" className="h-full w-full object-cover" />
-              </button>
-            ))}
+        <div className="space-y-1 rounded-md border border-emerald-500/30 bg-background p-3">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">Заголовок после обогащения</p>
+            <Badge variant="outline" className="border-emerald-500/30 text-emerald-700">
+              Проверить
+            </Badge>
           </div>
-        )}
-        <Button asChild size="sm" variant="outline" className="w-full">
-          <Link href={`/dashboard/products/${product.id}?returnTo=%2Fdashboard%2Flistings`}>
-            <Images className="mr-2 h-4 w-4" /> Проверить и изменить фотографии
-          </Link>
-        </Button>
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1 2xl:grid-cols-3">
-        <div className="rounded-lg border p-3">
-          <p className="text-xs text-muted-foreground">Базовая цена</p>
-          <p className="mt-1 font-semibold tabular-nums">{rubles(product.price)}</p>
-        </div>
-        <div className="rounded-lg border p-3">
-          <p className="text-xs text-muted-foreground">Остаток</p>
-          <p className="mt-1 font-semibold tabular-nums">{product.stock_qty} шт.</p>
-        </div>
-        <div className="rounded-lg border p-3">
-          <p className="text-xs text-muted-foreground">Бренд</p>
-          <p className="mt-1 truncate font-semibold">{product.brand || 'Не указан'}</p>
-        </div>
-      </div>
-
-      <div ref={commonDataRef} className="space-y-4 rounded-lg border p-4">
-        <div>
-          <p className="text-sm font-medium">Общие данные товара</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Заголовок, описание, бренд, упаковка и фото используются площадками совместно.
-            Изменение здесь может повлиять и на Avito.
-          </p>
-        </div>
-        <div className="rounded-md border bg-muted/20 p-3">
-          <p className="text-xs text-muted-foreground">Заголовок</p>
-          <p className="mt-1 text-sm font-medium leading-relaxed">
+          <p className="min-w-0 break-words font-medium leading-relaxed [overflow-wrap:anywhere]">
             {product.title_ai || product.name}
           </p>
         </div>
-        <div className="rounded-md border bg-muted/20 p-3">
-          <p className="text-xs text-muted-foreground">AI-описание</p>
-          <p className="mt-1 whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
+        <div className={`space-y-1 rounded-md border bg-background p-3 ${
+          product.description_ai ? 'border-emerald-500/30' : 'border-blue-500/40'
+        }`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm text-muted-foreground">AI-описание после обогащения</p>
+            <Badge
+              variant="outline"
+              className={product.description_ai
+                ? 'border-emerald-500/30 text-emerald-700'
+                : 'border-blue-500/40 text-blue-700'}
+            >
+              {product.description_ai ? 'Проверить' : 'Рекомендуется заполнить'}
+            </Badge>
+          </div>
+          <p className="max-h-48 min-w-0 overflow-y-auto whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
             {product.description_ai || 'Описание ещё не подготовлено.'}
           </p>
         </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className={`space-y-2 rounded-md border bg-background p-3 ${
+            product.brand ? 'border-emerald-500/30' : 'border-amber-500/50'
+          }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor="ozon-common-brand" className="text-sm text-muted-foreground">
+                Бренд
+              </label>
+              {!editingBrand && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 px-2"
+                  onClick={() => setEditingBrand(true)}
+                >
+                  Изменить
+                </Button>
+              )}
+            </div>
+            {editingBrand ? (
+              <>
+                <Input
+                  id="ozon-common-brand"
+                  value={brandValue}
+                  maxLength={200}
+                  disabled={savingBrand}
+                  placeholder="Укажите бренд товара"
+                  onChange={(event) => setBrandValue(event.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={savingBrand}
+                    onClick={() => void saveBrand()}
+                  >
+                    {savingBrand && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                    Сохранить
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={savingBrand}
+                    onClick={() => {
+                      setBrandValue(product.brand ?? '');
+                      setEditingBrand(false);
+                    }}
+                  >
+                    Отмена
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <p className="font-medium">{product.brand || 'Нужно заполнить'}</p>
+            )}
+            <p className="text-xs text-muted-foreground">
+              Общий бренд товара: изменение используется и в Avito.
+            </p>
+          </div>
+          <div className="rounded-md border bg-background p-3">
+            <p className="text-sm text-muted-foreground">Остаток товара</p>
+            <p className="mt-1 font-medium tabular-nums">{product.stock_qty} шт.</p>
+            <p className="mt-2 text-xs text-muted-foreground">Приходит из учётной системы.</p>
+          </div>
+        </div>
         <Button asChild variant="outline" className="w-full">
           <Link href={`/dashboard/products/${product.id}?returnTo=%2Fdashboard%2Flistings`}>
-            <Pencil className="mr-2 h-4 w-4" />
-            Исправить общие данные, упаковку или налог
+            <ExternalLink className="mr-2 h-4 w-4" />
+            Открыть товар и обогащение
           </Link>
         </Button>
       </div>
 
-      <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 p-3 text-sm text-muted-foreground">
-        Ниже — данные только кабинета «{account.name}»: цена Ozon, категория и
-        характеристики. Они сохраняются отдельно и не меняют объявление Avito.
+      <div ref={priceSectionRef}>
+        <OzonListingPriceEditor
+          ref={priceEditorRef}
+          productId={product.id}
+          accountId={account.id}
+          accountName={account.name}
+          stockQty={product.stock_qty}
+          preparation={preparation}
+          onPreparationChange={onPreparationChange}
+        />
       </div>
 
-      {preparation?.publication.latest_operation && (
-        <div className={`rounded-lg border p-3 ${
-          preparation.publication.latest_operation.state === 'succeeded'
-            ? 'border-emerald-500/30 bg-emerald-500/5'
-            : preparation.publication.latest_operation.state === 'failed'
-              ? 'border-destructive/40 bg-destructive/5'
-              : 'border-blue-500/30 bg-blue-500/5'
-        }`}
-        >
-          <div className="flex items-start gap-2">
-            {preparation.publication.latest_operation.state === 'succeeded'
-              ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
-              : <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />}
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">
-                {ozonPublicationStatusLabel(preparation)}
-              </p>
-              {preparation.publication.provider_status && (
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Статус Ozon: {preparation.publication.provider_status}
-                  {preparation.publication.moderation_status
-                    ? ` · Модерация: ${preparation.publication.moderation_status}`
-                    : ''}
-                </p>
-              )}
-              {operationErrors.map((error, index) => (
-                <button
-                  key={`${error.code}:${error.attribute_id ?? ''}:${index}`}
-                  type="button"
-                  onClick={() => scrollToIssue(
-                    error.field || (error.attribute_id ? 'attributes' : 'readiness'),
-                  )}
-                  className="mt-2 w-full rounded-md border bg-background p-2 text-left text-xs hover:bg-muted/50"
-                >
-                  <p className="font-medium text-destructive">{error.message}</p>
-                  {(error.field || error.attribute_id || error.provider_code) && (
-                    <p className="mt-1 text-muted-foreground">
-                      {[
-                        error.field,
-                        error.attribute_id ? `характеристика ${error.attribute_id}` : '',
-                        error.provider_code,
-                      ].filter(Boolean).join(' · ')}
-                    </p>
-                  )}
-                </button>
-              ))}
-            </div>
-          </div>
-          {ozonCanReconcile(preparation) && (
-            <Button
-              type="button"
-              variant="outline"
-              className="mt-3 w-full"
-              onClick={onReconcile}
-              disabled={footerAction !== null}
-            >
-              <RefreshCw className={`mr-2 h-4 w-4 ${
-                footerAction === 'reconcile' ? 'animate-spin' : ''
-              }`}
-              />
-              {footerAction === 'reconcile'
-                ? 'Проверяем в Ozon...'
-                : 'Проверить статус в Ozon'}
-            </Button>
-          )}
-        </div>
-      )}
+      <ProductPhysicalProfileEditor
+        ref={physicalProfileRef}
+        productId={product.id}
+        profile={product.physical_profile}
+        onProfileChange={onPhysicalProfileChange}
+      />
+
+      <div className="rounded-lg border border-blue-500/25 bg-blue-500/5 p-3 text-xs text-blue-950 dark:text-blue-100">
+        Следующий блок относится только к Ozon: выберите категорию и проверьте обязательные
+        характеристики. Поля Avito от этого не изменятся.
+      </div>
 
       <OzonOfferPreparationCard
         ref={preparationRef}
@@ -436,6 +596,10 @@ export function OzonListingEditorPanel({
         accounts={[account]}
         onPreparationChange={onPreparationChange}
         showAccountSelector={false}
+        showPricing={false}
+        showReadinessSummary={false}
+        title="5. Категория и характеристики Ozon"
+        refreshToken={preparationRefreshToken}
         embedded
       />
 
@@ -539,21 +703,6 @@ export function OzonListingEditorPanel({
         </p>
       </div>
 
-      {previewImage && (
-        <button
-          type="button"
-          aria-label="Закрыть полноэкранный просмотр"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          onClick={() => setPreviewImage(null)}
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={previewImage}
-            alt="Предпросмотр фотографии товара"
-            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
-          />
-        </button>
-      )}
     </div>
   );
-}
+});
