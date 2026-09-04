@@ -290,7 +290,7 @@ def _autofill_presentation(draft: OzonOfferDraft | None) -> dict[str, Any]:
             if not isinstance(value, Mapping):
                 continue
             presented = dict(value.items())
-            if presented.get('state') == 'tenant_confirmed':
+            if presented.get('state') in {'tenant_confirmed', 'kept_manual'}:
                 presented.update({
                     'state': 'tenant_entered',
                     'source_label': 'Введено вручную',
