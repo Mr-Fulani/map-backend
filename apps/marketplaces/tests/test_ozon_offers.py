@@ -409,7 +409,9 @@ def test_ozon_autofill_never_overwrites_tenant_confirmed_value():
         'value': 'MANUAL-PART',
         'dictionary_value_id': 0,
     }]
-    assert repeated.json()['data']['autofill']['fields']['0:5']['state'] == 'kept_manual'
+    field = repeated.json()['data']['autofill']['fields']['0:5']
+    assert field['state'] == 'tenant_entered'
+    assert field['source_label'] == 'Введено вручную'
 
 
 @pytest.mark.django_db
