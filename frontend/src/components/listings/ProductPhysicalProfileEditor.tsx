@@ -28,6 +28,7 @@ import {
   physicalDraftToApiPayload,
   physicalSuggestionIsAlreadyUsed,
   physicalSuggestionNeedsReview,
+  OPTIONAL_FOR_OZON_IMPORT,
   PRODUCT_PHYSICAL_GUIDANCE,
   PRODUCT_PHYSICAL_FIELDS,
   type ProductPhysicalFieldKey,
@@ -58,8 +59,10 @@ Props
   const [draft, setDraft] = useState(() => physicalDraftFromProfile(profile));
   const [saving, setSaving] = useState(false);
   const [suggestionActionId, setSuggestionActionId] = useState<number | null>(null);
-  const requiredMissing = profile.missing_fields.filter((field) => field !== 'vat_rate');
-  const fieldsToConfirm = new Set(
+  const requiredMissing = profile.missing_fields.filter((field) => (
+    !OPTIONAL_FOR_OZON_IMPORT.has(field)
+  ));
+  const fieldsToConfirm = new Set<ProductPhysicalFieldKey>(
     profile.suggestions
       .filter((suggestion) => physicalSuggestionNeedsReview(profile, suggestion))
       .map((suggestion) => suggestion.field),
@@ -154,8 +157,8 @@ Props
         <div>
           <p className="text-sm font-medium">{title}</p>
           <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
-            MAP использует данные 1С. Если их нет, заполните значение здесь. НДС можно
-            оставить пустым, если точная ставка неизвестна.
+            MAP использует данные 1С и найденные факты. Если их нет, заполните значение
+            здесь. Штрихкод и НДС можно оставить пустыми для создания карточки.
           </p>
         </div>
         <Badge
@@ -191,7 +194,7 @@ Props
           const from1c = fact.effective_source === '1c';
           const fromEvidence = fact.effective_source === 'map' && Boolean(fact.map_provenance);
           const enteredManually = fact.effective_source === 'map' && !fact.map_provenance;
-          const optional = key === 'vat_rate';
+          const optional = OPTIONAL_FOR_OZON_IMPORT.has(key);
           const missing = fact.effective_source === 'missing';
           const guidance = PRODUCT_PHYSICAL_GUIDANCE[key];
           const suggestions = profile.suggestions.filter((item) => item.field === key);
@@ -277,8 +280,10 @@ Props
                     ? 'MAP использует значение, которое Тенант подтвердил из найденного источника.'
                     : enteredManually
                       ? 'Значение введено вручную. MAP сохранил его, но не может подтвердить достоверность.'
-                  : optional && missing
-                    ? 'Не знаете ставку — оставьте «Не указано».'
+                    : optional && missing
+                    ? key === 'barcode'
+                      ? 'Можно пропустить: после создания карточки MAP предложит код Ozon.'
+                      : 'Не знаете ставку — оставьте «Не указано».'
                     : missing
                       ? 'Нет корректного значения в 1С или MAP.'
                       : 'Значение сохранено в MAP и используется для Ozon.'}

@@ -12,7 +12,8 @@ from apps.products.models import (
 from apps.products.part_parsers import ParsedPart
 from apps.products.physical_profiles import physical_profile_presentation
 from apps.products.physical_suggestions import (
-    extract_physical_suggestions, save_physical_suggestions,
+    extract_physical_suggestions, refresh_physical_suggestions_from_stored_facts,
+    save_physical_suggestions,
 )
 from apps.products.services import ProductEnrichmentService, ProductService
 from apps.tenants.tests.auth import create_tenant_with_operator_key
@@ -252,7 +253,7 @@ def test_patch_updates_only_map_fallback_and_embeds_profile_in_product_detail():
             'patch',
             f'/api/v1/products/{product.pk}/physical-profile/',
             {
-                'barcode': 'MAP-CODE',
+                'barcode': '4650252914394',
                 'length_mm': '100',
                 'width_mm': '200',
                 'height_mm': '50',
@@ -265,7 +266,7 @@ def test_patch_updates_only_map_fallback_and_embeds_profile_in_product_detail():
     assert response.status_code == 200
     data = response.json()['data']
     assert data['facts']['barcode']['source_value'] == 'SOURCE-CODE'
-    assert data['facts']['barcode']['map_value'] == 'MAP-CODE'
+    assert data['facts']['barcode']['map_value'] == '4650252914394'
     assert data['facts']['barcode']['effective_source'] == '1c'
     assert data['facts']['width_mm']['effective_source'] == 'map'
     profile = ProductPhysicalProfile.objects.get(product=product)
@@ -282,6 +283,7 @@ def test_patch_updates_only_map_fallback_and_embeds_profile_in_product_detail():
 @pytest.mark.parametrize('payload', [
     {'weight_g': '-1'},
     {'vat_rate': '18'},
+    {'barcode': '12345678'},
     {'source_barcode': 'forbidden'},
     {},
 ])
@@ -400,6 +402,9 @@ def test_enrichment_creates_reviewable_suggestions_without_writing_map(source_id
     assert suggestions.get(field='weight_g').value == '160'
     assert suggestions.get(field='barcode').source_url == parsed.source_url
     assert not ProductPhysicalProfile.objects.filter(product=product).exists()
+    suggestions.update(is_current=False)
+    refresh_physical_suggestions_from_stored_facts(product)
+    assert suggestions.filter(is_current=True).count() == 5
 
 
 @pytest.mark.django_db

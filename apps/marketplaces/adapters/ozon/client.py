@@ -336,6 +336,38 @@ class OzonSellerClient:
             )
         return matches[0] if matches else None
 
+    def generate_barcodes(self, product_ids: list[int]) -> list[dict[str, Any]]:
+        """Ask Ozon to create its own barcodes for at most 100 known products."""
+
+        if (
+            not product_ids
+            or len(product_ids) > 100
+            or any(
+                isinstance(item, bool) or not isinstance(item, int) or item <= 0
+                for item in product_ids
+            )
+            or len(product_ids) != len(set(product_ids))
+        ):
+            raise ValueError('Ozon barcode generation requires 1 to 100 unique product IDs.')
+        payload = self._post('/v1/barcode/generate', {'product_ids': product_ids})
+        raw_errors = payload.get('errors')
+        result = payload.get('result')
+        if raw_errors is None and isinstance(result, Mapping):
+            raw_errors = result.get('errors')
+        if raw_errors is None:
+            raw_errors = []
+        if not isinstance(raw_errors, list) or len(raw_errors) > 100:
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректный результат создания штрихкода.',
+            )
+        if any(not isinstance(item, Mapping) for item in raw_errors):
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректную ошибку создания штрихкода.',
+            )
+        return [dict(item) for item in raw_errors]
+
     def update_prices(self, prices: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Update up to 100 prices and return the bounded item results."""
 

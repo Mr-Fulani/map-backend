@@ -5,7 +5,7 @@ import pytest
 from django.test import Client
 
 from apps.marketplaces.adapters.ozon.client import OzonAPIError
-from apps.marketplaces.models import Listing, MarketplaceFeedRun, OzonOperation
+from apps.marketplaces.models import Listing, MarketplaceFeedRun, OzonOfferDraft, OzonOperation
 from apps.marketplaces.tests.test_ozon_offers import (
     _account,
     _catalog,
@@ -54,6 +54,8 @@ def test_manual_product_import_is_complete_durable_and_idempotent(settings):
     client = Client()
     ready = _ready_offer(client, key, product, account)
     assert ready.json()['data']['preflight']['ready'] is True
+    product.physical_profile.source_barcode = ''
+    product.physical_profile.save(update_fields=['source_barcode', 'updated_at'])
     _enable_write(settings, tenant, account)
     idempotency_key = uuid.uuid4()
 
@@ -83,7 +85,6 @@ def test_manual_product_import_is_complete_durable_and_idempotent(settings):
             'complex_id': 0,
             'values': [{'value': 'Canonical Brand', 'dictionary_value_id': 501}],
         }],
-        'barcode': '4600000000000',
         'currency_code': 'RUB',
         'depth': 100,
         'description_category_id': 101,
@@ -101,6 +102,26 @@ def test_manual_product_import_is_complete_durable_and_idempotent(settings):
         'weight_unit': 'g',
         'width': 80,
     }
+    draft = OzonOfferDraft.objects.get(product=product, account=account)
+    draft.provider_product_id = 77
+    draft.save(update_fields=['provider_product_id', 'updated_at'])
+    account.ozon_profile.api_methods.append('/v1/barcode/generate')
+    account.ozon_profile.save(update_fields=['api_methods', 'updated_at'])
+    with (
+        patch('apps.marketplaces.ozon_publication.OzonSellerClient.generate_barcodes',
+              return_value=[]),
+        patch('apps.marketplaces.ozon_publication.OzonSellerClient.get_product_info_by_offer_id',
+              return_value={'barcodes': ['OZN123456789']}),
+    ):
+        barcode_response = client.post(
+            f'/api/v1/products/{product.pk}/ozon-offer/generate-barcode/',
+            {'account_id': account.pk}, content_type='application/json',
+            HTTP_AUTHORIZATION=f'Bearer {key}',
+        )
+    assert barcode_response.status_code == 202
+    assert barcode_response.json()['data']['publication']['barcode']['provider_values'] == [
+        'OZN123456789',
+    ]
     assert Listing.objects.count() == MarketplaceFeedRun.objects.count() == 0
 
 

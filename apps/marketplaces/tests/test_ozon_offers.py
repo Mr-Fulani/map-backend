@@ -22,7 +22,7 @@ from apps.marketplaces.ozon_catalog import (
     normalize_category_tree,
 )
 from apps.marketplaces.ozon_autofill import schedule_ozon_autofill
-from apps.products.models import Product, ProductImage, ProductPhysicalProfile
+from apps.products.models import Product, ProductAttribute, ProductImage, ProductPhysicalProfile
 from apps.tenants.tests.auth import create_tenant_with_operator_key, owner_access_token
 
 
@@ -238,7 +238,7 @@ def _complete_product(product):
     ProductPhysicalProfile.objects.create(
         tenant=product.tenant,
         product=product,
-        source_barcode='4600000000000',
+        source_barcode='4650252914394',
         source_length_mm=Decimal('100'),
         source_width_mm=Decimal('80'),
         source_height_mm=Decimal('50'),
@@ -323,6 +323,10 @@ def test_ozon_autofill_uses_safe_facts_and_recommends_regulatory_review():
     schema = _autofill_attribute_catalog(account)
     _autofill_dictionary_value(account, schema, 4, 'Test Brand', 401)
     _autofill_dictionary_value(account, schema, 6, 'Амортизатор', 601)
+    ProductAttribute.objects.create(
+        tenant=tenant, product=product, source_id='tachka',
+        name='Код ТН ВЭД', raw_name='Код ТН ВЭД', value='4009 32 000 0',
+    )
     client = Client()
     selected = _request(client, key, 'patch', product, {
         'account_id': account.pk,
@@ -343,16 +347,17 @@ def test_ozon_autofill_uses_safe_facts_and_recommends_regulatory_review():
     }
     assert values == {
         1: {'value': 'Test Brand OZ-1', 'dictionary_value_id': 0},
+        2: {'value': '4009 32 000 0', 'dictionary_value_id': 0},
         4: {'value': 'Test Brand', 'dictionary_value_id': 401},
         5: {'value': 'OZ-1', 'dictionary_value_id': 0},
         6: {'value': 'Амортизатор', 'dictionary_value_id': 601},
     }
     assert data['autofill']['status'] == 'needs_review'
-    assert data['autofill']['applied_count'] == 4
+    assert data['autofill']['applied_count'] == 5
     assert {
         item['code'] for item in data['autofill']['recommendations']
     } == {
-        'tnved_confirmation_required',
+        'enrichment_fact_confirmation_required',
         'marking_confirmation_required',
     }
     assert {
@@ -515,10 +520,10 @@ def test_missing_physical_facts_explain_where_tenant_can_get_each_value():
         for item in response.json()['data']['preflight']['errors']
         if item['code'] == 'physical_fact_missing'
     }
-    assert 'упаковки' in messages['physical:barcode']
-    assert 'случайный код' in messages['physical:barcode']
     assert 'измерьте упаковку' in messages['physical:length_mm']
     assert 'вместе с упаковкой' in messages['physical:weight_g']
+    recommendation = response.json()['data']['preflight']['recommendations']
+    assert any(item['code'] == 'barcode_generated_after_import' for item in recommendation)
 
 
 @pytest.mark.django_db
@@ -646,7 +651,8 @@ def test_missing_vat_is_a_recommendation_and_does_not_block_ozon_readiness():
     _complete_product(product)
     profile = product.physical_profile
     profile.source_vat_rate = None
-    profile.save(update_fields=['source_vat_rate', 'updated_at'])
+    profile.source_barcode = ''
+    profile.save(update_fields=['source_vat_rate', 'source_barcode', 'updated_at'])
     client = Client()
 
     _request(client, key, 'patch', product, {
@@ -672,6 +678,7 @@ def test_missing_vat_is_a_recommendation_and_does_not_block_ozon_readiness():
     assert preflight['errors'] == []
     assert [item['code'] for item in preflight['recommendations']] == [
         'brand_value_mismatch',
+        'barcode_generated_after_import',
         'vat_recommended',
     ]
 

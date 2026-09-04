@@ -71,13 +71,18 @@ export const PRODUCT_PHYSICAL_FIELDS: Array<{
   { key: 'vat_rate', label: 'НДС', unit: '%', placeholder: '20' },
 ];
 
+export const OPTIONAL_FOR_OZON_IMPORT = new Set<ProductPhysicalFieldKey>([
+  'barcode',
+  'vat_rate',
+]);
+
 export const PRODUCT_PHYSICAL_GUIDANCE: Record<ProductPhysicalFieldKey, {
   source: string;
   warning: string;
 }> = {
   barcode: {
-    source: 'Посмотрите на упаковке или возьмите из 1С, карточки поставщика либо каталога производителя.',
-    warning: 'Не придумывайте штрихкод и не подставляйте вместо него артикул.',
+    source: 'Если код есть — возьмите его с упаковки, из 1С, карточки поставщика или каталога производителя.',
+    warning: 'Кода нет — оставьте поле пустым. После создания карточки MAP сможет запросить отдельный код Ozon.',
   },
   length_mm: {
     source: 'Возьмите у производителя или измерьте длину товара в готовой упаковке.',
@@ -157,6 +162,15 @@ function canonicalNumber(value: number, factor: number): string {
   return String(Math.round(value * factor * 1000) / 1000);
 }
 
+export function validGtin(value: string): boolean {
+  if (![8, 12, 13, 14].includes(value.length) || !/^\d+$/.test(value)) return false;
+  const payload = value.slice(0, -1).split('').reverse();
+  const checksum = payload.reduce((sum, digit, index) => (
+    sum + Number(digit) * (index % 2 === 0 ? 3 : 1)
+  ), 0);
+  return (10 - (checksum % 10)) % 10 === Number(value[value.length - 1]);
+}
+
 export function physicalDraftToApiPayload(
   draft: ProductPhysicalDraft,
 ): Record<ProductPhysicalFieldKey, string | null> {
@@ -165,11 +179,17 @@ export function physicalDraftToApiPayload(
   const height = requiredNumber(draft.height_mm, 'Высота');
   const weight = requiredNumber(draft.weight_g, 'Вес');
   const vat = draft.vat_rate.trim();
+  const barcode = draft.barcode.trim();
+  if (barcode && !validGtin(barcode)) {
+    throw new Error(
+      'Штрихкод: введите корректный EAN/GTIN или оставьте поле пустым — MAP сможет запросить код Ozon позже.',
+    );
+  }
   if (vat && !['0', '5', '7', '10', '20'].includes(vat)) {
     throw new Error('НДС: выберите 0%, 5%, 7%, 10% или 20%.');
   }
   return {
-    barcode: draft.barcode.trim(),
+    barcode,
     length_mm: length === null ? null : canonicalNumber(length, 10),
     width_mm: width === null ? null : canonicalNumber(width, 10),
     height_mm: height === null ? null : canonicalNumber(height, 10),

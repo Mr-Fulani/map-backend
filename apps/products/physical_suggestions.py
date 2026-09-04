@@ -10,6 +10,8 @@ from django.utils.timezone import now
 
 from apps.products.models import (
     Product,
+    ProductAttribute,
+    ProductEnrichmentFact,
     ProductPhysicalProfile,
     ProductPhysicalSuggestion,
     ReviewStatus,
@@ -20,7 +22,7 @@ from apps.products.source_policy import PART_SOURCE_POLICIES
 _LABEL_ALIASES = {
     ProductPhysicalSuggestion.Field.BARCODE: {
         'ean', 'gtin', 'штрих код', 'ean штрих код', 'номер ean штрих код',
-        'номер штрих кода', 'barcode',
+        'номер штрих кода', 'ean 13', 'ean13', 'barcode',
     },
     ProductPhysicalSuggestion.Field.LENGTH_MM: {
         'длина упаковки', 'длина упаковки мм', 'длина упаковки см',
@@ -36,9 +38,16 @@ _LABEL_ALIASES = {
     },
     ProductPhysicalSuggestion.Field.WEIGHT_G: {
         'вес', 'масса', 'вес товара', 'масса товара', 'вес упаковки',
-        'масса упаковки', 'weight', 'item weight', 'package weight',
-        'packaging weight',
+        'масса упаковки', 'вес с упаковкой', 'масса с упаковкой',
+        'вес брутто', 'масса брутто', 'weight', 'item weight', 'package weight',
+        'packaging weight', 'gross weight',
     },
+}
+
+_COMBINED_DIMENSION_ALIASES = {
+    'габариты упаковки', 'размеры упаковки', 'размер упаковки',
+    'габаритные размеры упаковки', 'д ш в упаковки', 'длина ширина высота упаковки',
+    'package dimensions', 'packaging dimensions', 'package size', 'l w h',
 }
 
 _NUMBER_RE = re.compile(r'(?<![\d])([+-]?\d+(?:[.,]\d+)?)(?![\d])')
@@ -115,7 +124,7 @@ def _weight_g(raw_name: str, raw_value: str) -> Decimal | None:
     return result
 
 
-def _valid_gtin(value: str) -> bool:
+def valid_gtin(value: str) -> bool:
     if len(value) not in {8, 12, 13, 14} or not value.isdigit():
         return False
     payload = value[:-1]
@@ -128,8 +137,38 @@ def _valid_gtin(value: str) -> bool:
 
 def _barcode(raw_value: str) -> str | None:
     candidates = re.findall(r'(?<!\d)\d{8,14}(?!\d)', raw_value or '')
-    valid = list(dict.fromkeys(candidate for candidate in candidates if _valid_gtin(candidate)))
+    valid = list(dict.fromkeys(candidate for candidate in candidates if valid_gtin(candidate)))
     return valid[0] if len(valid) == 1 else None
+
+
+def _combined_dimensions_mm(
+    raw_name: str,
+    raw_value: str,
+) -> tuple[Decimal, Decimal, Decimal] | None:
+    """Parse one explicit packaged L×W×H value without guessing missing units."""
+
+    numbers = _NUMBER_RE.findall((raw_value or '').replace('\xa0', ' '))
+    if len(numbers) != 3:
+        return None
+    unit_text = f'{raw_value} {raw_name}'.lower().replace('ё', 'е')
+    if re.search(r'(?<![a-zа-я])(мм|mm)(?![a-zа-я])', unit_text):
+        factor = Decimal('1')
+    elif re.search(r'(?<![a-zа-я])(см|cm)(?![a-zа-я])', unit_text):
+        factor = Decimal('10')
+    elif re.search(r'(?<![a-zа-я])(м|m)(?![a-zа-я])', unit_text):
+        factor = Decimal('1000')
+    else:
+        return None
+    try:
+        values = tuple(Decimal(number.replace(',', '.')) * factor for number in numbers)
+    except InvalidOperation:
+        return None
+    if any(
+        not value.is_finite() or value <= 0 or value > Decimal('999999999.999')
+        for value in values
+    ):
+        return None
+    return values[0], values[1], values[2]
 
 
 def extract_physical_suggestions(
@@ -141,6 +180,23 @@ def extract_physical_suggestions(
     priorities: dict[str, int] = {}
     for raw_name, raw_value in attributes.items():
         label = _normalized_label(raw_name)
+        if label in _COMBINED_DIMENSION_ALIASES:
+            dimensions = _combined_dimensions_mm(raw_name, raw_value)
+            if dimensions is not None:
+                for dimension_field, combined_dimension in zip((
+                    ProductPhysicalSuggestion.Field.LENGTH_MM,
+                    ProductPhysicalSuggestion.Field.WIDTH_MM,
+                    ProductPhysicalSuggestion.Field.HEIGHT_MM,
+                ), dimensions, strict=True):
+                    if priorities.get(dimension_field, -1) <= 3:
+                        result[dimension_field] = PhysicalSuggestionCandidate(
+                            field=dimension_field,
+                            value=_canonical_decimal(combined_dimension),
+                            raw_name=(raw_name or '')[:150],
+                            raw_value=str(raw_value or ''),
+                        )
+                        priorities[dimension_field] = 3
+            continue
         field = next(
             (candidate for candidate, aliases in _LABEL_ALIASES.items() if label in aliases),
             None,
@@ -157,11 +213,17 @@ def extract_physical_suggestions(
         if field == ProductPhysicalSuggestion.Field.BARCODE:
             value = _barcode(raw_value)
         elif field == ProductPhysicalSuggestion.Field.WEIGHT_G:
-            parsed = _weight_g(raw_name, raw_value)
-            value = _canonical_decimal(parsed) if parsed is not None else None
+            parsed_weight = _weight_g(raw_name, raw_value)
+            value = (
+                _canonical_decimal(parsed_weight)
+                if parsed_weight is not None else None
+            )
         else:
-            parsed = _dimension_mm(raw_name, raw_value)
-            value = _canonical_decimal(parsed) if parsed is not None else None
+            single_dimension = _dimension_mm(raw_name, raw_value)
+            value = (
+                _canonical_decimal(single_dimension)
+                if single_dimension is not None else None
+            )
         if value is not None:
             result[field] = PhysicalSuggestionCandidate(
                 field=field,
@@ -171,6 +233,58 @@ def extract_physical_suggestions(
             )
             priorities[field] = priority
     return result
+
+
+def _latest_source_attributes(product: Product) -> dict[str, dict[str, str]]:
+    """Recover current-looking legacy facts so old enrichments are not lost."""
+
+    grouped: dict[str, dict[str, str]] = {}
+    seen_names: set[tuple[str, str]] = set()
+    rows = ProductAttribute.objects.filter(
+        tenant=product.tenant,
+        product=product,
+    ).order_by('-pk').values_list('source_id', 'raw_name', 'name', 'value')
+    for source_id, raw_name, name, value in rows:
+        normalized_name = _normalized_label(raw_name or name)
+        identity = (source_id, normalized_name)
+        if not normalized_name or identity in seen_names:
+            continue
+        seen_names.add(identity)
+        grouped.setdefault(source_id, {})[raw_name or name] = value
+
+    fact_rows = ProductEnrichmentFact.objects.filter(
+        tenant=product.tenant,
+        product=product,
+        fact_type=ProductEnrichmentFact.FactType.TECHNICAL,
+    ).order_by('-pk').values_list('source_id', 'name', 'value')
+    for source_id, name, value in fact_rows:
+        normalized_name = _normalized_label(name)
+        identity = (source_id, normalized_name)
+        if not normalized_name or identity in seen_names:
+            continue
+        seen_names.add(identity)
+        grouped.setdefault(source_id, {})[name] = value
+    return grouped
+
+
+def refresh_physical_suggestions_from_stored_facts(product: Product) -> None:
+    """Idempotently bridge stored catalogue/research facts into tenant review."""
+
+    source_urls: dict[str, str] = {}
+    for source_id, source_url in ProductEnrichmentFact.objects.filter(
+        tenant=product.tenant,
+        product=product,
+    ).exclude(source_url='').order_by('source_id', '-pk').values_list(
+        'source_id', 'source_url',
+    ):
+        source_urls.setdefault(source_id, source_url)
+    for source_id, attributes in _latest_source_attributes(product).items():
+        save_physical_suggestions(
+            product=product,
+            attributes=attributes,
+            source_id=source_id,
+            source_url=source_urls.get(source_id, ''),
+        )
 
 
 @transaction.atomic

@@ -77,6 +77,7 @@ def test_import_and_moderation_success_are_projected_to_offer(settings):
         patch(PRODUCT_INFO, return_value={
             'id': 71,
             'sku': 801,
+            'barcodes': ['OZN123456789'],
             'offer_id': draft.offer_id,
             'errors': [],
             'statuses': {
@@ -93,6 +94,7 @@ def test_import_and_moderation_success_are_projected_to_offer(settings):
     assert data['status'] == 'published'
     assert data['provider_product_id'] == 71
     assert data['provider_sku'] == 801
+    assert data['barcode']['provider_values'] == ['OZN123456789']
     assert data['provider_status'] == 'processed'
     assert data['moderation_status'] == 'approved'
     assert data['latest_operation']['state'] == 'succeeded'

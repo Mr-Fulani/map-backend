@@ -262,17 +262,26 @@ def test_catalog_methods_reject_non_list_results():
     OZON_API_MAX_PAGES=3,
     OZON_API_TIMEOUT_SECONDS=2,
 )
-def test_product_import_uses_current_endpoint_and_returns_task_id():
-    session = FakeSession([FakeResponse(200, {'result': {'task_id': 731}})])
+def test_product_mutations_use_current_endpoints():
+    session = FakeSession([
+        FakeResponse(200, {'result': {'task_id': 731}}),
+        FakeResponse(200, {'errors': []}),
+    ])
     item = {'offer_id': 'map-offer-1', 'name': 'Тестовый товар'}
 
     task_id = OzonSellerClient(
         client_id='cid', api_key='secret', session=session,
     ).import_products([item])
+    errors = OzonSellerClient(
+        client_id='cid', api_key='secret', session=session,
+    ).generate_barcodes([77])
 
     assert task_id == '731'
+    assert errors == []
     assert session.calls[0][0] == 'https://api-seller.ozon.ru/v3/product/import'
     assert session.calls[0][1]['json'] == {'items': [item]}
+    assert session.calls[1][0].endswith('/v1/barcode/generate')
+    assert session.calls[1][1]['json'] == {'product_ids': [77]}
 
 
 def test_product_import_rejects_empty_or_oversized_local_batches():

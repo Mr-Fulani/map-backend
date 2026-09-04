@@ -17,6 +17,7 @@ import {
   Loader2,
   RefreshCw,
   Save,
+  ScanBarcode,
   Send,
   Warehouse,
 } from 'lucide-react';
@@ -89,7 +90,7 @@ interface Props {
   mediaAction: ProductMediaAction;
   preparationRefreshToken: number;
   preparationRef: RefObject<OzonOfferPreparationCardHandle | null>;
-  footerAction: 'save' | 'regenerate' | 'publish' | 'reconcile' | 'commerce' | null;
+  footerAction: 'save' | 'regenerate' | 'publish' | 'reconcile' | 'commerce' | 'barcode' | null;
   onPreparationChange: (preparation: OzonOfferPreparation | null) => void;
   onUploadImage: (file: File) => Promise<void>;
   onApproveImage: (imageId: number) => Promise<void>;
@@ -103,6 +104,7 @@ interface Props {
   onPublish: () => void;
   onReconcile: () => void;
   onSyncCommerce: () => void;
+  onGenerateBarcode: () => void;
   onReload: () => void;
 }
 
@@ -165,6 +167,7 @@ Props
   onPublish,
   onReconcile,
   onSyncCommerce,
+  onGenerateBarcode,
   onReload,
 }, ref) {
   const imagesSectionRef = useRef<HTMLDivElement>(null);
@@ -176,6 +179,7 @@ Props
   const [brandValue, setBrandValue] = useState(product.brand ?? '');
   const [savingBrand, setSavingBrand] = useState(false);
   const publication = preparation?.publication;
+  const barcode = publication?.barcode;
   const providerSku = publication?.provider_sku ?? summary?.provider_sku ?? null;
   const externalUrl = providerSku
     ? `https://www.ozon.ru/product/${providerSku}/`
@@ -520,7 +524,7 @@ Props
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div className={`space-y-2 rounded-md border bg-background p-3 ${
-            product.brand ? 'border-emerald-500/30' : 'border-amber-500/50'
+            product.brand ? 'border-emerald-500/30' : 'border-dashed'
           }`}
           >
             <div className="flex items-center justify-between gap-2">
@@ -574,10 +578,10 @@ Props
                 </div>
               </>
             ) : (
-              <p className="font-medium">{product.brand || 'Нужно заполнить'}</p>
+              <p className="font-medium">{product.brand || 'В общем товаре не указан'}</p>
             )}
             <p className="text-xs text-muted-foreground">
-              Общий бренд товара: изменение используется и в Avito.
+              Общий бренд используется и в Avito. Бренд Ozon выбирается отдельно ниже: точное совпадение MAP подставит сам, но заменять VAG похожим названием нельзя.
             </p>
           </div>
           <div className="rounded-md border bg-background p-3">
@@ -609,10 +613,78 @@ Props
       <ProductPhysicalProfileEditor
         ref={physicalProfileRef}
         productId={product.id}
-        profile={product.physical_profile}
+        profile={preparation?.physical_profile ?? product.physical_profile}
         onProfileChange={onPhysicalProfileChange}
       />
+      {barcode && (
+        <div
+          data-testid="ozon-barcode-workflow"
+          className="rounded-lg border border-sky-500/30 bg-sky-500/5 p-4"
+        >
+          <div className="flex items-start gap-2">
+            <ScanBarcode className="mt-0.5 h-4 w-4 shrink-0 text-sky-700" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">Штрихкод Ozon</p>
+              {barcode.provider_values.length > 0 ? (
+                <>
+                  <p className="mt-1 break-all font-mono text-sm font-medium">
+                    {barcode.provider_values.join(', ')}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Код создан или подтверждён Ozon и относится только к этому кабинету.
+                  </p>
+                </>
+              ) : barcode.common_value ? (
+                <>
+                  <p className="mt-1 break-all font-mono text-sm font-medium">
+                    {barcode.common_value}
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Используем подтверждённый штрихкод производителя из общего товара.
+                  </p>
+                </>
+              ) : (
+                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                  Если штрихкода производителя нет, оставьте поле пустым. Сначала создайте карточку, затем MAP запросит у Ozon уникальный код — придумывать EAN нельзя.
+                </p>
+              )}
 
+              {!barcode.common_value && barcode.provider_values.length === 0 && (
+                <div className="mt-3">
+                  {!publication?.provider_product_id ? (
+                    <p className="rounded-md border border-blue-500/30 bg-background p-2.5 text-xs">
+                      Кнопка появится после первой отправки, когда Ozon присвоит товару ID.</p>
+                  ) : !barcode.generation_enabled ? (
+                    <p className="rounded-md border border-amber-500/40 bg-background p-2.5 text-xs">
+                      У API-ключа нет разрешения на создание штрихкодов. Карточка уже может пройти импорт; право можно добавить новым ключом позже.
+                    </p>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      disabled={footerAction !== null || !barcode.can_generate}
+                      onClick={onGenerateBarcode}
+                    >
+                      {footerAction === 'barcode'
+                        ? <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        : <ScanBarcode className="mr-2 h-4 w-4" />}
+                      {footerAction === 'barcode'
+                        ? 'Обращаемся в Ozon...'
+                        : ['requested', 'outcome_unknown'].includes(barcode.generation_status)
+                          ? 'Проверить результат'
+                          : barcode.generation_status === 'failed'
+                            ? 'Повторить создание штрихкода'
+                            : 'Создать штрихкод Ozon'}
+                    </Button>
+                  )}
+                  {barcode.generation_error && <p className="mt-2 text-xs text-destructive">{barcode.generation_error}</p>}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="rounded-lg border border-blue-500/25 bg-blue-500/5 p-3 text-xs text-blue-950 dark:text-blue-100">
         Следующий блок относится только к Ozon: выберите категорию и проверьте обязательные
         характеристики. Поля Avito от этого не изменятся.
