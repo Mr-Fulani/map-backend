@@ -384,6 +384,28 @@ class OzonSellerClient:
         payload = self._post('/v2/products/stocks', {'stocks': stocks})
         return _result_items(payload, label='остатков')
 
+    def archive_products(self, product_ids: list[int]) -> bool:
+        """Move up to 100 exact provider product IDs to the Ozon archive."""
+
+        if (
+            not product_ids
+            or len(product_ids) > 100
+            or any(
+                isinstance(item, bool) or not isinstance(item, int) or item <= 0
+                for item in product_ids
+            )
+            or len(product_ids) != len(set(product_ids))
+        ):
+            raise ValueError('Ozon archive requires 1 to 100 unique product IDs.')
+        payload = self._post('/v1/product/archive', {'product_id': product_ids})
+        result = payload.get('result')
+        if not isinstance(result, bool):
+            raise OzonAPIError(
+                'invalid_response',
+                'Ozon вернул некорректный результат архивирования.',
+            )
+        return result
+
     def list_fbs_postings(
         self, *, since: str, to: str, limit: int = 100, offset: int = 0,
     ) -> tuple[list[dict[str, Any]], bool]:

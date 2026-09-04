@@ -12,6 +12,7 @@ import {
 } from 'react';
 import {
   AlertCircle,
+  Archive,
   CheckCircle2,
   ExternalLink,
   Loader2,
@@ -44,6 +45,7 @@ import { Input } from '@/components/ui/input';
 import { SheetHeader } from '@/components/ui/sheet';
 import type { OzonOfferPreparation, OzonPreflightIssue } from '@/lib/ozon-offer-preparation';
 import {
+  ozonCanArchive,
   ozonCanReconcile,
   ozonPublicationActionLabel,
   ozonPublicationDisabled,
@@ -90,7 +92,7 @@ interface Props {
   mediaAction: ProductMediaAction;
   preparationRefreshToken: number;
   preparationRef: RefObject<OzonOfferPreparationCardHandle | null>;
-  footerAction: 'save' | 'regenerate' | 'publish' | 'reconcile' | 'commerce' | 'barcode' | null;
+  footerAction: 'save' | 'regenerate' | 'publish' | 'archive' | 'reconcile' | 'commerce' | 'barcode' | null;
   onPreparationChange: (preparation: OzonOfferPreparation | null) => void;
   onUploadImage: (file: File) => Promise<void>;
   onApproveImage: (imageId: number) => Promise<void>;
@@ -102,6 +104,7 @@ interface Props {
   onSave: () => void;
   onRegenerate: () => void;
   onPublish: () => void;
+  onArchive: () => void;
   onReconcile: () => void;
   onSyncCommerce: () => void;
   onGenerateBarcode: () => void;
@@ -122,10 +125,13 @@ function rubles(value: string): string {
 function localStatusLabel(summary: OzonWorkspaceSummary | null): string {
   if (!summary) return 'Загружается';
   if (summary.publication_status === 'published') return 'Опубликована';
+  if (summary.publication_status === 'archived') return 'Снята с публикации';
   if (['queued', 'import_processing', 'moderation_pending'].includes(summary.publication_status)) {
     return 'Проверяется в Ozon';
   }
-  if (summary.publication_status === 'outcome_unknown') return 'Ответ нужно сверить';
+  if (['outcome_unknown', 'archive_outcome_unknown'].includes(summary.publication_status)) {
+    return 'Ответ нужно сверить';
+  }
   if (['send_failed', 'not_accepted', 'import_failed', 'moderation_failed'].includes(summary.publication_status)) {
     return 'Ozon отклонил карточку';
   }
@@ -165,6 +171,7 @@ Props
   onSave,
   onRegenerate,
   onPublish,
+  onArchive,
   onReconcile,
   onSyncCommerce,
   onGenerateBarcode,
@@ -178,6 +185,7 @@ Props
   const [editingBrand, setEditingBrand] = useState(false);
   const [brandValue, setBrandValue] = useState(product.brand ?? '');
   const [savingBrand, setSavingBrand] = useState(false);
+  const [confirmingArchive, setConfirmingArchive] = useState(false);
   const publication = preparation?.publication;
   const barcode = publication?.barcode;
   const providerSku = publication?.provider_sku ?? summary?.provider_sku ?? null;
@@ -202,6 +210,10 @@ Props
     setBrandValue(product.brand ?? '');
     setEditingBrand(false);
   }, [product.brand]);
+
+  useEffect(() => {
+    setConfirmingArchive(false);
+  }, [publication?.status, account.id]);
 
   useImperativeHandle(ref, () => ({
     applyMarketPrice: (price: string) => priceEditorRef.current?.applyMarketPrice(price) ?? false,
@@ -785,6 +797,72 @@ Props
         >
           {ozonPublicationMessage(preparation)}
         </p>
+        {preparation?.publication.provider_product_id
+          && preparation.publication.status !== 'archived'
+          && !(
+            preparation.publication.latest_operation?.kind === 'archive'
+            && ['queued', 'sending', 'outcome_unknown', 'reconciling', 'succeeded'].includes(
+              preparation.publication.latest_operation.state,
+            )
+          )
+          && (
+            ozonCanArchive(preparation) ? (
+              confirmingArchive ? (
+                <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+                  <p className="text-sm font-medium text-destructive">
+                    Снять карточку с Ozon?
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    MAP сначала обнулит остаток на выбранном FBS-складе, затем
+                    перенесёт товар в архив и проверит результат.
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setConfirmingArchive(false)}
+                      disabled={footerAction !== null}
+                    >
+                      Отмена
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="destructive"
+                      onClick={() => {
+                        setConfirmingArchive(false);
+                        onArchive();
+                      }}
+                      disabled={footerAction !== null}
+                    >
+                      Да, снять
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => setConfirmingArchive(true)}
+                  disabled={footerAction !== null}
+                >
+                  <Archive className="mr-2 h-4 w-4" />
+                  Снять с публикации Ozon
+                </Button>
+              )
+            ) : preparation.publication.status === 'published'
+              && !preparation.publication.archive_enabled ? (
+                <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs">
+                  Для снятия нужно добавить API-ключу Ozon право
+                  <span className="font-mono"> /v1/product/archive</span>.
+                </p>
+              ) : null
+          )}
+        {footerAction === 'archive' && (
+          <p className="rounded-md border border-blue-500/30 bg-blue-500/5 p-2.5 text-xs">
+            Обнуляем остаток, архивируем и сверяем статус Ozon…
+          </p>
+        )}
         <Button
           type="button"
           variant="secondary"

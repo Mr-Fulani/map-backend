@@ -4,6 +4,7 @@ from django.conf import settings
 
 
 OZON_PRODUCT_IMPORT_METHOD = '/v3/product/import'
+OZON_PRODUCT_ARCHIVE_METHOD = '/v1/product/archive'
 
 
 def _safe_string_allowlist(setting_name: str, *, max_length: int) -> frozenset[str]:
@@ -66,3 +67,11 @@ def ozon_product_write_enabled_for_account(account) -> bool:
         profile.product_write_enabled is True
         and OZON_PRODUCT_IMPORT_METHOD in profile.api_methods
     )
+
+
+def ozon_product_archive_enabled_for_account(account) -> bool:
+    """Require the product gate plus the exact archive endpoint permission."""
+
+    if not ozon_product_write_enabled_for_account(account):
+        return False
+    return OZON_PRODUCT_ARCHIVE_METHOD in account.ozon_profile.api_methods

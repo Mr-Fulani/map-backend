@@ -12,6 +12,7 @@ from apps.marketplaces.models import (
     OzonAttributeValueSnapshot,
     OzonCategoryAttributeSnapshot,
     OzonOfferDraft,
+    OzonOperation,
 )
 from apps.marketplaces.ozon_catalog import OzonCatalogService
 from apps.marketplaces.ozon_category_policies import (
@@ -593,7 +594,10 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
         operation_presentation,
         ozon_barcode_generation_enabled_for_account,
     )
-    from apps.marketplaces.ozon_rollout import ozon_product_write_enabled_for_account
+    from apps.marketplaces.ozon_rollout import (
+        ozon_product_archive_enabled_for_account,
+        ozon_product_write_enabled_for_account,
+    )
 
     latest_operation = latest_offer_operation(draft)
     from apps.marketplaces.ozon_commerce import commerce_presentation
@@ -614,6 +618,12 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
         and barcode_generation_enabled
         and draft.barcode_generation_status
         != OzonOfferDraft.BarcodeGenerationStatus.REQUESTING
+    )
+    archive_enabled = ozon_product_archive_enabled_for_account(account)
+    archive_active = bool(
+        latest_operation is not None
+        and latest_operation.kind == OzonOperation.Kind.ARCHIVE
+        and latest_operation.state in OzonOperation.ACTIVE_STATES
     )
     return {
         'account': {'id': account.pk, 'name': account.name, 'marketplace': 'ozon'},
@@ -656,6 +666,14 @@ def offer_presentation(product: Product, account: MarketplaceAccount) -> dict[st
         ),
         'publication': {
             'write_enabled': ozon_product_write_enabled_for_account(account),
+            'archive_enabled': archive_enabled,
+            'can_archive': bool(
+                draft is not None
+                and draft.provider_product_id is not None
+                and draft.publication_status in {'published', 'archive_failed'}
+                and archive_enabled
+                and not archive_active
+            ),
             'status': draft.publication_status if draft is not None else 'not_prepared',
             'provider_product_id': draft.provider_product_id if draft is not None else None,
             'provider_sku': draft.provider_sku if draft is not None else None,

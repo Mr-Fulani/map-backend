@@ -191,6 +191,27 @@ test('lightweight Ozon summary reports provider lifecycle without loading every 
   }).label, 'Ozon: исправить 2');
 });
 
+test('archived Ozon channel is not shown as published', () => {
+  assert.deepEqual(ozonSummaryTargetState({
+    id: 33,
+    account_id: 15,
+    draft_exists: true,
+    publication_status: 'archived',
+    provider_product_id: 71,
+    provider_sku: 801,
+    provider_status: 'archived',
+    moderation_status: 'approved',
+    provider_error_count: 0,
+    last_provider_sync_at: '2026-09-05T00:01:00Z',
+    external_url: 'https://www.ozon.ru/product/801/',
+  }), {
+    label: 'Снят с публикации',
+    tone: 'neutral',
+    issueCount: 0,
+    prepared: true,
+  });
+});
+
 test('Ozon target does not infer readiness from an empty error list', () => {
   const preparation = {
     account: { id: 16, name: 'Ozon 2', marketplace: 'ozon' },

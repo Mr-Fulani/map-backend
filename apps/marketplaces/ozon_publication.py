@@ -180,7 +180,7 @@ def latest_offer_operation(draft: OzonOfferDraft | None) -> OzonOperation | None
     if draft is None or draft.pk is None:
         return None
     return draft.operations.filter(
-        kind=OzonOperation.Kind.PRODUCT_IMPORT,
+        kind__in=(OzonOperation.Kind.PRODUCT_IMPORT, OzonOperation.Kind.ARCHIVE),
     ).order_by('-created_at').first()
 
 
@@ -385,6 +385,19 @@ def request_product_import(
                     'Идентификатор отправки уже использован для другой карточки Ozon.',
                 )
             return existing
+        archive_operation = OzonOperation.objects.filter(
+            offer=draft,
+            kind=OzonOperation.Kind.ARCHIVE,
+        ).order_by('-created_at').first()
+        if draft.publication_status == 'archived' or (
+            archive_operation is not None
+            and archive_operation.state in OzonOperation.ACTIVE_STATES
+        ):
+            raise OzonPublicationError(
+                'offer_archived',
+                'Карточка снимается или уже находится в архиве Ozon. '
+                'Для повторной публикации сначала нужно вернуть её из архива.',
+            )
         active = OzonOperation.objects.filter(
             offer=draft,
             kind=OzonOperation.Kind.PRODUCT_IMPORT,

@@ -49,8 +49,8 @@ test('successful Ozon lifecycle changes refresh the provider-neutral listing ind
   assert.match(listingsPage, /<PublicationWorkspaceDrawer[\s\S]*onChannelChanged=\{load\}/);
   assert.equal(
     workspace.match(/await onChannelChanged\(\);/g)?.length,
-    3,
-    'publish, reconcile and commerce sync must each refresh the channel row',
+    4,
+    'publish, archive, reconcile and commerce sync must each refresh the channel row',
   );
 });
 
