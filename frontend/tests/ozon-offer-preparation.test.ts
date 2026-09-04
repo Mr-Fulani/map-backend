@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   isOzonBooleanAttribute,
+  ozonAttributeGuidance,
   ozonAttributesValidationErrors,
   ozonAttributesPayload,
   ozonCanReconcile,
@@ -105,6 +106,26 @@ test('recognizes boolean Ozon attributes and rejects arbitrary text', () => {
     complex_id: 0,
     values: [{ value: 'false', dictionary_value_id: 0 }],
   }]);
+});
+
+test('explains who owns safe and regulatory Ozon attributes', () => {
+  assert.deepEqual(
+    ozonAttributeGuidance({ name: 'Бренд', dictionary_id: 42 }),
+    {
+      owner: 'map',
+      ownerLabel: 'MAP заполняет при точном совпадении',
+      source: 'Бренд товара и официальный справочник значений Ozon.',
+      note: 'Если MAP не нашёл единственное совпадение, выберите бренд из справочника и проверьте написание.',
+    },
+  );
+  assert.equal(
+    ozonAttributeGuidance({ name: 'ТН ВЭД коды ЕАЭС', dictionary_id: 12 }).owner,
+    'documents',
+  );
+  assert.match(
+    ozonAttributeGuidance({ name: 'Нужен код маркировки', dictionary_id: 0 }).note,
+    /не угадывает/,
+  );
 });
 
 function publicationPreparation(

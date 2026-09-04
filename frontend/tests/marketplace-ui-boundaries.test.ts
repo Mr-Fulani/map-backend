@@ -66,6 +66,7 @@ test('publication workspace uses one bounded snapshot and loads only the selecte
 
 test('Ozon drawer mirrors Avito navigation cues without entering Avito publication code', () => {
   const editor = source('src/components/listings/OzonListingEditorPanel.tsx');
+  const productPage = source('src/app/dashboard/products/[id]/page.tsx');
   const preparation = source('src/components/products/OzonOfferPreparation.tsx');
   const media = source('src/components/listings/ProductMediaManager.tsx');
   const pricing = source('src/components/listings/OzonListingPriceEditor.tsx');
@@ -87,6 +88,12 @@ test('Ozon drawer mirrors Avito navigation cues without entering Avito publicati
   assert.match(physical, /Упаковка и налог/);
   assert.match(physical, /productApi\.updatePhysicalProfile/);
   assert.match(physical, /Принять значение/);
+  assert.match(physical, /Нужно получить или измерить/);
+  assert.match(physical, /Проверить в источнике/);
+  assert.match(productPage, /<ProductPhysicalProfileEditor/);
+  assert.doesNotMatch(productPage, /setPhysicalDraftField/);
+  assert.match(editor, /data-testid="ozon-guided-workflow"/);
+  assert.match(editor, /Все обязательные данные редактируются прямо/);
   assert.match(editor, /Заголовок и описание заполняет обогащение/);
   assert.match(editor, /onSaveBrand/);
   assert.match(editor, /Сохранить характеристики и проверить/);

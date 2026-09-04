@@ -8,6 +8,7 @@ import {
   physicalDraftToApiPayload,
   physicalSuggestionIsAlreadyUsed,
   physicalSuggestionNeedsReview,
+  PRODUCT_PHYSICAL_GUIDANCE,
   type ProductPhysicalProfile,
   type ProductPhysicalSuggestion,
 } from '../src/lib/product-physical-profile';
@@ -118,6 +119,14 @@ test('rejects unsupported VAT before sending the request', () => {
     }),
     /НДС/,
   );
+});
+
+test('physical fields tell the tenant where to get authoritative values', () => {
+  assert.match(PRODUCT_PHYSICAL_GUIDANCE.barcode.source, /упаковке/);
+  assert.match(PRODUCT_PHYSICAL_GUIDANCE.barcode.warning, /Не придумывайте/);
+  assert.match(PRODUCT_PHYSICAL_GUIDANCE.length_mm.warning, /размер упаковки/);
+  assert.match(PRODUCT_PHYSICAL_GUIDANCE.weight_g.source, /вместе с упаковкой/);
+  assert.match(PRODUCT_PHYSICAL_GUIDANCE.vat_rate.source, /бухгалтера/);
 });
 
 test('does not ask to approve an enrichment value already used by MAP', () => {

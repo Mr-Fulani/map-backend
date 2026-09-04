@@ -413,6 +413,113 @@ def test_ozon_autofill_never_overwrites_tenant_confirmed_value():
 
 
 @pytest.mark.django_db
+def test_manual_ozon_values_are_saved_but_semantic_conflicts_stay_visible():
+    tenant, key = _tenant('ozon-manual-quality')
+    account = _account(tenant, 'client-manual-quality')
+    product = _product(tenant, article='6N5945093')
+    product.name = 'Фонарь задний левый внутренний VAG Volkswagen Polo'
+    product.brand = 'VAG'
+    product.save(update_fields=['name', 'brand', 'updated_at'])
+    _catalog(account)
+    attributes = normalize_category_attributes([{
+        'id': 4,
+        'attribute_complex_id': 0,
+        'name': 'Бренд',
+        'description': '',
+        'type': 'String',
+        'is_collection': False,
+        'is_required': True,
+        'is_aspect': False,
+        'max_value_count': 1,
+        'group_name': 'Основные',
+        'group_id': 1,
+        'dictionary_id': 72,
+        'category_dependent': True,
+        'complex_is_collection': False,
+    }, {
+        'id': 6,
+        'attribute_complex_id': 0,
+        'name': 'Тип',
+        'description': '',
+        'type': 'String',
+        'is_collection': False,
+        'is_required': True,
+        'is_aspect': False,
+        'max_value_count': 1,
+        'group_name': 'Основные',
+        'group_id': 1,
+        'dictionary_id': 73,
+        'category_dependent': True,
+        'complex_is_collection': False,
+    }])
+    schema = OzonCategoryAttributeSnapshot.objects.create(
+        account=account,
+        description_category_id=101,
+        type_id=202,
+        language='DEFAULT',
+        schema_hash='9' * 64,
+        attributes=attributes,
+        attribute_count=2,
+        required_attribute_count=2,
+    )
+    _autofill_dictionary_value(account, schema, 4, 'Vaga', 401)
+    _autofill_dictionary_value(account, schema, 6, 'Фара автомобильная', 601)
+    client = Client()
+    _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'description_category_id': 101,
+        'type_id': 202,
+    })
+
+    response = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'attributes': [{
+            'id': 4,
+            'complex_id': 0,
+            'values': [{'value': 'ignored', 'dictionary_value_id': 401}],
+        }, {
+            'id': 6,
+            'complex_id': 0,
+            'values': [{'value': 'ignored', 'dictionary_value_id': 601}],
+        }],
+    })
+
+    assert response.status_code == 200
+    data = response.json()['data']
+    assert data['autofill']['fields']['0:4']['state'] == 'tenant_entered'
+    assert data['autofill']['fields']['0:4']['source_label'] == 'Введено вручную'
+    assert {
+        item['code'] for item in data['preflight']['recommendations']
+    } >= {'brand_value_mismatch', 'type_value_mismatch'}
+    assert data['preflight']['ready'] is False  # Physical facts and an image are still absent.
+
+
+@pytest.mark.django_db
+def test_missing_physical_facts_explain_where_tenant_can_get_each_value():
+    tenant, key = _tenant('ozon-physical-guidance')
+    account = _account(tenant, 'client-physical-guidance')
+    product = _product(tenant)
+    _catalog(account)
+    client = Client()
+
+    response = _request(client, key, 'patch', product, {
+        'account_id': account.pk,
+        'description_category_id': 101,
+        'type_id': 202,
+    })
+
+    messages = {
+        item['field']: item['message']
+        for item in response.json()['data']['preflight']['errors']
+        if item['code'] == 'physical_fact_missing'
+    }
+    assert 'упаковки' in messages['physical:barcode']
+    assert 'случайный код' in messages['physical:barcode']
+    assert 'измерьте упаковку' in messages['physical:length_mm']
+    assert 'вместе с упаковкой' in messages['physical:weight_g']
+
+
+@pytest.mark.django_db
 def test_connected_ozon_account_schedules_durable_autofill_after_enrichment():
     tenant, _key = _tenant('ozon-autofill-dispatch')
     _account(tenant, 'client-autofill-dispatch')
@@ -512,11 +619,12 @@ def test_preflight_is_ready_only_after_current_required_dictionary_value():
         }],
     })
     assert ready.status_code == 200
-    assert ready.json()['data']['preflight'] == {
-        'ready': True,
-        'errors': [],
-        'recommendations': [],
-    }
+    preflight = ready.json()['data']['preflight']
+    assert preflight['ready'] is True
+    assert preflight['errors'] == []
+    assert [item['code'] for item in preflight['recommendations']] == [
+        'brand_value_mismatch',
+    ]
     draft = OzonOfferDraft.objects.get()
     assert draft.attribute_schema_revision == schema.schema_hash
     assert draft.attributes[0]['values'] == [{
@@ -561,6 +669,7 @@ def test_missing_vat_is_a_recommendation_and_does_not_block_ozon_readiness():
     assert preflight['ready'] is True
     assert preflight['errors'] == []
     assert [item['code'] for item in preflight['recommendations']] == [
+        'brand_value_mismatch',
         'vat_recommended',
     ]
 

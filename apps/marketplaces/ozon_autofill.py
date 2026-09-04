@@ -435,9 +435,12 @@ def autofill_ozon_offer(
             fields[key] = {
                 'state': 'kept_manual',
                 'source': 'tenant',
-                'source_label': 'Проверено тенантом',
-                'confidence': 1.0,
-                'message': 'MAP сохранил введённое значение и не перезаписал его.',
+                'source_label': 'Введено вручную',
+                'confidence': 0.0,
+                'message': (
+                    'MAP сохранил введённое значение и не перезаписал его. '
+                    'Ручной ввод не считается автоматическим подтверждением достоверности.'
+                ),
             }
             continue
 

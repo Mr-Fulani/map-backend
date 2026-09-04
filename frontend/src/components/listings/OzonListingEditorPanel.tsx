@@ -413,6 +413,39 @@ Props
         </div>
       )}
 
+      <div
+        data-testid="ozon-guided-workflow"
+        className="space-y-3 rounded-lg border border-sky-500/25 bg-sky-500/5 p-3"
+      >
+        <div>
+          <p className="text-sm font-medium">Как подготовить карточку</p>
+          <p className="mt-0.5 text-xs leading-relaxed text-muted-foreground">
+            Работайте по блокам сверху вниз. Все обязательные данные редактируются прямо
+            в этом окне; переход в товар нужен только для повторного обогащения.
+          </p>
+        </div>
+        <div className="grid gap-2 text-xs sm:grid-cols-3">
+          <div className="rounded-md border border-emerald-500/35 bg-background p-2.5">
+            <strong className="text-emerald-800 dark:text-emerald-200">Готово автоматически</strong>
+            <p className="mt-1 text-muted-foreground">
+              Точный бренд и партномер, расчётная цена и остаток из 1С.
+            </p>
+          </div>
+          <div className="rounded-md border border-blue-500/35 bg-background p-2.5">
+            <strong className="text-blue-800 dark:text-blue-200">Проверить результат MAP</strong>
+            <p className="mt-1 text-muted-foreground">
+              Заголовок, описание, фотографии, категорию и найденные размеры упаковки.
+            </p>
+          </div>
+          <div className="rounded-md border border-amber-500/40 bg-background p-2.5">
+            <strong className="text-amber-800 dark:text-amber-200">Берём из документов</strong>
+            <p className="mt-1 text-muted-foreground">
+              Штрихкод без источника, ТН ВЭД, маркировку и НДС.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div ref={imagesSectionRef}>
         <ProductMediaManager
           images={images}
@@ -431,9 +464,7 @@ Props
         className={`space-y-4 rounded-lg border border-l-4 p-4 ${
           commonBlockers.length > 0
             ? 'border-amber-500/50 bg-amber-500/5'
-            : commonRecommendations.length > 0
-              ? 'border-blue-500/40 bg-blue-500/5'
-              : 'border-emerald-500/35 bg-emerald-500/5'
+            : 'border-blue-500/40 bg-blue-500/5'
         }`}
       >
         <div className="flex flex-wrap items-start justify-between gap-2">
@@ -448,21 +479,19 @@ Props
             variant="outline"
             className={commonBlockers.length > 0
               ? 'border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100'
-              : commonRecommendations.length > 0
-                ? 'border-blue-500/40 bg-blue-500/10 text-blue-900 dark:text-blue-100'
-                : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'}
+              : 'border-blue-500/40 bg-blue-500/10 text-blue-900 dark:text-blue-100'}
           >
             {commonBlockers.length > 0
               ? `Нужно заполнить: ${commonBlockers.length}`
               : commonRecommendations.length > 0
                 ? `Проверить: ${commonRecommendations.length}`
-                : 'Готово'}
+                : 'Проверьте перед отправкой'}
           </Badge>
         </div>
-        <div className="space-y-1 rounded-md border border-emerald-500/30 bg-background p-3">
+        <div className="space-y-1 rounded-md border border-blue-500/30 bg-background p-3">
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm text-muted-foreground">Заголовок после обогащения</p>
-            <Badge variant="outline" className="border-emerald-500/30 text-emerald-700">
+            <Badge variant="outline" className="border-blue-500/30 text-blue-700">
               Проверить
             </Badge>
           </div>
@@ -471,7 +500,7 @@ Props
           </p>
         </div>
         <div className={`space-y-1 rounded-md border bg-background p-3 ${
-          product.description_ai ? 'border-emerald-500/30' : 'border-blue-500/40'
+          product.description_ai ? 'border-blue-500/30' : 'border-amber-500/50'
         }`}
         >
           <div className="flex items-center justify-between gap-2">
@@ -479,8 +508,8 @@ Props
             <Badge
               variant="outline"
               className={product.description_ai
-                ? 'border-emerald-500/30 text-emerald-700'
-                : 'border-blue-500/40 text-blue-700'}
+                ? 'border-blue-500/30 text-blue-700'
+                : 'border-amber-500/50 text-amber-800'}
             >
               {product.description_ai ? 'Проверить' : 'Рекомендуется заполнить'}
             </Badge>
