@@ -487,6 +487,9 @@ OzonOfferPreparationCardProps
       || attribute.selected_values.length > 0
     ),
   );
+  const categoryNeedsReview = preparation?.preflight.recommendations.some(
+    (issue) => issue.field === 'category',
+  ) ?? false;
 
   return (
     <div ref={rootRef}>
@@ -574,17 +577,17 @@ OzonOfferPreparationCardProps
         ) : preparation?.draft ? (
           <>
             <div className="grid gap-2 text-xs sm:grid-cols-3">
-              <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-amber-950 dark:text-amber-100">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                <span><strong className="block">Нужно заполнить</strong>Без этого Ozon не примет карточку</span>
-              </div>
               <div className="flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2.5 text-emerald-950 dark:text-emerald-100">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-                <span><strong className="block">Готово</strong>Действие Тенанта не требуется</span>
+                <span><strong className="block">Зелёное · заполнил MAP</strong>Есть точный источник, действие не требуется</span>
               </div>
-              <div className="rounded-md border border-dashed bg-muted/30 p-2.5 text-muted-foreground">
-                <strong className="block text-foreground">Рекомендация</strong>
-                Не блокирует подготовку карточки
+              <div className="flex items-start gap-2 rounded-md border border-blue-500/40 bg-blue-500/10 p-2.5 text-blue-950 dark:text-blue-100">
+                <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                <span><strong className="block">Синее · проверьте</strong>Значение найдено или введено вручную</span>
+              </div>
+              <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-amber-950 dark:text-amber-100">
+                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span><strong className="block">Жёлтое · нужно решение</strong>Возьмите данные из указанного источника</span>
               </div>
             </div>
 
@@ -633,14 +636,14 @@ OzonOfferPreparationCardProps
                     variant="outline"
                     className="border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
                   >
-                    Готово · MAP: {preparation.autofill.applied_count}
+                    MAP заполнил: {preparation.autofill.applied_count}
                   </Badge>
                   {preparation.autofill.preserved_count > 0 && (
                     <Badge
                       variant="outline"
                       className="border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
                     >
-                      Готово · вручную: {preparation.autofill.preserved_count}
+                      Сохранено вручную · проверить: {preparation.autofill.preserved_count}
                     </Badge>
                   )}
                   {preparation.autofill.recommendations.length > 0 && (
@@ -690,11 +693,23 @@ OzonOfferPreparationCardProps
                 </p>
               </div>
               {preparation.draft.category && (
-                <div className="flex items-start gap-2 rounded-md border border-emerald-500/35 bg-emerald-500/5 p-3 text-sm">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+                <div className={`flex items-start gap-2 rounded-md border p-3 text-sm ${
+                  categoryNeedsReview
+                    ? 'border-amber-500/40 bg-amber-500/10'
+                    : 'border-emerald-500/35 bg-emerald-500/5'
+                }`}
+                >
+                  {categoryNeedsReview
+                    ? <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                    : <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />}
                   <div>
                     <p className="text-muted-foreground">{preparation.draft.category.category_path}</p>
                     <p className="font-medium">{preparation.draft.category.type_name}</p>
+                    {categoryNeedsReview && (
+                      <p className="mt-1 text-xs text-amber-950 dark:text-amber-100">
+                        MAP нашёл возможное несоответствие названию товара — перепроверьте выбор.
+                      </p>
+                    )}
                   </div>
                 </div>
               )}
@@ -855,10 +870,25 @@ OzonOfferPreparationCardProps
                 {preparation.schema && visibleAttributes.map((attribute) => {
                   const key = attributeKey(attribute);
                   const autofill = preparation.autofill.fields[ozonAttributeIdentity(attribute)];
-                  const recommendation = preparation.autofill.recommendations.find((item) => (
+                  const autofillRecommendation = preparation.autofill.recommendations.find((item) => (
                     item.attribute_id === attribute.id
                     && (item.complex_id ?? 0) === attribute.complex_id
                   ));
+                  const qualityRecommendation = preparation.preflight.recommendations.find((item) => (
+                    item.field === `attribute:${attribute.complex_id}:${attribute.id}`
+                  ));
+                  const recommendation = autofillRecommendation ?? (
+                    qualityRecommendation
+                      ? {
+                          code: qualityRecommendation.code,
+                          attribute_id: attribute.id,
+                          complex_id: attribute.complex_id,
+                          label: qualityRecommendation.label,
+                          message: qualityRecommendation.message,
+                          candidate: '',
+                        }
+                      : undefined
+                  );
                   return (
                     <div
                       key={key}

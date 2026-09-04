@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   isOzonBooleanAttribute,
+  ozonAttributeGuidance,
   ozonAttributeValidationMessage,
   type OzonAutofillField,
   type OzonAutofillRecommendation,
@@ -44,16 +45,28 @@ export function OzonOfferAttributeEditor({
   const hasValidValue = Boolean(selected) && !hasInvalidValue;
   const needsRequiredValue = attribute.is_required && !hasValidValue;
   const booleanAttribute = isOzonBooleanAttribute(attribute);
+  const guidance = ozonAttributeGuidance(attribute);
+  const autoFilled = autofill?.state === 'auto_filled';
+  const needsReview = Boolean(recommendation);
+  const guidanceClass = guidance.owner === 'documents'
+    ? 'border-amber-500/35 bg-amber-500/10 text-amber-950 dark:text-amber-100'
+    : guidance.owner === 'tenant'
+      ? 'border-blue-500/35 bg-blue-500/10 text-blue-950 dark:text-blue-100'
+      : 'border-sky-500/30 bg-sky-500/10 text-sky-950 dark:text-sky-100';
 
   return (
     <div
       className={`space-y-2 rounded-md border border-l-4 p-3 ${
         hasInvalidValue
           ? 'border-red-500/50 bg-red-500/5'
+          : needsReview
+            ? 'border-amber-500/50 bg-amber-500/5'
           : needsRequiredValue
             ? 'border-amber-500/50 bg-amber-500/5'
-            : hasValidValue
+            : hasValidValue && autoFilled
               ? 'border-emerald-500/35 bg-emerald-500/5'
+              : hasValidValue
+                ? 'border-blue-500/35 bg-blue-500/5'
               : 'border-dashed bg-muted/20'
       }`}
     >
@@ -68,13 +81,28 @@ export function OzonOfferAttributeEditor({
             <AlertCircle className="mr-1 h-3 w-3" />
             Исправить значение
           </Badge>
-        ) : hasValidValue ? (
+        ) : hasValidValue && needsReview ? (
+          <Badge
+            variant="outline"
+            className="border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100"
+          >
+            <AlertCircle className="mr-1 h-3 w-3" />
+            Перепроверить
+          </Badge>
+        ) : hasValidValue && autoFilled ? (
           <Badge
             variant="outline"
             className="border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200"
           >
             <CheckCircle2 className="mr-1 h-3 w-3" />
-            {autofill?.state === 'auto_filled' ? 'Готово · MAP' : 'Готово · вручную'}
+            Готово · MAP
+          </Badge>
+        ) : hasValidValue ? (
+          <Badge
+            variant="outline"
+            className="border-blue-500/40 bg-blue-500/10 text-blue-900 dark:text-blue-100"
+          >
+            Сохранено · проверить
           </Badge>
         ) : needsRequiredValue ? (
           <Badge
@@ -82,7 +110,7 @@ export function OzonOfferAttributeEditor({
             className="border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100"
           >
             <AlertCircle className="mr-1 h-3 w-3" />
-            Заполнить вручную
+            {guidance.owner === 'documents' ? 'Нужно подтверждение' : 'Нужно заполнить'}
           </Badge>
         ) : (
           <Badge variant="outline" className="border-dashed text-muted-foreground">
@@ -96,10 +124,21 @@ export function OzonOfferAttributeEditor({
           {attribute.description}
         </p>
       )}
+      <div className={`rounded border p-2 text-xs leading-relaxed ${guidanceClass}`}>
+        <p><strong>{guidance.ownerLabel}</strong></p>
+        <p className="mt-1"><strong>Где взять:</strong> {guidance.source}</p>
+        <p className="mt-1 opacity-80">{guidance.note}</p>
+      </div>
       {autofill && (
-        <p className="flex items-start gap-1.5 text-xs text-emerald-800 dark:text-emerald-200">
+        <p className={`flex items-start gap-1.5 text-xs ${autoFilled
+          ? 'text-emerald-800 dark:text-emerald-200'
+          : 'text-blue-900 dark:text-blue-100'}`}
+        >
           <ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-          <span><strong>Почему заполнено:</strong> {autofill.source_label}. {autofill.message}</span>
+          <span>
+            <strong>{autoFilled ? 'Почему заполнено автоматически:' : 'Статус ручного значения:'}</strong>{' '}
+            {autofill.source_label}. {autofill.message}
+          </span>
         </p>
       )}
       {recommendation && (
@@ -151,9 +190,16 @@ export function OzonOfferAttributeEditor({
       ) : attribute.dictionary_id > 0 ? (
         <>
           {selected && (
-            <div className="flex items-center justify-between rounded border border-emerald-500/30 bg-emerald-500/10 p-2 text-sm">
+            <div className={`flex items-center justify-between rounded border p-2 text-sm ${
+              needsReview || !autoFilled
+                ? 'border-blue-500/30 bg-blue-500/10'
+                : 'border-emerald-500/30 bg-emerald-500/10'
+            }`}
+            >
               <span className="flex items-center gap-1.5 font-medium">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                {needsReview
+                  ? <AlertCircle className="h-4 w-4 text-amber-600" />
+                  : <CheckCircle2 className={`h-4 w-4 ${autoFilled ? 'text-emerald-600' : 'text-blue-600'}`} />}
                 {selected.value}
               </span>
               <Button type="button" size="sm" variant="ghost" onClick={() => onValueChange(null)}>

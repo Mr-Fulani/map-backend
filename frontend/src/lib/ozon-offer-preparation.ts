@@ -26,7 +26,12 @@ export interface OzonPreflightIssue {
 }
 
 export interface OzonAutofillField {
-  state: 'auto_filled' | 'kept_manual' | 'kept_previous' | 'tenant_confirmed';
+  state:
+    | 'auto_filled'
+    | 'kept_manual'
+    | 'kept_previous'
+    | 'tenant_confirmed'
+    | 'tenant_entered';
   source: string;
   source_label: string;
   confidence: number;
@@ -226,6 +231,93 @@ export interface OzonDictionaryValue {
   value: string;
   info: string;
   picture: string;
+}
+
+export interface OzonAttributeGuidance {
+  owner: 'map' | 'tenant' | 'documents';
+  ownerLabel: string;
+  source: string;
+  note: string;
+}
+
+function normalizedAttributeName(name: string): string {
+  return name
+    .toLocaleLowerCase('ru-RU')
+    .replaceAll('ё', 'е')
+    .replace(/[^0-9a-zа-я]+/g, ' ')
+    .trim();
+}
+
+export function ozonAttributeGuidance(
+  attribute: Pick<OzonOfferAttribute, 'name' | 'dictionary_id'>,
+): OzonAttributeGuidance {
+  const name = normalizedAttributeName(attribute.name);
+  if (name.includes('тн вэд') || name.startsWith('тнвэд')) {
+    return {
+      owner: 'documents',
+      ownerLabel: 'Нужно подтвердить по документам',
+      source: 'Декларация или сертификат соответствия, документы поставщика либо таможенный специалист.',
+      note: 'MAP может показать кандидат, но не должен сам утверждать код ТН ВЭД.',
+    };
+  }
+  if (name.includes('маркиров') || name.includes('код киз')) {
+    return {
+      owner: 'documents',
+      ownerLabel: 'Нужно решение Тенанта',
+      source: 'Документы поставщика и требования маркировки для этой товарной группы.',
+      note: 'Выберите только «Да» или «Нет». MAP не угадывает обязательность маркировки по названию.',
+    };
+  }
+  if (name === 'бренд' || name === 'brand') {
+    return {
+      owner: 'map',
+      ownerLabel: 'MAP заполняет при точном совпадении',
+      source: 'Бренд товара и официальный справочник значений Ozon.',
+      note: 'Если MAP не нашёл единственное совпадение, выберите бренд из справочника и проверьте написание.',
+    };
+  }
+  if (name.includes('партномер') || name.includes('артикул производителя')) {
+    return {
+      owner: 'map',
+      ownerLabel: 'MAP заполняет из товара',
+      source: 'Артикул производителя из 1С, каталога производителя или карточки поставщика.',
+      note: 'Не подменяйте партномер OEM-номером другой детали.',
+    };
+  }
+  if (name.startsWith('название модели') || name === 'модель товара') {
+    return {
+      owner: 'map',
+      ownerLabel: 'MAP создаёт безопасный вариант',
+      source: 'Бренд и артикул товара.',
+      note: 'Одинаковое значение объединяет варианты, поэтому его нужно проверить перед массовой публикацией.',
+    };
+  }
+  if (name === 'тип' || name === 'тип товара') {
+    return {
+      owner: 'map',
+      ownerLabel: 'MAP предлагает по категории',
+      source: 'Выбранный конечный тип из дерева Ozon.',
+      note: 'Проверьте, что тип соответствует названию товара, а не только общей ветке каталога.',
+    };
+  }
+  if (name.includes('штрихкод') || name === 'ean' || name === 'ean 13') {
+    return {
+      owner: 'tenant',
+      ownerLabel: 'Только из подтверждённого источника',
+      source: 'Упаковка, 1С, карточка поставщика или каталог производителя.',
+      note: 'MAP не придумывает штрихкоды и не использует вместо них артикул.',
+    };
+  }
+  return {
+    owner: attribute.dictionary_id > 0 ? 'tenant' : 'map',
+    ownerLabel: attribute.dictionary_id > 0
+      ? 'Выберите из справочника Ozon'
+      : 'MAP заполняет, если есть точный факт',
+    source: attribute.dictionary_id > 0
+      ? 'Официальный справочник выбранной категории Ozon.'
+      : '1С, подтверждённые данные товара или каталог производителя.',
+    note: 'Если точного источника нет, значение остаётся на проверку Тенанту.',
+  };
 }
 
 const OZON_BOOLEAN_VALUES = new Set(['true', 'false']);

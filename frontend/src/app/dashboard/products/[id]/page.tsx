@@ -4,6 +4,7 @@ import { useEffect, useState, useRef, useCallback, type RefObject } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { accountApi, productApi, imageApi } from '@/lib/api';
+import { ProductPhysicalProfileEditor } from '@/components/listings/ProductPhysicalProfileEditor';
 import { OzonOfferPreparationCard } from '@/components/products/OzonOfferPreparation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -27,31 +28,13 @@ import {
   Trash2,
   ExternalLink,
   Store,
-  AlertCircle,
-  CheckCircle2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import {
   CatalogCategoryPicker,
   type CatalogCategoryOption,
 } from '@/components/products/catalog-category-picker';
 import {
-  PRODUCT_PHYSICAL_FIELDS,
-  canonicalPhysicalValueToDisplay,
-  effectivePhysicalValueForInput,
-  physicalDraftFromProfile,
-  physicalDraftToApiPayload,
-  physicalSuggestionIsAlreadyUsed,
-  physicalSuggestionNeedsReview,
-  type ProductPhysicalDraft,
-  type ProductPhysicalFieldKey,
   type ProductPhysicalProfile,
 } from '@/lib/product-physical-profile';
 import type { MarketplaceAccount } from '@/lib/marketplace-account-types';
@@ -483,12 +466,6 @@ export default function ProductDetailPage() {
   const [editingBrand, setEditingBrand] = useState(false);
   const [brandValue, setBrandValue] = useState('');
   const [savingBrand, setSavingBrand] = useState(false);
-  const [physicalDraft, setPhysicalDraft] = useState<ProductPhysicalDraft>(() => (
-    physicalDraftFromProfile(null)
-  ));
-  const [savingPhysicalProfile, setSavingPhysicalProfile] = useState(false);
-  const [physicalSuggestionActionId, setPhysicalSuggestionActionId] = useState<number | null>(null);
-
   const [searchTaskId, setSearchTaskId] = useState<string | null>(null);
   const [imageSearchResult, setImageSearchResult] = useState<ImageSearchResult | null>(null);
 
@@ -527,7 +504,6 @@ export default function ProductDetailPage() {
     const res = await productApi.get(Number(id));
     const nextProduct = res.data.data as ProductDetail;
     setProduct(nextProduct);
-    setPhysicalDraft(physicalDraftFromProfile(nextProduct.physical_profile));
     setPricingListingId((current) => (
       nextProduct.listing_options.some((listing) => listing.id === current)
         ? current
@@ -612,55 +588,6 @@ export default function ProductDetailPage() {
     }
   }
 
-  function setPhysicalDraftField(field: ProductPhysicalFieldKey, value: string) {
-    setPhysicalDraft((current) => ({ ...current, [field]: value }));
-  }
-
-  async function savePhysicalProfile() {
-    setSavingPhysicalProfile(true);
-    try {
-      const payload = physicalDraftToApiPayload(physicalDraft);
-      const response = await productApi.updatePhysicalProfile(Number(id), payload);
-      const physicalProfile = response.data.data as ProductPhysicalProfile;
-      setProduct((current) => current ? { ...current, physical_profile: physicalProfile } : current);
-      setPhysicalDraft(physicalDraftFromProfile(physicalProfile));
-      await refreshOzonPreparations();
-      toast.success('Данные MAP сохранены');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Не удалось сохранить данные товара');
-    } finally {
-      setSavingPhysicalProfile(false);
-    }
-  }
-
-  async function reviewPhysicalSuggestion(
-    suggestionId: number,
-    action: 'approve' | 'reject',
-  ) {
-    setPhysicalSuggestionActionId(suggestionId);
-    try {
-      const response = await productApi.reviewPhysicalSuggestion(
-        Number(id),
-        suggestionId,
-        action,
-      );
-      const physicalProfile = response.data.data as ProductPhysicalProfile;
-      setProduct((current) => current ? { ...current, physical_profile: physicalProfile } : current);
-      setPhysicalDraft(physicalDraftFromProfile(physicalProfile));
-      toast.success(action === 'approve' ? 'Значение подтверждено и записано в MAP' : 'Вариант отклонён');
-    } catch (error) {
-      const code = (error as { response?: { data?: { code?: string } } })
-        .response?.data?.code;
-      toast.error(
-        code === 'source_value_preferred'
-          ? 'Поле уже заполнено корректным значением из 1С.'
-          : 'Не удалось сохранить решение. Обновите страницу и повторите.',
-      );
-    } finally {
-      setPhysicalSuggestionActionId(null);
-    }
-  }
-
   useEffect(() => {
     let active = true;
 
@@ -669,7 +596,6 @@ export default function ProductDetailPage() {
         if (!active) return;
         const nextProduct = response.data.data as ProductDetail;
         setProduct(nextProduct);
-        setPhysicalDraft(physicalDraftFromProfile(nextProduct.physical_profile));
         setPricingListingId((current) => (
           nextProduct.listing_options.some((listing) => listing.id === current)
             ? current
@@ -1099,12 +1025,6 @@ export default function ProductDetailPage() {
   const descriptionAwaitsResearchReview = webResearch?.status === 'need_review'
     && webResearch.generate_after;
   const physicalProfile = product.physical_profile;
-  const requiredPhysicalMissingFields = physicalProfile.missing_fields.filter(
-    (field) => field !== 'vat_rate',
-  );
-  const physicalSuggestionsToReview = physicalProfile.suggestions.filter(
-    (suggestion) => physicalSuggestionNeedsReview(physicalProfile, suggestion),
-  );
 
   return (
     <div className="space-y-6">
@@ -1224,297 +1144,17 @@ export default function ProductDetailPage() {
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="space-y-2">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle className="text-base">Упаковка и налог</CardTitle>
-                <Badge
-                  variant="outline"
-                  className={requiredPhysicalMissingFields.length === 0
-                    ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
-                    : 'border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100'}
-                >
-                  {requiredPhysicalMissingFields.length === 0
-                    ? 'Готово: обязательные данные заполнены'
-                    : `Нужно заполнить: ${requiredPhysicalMissingFields.length}`}
-                </Badge>
-              </div>
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                Это общие факты о товаре. MAP сначала использует корректное значение из
-                1С. Если его нет или 1С передала ошибку, заполните поле здесь. Значения
-                пригодятся маркетплейсам с требованиями к упаковке и не меняют поля Avito.
-                НДС указывайте только по данным 1С или бухгалтера — неизвестную ставку
-                можно оставить пустой.
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
-                <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2.5 text-amber-950 dark:text-amber-100">
-                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span><strong className="block">Заполнить</strong>Пустое обязательное поле</span>
-                </div>
-                <div className="flex items-start gap-2 rounded-md border border-blue-500/40 bg-blue-500/10 p-2.5 text-blue-950 dark:text-blue-100">
-                  <span className="mt-0.5 inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">?</span>
-                  <span>
-                    <strong className="block">Подтвердить</strong>
-                    {physicalSuggestionsToReview.length > 0
-                      ? `MAP нашёл вариантов: ${physicalSuggestionsToReview.length}`
-                      : 'Найденное при обогащении'}
-                  </span>
-                </div>
-                <div className="flex items-start gap-2 rounded-md border border-emerald-500/40 bg-emerald-500/10 p-2.5 text-emerald-950 dark:text-emerald-100">
-                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-                  <span><strong className="block">Готово</strong>Уже используется из 1С или MAP</span>
-                </div>
-                <div className="rounded-md border border-dashed bg-muted/30 p-2.5 text-muted-foreground">
-                  <strong className="block text-foreground">Необязательно</strong>
-                  Можно оставить пустым
-                </div>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                {PRODUCT_PHYSICAL_FIELDS.map(({ key, label, unit, placeholder }) => {
-                  const fact = physicalProfile.facts[key];
-                  const from1c = fact.effective_source === '1c';
-                  const isOptional = key === 'vat_rate';
-                  const isMissing = fact.effective_source === 'missing';
-                  const suggestions = physicalProfile.suggestions.filter(
-                    (suggestion) => suggestion.field === key,
-                  );
-                  const hasSuggestionToReview = suggestions.some(
-                    (suggestion) => physicalSuggestionNeedsReview(physicalProfile, suggestion),
-                  );
-                  const value = effectivePhysicalValueForInput(
-                    physicalProfile,
-                    key,
-                    physicalDraft,
-                  );
-                  return (
-                    <div
-                      key={key}
-                      className={`space-y-2 rounded-lg border border-l-4 p-3 ${
-                        hasSuggestionToReview
-                          ? 'border-blue-500/40 bg-blue-500/5'
-                          : isMissing && !isOptional
-                            ? 'border-amber-500/50 bg-amber-500/5'
-                            : isMissing
-                              ? 'border-dashed bg-muted/20'
-                              : 'border-emerald-500/35 bg-emerald-500/5'
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <label htmlFor={`physical-${key}`} className="text-sm font-medium">
-                            {label}{unit ? `, ${unit}` : ''}
-                          </label>
-                          {isOptional && (
-                            <Badge variant="outline" className="border-dashed text-muted-foreground">
-                              Необязательно
-                            </Badge>
-                          )}
-                        </div>
-                        <Badge
-                          variant="outline"
-                          className={`shrink-0 ${
-                            from1c || fact.effective_source === 'map'
-                              ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
-                              : isOptional
-                                ? 'border-dashed text-muted-foreground'
-                                : 'border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100'
-                          }`}
-                        >
-                          {from1c
-                            ? 'Готово · из 1С'
-                            : fact.effective_source === 'map'
-                              ? 'Готово · в MAP'
-                              : isOptional ? 'Можно пропустить' : 'Нужно заполнить'}
-                        </Badge>
-                      </div>
-                      {key === 'vat_rate' ? (
-                        <Select
-                          value={value || 'not_set'}
-                          onValueChange={(next) => setPhysicalDraftField(
-                            key,
-                            next === 'not_set' ? '' : next,
-                          )}
-                          disabled={from1c || savingPhysicalProfile}
-                        >
-                          <SelectTrigger id={`physical-${key}`}>
-                            <SelectValue placeholder="Выберите ставку" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="not_set">Не указано</SelectItem>
-                            {['0', '5', '7', '10', '20'].map((rate) => (
-                              <SelectItem key={rate} value={rate}>{rate}%</SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      ) : (
-                        <Input
-                          id={`physical-${key}`}
-                          value={value}
-                          onChange={(event) => setPhysicalDraftField(key, event.target.value)}
-                          placeholder={placeholder}
-                          inputMode={key === 'barcode' ? 'text' : 'decimal'}
-                          disabled={from1c || savingPhysicalProfile}
-                        />
-                      )}
-                      {from1c ? (
-                        <p className="text-xs text-muted-foreground">
-                          Используется автоматически. Значение MAP не перезаписывает 1С.
-                        </p>
-                      ) : fact.source_error ? (
-                        <p className="text-xs text-amber-700 dark:text-amber-400">
-                          Значение из 1С не принято: {fact.source_error}
-                        </p>
-                      ) : key === 'vat_rate' ? (
-                        <p className="text-xs text-muted-foreground">
-                          Не знаете ставку — оставьте «Не указано». Это не блокирует
-                          подготовку карточки Ozon.
-                        </p>
-                      ) : (
-                        <p className="text-xs text-muted-foreground">
-                          {fact.effective_source === 'map'
-                            ? 'Будет использоваться, пока в 1С нет корректного значения.'
-                            : 'Нет корректного значения в 1С или MAP.'}
-                        </p>
-                      )}
-                      {fact.map_provenance && fact.effective_source === 'map' && (
-                        <p className="text-xs text-emerald-700 dark:text-emerald-400">
-                          Подтверждено из{' '}
-                          {fact.map_provenance.source_url ? (
-                            <a
-                              href={fact.map_provenance.source_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="font-medium underline underline-offset-2"
-                            >
-                              {fact.map_provenance.source_label}
-                            </a>
-                          ) : fact.map_provenance.source_label}
-                          : {fact.map_provenance.raw_value}
-                        </p>
-                      )}
-                      {suggestions.length > 0 && (
-                        <div className={`space-y-2 rounded-md border p-2.5 ${
-                          hasSuggestionToReview
-                            ? 'border-blue-500/40 bg-blue-500/10'
-                            : 'border-emerald-500/30 bg-emerald-500/5'
-                        }`}
-                        >
-                          <p className="flex items-center gap-1.5 text-xs font-semibold">
-                            {hasSuggestionToReview ? (
-                              <span className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-blue-600 text-[10px] font-bold text-white">?</span>
-                            ) : (
-                              <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                            )}
-                            {hasSuggestionToReview
-                              ? 'MAP нашёл значение — подтвердите или отклоните'
-                              : 'Найденное значение уже обработано'}
-                          </p>
-                          {suggestions.map((suggestion) => {
-                            const matchesCurrentValue = physicalSuggestionIsAlreadyUsed(
-                              physicalProfile,
-                              suggestion,
-                            );
-                            const isApplied = matchesCurrentValue;
-                            const needsReview = physicalSuggestionNeedsReview(
-                              physicalProfile,
-                              suggestion,
-                            );
-                            const isBusy = physicalSuggestionActionId === suggestion.id;
-                            return (
-                              <div
-                                key={suggestion.id}
-                                className={`space-y-2 rounded-md border p-2 ${
-                                  needsReview
-                                    ? 'border-blue-500/30 bg-background'
-                                    : isApplied
-                                      ? 'border-emerald-500/30 bg-emerald-500/5'
-                                      : 'border-border bg-muted/30 opacity-75'
-                                }`}
-                              >
-                                <div className="flex flex-wrap items-start justify-between gap-2 text-xs">
-                                  <div className="min-w-0">
-                                    <p className="font-medium">
-                                      {canonicalPhysicalValueToDisplay(key, suggestion.value)}
-                                      {unit ? ` ${unit}` : ''}
-                                    </p>
-                                    <p className="break-words text-muted-foreground">
-                                      {suggestion.source_url ? (
-                                        <a
-                                          href={suggestion.source_url}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                          className="underline underline-offset-2"
-                                        >
-                                          {suggestion.source_label}
-                                        </a>
-                                      ) : suggestion.source_label}
-                                      {' · '}{suggestion.raw_name}: {suggestion.raw_value}
-                                    </p>
-                                  </div>
-                                  {(isApplied || suggestion.review_status === 'rejected') && (
-                                    <Badge
-                                      variant="outline"
-                                      className={isApplied
-                                        ? 'shrink-0 border-emerald-500/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200'
-                                        : 'shrink-0 text-muted-foreground'}
-                                    >
-                                      {isApplied ? 'Готово · уже в поле' : 'Отклонено'}
-                                    </Badge>
-                                  )}
-                                </div>
-                                {needsReview && (
-                                  <div className="flex flex-wrap gap-2">
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      className="h-7"
-                                      onClick={() => reviewPhysicalSuggestion(suggestion.id, 'approve')}
-                                      disabled={physicalSuggestionActionId !== null || savingPhysicalProfile}
-                                    >
-                                      {isBusy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-                                      Принять значение
-                                    </Button>
-                                    {suggestion.review_status !== 'rejected' && (
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="ghost"
-                                        className="h-7"
-                                        onClick={() => reviewPhysicalSuggestion(suggestion.id, 'reject')}
-                                        disabled={physicalSuggestionActionId !== null || savingPhysicalProfile}
-                                      >
-                                        Отклонить
-                                      </Button>
-                                    )}
-                                  </div>
-                                )}
-                                {from1c && (
-                                  <p className="text-xs text-muted-foreground">
-                                    Действие не требуется: значение из 1С имеет приоритет.
-                                  </p>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs text-muted-foreground">
-                  Размеры вводятся в сантиметрах, вес — в килограммах.
-                </p>
-                <Button onClick={savePhysicalProfile} disabled={savingPhysicalProfile}>
-                  {savingPhysicalProfile && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  Сохранить данные MAP
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
+          <ProductPhysicalProfileEditor
+            productId={product.id}
+            profile={physicalProfile}
+            title="Упаковка и налог"
+            onProfileChange={(nextProfile) => {
+              setProduct((current) => current
+                ? { ...current, physical_profile: nextProfile }
+                : current);
+              void refreshOzonPreparations();
+            }}
+          />
 
           {/* AI-описание */}
           {(product.description_ai || generatingDescription) && (

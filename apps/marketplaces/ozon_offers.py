@@ -1,3 +1,4 @@
+import re
 from collections.abc import Mapping
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Any
@@ -35,11 +36,140 @@ PHYSICAL_LABELS = {
     'weight_g': 'Вес',
     'vat_rate': 'НДС',
 }
+PHYSICAL_SOURCE_GUIDANCE = {
+    'barcode': (
+        'Возьмите реальный штрихкод с упаковки, из 1С или карточки поставщика. '
+        'Не вводите случайный код.'
+    ),
+    'length_mm': (
+        'Укажите длину товара в готовой упаковке: возьмите её у производителя '
+        'или измерьте упаковку.'
+    ),
+    'width_mm': (
+        'Укажите ширину товара в готовой упаковке: возьмите её у производителя '
+        'или измерьте упаковку.'
+    ),
+    'height_mm': (
+        'Укажите высоту товара в готовой упаковке: возьмите её у производителя '
+        'или измерьте упаковку.'
+    ),
+    'weight_g': (
+        'Укажите вес товара вместе с упаковкой: возьмите его у производителя '
+        'или взвесьте упакованный товар.'
+    ),
+}
 
 MAX_DICTIONARY_SNAPSHOTS_PER_ATTRIBUTE = 20
 PRICE_QUANTUM = Decimal('0.01')
 BOOLEAN_ATTRIBUTE_TYPES = frozenset({'boolean', 'bool'})
 BOOLEAN_ATTRIBUTE_NAMES = frozenset({'нужен код маркировки'})
+GENERIC_TYPE_TOKEN_PREFIXES = (
+    'автомоб',
+    'автозап',
+    'аксессуар',
+    'детал',
+    'запчаст',
+    'комплект',
+    'набор',
+    'проч',
+    'товар',
+    'универсал',
+)
+
+
+def _normalized_words(value: str) -> list[str]:
+    return re.findall(r'[0-9a-zа-я]+', value.casefold().replace('ё', 'е'))
+
+
+def _compact_text(value: str) -> str:
+    return ''.join(_normalized_words(value))
+
+
+def _attribute_kind(name: str) -> str:
+    normalized = ' '.join(_normalized_words(name))
+    if normalized == 'бренд' or normalized == 'brand':
+        return 'brand'
+    if normalized == 'тип' or normalized == 'тип товара':
+        return 'type'
+    return 'other'
+
+
+def _selected_text(values: Any) -> str:
+    if not isinstance(values, list) or not values or not isinstance(values[0], Mapping):
+        return ''
+    value = values[0].get('value')
+    return value.strip() if isinstance(value, str) else ''
+
+
+def _type_matches_product(type_name: str, product_text: str) -> bool:
+    type_words = [
+        word for word in _normalized_words(type_name)
+        if len(word) >= 4
+        and not any(word.startswith(prefix) for prefix in GENERIC_TYPE_TOKEN_PREFIXES)
+    ]
+    if not type_words:
+        return True
+    product_words = _normalized_words(product_text)
+    return any(
+        type_word == product_word
+        or (
+            len(type_word) >= 5
+            and len(product_word) >= 5
+            and type_word[:5] == product_word[:5]
+        )
+        for type_word in type_words
+        for product_word in product_words
+    )
+
+
+def _semantic_quality_recommendations(
+    product: Product,
+    draft: OzonOfferDraft | None,
+    schema: OzonCategoryAttributeSnapshot | None,
+) -> list[dict[str, str]]:
+    """Warn about plausible human mistakes without blocking a valid Ozon draft."""
+
+    if draft is None or schema is None:
+        return []
+    selected = _selected_by_identity(draft)
+    recommendations: list[dict[str, str]] = []
+    selected_type = ''
+    for attribute in schema.attributes:
+        identity = (attribute['attribute_complex_id'], attribute['id'])
+        value = _selected_text(selected.get(identity))
+        if not value:
+            continue
+        kind = _attribute_kind(str(attribute.get('name') or ''))
+        field = f'attribute:{identity[0]}:{identity[1]}'
+        if kind == 'brand' and (product.brand or '').strip():
+            product_brand = product.brand.strip()
+            if _compact_text(value) != _compact_text(product_brand):
+                recommendations.append(_issue(
+                    'brand_value_mismatch',
+                    field,
+                    str(attribute.get('name') or 'Бренд'),
+                    f'В товаре указан бренд «{product_brand}», а для Ozon — «{value}». '
+                    'Это может быть другой бренд: перепроверьте значение в справочнике Ozon.',
+                ))
+        elif kind == 'type':
+            selected_type = value
+
+    type_name = selected_type or draft.type_name.strip()
+    product_text = ' '.join(filter(None, [
+        product.title_ai,
+        product.name,
+        product.description_ai,
+    ]))
+    if type_name and product_text and not _type_matches_product(type_name, product_text):
+        recommendations.append(_issue(
+            'type_value_mismatch',
+            'category',
+            'Категория и тип Ozon',
+            f'Тип «{type_name}» не подтверждается названием товара. '
+            'Перепроверьте категорию: MAP не блокирует отправку, потому что название '
+            'у поставщика может отличаться.',
+        ))
+    return recommendations
 
 
 def _latest_schema(
@@ -154,11 +284,23 @@ def _autofill_presentation(draft: OzonOfferDraft | None) -> dict[str, Any]:
         else {}
     )
     raw_fields = raw.get('fields')
-    fields = {
-        str(key): dict(value.items())
-        for key, value in raw_fields.items()
-        if isinstance(value, Mapping)
-    } if isinstance(raw_fields, Mapping) else {}
+    fields = {}
+    if isinstance(raw_fields, Mapping):
+        for key, value in raw_fields.items():
+            if not isinstance(value, Mapping):
+                continue
+            presented = dict(value.items())
+            if presented.get('state') == 'tenant_confirmed':
+                presented.update({
+                    'state': 'tenant_entered',
+                    'source_label': 'Введено вручную',
+                    'confidence': 0.0,
+                    'message': (
+                        'MAP сохранил значение, но не считает ручной ввод '
+                        'автоматическим подтверждением достоверности.'
+                    ),
+                })
+            fields[str(key)] = presented
     raw_recommendations = raw.get('recommendations')
     recommendations = raw_recommendations if isinstance(raw_recommendations, list) else []
     return {
@@ -342,6 +484,8 @@ def _preflight(
                         value_error,
                     ))
 
+    recommendations.extend(_semantic_quality_recommendations(product, draft, schema))
+
     physical = physical_profile_presentation(product)
     for field in physical['missing_fields']:
         if field == 'vat_rate':
@@ -355,7 +499,7 @@ def _preflight(
         else:
             errors.append(_issue(
                 'physical_fact_missing', f'physical:{field}', PHYSICAL_LABELS[field],
-                'Заполните значение из 1С или MAP в блоке «Упаковка и налог».',
+                PHYSICAL_SOURCE_GUIDANCE[field],
             ))
     if not (product.title_ai or product.name).strip():
         errors.append(_issue('name_missing', 'name', 'Название', 'У товара нет названия.'))
@@ -717,9 +861,12 @@ def update_offer_draft(
                 ),
                 'state': 'tenant_confirmed',
                 'source': 'tenant',
-                'source_label': 'Проверено тенантом',
-                'confidence': 1.0,
-                'message': 'Значение проверено и сохранено пользователем.',
+                'source_label': 'Введено вручную',
+                'confidence': 0.0,
+                'message': (
+                    'MAP сохранил значение, но продолжает проверять его формат '
+                    'и соответствие данным товара.'
+                ),
             }
         raw_recommendations = raw_autofill.get('recommendations')
         recommendations = [
