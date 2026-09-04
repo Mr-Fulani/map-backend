@@ -1358,6 +1358,8 @@ export const categoryApi = {
 
 // Listings
 export const listingApi = {
+  workspace: (productId: number) =>
+    api.get(`/listings/workspace/${productId}/`),
   list: (params?: Record<string, unknown>) => api.get('/listings/', { params }),
   listChannels: (params?: Record<string, unknown>) => api.get('/listings/channels/', { params }),
   get: (id: number) => api.get(`/listings/${id}/`),

@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   avitoTargetState,
+  ozonSummaryTargetState,
   ozonTargetState,
   publicationTargetBadgeVariant,
   publicationWorkspaceView,
@@ -45,6 +46,22 @@ test('published Avito target is independent from another marketplace', () => {
   });
   assert.equal(state.label, 'Опубликован');
   assert.equal(state.tone, 'published');
+});
+
+test('lightweight workspace never claims Avito preflight has passed', () => {
+  assert.deepEqual(avitoTargetState({
+    id: 9,
+    account_id: 4,
+    status: 'draft',
+    status_display: 'Черновик',
+    can_publish: true,
+    preflight_loaded: false,
+  }), {
+    label: 'Черновик',
+    tone: 'neutral',
+    issueCount: 0,
+    prepared: true,
+  });
 });
 
 test('an existing Avito draft opens the full Avito view without an intermediate summary', () => {
@@ -138,6 +155,40 @@ test('Ozon target reports exact account draft readiness', () => {
   });
   assert.equal(publicationTargetBadgeVariant('warning'), 'destructive');
   assert.equal(publicationTargetBadgeVariant('ready'), 'default');
+});
+
+test('lightweight Ozon summary reports provider lifecycle without loading every preparation', () => {
+  assert.deepEqual(ozonSummaryTargetState({
+    id: 31,
+    account_id: 15,
+    draft_exists: true,
+    publication_status: 'published',
+    provider_product_id: 71,
+    provider_sku: 801,
+    provider_status: 'processed',
+    moderation_status: 'approved',
+    provider_error_count: 0,
+    last_provider_sync_at: '2026-09-02T00:01:00Z',
+    external_url: 'https://www.ozon.ru/product/801/',
+  }), {
+    label: 'Опубликован',
+    tone: 'published',
+    issueCount: 0,
+    prepared: true,
+  });
+  assert.equal(ozonSummaryTargetState({
+    id: 32,
+    account_id: 16,
+    draft_exists: true,
+    publication_status: 'moderation_failed',
+    provider_product_id: null,
+    provider_sku: null,
+    provider_status: 'failed',
+    moderation_status: 'declined',
+    provider_error_count: 2,
+    last_provider_sync_at: null,
+    external_url: '',
+  }).label, 'Ozon: исправить 2');
 });
 
 test('Ozon target does not infer readiness from an empty error list', () => {
