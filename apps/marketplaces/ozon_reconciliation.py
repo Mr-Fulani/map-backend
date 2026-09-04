@@ -74,17 +74,38 @@ def _positive_int(value: Any) -> int | None:
     return result if result > 0 else None
 
 
-def _friendly_provider_errors(raw: Any, *, code: str) -> list[dict[str, Any]]:
+def _friendly_provider_errors(
+    raw: Any,
+    *,
+    code: str,
+    blocking: bool = True,
+) -> list[dict[str, Any]]:
     if not isinstance(raw, list):
         raw = []
+    normalized_items = [item for item in raw if isinstance(item, Mapping)]
+    specific_image_error_present = any(
+        _normalized_status(
+            item.get('code') or item.get('error_code') or item.get('state'),
+        ) != 'some_image_failed'
+        and any(token in _safe_text(item, limit=1000).casefold() for token in (
+            'image', 'picture', 'photo', 'изображ', 'фото', 'pics_',
+        ))
+        for item in normalized_items
+    )
     errors: list[dict[str, Any]] = []
-    for item in raw[:MAX_PROVIDER_ERRORS]:
-        if not isinstance(item, Mapping):
-            continue
+    for item in normalized_items:
         provider_code = _safe_text(
             item.get('code') or item.get('error_code') or item.get('state'),
             limit=100,
         )
+        if (
+            _normalized_status(provider_code) == 'some_image_failed'
+            and specific_image_error_present
+        ):
+            # Ozon can return both one exact image problem and a second
+            # aggregate "some image failed" entry for the same problem.
+            # Present it once so the tenant does not see two fake tasks.
+            continue
         field = _safe_text(item.get('field') or item.get('field_name'), limit=200)
         attribute_id = _positive_int(item.get('attribute_id'))
         description = _safe_text(
@@ -92,31 +113,59 @@ def _friendly_provider_errors(raw: Any, *, code: str) -> list[dict[str, Any]]:
             limit=700,
         )
         lowered = f'{provider_code} {description}'.casefold()
-        if 'required' in lowered or 'обязат' in lowered:
+        image_related = any(token in lowered for token in (
+            'image', 'picture', 'photo', 'изображ', 'фото', 'pics_',
+        ))
+        if not blocking and image_related:
+            message = (
+                'Ozon принял карточку, но отклонил одно или несколько изображений. '
+                'Проверьте требования к фотографиям.'
+            )
+        elif not blocking:
+            message = (
+                f'Ozon принял карточку, но вернул предупреждение: {description}'
+                if description else
+                'Ozon принял карточку, но вернул предупреждение без детализации.'
+            )
+        elif 'required' in lowered or 'обязат' in lowered:
             message = 'Заполните обязательное поле или характеристику Ozon.'
         elif 'dictionary' in lowered or 'справочник' in lowered:
             message = 'Выберите актуальное значение из справочника Ozon.'
-        elif 'image' in lowered or 'изображ' in lowered:
+        elif image_related:
             message = 'Проверьте фотографии и требования Ozon к изображениям.'
         elif 'barcode' in lowered or 'штрих' in lowered:
             message = 'Проверьте штрихкод товара.'
         else:
             message = description or 'Ozon отклонил данные карточки.'
-        errors.append({
+        error: dict[str, Any] = {
             'code': code,
             'provider_code': provider_code,
             'field': field,
             'attribute_id': attribute_id,
             'message': message,
-        })
+        }
+        if not blocking:
+            error['severity'] = 'warning'
+            error['blocking'] = False
+        errors.append(error)
+        if len(errors) >= MAX_PROVIDER_ERRORS:
+            break
     if not errors:
-        errors.append({
+        error = {
             'code': code,
             'provider_code': '',
             'field': '',
             'attribute_id': None,
-            'message': 'Ozon отклонил данные карточки без детализации.',
-        })
+            'message': (
+                'Ozon отклонил данные карточки без детализации.'
+                if blocking else
+                'Ozon принял карточку, но вернул предупреждение без детализации.'
+            ),
+        }
+        if not blocking:
+            error['severity'] = 'warning'
+            error['blocking'] = False
+        errors.append(error)
     return errors
 
 
@@ -147,6 +196,8 @@ def _require_read_admission(account: MarketplaceAccount) -> None:
 def _claim_reconciliation(
     product: Product,
     account: MarketplaceAccount,
+    *,
+    allow_terminal_refresh: bool = False,
 ) -> tuple[OzonOperation, bool, str, str]:
     now = timezone.now()
     with transaction.atomic():
@@ -173,9 +224,17 @@ def _claim_reconciliation(
                 'operation_missing',
                 'Карточка ещё не отправлялась в Ozon.',
             )
-        if operation.state not in OzonOperation.ACTIVE_STATES:
+        terminal_refresh = (
+            allow_terminal_refresh
+            and operation.state not in OzonOperation.ACTIVE_STATES
+        )
+        if operation.state not in OzonOperation.ACTIVE_STATES and not terminal_refresh:
             return operation, False, '', ''
-        if operation.next_reconcile_at and operation.next_reconcile_at > now:
+        if (
+            not terminal_refresh
+            and operation.next_reconcile_at
+            and operation.next_reconcile_at > now
+        ):
             return operation, False, '', ''
         if operation.reconcile_count >= 100:
             operation.state = OzonOperation.State.MANUAL_REVIEW
@@ -193,10 +252,14 @@ def _claim_reconciliation(
             draft.save(update_fields=['publication_status', 'provider_errors', 'updated_at'])
             return operation, False, '', ''
         operation.reconcile_count += 1
+        if terminal_refresh:
+            operation.state = OzonOperation.State.RECONCILING
+            operation.completed_at = None
         operation.last_reconciled_at = now
         operation.next_reconcile_at = now + RECONCILE_LEASE
         operation.save(update_fields=[
-            'reconcile_count', 'last_reconciled_at', 'next_reconcile_at', 'updated_at',
+            'state', 'reconcile_count', 'last_reconciled_at',
+            'next_reconcile_at', 'completed_at', 'updated_at',
         ])
         client_id, api_key = _validated_credentials(locked_account)
         return operation, True, client_id, api_key
@@ -279,11 +342,12 @@ def _persist_product_projection(
     provider_barcodes = provider_barcodes_from_item(item)
     raw_errors = item.get('errors')
     has_errors = isinstance(raw_errors, list) and bool(raw_errors)
+    approved = normalized_moderation in MODERATION_APPROVED
     rejected = (
-        has_errors
-        or normalized_moderation in MODERATION_REJECTED
+        normalized_moderation in MODERATION_REJECTED
         or validation_status in MODERATION_REJECTED
         or normalized_provider in MODERATION_REJECTED
+        or (has_errors and not approved)
     )
     if rejected:
         return _finish_failed(
@@ -295,7 +359,14 @@ def _persist_product_projection(
             response_summary={'product_statuses': dict(statuses)},
         )
 
-    approved = normalized_moderation in MODERATION_APPROVED
+    provider_warnings = (
+        _friendly_provider_errors(
+            raw_errors,
+            code='provider_warning',
+            blocking=False,
+        )
+        if approved and has_errors else []
+    )
     pending = (
         normalized_moderation in MODERATION_PENDING
         or normalized_provider in MODERATION_PENDING
@@ -316,12 +387,14 @@ def _persist_product_projection(
             draft.barcode_generation_error = ''
         draft.provider_status = provider_status
         draft.moderation_status = moderation_status
-        draft.provider_errors = []
+        draft.provider_errors = provider_warnings
         draft.last_provider_sync_at = timezone.now()
         operation.response_summary = {
             **operation.response_summary,
             'product_statuses': dict(statuses),
+            'provider_warnings': provider_warnings,
         }
+        operation.errors = []
         if approved:
             operation.state = OzonOperation.State.SUCCEEDED
             operation.completed_at = timezone.now()
@@ -394,11 +467,17 @@ def _persist_not_found(operation_id) -> OzonOperation:
 def reconcile_product_import(
     product: Product,
     account: MarketplaceAccount,
+    *,
+    allow_terminal_refresh: bool = False,
 ) -> OzonOperation:
     """Perform at most one task-status read and one exact-offer read."""
 
     try:
-        operation, claimed, client_id, api_key = _claim_reconciliation(product, account)
+        operation, claimed, client_id, api_key = _claim_reconciliation(
+            product,
+            account,
+            allow_terminal_refresh=allow_terminal_refresh,
+        )
     except OzonPublicationError as exc:
         raise OzonReconciliationError(exc.code, str(exc)) from exc
     if not claimed:

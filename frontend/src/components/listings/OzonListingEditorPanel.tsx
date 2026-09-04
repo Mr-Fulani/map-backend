@@ -51,6 +51,7 @@ import {
   ozonPublicationDisabled,
   ozonPublicationMessage,
   ozonPublicationStatusLabel,
+  ozonProviderWarnings,
 } from '@/lib/ozon-offer-preparation';
 import type { OzonWorkspaceSummary } from '@/lib/publication-workspace';
 import type { ProductPhysicalProfile } from '@/lib/product-physical-profile';
@@ -199,6 +200,10 @@ Props
     || summary?.publication_status === 'published';
   const blockingIssues = preparation?.preflight.errors ?? [];
   const recommendations = preparation?.preflight.recommendations ?? [];
+  const providerWarnings = useMemo(
+    () => ozonProviderWarnings(preparation),
+    [preparation],
+  );
   const commonBlockers = blockingIssues.filter((issue) => (
     ['name', 'brand', 'description', 'stock'].includes(issue.field)
   ));
@@ -220,7 +225,9 @@ Props
   }));
 
   const operationErrors = useMemo(() => (
-    preparation?.publication.latest_operation?.errors ?? []
+    (preparation?.publication.latest_operation?.errors ?? []).filter(
+      (issue) => issue.blocking !== false,
+    )
   ), [preparation]);
 
   function scrollToIssue(field: string) {
@@ -231,7 +238,9 @@ Props
     }
     if (physicalProfileRef.current?.focusField(field)) return;
     if (preparationRef.current?.focusField(field)) return;
-    const target = field === 'images' ? imagesSectionRef.current : commonDataRef.current;
+    const target = ['images', 'pictures', 'photo', 'photos'].includes(field)
+      ? imagesSectionRef.current
+      : commonDataRef.current;
     target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
@@ -386,6 +395,37 @@ Props
       </div>
 
       {publicationOperationStatus()}
+
+      {providerWarnings.length > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                Карточка принята Ozon, но есть предупреждения
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Товар остаётся опубликованным. Предупреждение не блокирует продажу.
+              </p>
+              {providerWarnings.map((warning, index) => (
+                <button
+                  key={`${warning.provider_code ?? warning.code ?? 'warning'}:${index}`}
+                  type="button"
+                  onClick={() => scrollToIssue(warning.field || 'images')}
+                  className="mt-2 w-full rounded-md border border-amber-500/30 bg-background p-2 text-left text-xs hover:bg-amber-500/10"
+                >
+                  <p className="font-medium text-amber-950 dark:text-amber-100">
+                    {warning.message || 'Проверьте изображения по требованиям Ozon.'}
+                  </p>
+                  {warning.provider_code && (
+                    <p className="mt-1 text-muted-foreground">Код Ozon: {warning.provider_code}</p>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {preparation && (blockingIssues.length > 0 || recommendations.length > 0) && (
         <div className={`space-y-2 rounded-lg border p-3 ${

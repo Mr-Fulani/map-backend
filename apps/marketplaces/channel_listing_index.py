@@ -14,6 +14,7 @@ from django.db.models import (
     BigIntegerField,
     Case,
     CharField,
+    Count,
     IntegerField,
     Q,
     QuerySet,
@@ -123,6 +124,82 @@ def _filter_ozon_status(qs: QuerySet, normalized_status: str) -> QuerySet:
     return qs.filter(pk__isnull=True)
 
 
+def _avito_channel_queryset(tenant) -> QuerySet:
+    return Listing.objects.filter(
+        tenant=tenant,
+        product__tenant=tenant,
+        account__tenant=tenant,
+        account__is_active=True,
+        account__deleted_at__isnull=True,
+        account__marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
+    ).exclude(status=Listing.STATUS_DELETED)
+
+
+def _ozon_channel_queryset(tenant) -> QuerySet:
+    return OzonOfferDraft.objects.filter(
+        tenant=tenant,
+        product__tenant=tenant,
+        account__tenant=tenant,
+        account__is_active=True,
+        account__deleted_at__isnull=True,
+        account__marketplace=MarketplaceAccount.MARKETPLACE_OZON,
+    ).exclude(
+        # Enrichment creates technical drafts before a tenant hands the item
+        # to Listings. They are not publication attempts and must not inflate
+        # customer-facing marketplace counters.
+        publication_status='local_draft',
+    )
+
+
+def channel_status_counts(tenant) -> dict[str, int]:
+    """Aggregate the same provider-neutral lifecycle shown by Listings."""
+    avito = _avito_channel_queryset(tenant).aggregate(
+        total=Count('id'),
+        active=Count('id', filter=Q(status=Listing.STATUS_ACTIVE)),
+        queued=Count('id', filter=Q(status=Listing.STATUS_QUEUED)),
+        pending=Count('id', filter=Q(status=Listing.STATUS_PENDING)),
+        rejected=Count('id', filter=Q(status=Listing.STATUS_REJECTED)),
+        requires_review=Count(
+            'id', filter=Q(status=Listing.STATUS_REQUIRES_REVIEW),
+        ),
+        limit_reached=Count(
+            'id', filter=Q(status=Listing.STATUS_LIMIT_REACHED),
+        ),
+    )
+    rejected_without_projection = Q(
+        publication_status__in=OZON_STATUS_REJECTED,
+    ) & (
+        Q(provider_product_id__isnull=True)
+        | Q(last_provider_sync_at__isnull=True)
+    )
+    requires_review = (
+        Q(publication_status__in=OZON_STATUS_REVIEW)
+        | (
+            Q(publication_status__in=OZON_STATUS_REJECTED)
+            & Q(provider_product_id__isnull=False)
+            & Q(last_provider_sync_at__isnull=False)
+        )
+        | ~Q(publication_status__in=OZON_KNOWN_PUBLICATION_STATUSES)
+    )
+    ozon = _ozon_channel_queryset(tenant).aggregate(
+        total=Count('id'),
+        active=Count('id', filter=Q(publication_status__in=OZON_STATUS_ACTIVE)),
+        queued=Count('id', filter=Q(publication_status__in=OZON_STATUS_QUEUED)),
+        pending=Count('id', filter=Q(publication_status__in=OZON_STATUS_PENDING)),
+        rejected=Count('id', filter=rejected_without_projection),
+        requires_review=Count('id', filter=requires_review),
+    )
+    keys = ('total', 'active', 'queued', 'pending', 'rejected', 'requires_review')
+    counts = {
+        key: int(avito.get(key) or 0) + int(ozon.get(key) or 0)
+        for key in keys
+    }
+    counts['limit_reached'] = int(avito.get('limit_reached') or 0)
+    counts['avito_active'] = int(avito.get('active') or 0)
+    counts['ozon_active'] = int(ozon.get('active') or 0)
+    return counts
+
+
 def channel_index_keys(
     tenant,
     *,
@@ -131,28 +208,8 @@ def channel_index_keys(
     normalized_status: str = '',
 ) -> QuerySet:
     """Return a UNION ALL of lightweight, tenant-fenced resource keys."""
-    avito = Listing.objects.filter(
-        tenant=tenant,
-        product__tenant=tenant,
-        account__tenant=tenant,
-        account__is_active=True,
-        account__deleted_at__isnull=True,
-        account__marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
-    ).exclude(status=Listing.STATUS_DELETED)
-    ozon = OzonOfferDraft.objects.filter(
-        tenant=tenant,
-        product__tenant=tenant,
-        account__tenant=tenant,
-        account__is_active=True,
-        account__deleted_at__isnull=True,
-        account__marketplace=MarketplaceAccount.MARKETPLACE_OZON,
-    ).exclude(
-        # Enrichment creates a technical local draft for every connected Ozon
-        # account.  It is preparation state, not a tenant hand-off to the
-        # Listings workspace.  Until that hand-off has its own durable marker,
-        # only an actual publication attempt belongs in this index.
-        publication_status='local_draft',
-    )
+    avito = _avito_channel_queryset(tenant)
+    ozon = _ozon_channel_queryset(tenant)
 
     if marketplace and marketplace != MarketplaceAccount.MARKETPLACE_AVITO:
         avito = avito.filter(pk__isnull=True)

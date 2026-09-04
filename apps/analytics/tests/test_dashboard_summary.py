@@ -17,6 +17,7 @@ from apps.marketplaces.models import (
     Listing,
     ListingStats,
     MarketplaceAccount,
+    OzonOfferDraft,
 )
 from apps.products.models import (
     Product,
@@ -77,6 +78,17 @@ def make_account(tenant, suffix='1'):
         marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
         external_id=f'avito-{tenant.pk}-{suffix}',
         credentials_enc=encrypt({'client_id': 'client', 'client_secret': 'secret'}),
+    )
+
+
+def make_ozon_account(tenant, suffix='1', *, active=True):
+    return MarketplaceAccount.objects.create(
+        tenant=tenant,
+        name=f'Ozon {suffix}',
+        marketplace=MarketplaceAccount.MARKETPLACE_OZON,
+        external_id=f'ozon-{tenant.pk}-{suffix}',
+        credentials_enc=encrypt({'client_id': 'client', 'api_key': 'secret'}),
+        is_active=active,
     )
 
 
@@ -392,6 +404,68 @@ def test_dashboard_listing_counts_match_listing_page_scope():
     assert rejected_attention['count'] == rejected_count
     assert rejected_attention['href'] == '/dashboard/listings?status=rejected'
     assert listings_response.json()['meta']['total'] == rejected_count
+
+
+@pytest.mark.django_db
+def test_dashboard_counts_ozon_publication_lifecycle_from_listing_index():
+    tenant, _, token = make_tenant('dashboard-ozon-lifecycle')
+    datasource = make_datasource(tenant)
+    ozon = make_ozon_account(tenant)
+    inactive_ozon = make_ozon_account(tenant, 'inactive', active=False)
+
+    def offer(suffix, publication_status, **values):
+        return OzonOfferDraft.objects.create(
+            tenant=tenant,
+            product=make_product(tenant, datasource, suffix),
+            account=ozon,
+            publication_status=publication_status,
+            **values,
+        )
+
+    offer('OZ-ACTIVE', 'published')
+    offer('OZ-QUEUED', 'queued')
+    offer('OZ-PENDING', 'moderation_pending')
+    offer('OZ-REJECTED', 'moderation_failed')
+    offer(
+        'OZ-REVIEW',
+        'moderation_failed',
+        provider_product_id=717,
+        last_provider_sync_at=timezone.now(),
+    )
+    offer('OZ-LOCAL-DRAFT', 'local_draft')
+    OzonOfferDraft.objects.create(
+        tenant=tenant,
+        product=make_product(tenant, datasource, 'OZ-INACTIVE'),
+        account=inactive_ozon,
+        publication_status='published',
+    )
+
+    client = Client(HTTP_AUTHORIZATION=f'Bearer {token}')
+    dashboard_response = client.get(URL)
+    active_response = client.get('/api/v1/listings/channels/?status=active')
+
+    assert dashboard_response.status_code == 200
+    assert active_response.status_code == 200
+    data = dashboard_response.json()['data']
+    assert data['funnel'] == {
+        'products': 7,
+        'listings': 5,
+        'active_listings': 1,
+        'queued_listings': 1,
+        'pending_listings': 1,
+        'rejected_listings': 1,
+        'requires_review_listings': 1,
+        'limit_reached_listings': 0,
+    }
+    assert active_response.json()['meta']['total'] == 1
+    assert data['analytics']['summary']['active_listings'] == 0
+    assert data['marketplaces']['ozon_total'] == 2
+    rejection = next(
+        item for item in data['attention']
+        if item['code'] == 'listing_rejected'
+    )
+    assert rejection['title'] == 'Площадки отклонили объявления'
+    assert rejection['count'] == 1
 
 
 @pytest.mark.django_db

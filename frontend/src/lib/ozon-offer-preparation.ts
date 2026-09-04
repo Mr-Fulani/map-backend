@@ -80,6 +80,8 @@ export interface OzonOperationPresentation {
     provider_code?: string;
     field?: string;
     attribute_id?: number | null;
+    severity?: 'error' | 'warning';
+    blocking?: boolean;
   }>;
   attempt_count: number;
   reconcile_count: number;
@@ -140,7 +142,15 @@ export interface OzonOfferPreparation {
     provider_sku: number | null;
     provider_status: string;
     moderation_status: string;
-    provider_errors: Array<{ code?: string; message?: string }>;
+    provider_errors: Array<{
+      code?: string;
+      message?: string;
+      provider_code?: string;
+      field?: string;
+      attribute_id?: number | null;
+      severity?: 'error' | 'warning';
+      blocking?: boolean;
+    }>;
     last_provider_sync_at: string | null;
     barcode?: {
       common_value: string | null;
@@ -195,8 +205,14 @@ export function ozonCanArchive(preparation: OzonOfferPreparation | null): boolea
 }
 
 export function ozonCanReconcile(preparation: OzonOfferPreparation | null): boolean {
-  const state = preparation?.publication.latest_operation?.state;
-  return state ? ACTIVE_OZON_OPERATION_STATES.has(state) : false;
+  const operation = preparation?.publication.latest_operation;
+  return operation?.kind === 'product_import';
+}
+
+export function ozonProviderWarnings(preparation: OzonOfferPreparation | null) {
+  return (preparation?.publication.provider_errors ?? []).filter((issue) => (
+    issue.blocking === false || issue.severity === 'warning'
+  ));
 }
 
 export function ozonPublicationActionLabel(preparation: OzonOfferPreparation | null): string {

@@ -12,6 +12,7 @@ from django.utils import timezone
 from apps.billing.ai_wallet import AIWalletService
 from apps.billing.models import Subscription
 from apps.datasources.models import DataSourceConnection
+from apps.marketplaces.channel_listing_index import channel_status_counts
 from apps.marketplaces.models import (
     AvitoAccountStatus,
     Listing,
@@ -205,26 +206,7 @@ def _subscription_and_usage(
 
 
 def _listing_counts(tenant) -> dict[str, int]:
-    # Match the customer-facing Listings page: listings that belong to a
-    # disabled marketplace account are historical and cannot be acted on from
-    # the target page linked by dashboard cards and alerts.
-    values = Listing.objects.filter(
-        tenant=tenant,
-        account__is_active=True,
-    ).aggregate(
-        total=Count('id', filter=~Q(status=Listing.STATUS_DELETED)),
-        active=Count('id', filter=Q(status=Listing.STATUS_ACTIVE)),
-        queued=Count('id', filter=Q(status=Listing.STATUS_QUEUED)),
-        pending=Count('id', filter=Q(status=Listing.STATUS_PENDING)),
-        rejected=Count('id', filter=Q(status=Listing.STATUS_REJECTED)),
-        requires_review=Count(
-            'id', filter=Q(status=Listing.STATUS_REQUIRES_REVIEW),
-        ),
-        limit_reached=Count(
-            'id', filter=Q(status=Listing.STATUS_LIMIT_REACHED),
-        ),
-    )
-    return {key: _number(value) for key, value in values.items()}
+    return channel_status_counts(tenant)
 
 
 def _review_counts(tenant) -> dict[str, int]:
@@ -614,11 +596,22 @@ def _avito_warning(account_data: dict[str, Any]) -> tuple[str, list[str], list[s
 
 
 def _marketplaces(tenant) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    totals = MarketplaceAccount.objects.filter(tenant=tenant).aggregate(
+        avito=Count(
+            'id',
+            filter=Q(marketplace=MarketplaceAccount.MARKETPLACE_AVITO),
+        ),
+        ozon=Count(
+            'id',
+            filter=Q(marketplace=MarketplaceAccount.MARKETPLACE_OZON),
+        ),
+    )
     queryset = MarketplaceAccount.objects.filter(
         tenant=tenant,
         marketplace=MarketplaceAccount.MARKETPLACE_AVITO,
     ).select_related('avito_status').order_by('-is_active', 'id')
-    total = queryset.count()
+    total = _number(totals['avito'])
+    ozon_total = _number(totals['ozon'])
     accounts = list(queryset[:MAX_AVITO_ACCOUNTS])
     data = []
     attention = []
@@ -675,6 +668,7 @@ def _marketplaces(tenant) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         ))
     return {
         'avito_total': total,
+        'ozon_total': ozon_total,
         'avito_truncated': total > len(data),
         'avito': data,
     }, attention
@@ -758,7 +752,7 @@ def build_tenant_dashboard_summary(tenant) -> dict[str, Any]:
             'requires_review', 'Требуют проверки',
         ),
         (
-            'listing_rejected', 'critical', 'Avito отклонил объявления',
+            'listing_rejected', 'critical', 'Площадки отклонили объявления',
             'rejected', 'Отклонено',
         ),
         (
@@ -793,7 +787,7 @@ def build_tenant_dashboard_summary(tenant) -> dict[str, Any]:
         'attention': attention,
         'analytics': _analytics(
             tenant,
-            active_listing_count=listings['active'],
+            active_listing_count=listings['avito_active'],
         ),
         'funnel': {
             'products': product_count,

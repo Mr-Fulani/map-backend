@@ -344,7 +344,11 @@ class ProductOzonOfferReconcileView(APIView):
             operation = (
                 reconcile_product_archive(product, account)
                 if latest is not None and latest.kind == OzonOperation.Kind.ARCHIVE
-                else reconcile_product_import(product, account)
+                else reconcile_product_import(
+                    product,
+                    account,
+                    allow_terminal_refresh=True,
+                )
             )
         except (OzonReconciliationError, OzonLifecycleError) as exc:
             return Response(

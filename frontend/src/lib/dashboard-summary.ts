@@ -163,6 +163,7 @@ export interface DashboardSummary {
   datasources: DashboardDatasources;
   marketplaces: {
     avito_total: number;
+    ozon_total: number;
     avito_truncated: boolean;
     avito: DashboardAvitoAccount[];
   };

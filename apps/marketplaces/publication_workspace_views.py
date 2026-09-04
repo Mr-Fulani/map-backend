@@ -33,7 +33,21 @@ def _datetime(value):
 
 
 def _provider_error_count(value) -> int:
-    return len(value) if isinstance(value, list) else 0
+    if not isinstance(value, list):
+        return 0
+    return sum(
+        1 for item in value
+        if not isinstance(item, dict) or item.get('blocking') is not False
+    )
+
+
+def _provider_warning_count(value) -> int:
+    if not isinstance(value, list):
+        return 0
+    return sum(
+        1 for item in value
+        if isinstance(item, dict) and item.get('blocking') is False
+    )
 
 
 def _account_row(account: MarketplaceAccount) -> dict:
@@ -71,6 +85,7 @@ def _ozon_row(draft: OzonOfferDraft) -> dict:
         'provider_status': draft.provider_status,
         'moderation_status': draft.moderation_status,
         'provider_error_count': _provider_error_count(draft.provider_errors),
+        'provider_warning_count': _provider_warning_count(draft.provider_errors),
         'last_provider_sync_at': _datetime(draft.last_provider_sync_at),
         'external_url': (
             f'https://www.ozon.ru/product/{provider_sku}/'

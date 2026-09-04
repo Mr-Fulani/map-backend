@@ -122,6 +122,7 @@ def test_workspace_returns_local_channel_summaries_without_credentials():
         'provider_status': 'processed',
         'moderation_status': 'approved',
         'provider_error_count': 0,
+        'provider_warning_count': 0,
         'last_provider_sync_at': None,
         'external_url': 'https://www.ozon.ru/product/456/',
     }]
@@ -141,6 +142,32 @@ def test_workspace_enforces_product_and_account_tenant_fences():
     assert response.status_code == 200
     assert response.json()['data']['accounts'] == []
     assert foreign_response.status_code == 404
+
+
+@pytest.mark.django_db
+def test_workspace_separates_approved_provider_warnings_from_blocking_errors():
+    tenant, token = _tenant('workspace-provider-warning')
+    ozon = _account(tenant, MarketplaceAccount.MARKETPLACE_OZON, 'primary')
+    product = _product(tenant, 'provider-warning')
+    OzonOfferDraft.objects.create(
+        tenant=tenant,
+        product=product,
+        account=ozon,
+        publication_status='published',
+        provider_errors=[{
+            'code': 'provider_warning',
+            'message': 'Проверьте фотографию.',
+            'blocking': False,
+            'severity': 'warning',
+        }],
+    )
+
+    response = _get(Client(), token, product.pk)
+
+    assert response.status_code == 200
+    summary = response.json()['data']['ozon_drafts'][0]
+    assert summary['provider_error_count'] == 0
+    assert summary['provider_warning_count'] == 1
 
 
 @pytest.mark.django_db

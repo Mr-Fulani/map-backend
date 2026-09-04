@@ -168,6 +168,7 @@ test('lightweight Ozon summary reports provider lifecycle without loading every 
     provider_status: 'processed',
     moderation_status: 'approved',
     provider_error_count: 0,
+    provider_warning_count: 0,
     last_provider_sync_at: '2026-09-02T00:01:00Z',
     external_url: 'https://www.ozon.ru/product/801/',
   }), {
@@ -186,9 +187,24 @@ test('lightweight Ozon summary reports provider lifecycle without loading every 
     provider_status: 'failed',
     moderation_status: 'declined',
     provider_error_count: 2,
+    provider_warning_count: 0,
     last_provider_sync_at: null,
     external_url: '',
   }).label, 'Ozon: исправить 2');
+  assert.equal(ozonSummaryTargetState({
+    id: 34,
+    account_id: 15,
+    draft_exists: true,
+    publication_status: 'published',
+    provider_product_id: 71,
+    provider_sku: 801,
+    provider_status: 'price_sent',
+    moderation_status: 'approved',
+    provider_error_count: 0,
+    provider_warning_count: 1,
+    last_provider_sync_at: '2026-09-05T10:01:00Z',
+    external_url: 'https://www.ozon.ru/product/801/',
+  }).label, 'Опубликован · проверить: 1');
 });
 
 test('archived Ozon channel is not shown as published', () => {
@@ -202,6 +218,7 @@ test('archived Ozon channel is not shown as published', () => {
     provider_status: 'archived',
     moderation_status: 'approved',
     provider_error_count: 0,
+    provider_warning_count: 0,
     last_provider_sync_at: '2026-09-05T00:01:00Z',
     external_url: 'https://www.ozon.ru/product/801/',
   }), {
