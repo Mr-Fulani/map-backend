@@ -8,6 +8,7 @@ from django.utils import timezone
 from apps.marketplaces.adapters.ozon.client import OzonAPIError
 from apps.marketplaces.models import OzonOperation
 from apps.marketplaces.tests.test_ozon_commerce import STOCK_CALL, _setup
+from apps.marketplaces.tests.test_ozon_publication import _publish
 
 
 ARCHIVE_CALL = 'apps.marketplaces.ozon_lifecycle.OzonSellerClient.archive_products'
@@ -176,3 +177,52 @@ def test_archive_is_fail_closed_without_exact_method_permission(settings):
     assert OzonOperation.objects.count() == 0
     stock_call.assert_not_called()
     archive_call.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_archive_is_blocked_while_a_commerce_mutation_is_active(settings):
+    tenant, key, account, product, draft, client = _setup(
+        settings, 'ozon-archive-commerce-race',
+    )
+    _enable_archive(account)
+    OzonOperation.objects.create(
+        tenant=tenant,
+        account=account,
+        offer=draft,
+        kind=OzonOperation.Kind.STOCK_UPDATE,
+        state=OzonOperation.State.SENDING,
+        idempotency_key='active-stock',
+        request_sha256='a' * 64,
+    )
+
+    with patch(STOCK_CALL) as stock_call, patch(ARCHIVE_CALL) as archive_call:
+        response = _archive(client, key, product, account)
+
+    assert response.status_code == 400
+    assert response.json()['code'] == 'commerce_in_progress'
+    stock_call.assert_not_called()
+    archive_call.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_new_product_import_is_blocked_after_archive_confirmation(settings):
+    _, key, account, product, draft, client = _setup(
+        settings, 'ozon-archive-block-republish',
+    )
+    _enable_archive(account)
+    with (
+        patch(STOCK_CALL, return_value=_zero_result(draft)),
+        patch(ARCHIVE_CALL, return_value=True),
+        patch(INFO_CALL, return_value=_provider_item(draft, archived=True)),
+    ):
+        archived = _archive(client, key, product, account)
+    assert archived.status_code == 202
+
+    with patch(
+        'apps.marketplaces.ozon_publication.OzonSellerClient.import_products',
+    ) as provider_import:
+        response = _publish(client, key, product, account)
+
+    assert response.status_code == 400
+    assert response.json()['code'] == 'offer_archived'
+    provider_import.assert_not_called()

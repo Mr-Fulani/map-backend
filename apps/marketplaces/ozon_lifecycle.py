@@ -256,6 +256,16 @@ def request_product_archive(
         ).order_by('-created_at').first()
         if active is not None:
             return active
+        commerce_active = OzonOperation.objects.filter(
+            offer=draft,
+            kind__in=(OzonOperation.Kind.PRICE_UPDATE, OzonOperation.Kind.STOCK_UPDATE),
+            state__in=OzonOperation.ACTIVE_STATES,
+        ).exists()
+        if commerce_active:
+            raise OzonLifecycleError(
+                'commerce_in_progress',
+                'Дождитесь завершения текущей синхронизации цены и остатка.',
+            )
         profile, provider_product_id, warehouse_id = _require_archive_admission(
             locked_account, draft,
         )
