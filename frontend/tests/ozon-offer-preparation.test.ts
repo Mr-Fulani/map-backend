@@ -7,6 +7,7 @@ import {
   ozonAttributesValidationErrors,
   ozonAttributesPayload,
   ozonCanReconcile,
+  ozonCanArchive,
   ozonPublicationActionLabel,
   ozonPublicationDisabled,
   ozonPublicationMessage,
@@ -213,4 +214,30 @@ test('Ozon retry copy is explicit only after a terminal rejection', () => {
   assert.equal(ozonPublicationStatusLabel(failed), 'Ozon отклонил карточку');
   assert.equal(ozonPublicationActionLabel(failed), 'Исправил, отправить повторно');
   assert.equal(ozonPublicationMessage(failed), 'Исправьте обязательное поле.');
+});
+
+test('archived Ozon offer is not mistaken for a published card', () => {
+  const archived = publicationPreparation({
+    id: 'operation-archive',
+    kind: 'archive',
+    state: 'succeeded',
+    provider_task_id: null,
+    errors: [],
+    attempt_count: 1,
+    reconcile_count: 1,
+    last_reconciled_at: '2026-09-05T00:01:00Z',
+    next_reconcile_at: null,
+    retry_after_at: null,
+    completed_at: '2026-09-05T00:01:00Z',
+    created_at: '2026-09-05T00:00:00Z',
+    updated_at: '2026-09-05T00:01:00Z',
+  });
+  archived.publication.status = 'archived';
+  archived.publication.archive_enabled = true;
+  archived.publication.can_archive = false;
+
+  assert.equal(ozonCanArchive(archived), false);
+  assert.equal(ozonPublicationDisabled(archived), true);
+  assert.equal(ozonPublicationStatusLabel(archived), 'Снята с публикации');
+  assert.match(ozonPublicationMessage(archived), /остаток обнулён/i);
 });

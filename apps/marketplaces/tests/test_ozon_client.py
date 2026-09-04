@@ -219,6 +219,23 @@ def test_commerce_methods_use_exact_price_and_stock_contracts():
 
 
 @override_settings(OZON_API_RESPONSE_MAX_BYTES=100_000, OZON_API_TIMEOUT_SECONDS=2)
+def test_archive_method_uses_exact_ids_and_requires_boolean_confirmation():
+    session = FakeSession([FakeResponse(200, {'result': True})])
+    client = OzonSellerClient(client_id='cid', api_key='key', session=session)
+
+    assert client.archive_products([731]) is True
+    assert session.calls[0][0].endswith('/v1/product/archive')
+    assert session.calls[0][1]['json'] == {'product_id': [731]}
+
+    invalid = OzonSellerClient(
+        client_id='cid', api_key='key',
+        session=FakeSession([FakeResponse(200, {'result': 'true'})]),
+    )
+    with pytest.raises(OzonAPIError, match='некорректный'):
+        invalid.archive_products([731])
+
+
+@override_settings(OZON_API_RESPONSE_MAX_BYTES=100_000, OZON_API_TIMEOUT_SECONDS=2)
 def test_fbs_order_list_uses_bounded_read_contract():
     session = FakeSession([FakeResponse(200, {'result': {
         'postings': [{'posting_number': '1'}], 'has_next': False,

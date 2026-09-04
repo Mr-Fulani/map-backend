@@ -110,6 +110,14 @@ export function ozonSummaryTargetState(
     };
   }
   const status = summary.publication_status;
+  if (status === 'archived') {
+    return {
+      label: 'Снят с публикации',
+      tone: 'neutral',
+      issueCount: 0,
+      prepared: true,
+    };
+  }
   if (status === 'published') {
     return {
       label: 'Опубликован',
@@ -128,7 +136,7 @@ export function ozonSummaryTargetState(
       prepared: true,
     };
   }
-  if (['queued', 'import_processing', 'moderation_pending', 'outcome_unknown'].includes(status)) {
+  if (['queued', 'import_processing', 'moderation_pending', 'outcome_unknown', 'archive_pending', 'archive_processing', 'archive_outcome_unknown'].includes(status)) {
     return {
       label: status === 'outcome_unknown' ? 'Нужно сверить' : 'Проверяется Ozon',
       tone: 'neutral',
@@ -156,6 +164,15 @@ export function ozonTargetState(
     };
   }
   const operationState = preparation.publication.latest_operation?.state;
+  const operationKind = preparation.publication.latest_operation?.kind;
+  if (operationKind === 'archive' && operationState === 'succeeded') {
+    return {
+      label: 'Снят с публикации',
+      tone: 'neutral',
+      issueCount: 0,
+      prepared: true,
+    };
+  }
   if (operationState === 'succeeded') {
     return {
       label: 'Опубликован',

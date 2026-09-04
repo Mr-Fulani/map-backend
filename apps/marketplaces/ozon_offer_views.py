@@ -5,9 +5,14 @@ from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serial
 from rest_framework import serializers, status
 from rest_framework.response import Response
 
-from apps.marketplaces.models import MarketplaceAccount
+from apps.marketplaces.models import MarketplaceAccount, OzonOfferDraft, OzonOperation
 from apps.marketplaces.ozon_autofill import OzonAutofillError, autofill_ozon_offer
 from apps.marketplaces.ozon_commerce import OzonCommerceError, sync_offer_commerce
+from apps.marketplaces.ozon_lifecycle import (
+    OzonLifecycleError,
+    reconcile_product_archive,
+    request_product_archive,
+)
 from apps.marketplaces.ozon_offers import (
     OzonOfferError,
     offer_presentation,
@@ -85,6 +90,10 @@ class OzonOfferPublishSerializer(serializers.Serializer):
 
 
 class OzonOfferCommerceSerializer(OzonOfferPublishSerializer):
+    pass
+
+
+class OzonOfferArchiveSerializer(OzonOfferPublishSerializer):
     pass
 
 
@@ -298,7 +307,7 @@ class ProductOzonOfferBarcodeView(APIView):
 
 @extend_schema(tags=['Products'])
 class ProductOzonOfferReconcileView(APIView):
-    """Read-only refresh of one exact Ozon import/moderation state."""
+    """Read-only refresh of the latest exact Ozon lifecycle state."""
 
     api_key_enabled = True
     api_key_scopes = {'POST': {'catalog:read'}}
@@ -319,9 +328,25 @@ class ProductOzonOfferReconcileView(APIView):
         ).first()
         if product is None or account is None:
             return Response(status=status.HTTP_404_NOT_FOUND)
+        draft = OzonOfferDraft.objects.filter(
+            tenant=request.tenant,
+            product=product,
+            account=account,
+        ).first()
+        latest = (
+            OzonOperation.objects.filter(
+                offer=draft,
+                kind__in=(OzonOperation.Kind.PRODUCT_IMPORT, OzonOperation.Kind.ARCHIVE),
+            ).order_by('-created_at').first()
+            if draft is not None else None
+        )
         try:
-            operation = reconcile_product_import(product, account)
-        except OzonReconciliationError as exc:
+            operation = (
+                reconcile_product_archive(product, account)
+                if latest is not None and latest.kind == OzonOperation.Kind.ARCHIVE
+                else reconcile_product_import(product, account)
+            )
+        except (OzonReconciliationError, OzonLifecycleError) as exc:
             return Response(
                 {'status': 'error', 'code': exc.code, 'message': str(exc)},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -331,6 +356,47 @@ class ProductOzonOfferReconcileView(APIView):
             'data': offer_presentation(product, account),
             'operation_id': str(operation.pk),
         })
+
+
+@extend_schema(tags=['Products'])
+class ProductOzonOfferArchiveView(APIView):
+    """Zero exact FBS stock, archive one offer, and reconcile the result."""
+
+    api_key_enabled = True
+    api_key_scopes = {'POST': {'catalog:write'}}
+
+    @extend_schema(
+        operation_id='product_ozon_offer_archive',
+        request=OzonOfferArchiveSerializer,
+        responses=OZON_OFFER_RESPONSE,
+    )
+    def post(self, request, pk):
+        serializer = OzonOfferArchiveSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        product = Product.objects.filter(pk=pk, tenant=request.tenant).first()
+        account = MarketplaceAccount.objects.filter(
+            pk=serializer.validated_data['account_id'],
+            tenant=request.tenant,
+            marketplace=MarketplaceAccount.MARKETPLACE_OZON,
+        ).first()
+        if product is None or account is None:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        try:
+            operation = request_product_archive(
+                product,
+                account,
+                idempotency_key=str(serializer.validated_data['idempotency_key']),
+            )
+        except OzonLifecycleError as exc:
+            return Response(
+                {'status': 'error', 'code': exc.code, 'message': str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({
+            'status': 'ok',
+            'data': offer_presentation(product, account),
+            'operation_id': str(operation.pk),
+        }, status=status.HTTP_202_ACCEPTED)
 
 
 @extend_schema(tags=['Products'])

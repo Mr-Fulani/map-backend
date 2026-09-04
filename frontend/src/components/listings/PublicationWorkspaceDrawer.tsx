@@ -150,7 +150,7 @@ export default function PublicationWorkspaceDrawer({
   const [reloadToken, setReloadToken] = useState(0);
   const [preparingAccountId, setPreparingAccountId] = useState<number | null>(null);
   const [ozonFooterAction, setOzonFooterAction] = useState<
-    'save' | 'regenerate' | 'publish' | 'reconcile' | 'commerce' | 'barcode' | null
+    'save' | 'regenerate' | 'publish' | 'archive' | 'reconcile' | 'commerce' | 'barcode' | null
   >(null);
   const [mediaAction, setMediaAction] = useState<ProductMediaAction>(null);
   const [ozonPreparationRefreshToken, setOzonPreparationRefreshToken] = useState(0);
@@ -414,6 +414,40 @@ export default function PublicationWorkspaceDrawer({
     }
   }
 
+  async function archiveProductInOzon() {
+    if (!product || !selectedAccount || selectedAccount.marketplace !== 'ozon') return;
+    if (typeof crypto === 'undefined' || typeof crypto.randomUUID !== 'function') {
+      toast.error('Браузер не поддерживает безопасный идентификатор операции.');
+      return;
+    }
+    setOzonFooterAction('archive');
+    try {
+      const response = await productApi.archiveOzonOffer(
+        product.id,
+        selectedAccount.id,
+        crypto.randomUUID(),
+      );
+      const preparation = envelopeData<OzonOfferPreparation>(response.data);
+      handleOzonPreparationChange(preparation);
+      await onChannelChanged();
+      const operation = preparation.publication.latest_operation;
+      if (operation?.state === 'succeeded') {
+        toast.success('Остаток обнулён, Ozon подтвердил снятие карточки.');
+      } else if (operation && ['outcome_unknown', 'reconciling'].includes(operation.state)) {
+        toast.warning('Остаток обнулён. MAP сверяет архивный статус с Ozon.');
+      } else {
+        toast.error(operation?.errors[0]?.message ?? 'Не удалось снять карточку Ozon.');
+      }
+    } catch (error: unknown) {
+      const message = (
+        error as { response?: { data?: { message?: string } } }
+      ).response?.data?.message;
+      toast.error(message ?? 'Не удалось снять карточку Ozon.');
+    } finally {
+      setOzonFooterAction(null);
+    }
+  }
+
   async function reconcileProductInOzon() {
     if (!product || !selectedAccount || selectedAccount.marketplace !== 'ozon') return;
     setOzonFooterAction('reconcile');
@@ -611,6 +645,7 @@ export default function PublicationWorkspaceDrawer({
                   onSave={() => void saveOzonPreparation()}
                   onRegenerate={() => void regenerateProductForOzon()}
                   onPublish={() => void publishProductToOzon()}
+                  onArchive={() => void archiveProductInOzon()}
                   onReconcile={() => void reconcileProductInOzon()}
                   onSyncCommerce={() => void syncOzonCommerce()}
                   onGenerateBarcode={() => void generateOzonBarcode()}

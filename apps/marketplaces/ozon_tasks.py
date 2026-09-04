@@ -8,6 +8,7 @@ from django.db.models import Q
 
 from apps.marketplaces.models import OzonAccountProfile, OzonOfferDraft, OzonOperation
 from apps.marketplaces.ozon_commerce import OzonCommerceError, sync_offer_commerce
+from apps.marketplaces.ozon_lifecycle import OzonLifecycleError, reconcile_product_archive
 from apps.marketplaces.ozon_orders import OzonOrderSyncError, sync_fbs_orders
 from apps.marketplaces.ozon_reconciliation import OzonReconciliationError, reconcile_product_import
 
@@ -15,7 +16,7 @@ from apps.marketplaces.ozon_reconciliation import OzonReconciliationError, recon
 @shared_task(queue='sync_import')
 def reconcile_due_ozon_imports():
     operations = OzonOperation.objects.filter(
-        kind=OzonOperation.Kind.PRODUCT_IMPORT,
+        kind__in=(OzonOperation.Kind.PRODUCT_IMPORT, OzonOperation.Kind.ARCHIVE),
         state__in=OzonOperation.ACTIVE_STATES,
         account__is_active=True,
     ).filter(
@@ -24,9 +25,12 @@ def reconcile_due_ozon_imports():
     completed = 0
     for operation in operations:
         try:
-            reconcile_product_import(operation.offer.product, operation.account)
+            if operation.kind == OzonOperation.Kind.ARCHIVE:
+                reconcile_product_archive(operation.offer.product, operation.account)
+            else:
+                reconcile_product_import(operation.offer.product, operation.account)
             completed += 1
-        except OzonReconciliationError:
+        except (OzonReconciliationError, OzonLifecycleError):
             continue
     return {'checked': completed}
 

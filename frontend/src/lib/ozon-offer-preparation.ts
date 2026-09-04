@@ -133,6 +133,8 @@ export interface OzonOfferPreparation {
   };
   publication: {
     write_enabled: boolean;
+    archive_enabled?: boolean;
+    can_archive?: boolean;
     status: string;
     provider_product_id: number | null;
     provider_sku: number | null;
@@ -181,10 +183,15 @@ const ACTIVE_OZON_OPERATION_STATES = new Set<OzonOperationState>([
 
 export function ozonPublicationDisabled(preparation: OzonOfferPreparation | null): boolean {
   if (!preparation?.preflight.ready || !preparation.publication.write_enabled) return true;
+  if (preparation.publication.status === 'archived') return true;
   const state = preparation.publication.latest_operation?.state;
   return state
     ? ACTIVE_OZON_OPERATION_STATES.has(state) || ['partial', 'manual_review'].includes(state)
     : false;
+}
+
+export function ozonCanArchive(preparation: OzonOfferPreparation | null): boolean {
+  return preparation?.publication.can_archive === true;
 }
 
 export function ozonCanReconcile(preparation: OzonOfferPreparation | null): boolean {
@@ -193,6 +200,7 @@ export function ozonCanReconcile(preparation: OzonOfferPreparation | null): bool
 }
 
 export function ozonPublicationActionLabel(preparation: OzonOfferPreparation | null): string {
+  if (preparation?.publication.status === 'archived') return 'Снята с публикации';
   const state = preparation?.publication.latest_operation?.state;
   if (state === 'failed') return 'Исправил, отправить повторно';
   if (state === 'succeeded') return 'Отправить обновление в Ozon';
@@ -200,6 +208,16 @@ export function ozonPublicationActionLabel(preparation: OzonOfferPreparation | n
 }
 
 export function ozonPublicationStatusLabel(preparation: OzonOfferPreparation | null): string {
+  const operation = preparation?.publication.latest_operation;
+  if (operation?.kind === 'archive') {
+    if (operation.state === 'queued' || operation.state === 'sending') return 'Снимается с публикации';
+    if (operation.state === 'outcome_unknown' || operation.state === 'reconciling') {
+      return 'Проверяется снятие';
+    }
+    if (operation.state === 'succeeded') return 'Снята с публикации';
+    if (operation.state === 'failed') return 'Не удалось снять';
+    return 'Нужно проверить снятие';
+  }
   const state = preparation?.publication.latest_operation?.state;
   if (!state) return 'Не отправлялась';
   if (state === 'queued' || state === 'sending') return 'Отправляется';
@@ -219,6 +237,23 @@ export function ozonPublicationMessage(preparation: OzonOfferPreparation | null)
     return 'Карточка готова, но отправка для этого кабинета пока закрыта безопасным rollout.';
   }
   const operation = preparation.publication.latest_operation;
+  if (operation?.kind === 'archive') {
+    if (operation.state === 'succeeded') {
+      return 'Остаток обнулён, Ozon подтвердил перенос карточки в архив.';
+    }
+    if (operation.state === 'outcome_unknown' || operation.state === 'reconciling') {
+      return 'MAP обнулил остаток и сверяет архивный статус с Ozon.';
+    }
+    if (operation.state === 'queued' || operation.state === 'sending') {
+      return 'Сначала MAP обнуляет остаток, затем переносит карточку в архив.';
+    }
+    if (operation.state === 'failed' || operation.state === 'manual_review') {
+      return operation.errors[0]?.message ?? 'Проверьте результат снятия в Ozon.';
+    }
+  }
+  if (preparation.publication.status === 'archived') {
+    return 'Карточка находится в архиве Ozon и не продаётся.';
+  }
   if (!operation) return 'Карточка готова к ручной отправке в Ozon.';
   if (operation.state === 'outcome_unknown') {
     return 'Ozon мог получить карточку. Не отправляйте повторно — MAP сначала сверит результат.';
