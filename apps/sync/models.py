@@ -9,6 +9,8 @@ class SyncLog(models.Model):
     EVENT_LISTING_PUBLISH = 'listing_publish'
     EVENT_LISTING_UPDATE = 'listing_update'
     EVENT_LISTING_PRICE_UPDATE = 'listing_price_update'
+    EVENT_LISTING_STOCK_UPDATE = 'listing_stock_update'
+    EVENT_ORDERS_SYNC = 'orders_sync'
     EVENT_LISTING_UNPUBLISH = 'listing_unpublish'
     EVENT_LISTING_DELETE = 'listing_delete'
     EVENT_LISTING_ERROR = 'listing_error'
@@ -23,6 +25,8 @@ class SyncLog(models.Model):
         (EVENT_LISTING_PUBLISH, 'Публикация'),
         (EVENT_LISTING_UPDATE, 'Обновление'),
         (EVENT_LISTING_PRICE_UPDATE, 'Обновление цены'),
+        (EVENT_LISTING_STOCK_UPDATE, 'Обновление остатка'),
+        (EVENT_ORDERS_SYNC, 'Синхронизация заказов'),
         (EVENT_LISTING_UNPUBLISH, 'Снятие с публикации'),
         (EVENT_LISTING_DELETE, 'Удаление'),
         (EVENT_LISTING_ERROR, 'Ошибка листинга'),
@@ -48,6 +52,11 @@ class SyncLog(models.Model):
         'marketplaces.Listing', null=True, blank=True,
         on_delete=models.SET_NULL, related_name='sync_logs', verbose_name='Листинг',
     )
+    account = models.ForeignKey(
+        'marketplaces.MarketplaceAccount', null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='sync_logs', verbose_name='Кабинет',
+    )
+    event_key = models.CharField(max_length=160, null=True, blank=True, unique=True)
     event_type = models.CharField(max_length=30, choices=EVENT_CHOICES, verbose_name='Тип события')
     status = models.CharField(max_length=10, choices=STATUS_CHOICES, verbose_name='Статус')
     message = models.TextField(verbose_name='Сообщение')
@@ -60,6 +69,7 @@ class SyncLog(models.Model):
         indexes = [
             models.Index(fields=['tenant', '-created_at']),
             models.Index(fields=['tenant', 'event_type', 'status']),
+            models.Index(fields=['tenant', 'account', '-created_at'], name='sync_tenant_account_time_idx'),
         ]
 
     def __str__(self):

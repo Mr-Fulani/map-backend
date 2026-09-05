@@ -4,6 +4,7 @@ from typing import Protocol, cast
 from drf_spectacular.utils import extend_schema
 from rest_framework.generics import ListAPIView
 from rest_framework.exceptions import ValidationError
+from django.db.models import Q
 
 from apps.sync.models import SyncLog
 from apps.sync.serializers import SyncLogSerializer
@@ -36,7 +37,7 @@ class SyncLogListView(ListAPIView):
         tenant = cast(_TenantRequest, self.request).tenant
         qs = (
             SyncLog.objects.filter(tenant=tenant)
-            .select_related('listing__account')
+            .select_related('listing__account', 'account', 'product')
             .order_by('-created_at')
         )
 
@@ -61,9 +62,9 @@ class SyncLogListView(ListAPIView):
                     'marketplace': 'Некорректный идентификатор маркетплейса.',
                 })
             qs = qs.filter(
-                listing__tenant=tenant,
-                listing__account__tenant=tenant,
-                listing__account__marketplace=marketplace,
+                Q(account__tenant=tenant, account__marketplace=marketplace)
+                | Q(account__isnull=True, listing__tenant=tenant,
+                    listing__account__tenant=tenant, listing__account__marketplace=marketplace)
             )
 
         account_id = self.request.query_params.get('account', '').strip()
@@ -75,9 +76,9 @@ class SyncLogListView(ListAPIView):
             ):
                 raise ValidationError({'account': 'Ожидается положительный ID.'})
             qs = qs.filter(
-                listing__tenant=tenant,
-                listing__account__tenant=tenant,
-                listing__account_id=int(account_id),
+                Q(account__tenant=tenant, account_id=int(account_id))
+                | Q(account__isnull=True, listing__tenant=tenant,
+                    listing__account__tenant=tenant, listing__account_id=int(account_id))
             )
 
         date = self.request.query_params.get('date')
