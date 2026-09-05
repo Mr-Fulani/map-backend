@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { PasswordInput } from '@/components/ui/password-input';
 import { Switch } from '@/components/ui/switch';
 import { OzonCatalogStatus } from '@/components/marketplaces/OzonCatalogStatus';
+import { OzonSyncHealth } from '@/components/marketplaces/OzonSyncHealth';
 import { accountApi } from '@/lib/api';
 import type { MarketplaceAccount } from '@/lib/marketplace-account-types';
 import {
@@ -81,7 +82,7 @@ export function OzonAccountSettings({
       };
       onAccountUpsert({
         ...account,
-        ozon_profile: { ...account.ozon_profile, ...flags },
+        ozon_profile: { ...account.ozon_profile, ...flags, sync_health: undefined },
       });
       toast.success(
         field === 'product_write_enabled'
@@ -437,6 +438,12 @@ export function OzonAccountSettings({
                       </label>
                     </div>
                   )}
+
+                  <OzonSyncHealth
+                    key={`${account.id}:${profile?.product_write_enabled}:${profile?.commerce_auto_sync_enabled}:${profile?.orders_auto_sync_enabled}:${profile?.last_checked_at}`}
+                    accountId={account.id}
+                    initial={profile?.sync_health}
+                  />
 
                   <OzonCatalogStatus
                     accountId={account.id}

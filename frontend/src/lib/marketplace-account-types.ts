@@ -30,6 +30,27 @@ export interface AvitoAccountHealth {
   last_error_message: string;
 }
 
+export type OzonSyncState = 'disabled' | 'idle' | 'unknown' | 'pending' | 'ok' | 'error' | 'delayed';
+
+export interface OzonSyncHealth {
+  observed_at: string;
+  monitor_checked_at: string | null;
+  monitor_status: 'ok' | 'unknown';
+  queue_status: 'available' | 'unavailable' | 'unknown';
+  credential: { state: string; message: string; code: string };
+  jobs: Array<{
+    job: 'reconciliation' | 'commerce' | 'orders';
+    label: string;
+    state: OzonSyncState;
+    message: string;
+    last_attempt_at: string | null;
+    last_completed_at: string | null;
+    last_success_at: string | null;
+    error_code: string;
+    alert_ready: boolean;
+  }>;
+}
+
 export interface OzonAccountProfile {
   connection_status: 'connected' | 'warehouse_missing' | 'warehouse_selection_required';
   company_name: string;
@@ -45,6 +66,7 @@ export interface OzonAccountProfile {
   product_write_enabled: boolean;
   commerce_auto_sync_enabled: boolean;
   orders_auto_sync_enabled: boolean;
+  sync_health?: OzonSyncHealth;
 }
 
 export interface OzonCatalogTreeMetadata {

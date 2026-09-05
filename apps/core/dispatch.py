@@ -29,6 +29,7 @@ class SafeRetryableDispatchError(RuntimeError):
 
 
 DURABLE_TASK_QUEUES = {
+    'apps.marketplaces.ozon_tasks.deliver_ozon_health_alert': 'notifications',
     'apps.products.tasks.parse_single_part': 'part_parsing',
     'apps.products.tasks.parse_single_part_then_generate_description': 'part_parsing',
     'apps.products.tasks.process_bulk_product_action': 'part_parsing_bulk',

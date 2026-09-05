@@ -221,6 +221,9 @@ def test_create_ozon_account_encrypts_api_key_and_returns_safe_profile():
     assert body['external_id'] == 'ozon-client-1'
     assert body['provider_capabilities']['account_health'] is True
     assert body['avito_status'] is None
+    sync_health = body['ozon_profile'].pop('sync_health')
+    assert sync_health['monitor_status'] == 'unknown'
+    assert [row['state'] for row in sync_health['jobs']] == ['unknown', 'disabled', 'disabled']
     assert body['ozon_profile'] == {
         'connection_status': 'connected',
         'company_name': 'АльфаПро',

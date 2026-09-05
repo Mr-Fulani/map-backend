@@ -96,10 +96,17 @@ def record_automation_result(profile, job: str, *, checked: int, failed: int, co
     safe_code = code if code in ERROR_MESSAGES else ('sync_failed' if failed else '')
     health = dict(profile.automation_health or {})
     previous = health.get(job, {})
+    previous = previous if isinstance(previous, dict) else {}
     now = timezone.now()
     health[job] = {
+        **previous,
         'checked_at': now.isoformat(), 'checked': checked,
         'failed': failed, 'error_code': safe_code,
+        'last_success_at': (
+            previous.get('last_success_at')
+            or (previous.get('checked_at') if not previous.get('error_code') else None)
+        ) if failed else now.isoformat(),
+        'failure_since': (previous.get('failure_since') or now.isoformat()) if failed else None,
     }
     updated = OzonAccountProfile.objects.filter(
         pk=profile.pk, account__tenant_id=profile.account.tenant_id,

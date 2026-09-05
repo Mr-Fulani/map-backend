@@ -49,6 +49,13 @@ class Command(BaseCommand):
 
         tasks = [
             {
+                'name': 'monitor_ozon_account_health',
+                'task': 'apps.marketplaces.ozon_tasks.monitor_ozon_account_health',
+                'schedule': every_1m,
+                'queue': 'notifications',
+                'expire_seconds': 50,
+            },
+            {
                 'name': 'reconcile_due_ozon_imports',
                 'task': 'apps.marketplaces.ozon_tasks.reconcile_due_ozon_imports',
                 'schedule': every_1m,
