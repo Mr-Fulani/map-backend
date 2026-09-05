@@ -15,6 +15,22 @@ Telemetry fail-open: сбой или отсутствие Sentry не меняе
 
 ## Celery snapshot
 
+### Диагностика Ozon для тенанта
+
+С 2026-09-06 выложен [Ozon health monitor](OZON_HEALTH_RELEASE.md), baseline
+`04bb573`. В настройках кабинета видны сверка статусов, цены/остатки и FBS-заказы,
+последний успешный запуск, задержка и выключенная автоматизация. Монитор читает
+локальные данные, не создаёт дополнительные вызовы Ozon; UI не опрашивает workers
+на каждый кабинет. Устойчивые инциденты и восстановление используют существующую
+durable доставку уведомлений тенанта.
+
+Это не замена внешнему dead-man: остановившаяся очередь не гарантирует доставку
+сообщения о собственной остановке. Реальный Sentry routing/test-fire и Telegram
+инцидент не проверялись этим production canary. Пороги, границы и точные результаты
+проверок — в release report; включённые флаги — в [OZON_STATUS.md](OZON_STATUS.md).
+
+### Общий collector
+
 `collect_celery_observability` запускается Beat раз в 60 секунд в очереди
 `notifications`, имеет expiration 50 секунд, soft/hard time limits 12/15 секунд
 и сохраняет snapshot в coordination Redis на 150 секунд. Staff-only страница
