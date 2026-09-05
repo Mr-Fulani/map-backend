@@ -15,6 +15,7 @@ from apps.marketplaces.models import (
     OzonOperation,
 )
 from apps.marketplaces.ozon_catalog import OzonCatalogService
+from apps.marketplaces.ozon_images import ozon_image_preflight
 from apps.marketplaces.ozon_category_policies import (
     OzonCategoryPolicyError,
     resolved_category_type_policy,
@@ -563,6 +564,10 @@ def _preflight(
             'Фотографии',
             'Добавьте или одобрите хотя бы одну фотографию.',
         ))
+    else:
+        image_preflight = ozon_image_preflight(product)
+        errors.extend(image_preflight['errors'])
+        recommendations.extend(image_preflight['recommendations'])
     if not (product.description_ai or '').strip():
         recommendations.append(_issue(
             'description_recommended', 'description', 'Описание',

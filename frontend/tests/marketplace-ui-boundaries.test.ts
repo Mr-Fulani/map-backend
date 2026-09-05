@@ -80,6 +80,10 @@ test('Ozon drawer mirrors Avito navigation cues without entering Avito publicati
   assert.match(media, /Отклонить/);
   assert.match(media, /Сделать главным/);
   assert.match(media, /Удалить эту фотографию/);
+  assert.match(media, /не примет это фото/);
+  assert.match(media, /Официальные требования/);
+  assert.match(editor, /channelLabel="Ozon"/);
+  assert.match(editor, /channelIssues=\{imageChannelIssues\}/);
   assert.match(pricing, /Кабинет Ozon/);
   assert.match(pricing, /Наценка Ozon/);
   assert.match(pricing, /Цена объявления Ozon/);

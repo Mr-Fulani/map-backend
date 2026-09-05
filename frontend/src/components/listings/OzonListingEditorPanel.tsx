@@ -75,6 +75,8 @@ export interface OzonEditorImage {
   position: number;
   url: string;
   thumb_url: string;
+  resolution_w?: number | null;
+  resolution_h?: number | null;
 }
 
 interface OzonEditorAccount {
@@ -200,6 +202,10 @@ Props
     || summary?.publication_status === 'published';
   const blockingIssues = preparation?.preflight.errors ?? [];
   const recommendations = preparation?.preflight.recommendations ?? [];
+  const imageChannelIssues = [
+    ...blockingIssues.map((issue) => ({ ...issue, blocking: true })),
+    ...recommendations.map((issue) => ({ ...issue, blocking: false })),
+  ].filter((issue) => issue.field === 'images' && issue.image_id);
   const providerWarnings = useMemo(
     () => ozonProviderWarnings(preparation),
     [preparation],
@@ -511,6 +517,9 @@ Props
           onReject={onRejectImage}
           onSetPrimary={onSetPrimaryImage}
           onDelete={onDeleteImage}
+          channelLabel="Ozon"
+          channelIssues={imageChannelIssues}
+          channelHelpUrl="https://docs.ozon.ru/global/products/requirements/media/image-requirements/"
         />
       </div>
 

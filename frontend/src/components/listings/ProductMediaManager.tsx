@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState, type ChangeEvent } from 'react';
 import {
+  AlertTriangle,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -31,6 +32,15 @@ export interface ProductMediaImage {
   position: number;
   url: string;
   thumb_url: string;
+  resolution_w?: number | null;
+  resolution_h?: number | null;
+}
+
+export interface ProductMediaChannelIssue {
+  code: string;
+  image_id?: number;
+  message: string;
+  blocking: boolean;
 }
 
 export type ProductMediaAction = number | 'upload' | null;
@@ -43,6 +53,9 @@ interface Props {
   onReject: (imageId: number) => Promise<void>;
   onSetPrimary: (imageId: number) => Promise<void>;
   onDelete: (imageId: number) => Promise<boolean>;
+  channelLabel?: string;
+  channelIssues?: ProductMediaChannelIssue[];
+  channelHelpUrl?: string;
 }
 
 const REVIEW_STATUSES = new Set(['needs_review', 'low_confidence']);
@@ -78,6 +91,9 @@ export function ProductMediaManager({
   onReject,
   onSetPrimary,
   onDelete,
+  channelLabel,
+  channelIssues = [],
+  channelHelpUrl,
 }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [activeImageId, setActiveImageId] = useState<number | null>(null);
@@ -99,6 +115,10 @@ export function ProductMediaManager({
   const activeStatus = activeImage ? statusPresentation(activeImage.status) : null;
   const pendingReviewCount = orderedImages.filter((image) => REVIEW_STATUSES.has(image.status)).length;
   const hasNoImages = orderedImages.length === 0;
+  const blockingChannelIssueCount = channelIssues.filter((issue) => issue.blocking).length;
+  const activeChannelIssues = activeImage
+    ? channelIssues.filter((issue) => issue.image_id === activeImage.id)
+    : [];
 
   function moveImage(direction: -1 | 1) {
     if (orderedImages.length < 2) return;
@@ -114,7 +134,7 @@ export function ProductMediaManager({
 
   return (
     <div className={`space-y-3 rounded-lg border border-l-4 p-3 ${
-      hasNoImages
+      hasNoImages || blockingChannelIssueCount > 0
         ? 'border-red-500/50 bg-red-500/5'
         : pendingReviewCount > 0
           ? 'border-amber-500/50 bg-amber-500/5'
@@ -129,7 +149,7 @@ export function ProductMediaManager({
         </div>
         <Badge
           variant="outline"
-          className={hasNoImages
+          className={hasNoImages || blockingChannelIssueCount > 0
             ? 'border-red-500/50 bg-red-500/10 text-red-900 dark:text-red-100'
             : pendingReviewCount > 0
               ? 'border-amber-500/50 bg-amber-500/10 text-amber-900 dark:text-amber-100'
@@ -137,9 +157,11 @@ export function ProductMediaManager({
         >
           {hasNoImages
             ? 'Нужно добавить фото'
-            : pendingReviewCount > 0
-              ? `Нужно проверить: ${pendingReviewCount}`
-            : `Готово: ${orderedImages.length}`}
+            : blockingChannelIssueCount > 0
+              ? `${channelLabel ?? 'Канал'}: исправить ${blockingChannelIssueCount}`
+              : pendingReviewCount > 0
+                ? `Нужно проверить: ${pendingReviewCount}`
+                : `Готово: ${orderedImages.length}`}
         </Badge>
       </div>
 
@@ -187,6 +209,8 @@ export function ProductMediaManager({
       <div className="flex gap-2 overflow-x-auto pb-1">
         {orderedImages.map((image) => {
           const status = statusPresentation(image.status);
+          const imageChannelIssues = channelIssues.filter((issue) => issue.image_id === image.id);
+          const hasBlockingChannelIssue = imageChannelIssues.some((issue) => issue.blocking);
           return (
             <button
               key={image.id}
@@ -206,6 +230,11 @@ export function ProductMediaManager({
               )}
               {REVIEW_STATUSES.has(image.status) && (
                 <span className="absolute bottom-0.5 right-0.5 h-2.5 w-2.5 rounded-full border border-white bg-amber-500" />
+              )}
+              {hasBlockingChannelIssue && (
+                <span className="absolute right-0.5 top-0.5 rounded-full border border-white bg-red-600 p-0.5 text-white">
+                  <AlertTriangle className="h-2.5 w-2.5" />
+                </span>
               )}
             </button>
           );
@@ -241,6 +270,28 @@ export function ProductMediaManager({
               Фото {activeIndex + 1} из {orderedImages.length}
             </span>
           </div>
+          {activeImage.resolution_w && activeImage.resolution_h && (
+            <p className="text-xs text-muted-foreground">
+              Разрешение: {activeImage.resolution_w} × {activeImage.resolution_h} px
+            </p>
+          )}
+          {activeChannelIssues.map((issue) => (
+            <div
+              key={`${issue.code}:${activeImage.id}`}
+              className={`rounded-md border p-2 text-xs ${
+                issue.blocking
+                  ? 'border-red-500/40 bg-red-500/10 text-red-950 dark:text-red-100'
+                  : 'border-blue-500/30 bg-blue-500/5 text-blue-950 dark:text-blue-100'
+              }`}
+            >
+              <p className="font-medium">
+                {issue.blocking
+                  ? `${channelLabel ?? 'Маркетплейс'} не примет это фото`
+                  : `Проверка для ${channelLabel ?? 'маркетплейса'}`}
+              </p>
+              <p className="mt-1">{issue.message}</p>
+            </div>
+          ))}
           {REVIEW_STATUSES.has(activeImage.status) && (
             <p className="text-xs text-amber-900 dark:text-amber-100">
               Проверьте, что на фото именно этот товар. Затем одобрите или отклоните его.
@@ -308,6 +359,17 @@ export function ProductMediaManager({
           : <Plus className="mr-2 h-4 w-4" />}
         Загрузить фото
       </Button>
+
+      {channelHelpUrl && (
+        <a
+          href={channelHelpUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="block text-center text-xs text-primary hover:underline"
+        >
+          Официальные требования {channelLabel ?? 'маркетплейса'} к фотографиям
+        </a>
+      )}
 
       <Dialog open={pendingDelete !== null} onOpenChange={(open) => { if (!open) setPendingDelete(null); }}>
         <DialogContent>
