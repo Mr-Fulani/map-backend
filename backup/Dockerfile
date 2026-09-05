@@ -6,6 +6,7 @@ RUN set -eux; \
         ca-certificates \
         libcrypto3 \
         libssl3 \
+        'libuuid>=2.42.3-r0' \
         python3; \
     for package in libcrypto3 libssl3; do \
         version="$(apk list --installed "$package" \

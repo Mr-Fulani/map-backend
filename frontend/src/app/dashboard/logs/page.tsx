@@ -31,6 +31,7 @@ interface SyncLog {
   message: string;
   created_at: string;
   target_url?: string | null;
+  payload?: { state?: string };
 }
 
 interface Meta {
@@ -78,7 +79,9 @@ function operationLabel(value: string) {
   return OPERATION_FILTERS.find((item) => item.value === value)?.label ?? value;
 }
 
-function resultLabel(value: string) {
+function resultLabel(value: string, state?: string) {
+  if (value === 'ok' && state === 'queued') return 'В очереди';
+  if (value === 'ok' && state === 'reconciling') return 'Проверяем';
   return ({ ok: 'Успешно', warn: 'Требует внимания', error: 'Ошибка' } as Record<string, string>)[value] ?? value;
 }
 
@@ -247,7 +250,7 @@ export default function LogsPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <Badge variant={STATUS_VARIANT[log.status] ?? 'secondary'}>
-                      {resultLabel(log.provider_result)}
+                      {resultLabel(log.provider_result, log.payload?.state)}
                     </Badge>
                     {log.marketplace && (
                       <Badge variant="outline" className="ml-2">
@@ -311,7 +314,7 @@ export default function LogsPage() {
                   <tr key={log.id} className="border-b transition-colors hover:bg-muted/30">
                     <td className="px-4 py-3">
                       <Badge variant={STATUS_VARIANT[log.status] ?? 'secondary'}>
-                        {resultLabel(log.provider_result)}
+                        {resultLabel(log.provider_result, log.payload?.state)}
                       </Badge>
                     </td>
                     <td className="px-4 py-3">

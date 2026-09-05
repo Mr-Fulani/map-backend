@@ -1,6 +1,7 @@
 from contextlib import contextmanager
 from datetime import timedelta
 import threading
+from types import SimpleNamespace
 from unittest.mock import patch
 import uuid
 
@@ -200,8 +201,14 @@ def test_run_deadline_leaves_next_cards_for_a_later_run(settings):
     tenant, _ = _tenant('fair-deadline')
     account = _enabled_account(tenant, 'fair-deadline')
     drafts = _offers(tenant, account, 3)
-    with patch.object(ozon_tasks.time, 'monotonic', side_effect=[0, 0, 0, 50]):
-        with patch.object(ozon_tasks, 'sync_offer_commerce') as sync:
+    clock = [0]
+
+    def expire_budget(*args, **kwargs):
+        clock[0] = 50
+
+    # Replace only this module's clock; psycopg also uses time.monotonic.
+    with patch.object(ozon_tasks, 'time', SimpleNamespace(monotonic=lambda: clock[0])):
+        with patch.object(ozon_tasks, 'sync_offer_commerce', side_effect=expire_budget) as sync:
             assert ozon_tasks.sync_enabled_ozon_commerce()['attempted'] == 1
     sync.assert_called_once()
     account.ozon_profile.refresh_from_db()
