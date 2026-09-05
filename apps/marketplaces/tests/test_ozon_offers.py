@@ -249,6 +249,9 @@ def _complete_product(product):
         product=product,
         s3_key='products/test.jpg',
         sha256='a' * 64,
+        resolution_w=800,
+        resolution_h=600,
+        file_size_kb=120,
     )
 
 
@@ -638,6 +641,69 @@ def test_preflight_is_ready_only_after_current_required_dictionary_value():
         'value': 'Canonical Brand',
         'dictionary_value_id': 501,
     }]
+
+
+@pytest.mark.django_db
+def test_preflight_identifies_exact_ozon_image_with_invalid_dimensions():
+    tenant, key = _tenant('ozon-image-dimensions')
+    account = _account(tenant, 'client-image-dimensions')
+    product = _product(tenant)
+    _catalog(account)
+    client = Client()
+    ready = _ready_offer(client, key, product, account)
+    image = product.images.get()
+    image.resolution_w = 178
+    image.resolution_h = 136
+    image.save(update_fields=['resolution_w', 'resolution_h'])
+
+    response = _request(client, key, 'get', product, account_id=account.pk)
+
+    assert ready.status_code == response.status_code == 200
+    preflight = response.json()['data']['preflight']
+    assert preflight['ready'] is False
+    assert preflight['errors'] == [{
+        'code': 'image_dimensions_invalid',
+        'field': 'images',
+        'label': 'Фото №1',
+        'message': (
+            'Разрешение 178 × 136 px. Для Ozon каждая сторона должна быть не '
+            'меньше 200 px. Замените это фото.'
+        ),
+        'image_id': image.pk,
+        'image_index': 1,
+        'help_url': (
+            'https://docs.ozon.ru/global/products/requirements/media/'
+            'image-requirements/'
+        ),
+        'width_px': 178,
+        'height_px': 136,
+    }]
+
+
+@pytest.mark.django_db
+def test_unknown_legacy_image_dimensions_are_a_nonblocking_recommendation():
+    tenant, key = _tenant('ozon-image-dimensions-unknown')
+    account = _account(tenant, 'client-image-dimensions-unknown')
+    product = _product(tenant)
+    _catalog(account)
+    client = Client()
+    ready = _ready_offer(client, key, product, account)
+    image = product.images.get()
+    image.resolution_w = None
+    image.resolution_h = None
+    image.save(update_fields=['resolution_w', 'resolution_h'])
+
+    response = _request(client, key, 'get', product, account_id=account.pk)
+
+    assert ready.status_code == response.status_code == 200
+    preflight = response.json()['data']['preflight']
+    assert preflight['ready'] is True
+    assert preflight['errors'] == []
+    assert any(
+        issue['code'] == 'image_dimensions_unknown'
+        and issue['image_id'] == image.pk
+        for issue in preflight['recommendations']
+    )
 
 
 @pytest.mark.django_db

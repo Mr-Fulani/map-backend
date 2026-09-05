@@ -147,6 +147,29 @@ def test_product_import_is_fail_closed_before_provider_call(settings):
 
 
 @pytest.mark.django_db
+def test_product_import_rejects_small_image_before_provider_call(settings):
+    tenant, key = _tenant('ozon-publish-small-image')
+    account = _account(tenant, 'client-publish-small-image')
+    product = _product(tenant)
+    _catalog(account)
+    client = Client()
+    _ready_offer(client, key, product, account)
+    image = product.images.get()
+    image.resolution_w = 178
+    image.resolution_h = 136
+    image.save(update_fields=['resolution_w', 'resolution_h'])
+    _enable_write(settings, tenant, account)
+
+    with patch(PROVIDER_IMPORT) as provider_import:
+        response = _publish(client, key, product, account)
+
+    assert response.status_code == 400
+    assert response.json()['code'] == 'preflight_failed'
+    assert OzonOperation.objects.count() == 0
+    provider_import.assert_not_called()
+
+
+@pytest.mark.django_db
 def test_idempotency_key_cannot_be_reused_for_another_offer(settings):
     tenant, key = _tenant('ozon-publish-idempotency-scope')
     account = _account(tenant, 'client-publish-idempotency-scope')

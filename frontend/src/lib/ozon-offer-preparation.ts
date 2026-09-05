@@ -24,6 +24,11 @@ export interface OzonPreflightIssue {
   field: string;
   label: string;
   message: string;
+  image_id?: number;
+  image_index?: number;
+  width_px?: number;
+  height_px?: number;
+  help_url?: string;
 }
 
 export interface OzonAutofillField {

@@ -69,6 +69,8 @@ interface WorkspaceImage {
   position: number;
   url: string;
   thumb_url: string;
+  resolution_w?: number | null;
+  resolution_h?: number | null;
 }
 
 type AvitoListingDetail = PublicationWorkspaceListing;

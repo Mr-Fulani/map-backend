@@ -191,6 +191,8 @@ def upload_image(product, raw_bytes: bytes) -> ProductImage | None:
     phash = perceptual_hash(img)
     original_bytes = _to_jpeg_bytes(_resize(img.copy(), MAX_DIMENSION))
     thumb_bytes = _to_jpeg_bytes(_resize(img.copy(), THUMB_DIMENSION))
+    with Image.open(io.BytesIO(original_bytes)) as stored_image:
+        stored_width, stored_height = stored_image.size
 
     class _UploadAborted(RuntimeError):
         pass
@@ -247,6 +249,9 @@ def upload_image(product, raw_bytes: bytes) -> ProductImage | None:
                     status=ProductImage.Status.MANUALLY_SET,
                     is_primary=(position == 0),
                     phash=phash,
+                    resolution_w=stored_width,
+                    resolution_h=stored_height,
+                    file_size_kb=max(1, len(original_bytes) // 1024),
                 )
             return uploaded
         except StaleProductFeedWrite:

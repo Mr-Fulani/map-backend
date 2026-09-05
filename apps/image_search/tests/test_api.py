@@ -118,6 +118,8 @@ def test_manual_upload_persists_actual_storage_names(product):
 
     assert image.s3_key == 'dev/products/manual/original_suffixed.jpg'
     assert image.s3_key_thumb == 'dev/products/manual/thumb_suffixed.jpg'
+    assert (image.resolution_w, image.resolution_h) == (64, 64)
+    assert image.file_size_kb is not None
 
 
 @pytest.mark.django_db
