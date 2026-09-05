@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import { accountApi, logApi } from '@/lib/api';
 import {
@@ -29,6 +30,8 @@ interface SyncLog {
   account_name: string | null;
   message: string;
   created_at: string;
+  target_url?: string | null;
+  payload?: { state?: string };
 }
 
 interface Meta {
@@ -63,11 +66,24 @@ const OPERATION_FILTERS = [
   { value: 'listing_publish', label: 'Публикация' },
   { value: 'listing_update', label: 'Обновление' },
   { value: 'listing_price_update', label: 'Обновление цены' },
+  { value: 'listing_stock_update', label: 'Обновление остатка' },
+  { value: 'orders_sync', label: 'Синхронизация заказов' },
+  { value: 'moderation', label: 'Модерация и проверка статуса' },
   { value: 'listing_unpublish', label: 'Архивирование' },
   { value: 'listing_delete', label: 'Удаление' },
   { value: 'listing_error', label: 'Ошибка листинга' },
   { value: 'rate_limit_hit', label: 'Лимит API' },
 ];
+
+function operationLabel(value: string) {
+  return OPERATION_FILTERS.find((item) => item.value === value)?.label ?? value;
+}
+
+function resultLabel(value: string, state?: string) {
+  if (value === 'ok' && state === 'queued') return 'В очереди';
+  if (value === 'ok' && state === 'reconciling') return 'Проверяем';
+  return ({ ok: 'Успешно', warn: 'Требует внимания', error: 'Ошибка' } as Record<string, string>)[value] ?? value;
+}
 
 export default function LogsPage() {
   const router = useRouter();
@@ -234,7 +250,7 @@ export default function LogsPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <Badge variant={STATUS_VARIANT[log.status] ?? 'secondary'}>
-                      {log.provider_result}
+                      {resultLabel(log.provider_result, log.payload?.state)}
                     </Badge>
                     {log.marketplace && (
                       <Badge variant="outline" className="ml-2">
@@ -242,10 +258,10 @@ export default function LogsPage() {
                       </Badge>
                     )}
                     <p className="mt-2 break-words font-mono text-xs text-muted-foreground">
-                      {log.operation}
+                      {operationLabel(log.operation)}
                     </p>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {log.account_name || 'Общее событие tenant'}
+                      {log.account_name || 'Общее событие организации'}
                     </p>
                   </div>
                   <span className="shrink-0 text-xs text-muted-foreground">
@@ -253,6 +269,11 @@ export default function LogsPage() {
                   </span>
                 </div>
                 <p className="mt-2 break-words text-sm">{log.message || '—'}</p>
+                {log.target_url && (
+                  <Link href={log.target_url} className="mt-2 inline-block text-sm text-primary underline">
+                    Открыть {log.target_url.includes('/settings') ? 'настройки' : 'карточку'}
+                  </Link>
+                )}
               </div>
             ))}
       </div>
@@ -293,7 +314,7 @@ export default function LogsPage() {
                   <tr key={log.id} className="border-b transition-colors hover:bg-muted/30">
                     <td className="px-4 py-3">
                       <Badge variant={STATUS_VARIANT[log.status] ?? 'secondary'}>
-                        {log.provider_result}
+                        {resultLabel(log.provider_result, log.payload?.state)}
                       </Badge>
                     </td>
                     <td className="px-4 py-3">
@@ -307,10 +328,15 @@ export default function LogsPage() {
                       {log.account_name || '—'}
                     </td>
                     <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                      {log.operation}
+                      {operationLabel(log.operation)}
                     </td>
                     <td className="px-4 py-3">
                       <p className="line-clamp-2">{log.message || '—'}</p>
+                      {log.target_url && (
+                        <Link href={log.target_url} className="mt-1 inline-block text-primary underline">
+                          Открыть {log.target_url.includes('/settings') ? 'настройки' : 'карточку'}
+                        </Link>
+                      )}
                     </td>
                     <td className="hidden px-4 py-3 text-muted-foreground md:table-cell whitespace-nowrap">
                       {new Date(log.created_at).toLocaleString('ru-RU')}

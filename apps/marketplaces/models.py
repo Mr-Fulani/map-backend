@@ -406,6 +406,12 @@ class OzonAccountProfile(TimestampedModel):
         default=False,
         verbose_name='Автосинхронизация FBS-заказов Ozon',
     )
+    commerce_checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    orders_checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    reconciliation_checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    commerce_cursor = models.PositiveBigIntegerField(default=0)
+    reconciliation_cursor = models.UUIDField(null=True, blank=True)
+    automation_health = models.JSONField(default=dict, blank=True)
     last_checked_at = models.DateTimeField(verbose_name='Подключение проверено')
 
     class Meta:
@@ -1019,6 +1025,17 @@ class OzonOperation(TimestampedModel):
 
     def __str__(self):
         return f'Ozon operation {self.kind} / {self.id}'
+
+    def save(self, *args, **kwargs):
+        # Keep the user-facing event in the same transaction as the durable
+        # Ozon outcome, including changes initiated from the manual drawer.
+        from apps.marketplaces.ozon_events import record_operation_event
+
+        update_fields = kwargs.get('update_fields')
+        with transaction.atomic(using=kwargs.get('using')):
+            super().save(*args, **kwargs)
+            if update_fields is None or set(update_fields) & {'state', 'errors', 'response_summary'}:
+                record_operation_event(self)
 
 
 class OzonFbsPosting(TimestampedModel):

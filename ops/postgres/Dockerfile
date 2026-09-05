@@ -1,7 +1,7 @@
 FROM postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
 
 RUN set -eux; \
-    apk add --no-cache --upgrade libcrypto3 libssl3; \
+    apk add --no-cache --upgrade libcrypto3 libssl3 'libuuid>=2.42.3-r0'; \
     for package in libcrypto3 libssl3; do \
         version="$(apk list --installed "$package" \
             | sed -n "s/^${package}-\\([^ ]*\\).*/\\1/p")"; \
