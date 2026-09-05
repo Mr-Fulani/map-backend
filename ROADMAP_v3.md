@@ -11,6 +11,10 @@
 > в `requirements/*.in`, сгенерированных hash-lock `requirements/*.txt`,
 > `frontend/package.json`/`package-lock.json` и Dockerfile-ах.
 
+> Поиск/модерация фото и их обработка/генерация — разные контуры. Актуальный
+> аудит незавершённой обработки и коротких видео на 2026-09-06:
+> [docs/media_processing.md](docs/media_processing.md).
+
 > **Адаптировано:** под существующую архитектуру MAP  
 > **Хранилище:** Yandex Cloud S3 (текущее)  
 > **Источники:** Free-only (pluggable на будущее)  

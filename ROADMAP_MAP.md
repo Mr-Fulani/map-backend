@@ -10,6 +10,9 @@
 > [security runbook](docs/PRODUCTION_SECURITY.md) и
 > [backup/restore runbook](docs/BACKUP_RESTORE.md).
 
+> Сводки на 2026-09-06: [Ozon в production](docs/OZON_STATUS.md),
+> [обработка фото и короткие видео — что ещё не завершено](docs/media_processing.md).
+
 > Актуальный специализированный план по AI-моделям, кредитам и маржинальности:
 > [ROADMAP_AI_MODELS_AND_BILLING.md](ROADMAP_AI_MODELS_AND_BILLING.md)
 

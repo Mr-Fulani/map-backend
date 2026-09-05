@@ -1,7 +1,13 @@
-# Ozon: справедливая синхронизация и журнал — CODE_READY
+# Ozon: справедливая синхронизация и журнал — ENABLED
 
-Активный пакет от 2026-09-06: каждый включённый кабинет получает свою очередь
+Обновлено: 2026-09-06. Релиз: [PR #317](https://github.com/Mr-Fulani/map-backend/pull/317),
+SHA `a2308d566511d652002c383b82c8b737349bdb7a`; входит в текущий
+[production baseline Ozon](OZON_STATUS.md).
+
+Каждый включённый кабинет получает свою очередь
 обхода, а результаты Ozon видны в общих логах с переходом к нужной карточке.
+`ENABLED` относится к журналу и планировщику: он не включает автоматически
+цены/остатки или заказы у тенантов. У AlfaPro оба переключателя остались выключены.
 
 Границы: Ozon automation/operations и общий журнал SyncLog (две подсистемы).
 Новые поля и индексы только для Ozon scheduling и привязки событий; не более
@@ -18,29 +24,26 @@
 - фильтры Avito и существующие события сохраняют прежнее поведение;
 - узкие тесты, полный CI, проверка миграций, deploy и read-only smoke пройдены.
 
-Проверки на 2026-09-06:
+## Проверки и выкладка 2026-09-06
 
-- `python3 -m flake8` для изменённых Python-модулей: PASS.
-- `manage.py makemigrations --check --dry-run`: No changes detected.
-- `npm run lint`, `npm run typecheck`: PASS; `npm run test:unit`: 93 passed.
-- Backend/миграции/конкурентность проверяются в PostgreSQL CI. Локальный запуск
-  с SQLite остановился на PostgreSQL ArrayField (`near "[]": syntax error`);
-  тестовые сценарии при этом не выполнялись. Локальная PostgreSQL и сборка
-  ограничены нехваткой диска, очистка не выполнялась.
-- CI 33992419564: frontend build и backend contracts/schema/types PASS;
-  security gate выявил HIGH CVE в `libuuid 2.42.1-r0` backup image, исправление
-  доступно с `2.42.3-r0`. Release prerequisite: точечный upgrade этой библиотеки
-  в существующей команде apk у backup и PostgreSQL (одинаковый базовый image).
-  Backup workflow и security gate сохраняются.
-- Повторный security scan: backup, backend и frontend прошли; та же версия
-  `libuuid` найдена в Nginx image. В его существующий apk upgrade добавлено
-  такое же минимальное исправленное ограничение; Nginx config не меняется.
-- CI shard 0: 1011 passed, один новый тест часов требовал изоляции от часов
-  psycopg; исправлен mock только внутри ozon_tasks. Тесты 103 карточек,
-  21 кабинета и конкурентных запусков прошли. Итоговый CI ещё обязателен.
-- `pytest tests/test_backup_tools.py::test_backup_container_and_deploy_contracts
-  tests/test_runtime_contract.py -q`: 37 passed. Полный локальный backup-набор:
-  54 passed, одна проверка восстановления остановлена нехваткой 1 GiB tmp.
+- [Полный CI 33993555424](https://github.com/Mr-Fulani/map-backend/actions/runs/33993555424) — **success**:
+  backend **2954 passed, 2 skipped**, coverage **80.2%**, frontend **93 passed**,
+  runtime/deploy contracts **67 passed**; миграции, типы/schema, frontend build,
+  security и runtime gates прошли, включая конкурентность и обход 103 карточек / 21 кабинета.
+- `manage.py makemigrations --check --dry-run` — **No changes detected**;
+  flake8, `npm run lint`, `npm run typecheck` — **pass**.
+- [Main CI 33994284818](https://github.com/Mr-Fulani/map-backend/actions/runs/33994284818) и
+  [deploy 33994300830](https://github.com/Mr-Fulani/map-backend/actions/runs/33994300830) — **success**.
+- Read-only AlfaPro canary, товар `3177`, Ozon account `5`: два события
+  («проверка» / «подтверждено с предупреждениями»), повторная сверка без дублей,
+  ссылки ведут в нужные marketplace/account. Существующий Avito-фильтр и события сохранены.
+  Новые публикации, изменения цены/остатка и включение автоматизации не выполнялись.
+
+Промежуточные неуспешные попытки сохранены в PR: SQLite не подходит для
+PostgreSQL-specific моделей; локальный backup test был ограничен диском.
+Найденная CI уязвимость `libuuid` исправлена до финального зелёного gate в
+backup/PostgreSQL/Nginx images (`>=2.42.3-r0`). Это закрытые препятствия, а не
+текущие release blockers. Очистка диска не выполнялась.
 
 Ограничения и дальнейшие задачи:
 
@@ -51,4 +54,6 @@
   автоматически не восстанавливается. Повторная сверка создаёт снимок события.
 - Детальные provider errors доступны в карточке; общий журнал хранит безопасный
   статус и ссылку без копирования произвольных provider payloads.
-- Продвинутые алерты на отставание и недоступность worker — следующий пакет.
+- Мониторинг устойчивых сбоев, задержек и восстановлений уже выложен в
+  [следующем релизе #318](OZON_HEALTH_RELEASE.md). Независимый внешний dead-man
+  и его реальный test-fire остаются отдельной эксплуатационной проверкой.
