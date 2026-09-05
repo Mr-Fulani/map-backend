@@ -32,6 +32,9 @@
   доступно с `2.42.3-r0`. Release prerequisite: точечный upgrade этой библиотеки
   в существующей команде apk у backup и PostgreSQL (одинаковый базовый image).
   Backup workflow и security gate сохраняются.
+- Повторный security scan: backup, backend и frontend прошли; та же версия
+  `libuuid` найдена в Nginx image. В его существующий apk upgrade добавлено
+  такое же минимальное исправленное ограничение; Nginx config не меняется.
 - CI shard 0: 1011 passed, один новый тест часов требовал изоляции от часов
   psycopg; исправлен mock только внутри ozon_tasks. Тесты 103 карточек,
   21 кабинета и конкурентных запусков прошли. Итоговый CI ещё обязателен.

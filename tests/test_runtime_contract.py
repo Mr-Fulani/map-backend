@@ -414,6 +414,8 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
         assert 'libcrypto3' in dockerfiles[name], name
         assert 'libssl3' in dockerfiles[name], name
         assert 'apk version -t "$version" 3.5.8-r0' in dockerfiles[name], name
+    for name in ('backup', 'postgres', 'nginx'):
+        assert "'libuuid>=2.42.3-r0'" in dockerfiles[name], name
     assert 'libcrypto3 libssl3 libexpat' in dockerfiles['nginx']
     assert 'apk version -t "$version" 2.8.4-r0' in dockerfiles['nginx']
     assert dockerfiles['egress_proxy'].splitlines()[0] == (
