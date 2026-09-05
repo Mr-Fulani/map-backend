@@ -180,3 +180,15 @@ def sync_enabled_ozon_commerce():
 @shared_task(queue='sync_import')
 def sync_enabled_ozon_orders():
     return _run('orders')
+
+
+@shared_task(queue='notifications', expires=50, soft_time_limit=20, time_limit=25)
+def monitor_ozon_account_health():
+    from apps.marketplaces.ozon_health_monitor import monitor_accounts
+    return monitor_accounts()
+
+
+@shared_task(queue='notifications')
+def deliver_ozon_health_alert(tenant_id, account_id, event_key, message, recovery_from=None):
+    from apps.marketplaces.ozon_health_monitor import deliver_alert
+    return deliver_alert(tenant_id, account_id, event_key, message, recovery_from)

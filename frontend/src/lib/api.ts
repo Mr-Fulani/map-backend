@@ -1289,6 +1289,7 @@ export const accountApi = {
   delete: (id: number) => api.delete(`/accounts/${id}/`),
   checkAutoload: (id: number) => api.get(`/accounts/${id}/autoload-status/`),
   getOzonFbsOrders: (id: number) => api.get(`/accounts/${id}/ozon-fbs-orders/`),
+  getOzonHealth: (id: number) => api.get(`/accounts/${id}/ozon-health/`),
   syncOzonFbsOrders: (id: number) => api.post(`/accounts/${id}/ozon-fbs-orders/`, {}),
   updateOzonAutomation: (
     id: number,

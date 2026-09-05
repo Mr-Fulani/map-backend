@@ -1,4 +1,5 @@
 from django.urls import path
+from apps.marketplaces.ozon_health_views import OzonHealthView
 
 from apps.marketplaces.views import (
     AutoloadStatusView,
@@ -18,6 +19,7 @@ from apps.marketplaces.ozon_catalog_views import (
 from apps.marketplaces.ozon_order_views import OzonAutomationView, OzonFbsOrdersView
 
 urlpatterns = [
+    path('<int:pk>/ozon-health/', OzonHealthView.as_view(), name='account-ozon-health'),
     path('', MarketplaceAccountListView.as_view(), name='account-list'),
     path(
         'provider-rollout/',

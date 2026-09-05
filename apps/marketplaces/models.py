@@ -412,6 +412,8 @@ class OzonAccountProfile(TimestampedModel):
     commerce_cursor = models.PositiveBigIntegerField(default=0)
     reconciliation_cursor = models.UUIDField(null=True, blank=True)
     automation_health = models.JSONField(default=dict, blank=True)
+    health_monitor_checked_at = models.DateTimeField(null=True, blank=True, db_index=True)
+    health_monitor_state = models.JSONField(default=dict, blank=True)
     last_checked_at = models.DateTimeField(verbose_name='Подключение проверено')
 
     class Meta:

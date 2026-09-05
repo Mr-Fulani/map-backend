@@ -257,11 +257,13 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
                 'product_write_enabled': serializers.BooleanField(read_only=True),
                 'commerce_auto_sync_enabled': serializers.BooleanField(read_only=True),
                 'orders_auto_sync_enabled': serializers.BooleanField(read_only=True),
+                'sync_health': serializers.DictField(read_only=True),
             },
         ),
     )
     def get_ozon_profile(self, obj):
         """Возвращает только безопасный снимок; credentials здесь отсутствуют."""
+        from apps.marketplaces.ozon_health import health_snapshot
         if obj.marketplace != MarketplaceAccount.MARKETPLACE_OZON:
             return None
         try:
@@ -283,6 +285,7 @@ class MarketplaceAccountSerializer(serializers.ModelSerializer):
             'product_write_enabled': profile.product_write_enabled,
             'commerce_auto_sync_enabled': profile.commerce_auto_sync_enabled,
             'orders_auto_sync_enabled': profile.orders_auto_sync_enabled,
+            'sync_health': health_snapshot(profile),
         }
 
 
