@@ -4,8 +4,6 @@
 #
 #    scripts/compile_requirements.sh
 #
---only-binary :all:
-
 amqp==5.3.1 \
     --hash=sha256:43b3319e1b4e7d1251833a93d672b4af1e40f3d632d479b98661a95f117880a2
     # via kombu
@@ -28,7 +26,7 @@ billiard==4.2.4 \
 boto3==1.43.67 \
     --hash=sha256:082cf9df068168cb44028a1703822374c1eb7e48fa49470d7e8a76f0c977d0bc
     # via
-    #   -r requirements/base.in
+    #   -r base.in
     #   django-storages
 botocore==1.43.67 \
     --hash=sha256:48ab8e9fac26fbc2a700d57010251003e6a5f731cf74d8540fb796bc8f3fc0ef
@@ -136,10 +134,10 @@ brotli==1.2.0 \
     --hash=sha256:fc1530af5c3c275b8524f2e24841cbe2599d74462455e9bae5109e9ff42e9361 \
     --hash=sha256:ff09cd8c5eec3b9d02d2408db41be150d8891c5566addce57513bf546e3d6c6d
     # via httpx
-celery==5.6.3 \
+celery[redis]==5.6.3 \
     --hash=sha256:0808f42f80909c4d5833202360ffafb2a4f83f4d8e23e1285d926610e9a7afa6
     # via
-    #   -r requirements/base.in
+    #   -r base.in
     #   django-celery-beat
 certifi==2026.7.22 \
     --hash=sha256:62f22742b58a1a33014a2b6b706588a8d7e2a88ae7bd1a6ebe8c992928483775
@@ -409,20 +407,21 @@ cryptography==50.0.0 \
     --hash=sha256:f59e38625469987d7ef6d495323c55e7db6c212eaf6112267e0d3b565a2e9c9f \
     --hash=sha256:f89831ef99dd7dd169ab06d63a831adb9e20a87aac6d380266bbda5823349169 \
     --hash=sha256:fd9192b7b70c573d7f214eb1ae35e00d359f6f5e4b27c7e21e30de1fc6204645
-    # via -r requirements/base.in
+    # via -r base.in
 ddgs==9.14.4 \
     --hash=sha256:acb084c34bf1110c974caf7e5e5a2c1973beb4bd9e170bfd191fe5ed2d2b2d6c
-    # via -r requirements/base.in
+    # via -r base.in
 defusedxml==0.7.1 \
     --hash=sha256:a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61
-    # via -r requirements/base.in
+    # via -r base.in
 dj-database-url==3.1.2 \
     --hash=sha256:544e015fee3efa5127a1eb1cca465f4ace578265b3671fe61d0ed7dbafb5ec8a
-    # via -r requirements/base.in
-django==5.2.17 \
-    --hash=sha256:f04fb3b36ee119e1af4fa1d397d5fd6cf12700f49321e84d4f4c642c5b1973db
+    # via -r base.in
+django==6.0.8 \
+    --hash=sha256:9b98b7e1902e0e575ea4f42c175fc9512784f7f2580898286aee3388b322219d \
+    --hash=sha256:cb0bd962d27fc866f3c514b20aae6a7df56ec80b488f9899da46d675cd051526
     # via
-    #   -r requirements/base.in
+    #   -r base.in
     #   dj-database-url
     #   django-celery-beat
     #   django-cors-headers
@@ -436,34 +435,34 @@ django==5.2.17 \
     #   sentry-sdk
 django-celery-beat==2.9.0 \
     --hash=sha256:4a9e5ebe26d6f8d7215e1fc5c46e466016279dc102435a28141108649bdf2157
-    # via -r requirements/base.in
+    # via -r base.in
 django-cors-headers==4.9.0 \
     --hash=sha256:15c7f20727f90044dcee2216a9fd7303741a864865f0c3657e28b7056f61b449
-    # via -r requirements/base.in
+    # via -r base.in
 django-redis==7.0.0 \
     --hash=sha256:4b23aa6e0cd0937bb1242e9a463809e6004de3ca2150f34e986306bb6220d688
-    # via -r requirements/base.in
-django-storages==1.14.6 \
+    # via -r base.in
+django-storages[s3]==1.14.6 \
     --hash=sha256:11b7b6200e1cb5ffcd9962bd3673a39c7d6a6109e8096f0e03d46fab3d3aabd9
-    # via -r requirements/base.in
+    # via -r base.in
 django-timezone-field==7.2.2 \
     --hash=sha256:30354d0f37462a0b9b5c289e271580a6be9b58dea30e7bf88435372882c8fa7a
     # via django-celery-beat
 django-unfold==0.103.0 \
     --hash=sha256:161cd07cf644a0c64ba6bbd7ff2202a9c2b5a20734df6dd749d667f50bd8a8ba
-    # via -r requirements/base.in
+    # via -r base.in
 djangorestframework==3.17.2 \
     --hash=sha256:cb0546a7415d5b46c04e0f4fe0a54b2109f4fdd5e83ca773c8c6183a6493d042
     # via
-    #   -r requirements/base.in
+    #   -r base.in
     #   djangorestframework-simplejwt
     #   drf-spectacular
 djangorestframework-simplejwt==5.5.1 \
     --hash=sha256:2c30f3707053d384e9f315d11c2daccfcb548d4faa453111ca19a542b732e469
-    # via -r requirements/base.in
+    # via -r base.in
 drf-spectacular==0.30.0 \
     --hash=sha256:006cf5921ebe20a9bd24f7c846261ebbf78780be5961b0d6e87afaa82afd62ff
-    # via -r requirements/base.in
+    # via -r base.in
 et-xmlfile==2.0.0 \
     --hash=sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa
     # via openpyxl
@@ -472,7 +471,7 @@ fake-useragent==2.2.0 \
     # via ddgs
 gunicorn==26.0.0 \
     --hash=sha256:40233d26a5f0d1872916188c276e21641155111c2853f0c2cd55260aec0d24fc
-    # via -r requirements/base.in
+    # via -r base.in
 h11==0.16.0 \
     --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
     # via httpcore
@@ -485,7 +484,7 @@ hpack==4.2.0 \
 httpcore==1.0.9 \
     --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55
     # via httpx
-httpx==0.28.1 \
+httpx[brotli,http2,socks]==0.28.1 \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
     # via ddgs
 hyperframe==6.1.0 \
@@ -511,7 +510,7 @@ jsonschema==4.26.0 \
 jsonschema-specifications==2025.9.1 \
     --hash=sha256:98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe
     # via jsonschema
-kombu==5.6.2 \
+kombu[redis]==5.6.2 \
     --hash=sha256:efcfc559da324d41d61ca311b0c64965ea35b4c55cc04ee36e55386145dace93
     # via celery
 lxml==6.1.1 \
@@ -649,11 +648,11 @@ lxml==6.1.1 \
     --hash=sha256:ff3f333630ab480244a1bff72043e511a91eb22e7595dead8653ee5612dd8f3d \
     --hash=sha256:ffecec8eb889b58ba9be5b95fb1cc78e22ea8eedea38e8736a1568fe1979250e
     # via
-    #   -r requirements/base.in
+    #   -r base.in
     #   ddgs
 openpyxl==3.1.5 \
     --hash=sha256:5282c12b107bffeef825f4617dc029afaf41d0ea60823bbb665ef3079dc79de2
-    # via -r requirements/base.in
+    # via -r base.in
 packaging==26.3 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
     # via
@@ -746,7 +745,7 @@ pillow==12.3.0 \
     --hash=sha256:fdafc9cce40277e0f7a0feabce0ee50dd2fa1800f3b38015e51296b5e814048d \
     --hash=sha256:fe3cca2e4e8a592be0f269a1ca4835c25199d9f3ce815c8491048f785b0a0198 \
     --hash=sha256:ffd0c5368496f41b0944be820fcb7a838aa6e623d250b01acf2643939c3f99d7
-    # via -r requirements/base.in
+    # via -r base.in
 primp==1.3.1 \
     --hash=sha256:0504de2901c97903a9c369856a4b186dc90a782d8320652c142b066e697d5a1a \
     --hash=sha256:09ada1752629fe89d7b128beeb59cb641f404af462e24177ba36aed1cf322299 \
@@ -782,9 +781,9 @@ primp==1.3.1 \
 prompt-toolkit==3.0.53 \
     --hash=sha256:01c0891d7f9237d5e339f7d3e42cdae80b7534abb1c7c0e3352efba6231492f2
     # via click-repl
-psycopg==3.3.4 \
+psycopg[binary]==3.3.4 \
     --hash=sha256:b6bbc25ccf05c8fad3b061d9db2ef0909a555171b84b07f29458a447253d679a
-    # via -r requirements/base.in
+    # via -r base.in
 psycopg-binary==3.3.4 \
     --hash=sha256:018fbed325936da502feb546642c982dcc4b9ffdea32dfef78dbf3b7f7ad4070 \
     --hash=sha256:0579252a1202cd73e4da137a1426e2dae993ae44e757605344282af3a082848c \
@@ -933,7 +932,7 @@ pyyaml==6.0.3 \
 redis==6.4.0 \
     --hash=sha256:f0544fa9604264e9464cdf4814e7d4830f74b165d52f2a330a760a88dd248b7f
     # via
-    #   -r requirements/base.in
+    #   -r base.in
     #   django-redis
     #   kombu
 referencing==0.37.0 \
@@ -943,7 +942,7 @@ referencing==0.37.0 \
     #   jsonschema-specifications
 requests==2.34.2 \
     --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0
-    # via -r requirements/base.in
+    # via -r base.in
 rpds-py==2026.6.3 \
     --hash=sha256:0be972be84cfcaf46c8c6edf690ca0f154ac17babf1f6a955a51579b34ad2dc5 \
     --hash=sha256:127565fead0a10943b282957bd5447804ff3160ad79f2ad2635e6d249e380680 \
@@ -1130,10 +1129,10 @@ selectolax==0.4.11 \
     --hash=sha256:f8121f4cbfe870d9ad24ae418a735d918d55844e905c3270077e97f4e579770f \
     --hash=sha256:f8f014f328f6f79a364293bca54d43af1cec776dc10a5302054a54b5fb2d8675 \
     --hash=sha256:fad5b1065f73eeaa07ea343cbc548aaa9f9a5c359c3bdd8d98f5d80b61550d1c
-    # via -r requirements/base.in
-sentry-sdk==2.66.1 \
+    # via -r base.in
+sentry-sdk[django]==2.66.1 \
     --hash=sha256:86002793161d9a95ef04bdd8d442e9bfece5d989b755f05d6360215094a7aff6
-    # via -r requirements/base.in
+    # via -r base.in
 six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274
     # via
@@ -1145,11 +1144,11 @@ socksio==1.0.0 \
 sqlparse==0.6.0 \
     --hash=sha256:b861c0288ce2fa56209a9a6412d2e066ac664b3873b89c26c9d8415e8e32996f
     # via
-    #   -r requirements/base.in
+    #   -r base.in
     #   django
 transliterate==1.10.2 \
     --hash=sha256:010a5021bf6021689c4fade0985f3f7b3db1f2f16a48a09a56797f171c08ed42
-    # via -r requirements/base.in
+    # via -r base.in
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
     # via
@@ -1171,7 +1170,7 @@ uritemplate==4.2.0 \
 urllib3==2.7.0 \
     --hash=sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897
     # via
-    #   -r requirements/base.in
+    #   -r base.in
     #   botocore
     #   requests
     #   sentry-sdk
@@ -1186,4 +1185,4 @@ wcwidth==0.8.2 \
     # via prompt-toolkit
 xlrd==2.0.2 \
     --hash=sha256:ea762c3d29f4cca48d82df517b6d89fbce4db3107f9d78713e48cd321d5c9aa9
-    # via -r requirements/base.in
+    # via -r base.in

@@ -1,5 +1,5 @@
 # Core
-Django==5.2.17
+Django==6.0.8
 sqlparse==0.6.0
 djangorestframework==3.17.2
 dj-database-url==3.1.2
