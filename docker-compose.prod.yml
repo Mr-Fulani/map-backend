@@ -236,7 +236,7 @@ services:
 
   redis:
     <<: *runtime-policy
-    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    image: redis:8.10.3-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
     cpus: "0.5"
     mem_limit: 256m
     pids_limit: 128
@@ -253,7 +253,7 @@ services:
 
   redis_broker:
     <<: *runtime-policy
-    image: redis:7.4.10-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    image: redis:8.10.3-alpine@sha256:21090af93f8324db2f0f0f4f38a7c60369d47d917e000c3423d89d2ae2883537
     cpus: "0.75"
     mem_limit: 352m
     pids_limit: 128
