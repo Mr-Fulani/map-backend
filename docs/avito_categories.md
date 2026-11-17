@@ -4,8 +4,18 @@
 дерева категорий Avito** — категории → подкатегории → виды запчастей (самый
 глубокий уровень, напр. `Двигатель → Патрубки вентиляции`).
 
-Дерево **вшито в код** в `apps/marketplaces/data/avito_tree_<domain>.json` и
-редактируется/дополняется/удаляется тенантом через дашборд (Настройки → Категории).
+Базовое дерево **вшито в код** в `apps/marketplaces/data/avito_tree_<domain>.json` и
+редактируется/дополняется/удаляется тенантом через дашборд (Настройки →
+Маркетплейсы → категории Avito).
+
+Для домена `auto_parts` поверх вшитого дерева работает **еженедельная живая
+синхронизация**: periodic task `sync_avito_category_tree` (очередь
+`avito_update`) через `AvitoCategoryTreeSyncService.sync_auto_parts` строит
+дерево из Avito API в пределах лимитов `AVITO_TREE_MAX_DEPTH` /
+`AVITO_TREE_MAX_NODES`, проверяет его против предыдущего, сохраняет в
+`AvitoCategoryTreeSnapshot` и мягко применяет к каталогам тенантов. При ошибке
+или превышении лимита остаётся последний проверенный снимок. Остальные домены
+обновляются только командами ниже.
 
 ## Как устроено Avito API (важно)
 
@@ -63,7 +73,25 @@
 - `apps/marketplaces/management/commands/sync_avito_full_tree.py` — сбор дерева из Avito → JSON.
 - `apps/marketplaces/management/commands/import_avito_tree.py` — импорт JSON → каталог тенанта.
 - `apps/marketplaces/avito_tree_import.py` — `AvitoTreeImporter`.
-- `apps/marketplaces/data/avito_tree_<domain>.json` — вшитые деревья (источник истины).
+- `apps/marketplaces/avito_tree_sync.py` — еженедельная синхронизация `auto_parts`
+  и модель-снимок `AvitoCategoryTreeSnapshot`.
+- `apps/marketplaces/management/commands/sync_avito_categories.py` — выгрузка
+  спецификаций полей листьев в `data/avito_field_specs.json` и зависимостей в
+  `data/avito_field_rules.json.gz`.
+- `apps/marketplaces/adapters/avito/category_map.py` — чтение этих спецификаций
+  при сборке и проверке фида.
+- `apps/marketplaces/data/avito_tree_<domain>.json` — вшитые деревья: базовый
+  источник для всех доменов и fallback для `auto_parts`, пока нет проверенного
+  живого снимка.
+
+## Авто-классификация товаров
+
+Назначение товару домена и категории каталога выполняется в
+`apps/products/services.py` (`classify_product_catalog_domain`,
+`get_or_classify_product_catalog_domain`). Перед сопоставлением текст
+нормализуется функцией `dehomoglyph` (латинские буквы-двойники → кириллица),
+результат хранится в `ProductCatalogClassification`. Ручное назначение
+категории тенантом авто-классификация не перезаписывает.
 
 ## Привязка к публикации (маппинг)
 

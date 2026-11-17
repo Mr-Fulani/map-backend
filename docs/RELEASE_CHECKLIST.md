@@ -72,11 +72,15 @@ targets, если daemon занят чужим проектом.
       точный успешный CI SHA являются обязательным gate.
 - [ ] `mapdeploy` принимает только public-key auth, не состоит в `docker`, не
       читает checkout/secrets и принимает только forced commands `deploy`, `backup-check`,
-      `topology-check`; его sudoers прошёл `visudo -c`.
+      `topology-check`, `capacity-check`; его sudoers прошёл `visudo -c`.
 - [ ] `PROD_HOST_FINGERPRINT` независимо сверен с SSH host key; парольный SSH и
       agent forwarding не требуются.
 - [ ] На хосте `/opt/saas_poster` нет tracked и untracked Git drift и достаточно
-      свободного диска (`PROD_MIN_FREE_DISK_MB` плюс запас на параллельную сборку).
+      свободного диска (`PROD_MIN_FREE_DISK_MB` плюс запас на последовательную сборку образов).
+- [ ] Ozon: `OZON_ACCOUNT_CONNECTION_ENABLED` и оба allowlist в `.env` не
+      изменились относительно согласованных значений; релиз сам не включает
+      запись или автоматизацию ни в одном кабинете
+      ([допуск](OZON_STATUS.md#допуск-и-переключатели)).
 - [ ] Host имеет не менее 3584 MiB RAM; normal Compose memory budget не выше
       2816 MiB, backup не выше 384 MiB, `capacity-check` подтверждает минимум
       1024 MiB доступной памяти для последовательной сборки и отсутствие

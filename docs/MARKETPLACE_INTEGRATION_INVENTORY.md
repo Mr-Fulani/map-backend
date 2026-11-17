@@ -41,6 +41,8 @@ Avito и без преждевременных вызовов Ozon.
 2. Первый Ozon MVP использует FBS и один выбранный склад на один Ozon account.
    Модель должна позволить добавить несколько складов позднее без смены
    идентичности offer. Обработка заказов, возвратов и FBO в MVP не входит.
+   (Позже добавлена отдельная ограниченная синхронизация FBS-заказов —
+   `ozon_orders.py`; возвраты и FBO по-прежнему не реализованы.)
 3. Barcode, габариты, вес и НДС берутся из 1C, если значение присутствует и
    проходит валидацию. Иначе пользователь заполняет fallback в MAP. Payload
    обязан показывать и сохранять источник эффективного значения: `1c` или
@@ -138,6 +140,14 @@ Tenant
 
 ## Фактическое состояние backend
 
+> **Это снимок M0 на 2026-08-29, а не текущее состояние.** По коду на
+> 2026-11-17 перечисленные ниже разрывы закрыты: `MarketplaceAccount` имеет
+> `MARKETPLACE_OZON`; `SyncLog` хранит marketplace/account и фильтруется по ним;
+> у товара есть barcode, габариты, вес и НДС с источником (`source_*` / `map_*`);
+> появился `provider_registry.py`; `publish_product` принимает явные
+> `account_ids` вместо fan-out во все кабинеты; dashboard-сводка содержит
+> `ozon_total`. Таблицы сохранены как исходная инвентаризация.
+
 ### Модели и identity
 
 | Файл | Что уже подходит | Avito-specific предположение или риск |
@@ -199,9 +209,14 @@ service; Avito migrations/data не переименовываются как п
   marketplace publication/status events в него сейчас не fan-out-ятся.
 - Avito reconciliation audit и feed evidence нельзя переиспользовать для Ozon:
   Ozon mutations получают отдельный `MarketplaceOperation` с sanitized request
-  digest, task ID, state, retries и reconciliation evidence.
+  digest, task ID, state, retries и reconciliation evidence. В коде эта модель
+  реализована под именем `OzonOperation`.
 
 ## Фактическое состояние frontend
+
+> **Снимок M0 на 2026-08-29.** Сейчас у Ozon отдельная форма и настройки
+> кабинета (`OzonAccountSettings.tsx`), логи фильтруются по маркетплейсу и
+> кабинету, появилась страница «Заказы». Таблица ниже — исходная инвентаризация.
 
 | Экран/файл | Avito-specific предположение |
 |---|---|
@@ -361,6 +376,9 @@ P7 и production feed flags не менялись.
 
 #### O1c — read-only AlfaPro canary (`REQUIRES APPROVAL`)
 
+> Исторический статус на 2026-08-30. Canary с тех пор выполнен, кабинет
+> AlfaPro подключён; см. [OZON_STATUS.md](OZON_STATUS.md).
+
 - непосредственно перед созданием/использованием ключа требуется отдельное
   подтверждение пользователя;
 - account allowlist и read-only вызовы roles/seller/warehouses;
@@ -390,7 +408,8 @@ O2b/O2c; фоновых чтений Ozon и изменений Avito runtime н
 
 ### O3 — durable publication и reconciliation
 
-- `MarketplaceOperation`, per-item outcome, task polling и safe retry;
+- `MarketplaceOperation` (в коде — `OzonOperation`), per-item outcome, task
+  polling и safe retry;
 - no blind retry после timeout;
 - один write-canary AlfaPro, stock 0, один FBS warehouse;
 - account allowlist и kill switch.
@@ -771,6 +790,9 @@ production, но rollout endpoint возвращает disabled при productio
 перед созданием/использованием ключа требуется отдельное подтверждение.
 
 ## O1c safety gate
+
+> Историческое evidence на 2026-08-30. Фразы «Production rollout остаётся
+> выключенным» и «MAP не обращался к Ozon» ниже относятся к той дате.
 
 Локально выполнено 2026-08-30:
 

@@ -59,8 +59,8 @@ P7, GC, cleanup, object deletion и `0039` остаются заморожены
    `stat` и GNU `timeout`. Canonical checkout, `.git`, secret-файлы и Docker
    operations принадлежат `root`. GitHub подключается отдельным public-key-only
    пользователем `mapdeploy`: его ключ имеет SSH `ForcedCommand`, а sudoers
-   разрешает только проверенный release entrypoint, backup freshness и topology
-   check. Не добавляйте `mapdeploy` в группу `docker` и не давайте ему доступ к
+   разрешает только проверенный release entrypoint, backup freshness, topology
+   check и capacity check. Не добавляйте `mapdeploy` в группу `docker` и не давайте ему доступ к
    checkout или secret-файлам.
    Поддерживаемый минимальный размер текущего single-host контура — 2 vCPU и
    3584 MiB RAM. Compose ограничивает обычный runtime суммарно 2816 MiB, а
@@ -170,6 +170,20 @@ EMAIL_HTTP_PROXY_URL=http://egress_proxy:3128
 
 Значения в угловых скобках — placeholders, их нельзя оставлять буквально.
 Если CDN не используется, оставьте `YC_CDN_DOMAIN` пустым.
+
+Ozon в этот минимальный набор не входит: без переменных ниже он остаётся
+выключенным (`OZON_ACCOUNT_CONNECTION_ENABLED=false` по умолчанию), и MAP не
+обращается к Ozon. Для разрешённых кабинетов задаются одновременно:
+
+```dotenv
+OZON_ACCOUNT_CONNECTION_ENABLED=true
+OZON_ACCOUNT_CONNECTION_TENANT_SLUGS=<exact-sorted-csv-of-tenant-slugs>
+OZON_ACCOUNT_CONNECTION_CLIENT_IDS=<exact-sorted-csv-of-ozon-client-ids>
+```
+
+Изменение этих списков — отдельное согласованное действие: оно открывает
+внешние вызовы к Ozon для названных кабинетов. Слои допуска описаны в
+[`OZON_STATUS.md`](OZON_STATUS.md#допуск-и-переключатели).
 До подключения платёжного провайдера явно задайте `BILLING_ENABLED=false` и
 оставьте `YOOKASSA_SHOP_ID`/`YOOKASSA_SECRET_KEY` пустыми. В этом режиме чтение
 тарифов, подписки, лимитов и истории доступно, а checkout, AI top-up, webhook,
@@ -373,7 +387,7 @@ API, foreign/fork run, иной workflow, неуспешный run или дру
    billing — к YooKassa с проверкой credentials, из нового Django image; все
    connectivity gates
    завершаются до maintenance/drain;
-4. останавливает ingress, Beat, web и workers с graceful drain;
+4. останавливает сначала Beat, затем ingress, web и workers с graceful drain;
 5. создаёт обязательный зашифрованный и подписанный S3 backup;
 6. только после успешного backup применяет миграции;
 7. идемпотентно создаёт canonical plans, собирает static data, обновляет periodic
