@@ -50,7 +50,8 @@ MAP объединяет импорт каталога из 1С/CSV, обога�
 - Полный CRUD листингов: создание, обновление цены/остатка, архивирование
 - Поддержка нескольких Avito-аккаунтов на одного тенанта
 - Автоматическое маппинг категорий каталога → категории Avito
-- Retry-логика: до 3 попыток при временных ошибках API Avito
+- Retry-логика при временных ошибках API Avito: до 6 попыток для публикации,
+  обновления и удаления, до 5 — для цены
 - Обработка кодов отклонения и сохранение причины отказа
 
 ### Публикация на Ozon
@@ -266,8 +267,11 @@ cd ..
 имена: `DJANGO_SECRET_KEY`, `DATABASE_URL`, `CACHE_REDIS_URL`,
 `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND`, `COORDINATION_REDIS_URL`,
 `FIELD_ENCRYPTION_KEYS`, `YC_S3_*`, ключи AI-провайдеров, `AVITO_*`,
-`YOOKASSA_*`, `RESEND_API_KEY`, `DEFAULT_FROM_EMAIL`,
+`OZON_*`, `YOOKASSA_*`, `RESEND_API_KEY`, `DEFAULT_FROM_EMAIL`,
 `EMAIL_HTTP_PROXY_URL` и `SENTRY_DSN`.
+Подключение Ozon по умолчанию выключено (`OZON_ACCOUNT_CONNECTION_ENABLED=false`)
+и требует точных allowlist тенантов и Client-Id; см.
+[статус Ozon](docs/OZON_STATUS.md).
 `REDIS_URL` используется только как fallback локальной разработки.
 
 Для production обязательны отдельные случайные PostgreSQL/cache-Redis/
@@ -378,7 +382,7 @@ saas_poster/
 │   ├── tenants/         — Tenant, TenantUser, APIKey, JWT
 │   └── users/           — кастомный User (email-based auth)
 ├── config/
-│   ├── settings/        — base, development, production
+│   ├── settings/        — base, development, production, image_search
 │   ├── celery.py
 │   └── urls.py
 ├── frontend/            — Next.js 16.3 / React 19 Dashboard
@@ -436,7 +440,7 @@ flake8 .
 # Создать миграции
 make migrations
 
-# Django shell
+# Shell (bash) внутри контейнера django
 make shell
 
 # Проверки без обращения к Docker daemon
@@ -452,7 +456,7 @@ cd frontend && npm run typecheck && npm run lint && npm run build
 | `make bootstrap` | Безопасно подготовить пустую БД и запустить первый dev runtime |
 | `make up` | Поднять все сервисы |
 | `make down` | Остановить все сервисы |
-| `make shell` | Django shell |
+| `make shell` | Открыть bash в контейнере `django` |
 | `make migrate` | Применить миграции |
 | `make test` | Запустить тесты с coverage |
 | `make lint` | Проверить весь Python-код через flake8 |
@@ -461,6 +465,10 @@ cd frontend && npm run typecheck && npm run lint && npm run build
 | `make frontend-test` | Запустить критичные frontend unit/contract тесты без Docker |
 | `make backup` | Создать зашифрованный production backup (ops profile) |
 | `make backup-check` | Проверить свежесть последнего production backup |
+| `make telegram-poll` | Telegram long polling для локальной разработки вместо webhook |
+
+Остальные цели (`dev`, `frontend`, `rebuild`, `restart*`, `logs*`, `seed`,
+`setup-periodic`, `superuser`) описаны в [DEV.md](DEV.md).
 
 Production runbooks: [deployment](docs/DEPLOYMENT.md),
 [security](docs/PRODUCTION_SECURITY.md), [backup/restore](docs/BACKUP_RESTORE.md)

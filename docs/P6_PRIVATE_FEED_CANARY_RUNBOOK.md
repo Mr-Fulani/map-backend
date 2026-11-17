@@ -239,8 +239,10 @@ MARKETPLACE_FEED_STORAGE_MODE=stable_bridge
 MARKETPLACE_FEED_PROFILE_MIGRATION_ENABLED=false
 ```
 
-Production settings отклоняют `active` без канонического списка ровно из
-одного положительного ID. Private serving в `active` также проверяет этот ID,
+В этом account-scoped режиме (`run=legacy`) production settings отклоняют
+`active` без канонического списка ровно из одного положительного ID; пустой
+список допустим только вместе с `run=durable` — это текущий fleet-default из
+раздела 8. Private serving в `active` также проверяет этот ID,
 поэтому случайная private endpoint запись другого аккаунта остаётся тёмной.
 
 После deploy оператор повторно проверяет legacy endpoint и запускает:

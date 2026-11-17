@@ -458,7 +458,8 @@ durable recovery очередь Celery Beat и применяется без pro
 Production-контейнеры находятся во внутренней Docker-сети без прямого маршрута в
 интернет. Исходящие HTTP(S)-запросы проходят через Squid. Proxy запрещает private,
 loopback, link-local, multicast и служебные диапазоны, но разрешает публичные
-endpoint-ы, необходимые Avito, AI-провайдерам, S3 и tenant webhook-ам. Public URL
+endpoint-ы, необходимые Avito, Ozon Seller API (`api-seller.ozon.ru`),
+YooKassa, AI-провайдерам, S3 и tenant webhook-ам. Public URL
 transport принимает только точный `PUBLIC_HTTP_PROXY_URL`; application DNS
 admission и Squid `dst` ACL являются независимыми проверками одного назначения.
 `check_public_http_connectivity` до drain выполняет side-effect-free GET. При

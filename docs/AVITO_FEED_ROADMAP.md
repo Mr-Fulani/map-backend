@@ -38,7 +38,9 @@ PR `#256` завершил fleet-default release на production SHA `0762ab5`: 
 account получает stable endpoint и durable/private delivery автоматически.
 Operational hardening PR `#262`–`#270` исправил реальные узкие места
 onboarding, generation/retry, provider outcomes и tenant-facing preflight.
-Текущий production SHA — `1c0030532f7fa4bd5357d48b39a5e938261931b5`.
+Production SHA на 2026-08-29 — `1c0030532f7fa4bd5357d48b39a5e938261931b5`;
+более поздние релизы не меняли feed-контур, их baseline — в
+[`OZON_STATUS.md`](OZON_STATUS.md).
 
 Текущий gate — observation без изменения кода P7:
 
@@ -285,7 +287,7 @@ backend (`2357 passed, 1 skipped`), оба mypy, flake8 и migration drift. Эт
 Содержимое:
 
 - две свёрнутые миграции `0029`–`0030` поверх production `0028` (artifact
-  schema и все P6 PostgreSQL guards);
+  schema и все P6 PostgreSQL guards) и точечная runtime-коррекция `0031`;
 - versioned private bucket;
 - запись и проверка точной версии XML;
 - ручная сверка неизвестного результата.
@@ -323,7 +325,9 @@ object delete, GC и `0039` не меняются.
 ### P7. Удаление старых файлов и DB-защита — отложенный backlog
 
 Сюда относятся `0036`–`0039`, cleanup служебных исключений, автоматическое
-удаление XML и перевод новой связи заданий в обязательную.
+удаление XML и перевод новой связи заданий в обязательную. Номера взяты из
+not-for-merge snapshot: в `main` `0036`–`0038` уже заняты Ozon, поэтому при
+активации P7 миграции получат новые номера.
 
 Этот пакет не начинается, пока:
 

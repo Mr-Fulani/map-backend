@@ -1,9 +1,16 @@
 # Avito Autoload — поля фида
 
-Публикация на Avito идёт **только через Autoload-фид** (XML `formatVersion="3"`):
-генерируем XML → кладём на S3 → `POST /autoload/v1/upload` → Avito асинхронно
-создаёт объявления. Сборка фида — `apps/marketplaces/adapters/avito/feed_builder.py`
-(`build_feed`). Результат опрашивается `poll_feed_results_task`.
+Публикация на Avito идёт **только через Autoload-фид** (XML `formatVersion="3"`).
+Сборка фида — `apps/marketplaces/adapters/avito/feed_builder.py`. Штатный
+production-путь: `write_feed` потоково пишет XML в приватный versioned artifact,
+а Avito забирает его по stable URL кабинета; результат опрашивается
+`poll_feed_results_task`. Прежний конвейер «`build_feed` → публичный S3 →
+`POST /autoload/v1/upload`» сохранён только как аварийный legacy-путь (см.
+[`AVITO_FEED_STATUS.md`](AVITO_FEED_STATUS.md)). Набор тегов в обоих путях
+одинаковый.
+
+Ограничения сборщика: `Title` — до 200 символов, `Description` — до 7500,
+не более 10 изображений на объявление.
 
 Набор обязательных полей **зависит от категории Avito**. Ниже — для текущей
 основной категории **«Запчасти и аксессуары»** (подтверждено реальными
@@ -17,10 +24,10 @@
 | `Title` | `listing.title` | → `product.name` |
 | `Description` | `listing.description_ai` | → `product.description_1c` |
 | `Price` | `listing.price_on_listing` | целое |
-| `Category` | `CategoryMapping.category_target` | → дефолт «Запчасти и аксессуары» |
+| `Category` | `fixed.Category` из спецификации листа дерева Avito | → `CategoryMapping.category_target` → дефолт «Запчасти и аксессуары» |
 | `AdType` (Вид объявления) | `listing.ad_type` | → «Товар приобретен на продажу». «Продаю своё» Avito не принимает для запчастей |
-| `GoodsType` (Вид товара) | `CategoryMapping.attributes_map['GoodsType']` | → дефолт «Запчасти» |
-| `ProductType` (Тип товара) | `CategoryMapping.attributes_map['ProductType']` | дефолта нет; для запчастей = класс техники, напр. «Для автомобилей» |
+| `GoodsType` (Вид товара) | `CategoryMapping.attributes_map['GoodsType']` | → `fixed.GoodsType` из спецификации листа → дефолт «Запчасти» |
+| `ProductType` (Тип товара) | `CategoryMapping.attributes_map['ProductType']` | → `fixed.ProductType` из спецификации листа; жёсткого дефолта нет — если пусто, тег не попадает в фид. Для запчастей = класс техники, напр. «Для автомобилей» |
 | `Brand` (Производитель) | `product.brand` | учитываются и `required=true`, и `required_by_dependency`; для нового «Автосвета» обязателен при `Condition=Новое`; имя тенанта не подставляется |
 | `Address` **или** `SellerAddressID` | цепочка размещения (см. ниже) | один из двух |
 | `ManagerName` (Контактное лицо) | цепочка контактов (см. ниже) | без него — отказ публикации |
@@ -30,7 +37,11 @@
 
 `SparePartType` (Вид запчасти) — обязателен (напр. «Автосвет», «Тормозная
 система»). Avito определяет его сам по названию, если не передан; мы отдаём
-его из `CategoryMapping.attributes_map['SparePartType']`, если задан.
+его из `CategoryMapping.attributes_map['SparePartType']`, если задан, иначе —
+из `fixed.SparePartType` спецификации листа. Для категорий, где Avito требует
+подвид (двигатель, кузов, трансмиссия и т.п.), дополнительно эмитится тег
+подвида — `EngineSparePartType`, `BodySparePartType` и аналогичные; значение
+берётся из дерева Avito.
 
 `OEM` (Номер детали) у Avito может быть **условно обязательным**. Например,
 для «Автосвета» официальный user-docs API возвращает `required=false`, но
@@ -118,9 +129,10 @@ listing.placement_address → `*_override` листинга → bulk-поля �
 Avito набор обязательных полей другой (напр. «Масла» → объём, вязкость; «Шины» →
 диаметр, сезон), и `Brand`/`OEM` могут быть неприменимы.
 
-Снимок `avito_field_specs.json` сохраняет не только статический `required`, но и
-нормализованные зависимости `required` / `visible` / `hidden` с условиями
-`value` / `filled` / `empty`. Временная ошибка Avito по одному листу больше не
+Снимок `apps/marketplaces/data/avito_field_specs.json` хранит спецификации
+листьев (включая `fixed`-значения и статический `required`), а нормализованные
+зависимости `required` / `visible` / `hidden` с условиями
+`value` / `filled` / `empty` лежат рядом в `avito_field_rules.json.gz`. Временная ошибка Avito по одному листу больше не
 затирает последнюю рабочую спецификацию пустыми данными. Текущая точка
 расширения значений — `CategoryMapping.attributes_map`. Рекомендуемое развитие:
 

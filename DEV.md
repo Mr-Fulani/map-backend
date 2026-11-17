@@ -9,7 +9,8 @@
 `dev.sh` жёстко фиксирует Compose file/project этого репозитория, не выполняет
 host-wide `docker prune` и не завершает процессы по номеру порта. После остановки
 собственного старого стенда он проверяет порты 3000/8000/5432/6379 и безопасно
-завершается при внешнем конфликте. `--clean` удаляет только локальный
+завершается при внешнем конфликте. Режим по умолчанию — `--fast` (без удаления
+кеша). `--clean` (синоним `--deep`) удаляет только локальный
 `frontend/.next`; Docker volumes и кеши других проектов не затрагиваются.
 `Ctrl+C` останавливает frontend и контейнеры только этого dev-проекта.
 
@@ -217,13 +218,11 @@ make superuser
 
 ---
 
-## Git / Ветки (RULEBOOK)
+## Git / Ветки
 
 ```bash
-git checkout develop
-git pull origin develop
-git checkout -b feature/BRANCH_NAME   # Новая фича от develop
-git checkout -b fix/BRANCH_NAME       # Багфикс
+git fetch origin
+git switch -c codex/BRANCH_NAME origin/main   # Рабочая ветка от свежего main
 
 # Коммит (Conventional Commits, описание на русском):
 git commit -m "feat(scope): добавить ..."
@@ -233,13 +232,18 @@ git commit -m "test(scope): добавить тесты для ..."
 git commit -m "docs(scope): обновить ..."
 
 # PR через GitHub CLI:
-gh pr create --base develop --title "feat: ..." --body "..."
-gh pr merge PR_NUMBER --squash --delete-branch
+gh pr create --base main --title "feat: ..." --body "..."
+gh pr merge PR_NUMBER --merge   # только после зелёного CI
 ```
 
 `APP_LABEL`, `MIGRATION_NAME`, `BRANCH_NAME` и `PR_NUMBER` — безопасные явные
 placeholders: замените их реальными значениями перед выполнением команды.
 
-`develop` — интеграционная ветка: её `push` запускает CI, но не production deploy.
-Production release оформляется отдельным reviewed merge/PR в `main`; только
-успешный CI для соответствующего `push` в `main` может запустить защищённый deploy.
+Фактический процесс: короткая рабочая ветка от `main` → PR в `main` → merge
+после зелёного CI. Только успешный CI для соответствующего `push` в `main` может
+запустить защищённый deploy.
+
+`develop` сохранена как постоянная ветка и не удаляется; CI по-прежнему
+запускается на её `push`/PR, но production deploy — нет. Текущая разработка
+через неё не идёт, и она отстаёт от `main`. Схема `feature/* → develop → main`
+из исторического `RULEBOOK_MAP.md` сейчас не применяется.

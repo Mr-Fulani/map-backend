@@ -346,7 +346,9 @@ endpoint/URL, пройти независимый fake-provider onboarding и о
 
 Сюда относятся:
 
-- migrations 0036–0038 и будущая 0039;
+- migrations 0036–0038 и будущая 0039 — номера из not-for-merge snapshot.
+  В `main` `0036`–`0038` заняты Ozon, поэтому при активации P7 эти миграции
+  перенумеровываются после последней существующей;
 - feed_run_dispatch_fence.py и feed_run_dispatch_backfill.py;
 - `CODE_READY`, но не `VERIFIED` feed_run_dispatch_terminal_cleanup.py и
   отдельная management-команда;
