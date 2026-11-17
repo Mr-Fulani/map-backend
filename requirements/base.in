@@ -1,7 +1,7 @@
 # Core
 Django==5.2.17
 sqlparse==0.6.0
-djangorestframework==3.17.2
+djangorestframework==3.18.2
 dj-database-url==3.1.2
 
 # Database
@@ -33,11 +33,11 @@ sentry-sdk[django]==2.66.1
 gunicorn==26.0.0
 
 # Images
-Pillow==12.3.0
+Pillow==13.0.0
 
 # HTTP
 requests==2.34.2
-urllib3==2.7.0
+urllib3==2.8.0
 
 # XML parsing (1С XML adapter)
 lxml==6.1.1
