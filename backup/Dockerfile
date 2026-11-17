@@ -6,8 +6,13 @@ RUN set -eux; \
         ca-certificates \
         libcrypto3 \
         libssl3 \
+        'krb5-libs>=1.22.3-r0' \
         'libuuid>=2.42.3-r0' \
-        python3; \
+        'libxslt>=1.1.43-r4' \
+        'musl>=1.2.6-r3' \
+        'musl-utils>=1.2.6-r3' \
+        python3 \
+        'zlib>=1.3.2-r1'; \
     for package in libcrypto3 libssl3; do \
         version="$(apk list --installed "$package" \
             | sed -n "s/^${package}-\\([^ ]*\\).*/\\1/p")"; \
