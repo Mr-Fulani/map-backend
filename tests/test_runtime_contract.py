@@ -52,6 +52,10 @@ EXPECTED_GOSU_EXCEPTIONS = {
     'CVE-2026-56859',
     'CVE-2026-56860',
     'CVE-2026-56862',
+    'CVE-2026-78667',
+    'CVE-2026-78669',
+    'CVE-2026-97031',
+    'CVE-2026-111943',
 }
 
 
@@ -392,6 +396,16 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
         dockerfiles['backend']
     )
     assert 'ge 3.5.7-1~deb13u2' in dockerfiles['backend']
+    for requirement in (
+        'apt=3.0.4',
+        'gzip=1.13-1+deb13u1',
+        'libapt-pkg7.0=3.0.4',
+        'libpcre2-8-0=10.46-1~deb13u3',
+        'libsqlite3-0=3.46.1-7+deb13u2',
+        'perl-base=5.40.1-6+deb13u1',
+        'zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1',
+    ):
+        assert requirement in dockerfiles['backend'], requirement
     assert dockerfiles['frontend'].splitlines()[0] == (
         'FROM node:24.18.0-alpine@sha256:'
         'a0b9bf06e4e6193cf7a0f58816cc935ff8c2a908f81e6f1a95432d679c54fbfd '
@@ -406,8 +420,8 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
         '57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777'
     )
     assert dockerfiles['nginx'].splitlines()[0] == (
-        'FROM nginx:1.30.4-alpine@sha256:'
-        '97d490c12ba55b4946b01546d1c3ed324e8d41ab1c9fcb2a616aa470620e5b46'
+        'FROM nginx:1.30.6-alpine@sha256:'
+        '901e593c95dc85f5a729f5765516321366ef4ac401821431d408897e95287d0a'
     )
     for name in ('frontend', 'backup', 'nginx', 'postgres'):
         assert 'apk add --no-cache --upgrade' in dockerfiles[name], name
@@ -416,6 +430,14 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
         assert 'apk version -t "$version" 3.5.8-r0' in dockerfiles[name], name
     for name in ('backup', 'postgres', 'nginx'):
         assert "'libuuid>=2.42.3-r0'" in dockerfiles[name], name
+    for name in ('frontend', 'backup', 'postgres'):
+        assert "'musl>=1.2.6-r3'" in dockerfiles[name], name
+        assert "'musl-utils>=1.2.6-r3'" in dockerfiles[name], name
+        assert "'zlib>=1.3.2-r1'" in dockerfiles[name], name
+    for name in ('backup', 'postgres'):
+        assert "'krb5-libs>=1.22.3-r0'" in dockerfiles[name], name
+    for name in ('backup', 'postgres', 'nginx'):
+        assert "'libxslt>=1.1.43-r4'" in dockerfiles[name], name
     assert 'libcrypto3 libssl3 libexpat' in dockerfiles['nginx']
     assert 'apk version -t "$version" 2.8.4-r0' in dockerfiles['nginx']
     assert dockerfiles['egress_proxy'].splitlines()[0] == (
@@ -426,6 +448,8 @@ def test_dockerfiles_pin_base_images_and_production_runs_non_root():
     assert 'for package in libssl3t64 openssl' in dockerfiles['egress_proxy']
     assert 'dpkg --compare-versions' in dockerfiles['egress_proxy']
     assert 'ge 3.0.13-0ubuntu3.11' in dockerfiles['egress_proxy']
+    assert 'for package in apt libapt-pkg6.0t64' in dockerfiles['egress_proxy']
+    assert 'ge 2.8.4ubuntu0.1' in dockerfiles['egress_proxy']
     assert '\nUSER app\n' in dockerfiles['backend']
     assert '/usr/sbin/nologin' in dockerfiles['backend']
     frontend_runner = dockerfiles['frontend'].split(' AS runner', 1)[1]
@@ -578,7 +602,7 @@ def test_trivy_exceptions_are_exact_path_scoped_and_expiring():
     assert len(exceptions) == len(EXPECTED_GOSU_EXCEPTIONS)
     for item in exceptions:
         assert item['paths'] == ['usr/local/bin/gosu']
-        assert str(item['expired_at']) == '2026-09-30'
+        assert str(item['expired_at']) == '2026-12-31'
         statement = item['statement'].lower()
         assert 'official postgresql' in statement
         assert 'uid/gid exec' in statement

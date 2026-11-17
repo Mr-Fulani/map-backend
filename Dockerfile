@@ -7,18 +7,25 @@ ENV PYTHONUNBUFFERED=1 \
 RUN set -eux; \
     apt-get update; \
     apt-get install --yes --no-install-recommends --only-upgrade \
+        apt \
         bsdutils \
+        gzip \
+        libapt-pkg7.0 \
         libblkid1 \
         liblastlog2-2 \
         libmount1 \
+        libpcre2-8-0 \
         libsmartcols1 \
+        libsqlite3-0 \
         libssl3t64 \
         libuuid1 \
         login \
         mount \
         openssl \
         openssl-provider-legacy \
-        util-linux; \
+        perl-base \
+        util-linux \
+        zlib1g; \
     for package in \
         libblkid1 \
         liblastlog2-2 \
@@ -39,6 +46,17 @@ RUN set -eux; \
     for package in libssl3t64 openssl openssl-provider-legacy; do \
         version="$(dpkg-query -W -f='${Version}' "$package")"; \
         dpkg --compare-versions "$version" ge 3.5.7-1~deb13u2; \
+    done; \
+    for requirement in \
+        apt=3.0.4 \
+        gzip=1.13-1+deb13u1 \
+        libapt-pkg7.0=3.0.4 \
+        libpcre2-8-0=10.46-1~deb13u3 \
+        libsqlite3-0=3.46.1-7+deb13u2 \
+        perl-base=5.40.1-6+deb13u1 \
+        zlib1g=1:1.3.dfsg+really1.3.1-1+deb13u1; do \
+        version="$(dpkg-query -W -f='${Version}' "${requirement%%=*}")"; \
+        dpkg --compare-versions "$version" ge "${requirement#*=}"; \
     done; \
     rm -rf /var/lib/apt/lists/*
 
